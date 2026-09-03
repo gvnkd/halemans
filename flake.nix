@@ -18,7 +18,10 @@
             systems = import systems;
             imports = [ ihp.flakeModules.default ];
 
-            perSystem = { pkgs, ... }: {
+            perSystem = { pkgs, config, lib, ... }: {
+                # Smoke check (milestone 0 §6) lives in ./nix/checks.nix.
+                checks = import ./nix/checks.nix { inherit pkgs lib config self; };
+
                 ihp = {
                     appName = "app"; # Change this to your project name
                     enable = true;
@@ -32,6 +35,11 @@
                         base
                         wai
                         text
+                        aeson
+                        lens
+                        vector
+                        wreq
+                        ihp-typed-sql
                         # ihp-mail           # Email support: https://ihp.digitallyinduced.com/Guide/mail.html
                         # ihp-datasync       # Real-time DataSync
                         # ihp-job-dashboard  # Job dashboard UI
@@ -69,19 +77,10 @@
                     # static.makeBundling = true; # Set false if not using Makefile for CSS/JS bundling
                 };
 
-                # Custom configuration that will start with `devenv up`
+                # Custom configuration that will start with `devenv up`.
+                # All custom nix code lives in ./nix/ (see design_docs/milestone_0.md).
                 devenv.shells.default = {
-                    # Start Mailhog on local development to catch outgoing emails
-                    # services.mailhog.enable = true;
-
-                    # PostgreSQL extensions
-                    # services.postgres.extensions = extensions: [ extensions.postgis ];
-
-                    # Custom processes that don't appear in https://devenv.sh/reference/options/
-                    processes = {
-                        # Uncomment if you use tailwindcss.
-                        # tailwind.exec = "tailwindcss -c tailwind/tailwind.config.js -i ./tailwind/app.css -o static/app.css --watch=always";
-                    };
+                    imports = [ ./nix/devenv.nix ];
                 };
             };
 

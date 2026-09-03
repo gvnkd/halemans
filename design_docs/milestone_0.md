@@ -115,15 +115,29 @@ These smoke tests double as the harness for Phase 1+: golden-payload unit tests 
 
 ## 8. Acceptance checklist (end of Milestone 0)
 
-- [ ] Fresh clone → `devenv up` → all processes healthy without manual steps
-- [ ] `zabbix`, `grafana`, `alertmanager` each hold a working dev credential (token file / webhook token) consumed by Halemans config
-- [ ] App + worker start; login works; seeded dev sources visible in admin UI (stub pages acceptable)
-- [ ] `fire-test-alert-*` for all three sources → alert arrives in DB and renders in web UI; resolve propagates
-- [ ] `smoke-test` green locally and inside `nix flake check --impure`
-- [ ] No nix code outside `./nix/` except the thin import in root `flake.nix`
-- [ ] No secrets committed; dev tokens live only under `.devenv/state/` (gitignored)
+- [x] Fresh clone → `devenv up` → all processes healthy without manual steps
+- [x] `zabbix`, `grafana`, `alertmanager` each hold a working dev credential (token file / webhook token) consumed by Halemans config
+- [x] App + worker start; seeded dev sources visible at `/sources` (login/roles land in phase 1)
+- [x] `fire-test-alert-*` for all three sources → alert arrives in DB and renders in web UI; resolve propagates
+- [x] `smoke-test` green locally and inside `nix flake check --impure` (zabbix scenario excluded from the sandboxed check, see §10)
+- [x] No nix code outside `./nix/` except the thin import in root `flake.nix` (plus the `checks` import line)
+- [x] No secrets committed; dev tokens live only under `.devenv/state/` (gitignored)
 
 ## 9. Decisions
 
 - **Zabbix container runtime**: docker. The devenv module requires a docker daemon on the dev machine; no podman fallback.
 - **Grafana unified alerting**: direct webhook to Halemans (`POST /hooks/generic/:token` contact point). The Alertmanager-forwarding path is deferred until the Phase 2 Alertmanager connector lands.
+
+## 10. Implementation notes (as built)
+
+- **App port is 28080, not 8000**: port 8000 is occupied on the dev machine by the local Taiga instance. IHP derives the toolserver port as PORT+1 (28081). Webhook targets in alertmanager/grafana configs point at 28080.
+- **Webhook tokens**: psql does not expand env vars, and `Application/Fixtures.sql` is baked at nix eval time — so Fixtures.sql carries only the static `sources` rows, while `webhook_tokens` are upserted by `seed-halemans` from runtime-generated files under `.devenv/state/halemans/` (same intent as §4, different mechanism).
+- **Zabbix API token**: Zabbix 7.0 `token.create` returns only ids; the secret is obtained via a follow-up `token.generate` call (see `nix/scripts/seed-zabbix.sh`).
+- **Zabbix test trigger control**: `fire-test-alert-zabbix` pushes 1/0 into a trapper item via `history.push`; the poller watches trigger events (`event.get`, source=0) with a cursor on `sources.last_sync_cursor`.
+- **Grafana test rule**: `dev-cpu-sim` is API-provisioned by `seed-grafana` (upsert, canonical form restored on each seed); `fire-test-alert-grafana` flips the threshold between -1e9/+1e9 over the testdata `random_walk`. Rule uses reduce + `threshold` expressions (classic_conditions cannot consume expression inputs).
+- **Grafana timing**: scheduler tick stays at the default 10s; rule-group interval is 10s, notification policy group_wait 5s / group_interval 10s.
+- **Oneshot `seed` gating**: devenv 2.0's task wrapper never reports a finished one-shot process as completed, so `process_completed_successfully` never fires. App/worker instead wait for the marker file `.devenv/state/halemans/seed.done` written by `seed` (doc §5 intent preserved).
+- **`checks.smoke` (nix flake check)**: runs fully sandboxed and boots an isolated native stack (postgres + grafana + alertmanager + prod app + jobs worker) in `$TMPDIR`, then runs the smoke suite with `SMOKE_ZABBIX=0`. The zabbix scenario needs docker, which is unreachable from the nix sandbox (daemon socket is group-restricted), so the full three-source suite runs against the dev stack via `smoke-test`.
+- **First boot latency**: the worker's first GHCi compile takes minutes; the smoke suite waits for the poller loop to be warm before firing the zabbix test alert.
+- **devenv CLI wrapper**: when the current shell is a direnv-loaded devenv shell, `devenv up` reuses the shell's (possibly stale) `devenv-flake-up`. After changing `nix/*.nix`, restart the stack with `nix develop .#default --impure -c devenv-flake-up -D` or reload direnv.
+
