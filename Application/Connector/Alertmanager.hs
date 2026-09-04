@@ -6,25 +6,32 @@ import Data.Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Vector as Vector
+import Data.Time.Calendar (fromGregorian)
 
 -- Alertmanager webhook payload (v4):
--- { "status": "firing", "alerts": [ { "status", "labels", "annotations",
---   "startsAt", "endsAt", "generatorURL", "fingerprint" } ] }
+-- { "status": "firing", "externalURL": "...", "alerts": [ { "status",
+--   "labels", "annotations", "startsAt", "endsAt", "generatorURL",
+--   "fingerprint" } ] }
+-- Milestone 2 hardening (milestone_2.md §8): multi-alert payloads, missing
+-- or zero endsAt never auto-resolves, deep links fall back to externalURL.
 normalize :: Value -> Either Text [NormalizedEvent]
-normalize (Object o) = case KeyMap.lookup "alerts" o of
-    Just (Array alerts) -> mapM toEvent (Vector.toList alerts)
+normalize payload@(Object o) = case KeyMap.lookup "alerts" o of
+    Just (Array alerts) -> mapM (toEvent (lookupText "externalURL" payload)) (Vector.toList alerts)
     _ -> Left "alertmanager payload: missing alerts array"
 normalize _ = Left "alertmanager payload: not an object"
 
-toEvent :: Value -> Either Text NormalizedEvent
-toEvent a@(Object _) = do
+toEvent :: Maybe Text -> Value -> Either Text NormalizedEvent
+toEvent externalUrl a@(Object _) = do
     let labels = fromMaybe (Object KeyMap.empty) (lookupKey "labels" a)
         annotations = fromMaybe (Object KeyMap.empty) (lookupKey "annotations" a)
         labelText k = lookupText k labels
         annotationText k = lookupText k annotations
     fp <- maybe (Left "alertmanager alert: missing fingerprint") Right (lookupText "fingerprint" a)
     let statusText = fromMaybe "firing" (lookupText "status" a)
-        status = if statusText == "resolved" then Resolved else Firing
+        endsAt = lookupTime "endsAt" a
+        -- A resolved status with a missing/zero endsAt is contradictory;
+        -- alertmanager sends endsAt=0001-01-01 for still-firing alerts.
+        status = if statusText == "resolved" && not (unknownEnd endsAt) then Resolved else Firing
         title = fromMaybe (fromMaybe "Alertmanager alert" (labelText "alertname")) (annotationText "summary")
     Right NormalizedEvent
         { fingerprint = "alertmanager:" <> fp
@@ -40,9 +47,14 @@ toEvent a@(Object _) = do
         , labels
         , annotations
         , startedAt = lookupTime "startsAt" a
-        , sourceUrl = lookupText "generatorURL" a
+        , sourceUrl = lookupText "generatorURL" a <|> externalUrl
         }
-toEvent _ = Left "alertmanager alert: not an object"
+toEvent _ _ = Left "alertmanager alert: not an object"
+
+unknownEnd :: Maybe UTCTime -> Bool
+unknownEnd Nothing = True
+unknownEnd (Just time) = time <= epoch
+    where epoch = UTCTime (fromGregorian 1 1 2) 0
 
 lookupKey :: Text -> Value -> Maybe Value
 lookupKey k (Object o) = KeyMap.lookup (Key.fromText k) o

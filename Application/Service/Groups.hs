@@ -1,0 +1,106 @@
+module Application.Service.Groups
+( assignGroup
+, recomputeGroupRollup
+, publishGroupUpdate
+) where
+
+import IHP.Prelude
+import IHP.ModelSupport
+import IHP.QueryBuilder
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
+import Generated.Types
+import Data.Aeson (object, (.=))
+import qualified Data.Aeson as Aeson
+import Control.Monad (void)
+import Application.Pipeline.Grouping (matchExprFromJSON, matchAlert, renderTemplate, severityRank)
+
+-- AlertGroup membership + rollup maintenance (design_docs/milestone_2.md
+-- §3 step 5, §4). Rules are evaluated in position order, first match wins;
+-- no match leaves the alert standalone.
+
+-- | Evaluate grouping rules for a freshly created alert. Returns the updated
+-- alert (group_id + grouped_by_version set) or the alert unchanged. Alerts
+-- without any subject (env/host/service all absent) are never grouped: their
+-- rendered key would be all dashes and collapse unrelated alerts together.
+assignGroup :: (?modelContext :: ModelContext) => Alert -> IO Alert
+assignGroup alert
+    | isNothing alert.env && isNothing alert.host && isNothing alert.service = pure alert
+assignGroup alert = do
+    rules <- query @GroupingRule
+        |> filterWhere (#enabled, True)
+        |> orderByAsc #position
+        |> fetch
+    case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
+        Nothing -> pure alert
+        Just rule -> do
+            let key = renderTemplate rule.groupKeyTemplate alert
+            group <- query @AlertGroup
+                |> filterWhere (#groupKey, key)
+                |> fetchOneOrNothing
+            groupRef <- case group of
+                Just group -> pure (get #id group)
+                Nothing -> do
+                    created <- newRecord @AlertGroup
+                        |> set #groupKey key
+                        |> set #title key
+                        |> set #environmentId alert.environmentId
+                        |> createRecord
+                    pure (get #id created)
+            updated <- alert
+                |> set #groupId (Just groupRef)
+                |> set #groupedByVersion (Just rule.version)
+                |> updateRecord
+            void (recomputeGroupRollup groupRef)
+            pure updated
+
+-- | Recompute worst severity / member count / rollup status from the current
+-- members. Group resolves when every member is resolved or closed (§3).
+recomputeGroupRollup :: (?modelContext :: ModelContext) => Id AlertGroup -> IO AlertGroup
+recomputeGroupRollup groupId = do
+    group <- fetch groupId
+    members <- query @Alert
+        |> filterWhere (#groupId, Just groupId)
+        |> fetch
+    let count = length members
+        worst = fromMaybe "warning" (maximumByMay (\a b -> compare (severityRank a) (severityRank b)) (map (.severity) members))
+        live = filter (\alert -> alert.status `notElem` ["resolved", "closed"]) members
+        rollupStatus
+            | any (\alert -> alert.status == "firing") live = "firing"
+            | not (null live) = "ack"
+            | otherwise = "resolved"
+    now <- getCurrentTime
+    let wasResolved = group.status == "resolved"
+        resolvedAt = if rollupStatus == "resolved" && not wasResolved then Just now else (if rollupStatus == "resolved" then group.resolvedAt else Nothing)
+    updated <- group
+        |> set #worstSeverity worst
+        |> set #memberCount count
+        |> set #status rollupStatus
+        |> set #resolvedAt resolvedAt
+        |> updateRecord
+    publishGroupUpdate updated
+    pure updated
+
+maximumByMay :: (a -> a -> Ordering) -> [a] -> Maybe a
+maximumByMay _ [] = Nothing
+maximumByMay cmp (x:xs) = Just (foldl' (\best y -> if cmp y best == GT then y else best) x xs)
+
+-- | Websocket fan-out for group mutations (§9): same halemans_events
+-- channel, fragment target group-row.
+publishGroupUpdate :: (?modelContext :: ModelContext) => AlertGroup -> IO ()
+publishGroupUpdate group = do
+    envName <- forM group.environmentId \environmentId -> do
+        environment <- fetch environmentId
+        pure environment.name
+    let payload :: Text
+        payload = cs (Aeson.encode (object
+            [ "groupId" .= get #id group
+            , "groupKey" .= group.groupKey
+            , "kind" .= ("group" :: Text)
+            , "env" .= envName
+            , "status" .= group.status
+            , "worstSeverity" .= group.worstSeverity
+            , "memberCount" .= group.memberCount
+            ]))
+    _ <- sqlQueryTyped [typedSql| SELECT 1 WHERE pg_notify('halemans_events', ${payload}) IS NULL |] :: IO [Int]
+    pure ()

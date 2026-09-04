@@ -41,6 +41,15 @@ navigation = [hsx|
             <li class="nav-item"><a class="nav-link" href={AlertsAction}>Alerts</a></li>
             <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>Blackouts</a></li>
             <li class="nav-item"><a class="nav-link" href={SourcesAction}>Sources</a></li>
+            <li class="nav-item dropdown">
+                <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Admin</a>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href={TeamsAction}>Teams</a></li>
+                    <li><a class="dropdown-item" href={GroupingRulesAction}>Grouping rules</a></li>
+                    <li><a class="dropdown-item" href={NotificationRulesAction}>Notification rules</a></li>
+                    <li><a class="dropdown-item" href={EscalationPoliciesAction}>Escalation policies</a></li>
+                </ul>
+            </li>
         </ul>
         <ul class="navbar-nav">
             {userMenu}

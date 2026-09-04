@@ -15,6 +15,11 @@ import Web.Controller.Blackouts
 import Web.Controller.Profile
 import Web.Controller.PushSubscriptions
 import Web.Controller.Live
+import Web.Controller.Groups
+import Web.Controller.Teams
+import Web.Controller.GroupingRules
+import Web.Controller.NotificationRules
+import Web.Controller.EscalationPolicies
 
 instance FrontController WebApplication where
     controllers =
@@ -30,6 +35,11 @@ instance FrontController WebApplication where
         , parseRoute @PushSubscriptionsController
         , parseRoute @HooksController
         , parseRoute @SourcesController
+        , parseRoute @GroupsController
+        , parseRoute @TeamsController
+        , parseRoute @GroupingRulesController
+        , parseRoute @NotificationRulesController
+        , parseRoute @EscalationPoliciesController
         ]
 
 instance InitControllerContext WebApplication where

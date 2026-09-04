@@ -19,6 +19,8 @@ import Application.Pipeline.StateMachine (AlertState, Trigger (..), Transition (
 import qualified Application.Pipeline.StateMachine as SM
 import Application.Pipeline.Blackouts (blackoutApplies)
 import Application.Service.Notify (dispatchNotification)
+import Application.Service.Groups (assignGroup, recomputeGroupRollup)
+import Application.Service.Escalation (cancelTrackersFor)
 
 data SourceStatus = Firing | Resolved deriving (Eq, Show)
 
@@ -88,11 +90,13 @@ ingest source event = do
             recordEvent (get #id alert) "created" (object ["source" .= get #name source])
             when suppressedNow do
                 recordEvent (get #id alert) "suppressed" (object ["note" .= ("covered by active blackout" :: Text)])
+            -- Step 5 grouping (milestone_2.md §3): first matching rule wins;
+            -- no match leaves the alert standalone.
+            grouped <- assignGroup alert
             unless suppressedNow do
-                when (event.severity `elem` ["critical", "high"]) do
-                    void (dispatchNotification alert)
-            publishAlertUpdate alert "created"
-            pure (Just (get #id alert))
+                void (dispatchNotification grouped)
+            publishAlertUpdate grouped "created"
+            pure (Just (get #id grouped))
         (Just alert, sourceStatus) -> do
             let currentState = fromMaybe SM.Firing (SM.alertStateFromText alert.status)
             let trigger = case sourceStatus of
@@ -100,8 +104,10 @@ ingest source event = do
                     Resolved -> SourceResolved
             let transition = SM.step currentState trigger
             updated <- applyTransition now environmentRef hostRef serviceRef suppressedNow alert transition
-            when (transition.applied && transition.to == SM.Resolved && alert.severity == "critical" && not suppressedNow) do
-                void (dispatchNotification updated)
+            when (transition.applied && transition.to == SM.Resolved) do
+                cancelTrackersFor (get #id alert)
+                unless suppressedNow do
+                    void (dispatchNotification updated)
             publishAlertUpdate updated transition.eventKind
             pure (Just (get #id alert))
 
@@ -139,6 +145,7 @@ applyTransition now environmentRef hostRef serviceRef suppressedNow alert transi
                 |> set #occurrences (alert.occurrences + 1)
             (False, _) -> base
     updated <- updateRecord transitioned
+    forM_ alert.groupId (void . recomputeGroupRollup)
     let payload = if transition.applied
             then object
                 [ "from" .= SM.alertStateToText transition.from

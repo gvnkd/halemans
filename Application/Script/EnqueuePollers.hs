@@ -8,4 +8,6 @@ run :: Script
 run = do
     _ <- newRecord @PollZabbixJob |> createRecord
     _ <- newRecord @AutoCloseJob |> createRecord
+    _ <- newRecord @PollGrafanaJob |> createRecord
+    _ <- newRecord @EscalationJob |> createRecord
     pure ()

@@ -11,6 +11,48 @@ let
     prodServer = config.packages."unoptimized-prod-server";
 in
 {
+    # Override of the IHP flake module's auto-generated unit-tests check for
+    # the same reason as integration-tests below: specs import app modules
+    # that use typedSql, so compile-time introspection needs a database with
+    # the schema loaded.
+    "tests" = lib.mkForce (pkgs.stdenv.mkDerivation {
+        name = "${config.ihp.appName}-tests";
+        src = builtins.path { path = config.ihp.projectPath; name = "source"; };
+        nativeBuildInputs = with pkgs; [
+            (config.ihp.ghcCompiler.ghcWithPackages (p: config.ihp.haskellPackages p ++ config.ihp.devHaskellPackages p ++ [p.ihp-ide p.ihp-schema-compiler]))
+            gnumake
+            postgresql
+        ];
+        buildPhase = ''
+            export IHP_LIB=${ihpLib}
+
+            export PGDATA="$TMPDIR/pgdata"
+            export PGHOST="$TMPDIR/pghost"
+            mkdir -p "$PGHOST"
+            initdb -D "$PGDATA" --no-locale --encoding=UTF8
+            echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
+            echo "listen_addresses = '''" >> "$PGDATA/postgresql.conf"
+            pg_ctl -D "$PGDATA" -l "$TMPDIR/pg.log" start
+
+            createdb -h "$PGHOST" app
+            export DATABASE_URL="postgresql:///app?host=$PGHOST"
+
+            psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+                -f ${config.packages.ihp-schema}/IHPSchema.sql \
+                -f Application/Schema.sql \
+                -f Application/Fixtures.sql
+
+            make -f $IHP_LIB/lib/IHP/Makefile.dist build/Generated/Types.hs
+
+            # shellcheck disable=SC2046
+            runghc $(make -f $IHP_LIB/lib/IHP/Makefile.dist print-ghc-extensions) -i. -ibuild -iConfig Test/Main.hs
+
+            pg_ctl -D "$PGDATA" stop || true
+            touch $out
+        '';
+        installPhase = "true";
+    });
+
     # Override of the IHP flake module's auto-generated integration-tests
     # check: the module's version never applies the schema to its temp
     # database, so typedSql compile-time introspection fails on any spec that

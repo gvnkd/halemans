@@ -42,13 +42,13 @@ def password(role):
         return f.read().strip()
 
 
-def fire_generic_alert(fingerprint, severity="warning", status="firing", title="playwright test alert"):
+def fire_generic_alert(fingerprint, severity="warning", status="firing", title="playwright test alert", host="dev-host-01"):
     token = open(os.path.join(STATE, "halemans", "generic-hook-token")).read().strip()
     payload = {
         "version": "4", "status": status, "receiver": "halemans",
         "alerts": [{
             "status": status,
-            "labels": {"alertname": "pw-test", "env": "dev", "host": "dev-host-01",
+            "labels": {"alertname": "pw-test", "env": "dev", "host": host,
                        "severity": severity, "check": "pw-test"},
             "annotations": {"summary": title},
             "startsAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -60,6 +60,16 @@ def fire_generic_alert(fingerprint, severity="warning", status="firing", title="
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200, resp.status
+
+
+def wait_sql_value(query, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        value = sql(query)
+        if value:
+            return value
+        time.sleep(1)
+    return None
 
 
 def login(page, role):
@@ -210,6 +220,197 @@ with sync_playwright() as pw:
         }}""")
         assert result == 403, result
         viewer.close()
+
+    @check("viewer gets 403 on all admin pages")
+    def _():
+        viewer = context.new_page()
+        login(viewer, "viewer")
+        for path in ["/admin/teams", "/admin/grouping-rules", "/admin/notification-rules",
+                     "/admin/escalation-policies", "/sources/new"]:
+            result = viewer.evaluate(f"""async () => {{
+                const res = await fetch('{path}');
+                return res.status;
+            }}""")
+            assert result == 403, f"{path}: {result}"
+        viewer.close()
+
+    # ---------------------------------------------------------- milestone 2
+
+    @check("grouping: rule via admin UI, two alerts roll into one group, group card + group ack")
+    def _():
+        ts = int(time.time())
+        host = f"pw-group-host-{ts}"
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/grouping-rules")
+        admin.get_by_test_id("new-grouping-rule").click()
+        admin.get_by_test_id("rule-name").fill("pw-rule")
+        admin.get_by_test_id("rule-position").fill("-1")
+        admin.get_by_test_id("rule-template").fill("{host}-pw")
+        admin.get_by_test_id("grouping-rule-submit").click()
+        admin.get_by_test_id("grouping-rules-table").get_by_text("pw-rule").wait_for()
+        # rule preview renders
+        admin.get_by_test_id("grouping-rule-row").filter(has_text="pw-rule").get_by_test_id("preview-grouping-rule").click()
+        admin.get_by_test_id("grouping-rule-preview-table").wait_for()
+
+        fire_generic_alert(f"pw-grp-a-{ts}", title=f"pw group member A {ts}", host=host)
+        fire_generic_alert(f"pw-grp-b-{ts}", title=f"pw group member B {ts}", host=host)
+        group_id = wait_sql_value(
+            f"SELECT id FROM alert_groups WHERE group_key = '{host}-pw' AND member_count = 2", 60)
+        assert group_id, "group with 2 members never appeared"
+
+        admin.goto(f"{APP}/groups/{group_id}")
+        admin.get_by_test_id("group-header").wait_for()
+        body = admin.content()
+        assert f"pw group member A {ts}" in body and f"pw group member B {ts}" in body
+
+        # env page grouped view rolls up the group
+        admin.goto(f"{APP}/env/dev?view=grouped")
+        admin.get_by_test_id("env-groups-table").wait_for()
+        admin.locator(f'tr[data-group-key="{host}-pw"]').wait_for()
+
+        # group ack acts on all firing members
+        admin.goto(f"{APP}/groups/{group_id}")
+        admin.get_by_test_id("ack-group").click()
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            unacked = sql(f"SELECT count(*) FROM alerts WHERE group_id = '{group_id}' AND status = 'firing'")
+            if unacked == "0":
+                break
+            time.sleep(1)
+        assert sql(f"SELECT count(*) FROM alerts WHERE group_id = '{group_id}' AND status = 'firing'") == "0"
+        # cleanup so later severity-threshold rules don't see stale state
+        sql(f"UPDATE grouping_rules SET enabled = false WHERE name = 'pw-rule'")
+        admin.close()
+
+    @check("grouping rule edit bumps version")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        version_before = sql("SELECT version FROM grouping_rules WHERE name = 'pw-rule'")
+        admin.goto(f"{APP}/admin/grouping-rules")
+        admin.get_by_test_id("grouping-rule-row").filter(has_text="pw-rule").get_by_test_id("edit-grouping-rule").click()
+        admin.get_by_test_id("rule-template").fill("{host}-pw-v2")
+        admin.get_by_test_id("grouping-rule-submit").click()
+        admin.get_by_test_id("grouping-rules-table").wait_for()
+        version_after = sql("SELECT version FROM grouping_rules WHERE name = 'pw-rule'")
+        assert int(version_after) == int(version_before) + 1, (version_before, version_after)
+        admin.close()
+
+    @check("blackout edit changes the window without recreate")
+    def _():
+        ts = int(time.time())
+        host = f"pw-boedit-host-{ts}"
+        fire_generic_alert(f"pw-boedit-seed-{ts}", title=f"pw boedit seed {ts}", host=host)
+        assert wait_sql_value(f"SELECT id FROM hosts WHERE fqdn = '{host}'"), "host never auto-created"
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/blackouts")
+        admin.get_by_test_id("new-blackout").click()
+        admin.select_option("[data-testid=blackout-scope-type]", "host")
+        admin.select_option("[data-testid=blackout-scope-id]", label=host)
+        start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
+        end = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))
+        admin.get_by_test_id("blackout-starts-at").fill(start)
+        admin.get_by_test_id("blackout-ends-at").fill(end)
+        admin.get_by_test_id("blackout-reason").fill("pw edit me")
+        admin.get_by_test_id("blackout-submit").click()
+        row = admin.get_by_test_id("blackout-row").filter(has_text="pw edit me")
+        row.wait_for()
+        blackout_id = sql("SELECT id FROM blackouts WHERE reason = 'pw edit me'")
+        row.get_by_test_id("edit-blackout").click()
+        new_end = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 7200))
+        admin.get_by_test_id("blackout-ends-at").fill(new_end)
+        admin.get_by_test_id("blackout-reason").fill("pw edited")
+        admin.get_by_test_id("blackout-submit").click()
+        admin.get_by_test_id("blackout-row").filter(has_text="pw edited").wait_for()
+        same_id = sql("SELECT id FROM blackouts WHERE reason = 'pw edited'")
+        assert same_id == blackout_id, "edit recreated the row"
+        sql("DELETE FROM blackouts WHERE id = '%s'" % blackout_id)  # cleanup
+        admin.close()
+
+    @check("sources admin: create, edit, disable, re-enable")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/sources")
+        admin.get_by_test_id("new-source").click()
+        admin.get_by_test_id("source-name").fill("pw-source")
+        admin.select_option("[data-testid=source-type]", "webhook")
+        admin.get_by_test_id("source-base-url").fill("http://example.invalid")
+        admin.get_by_test_id("source-submit").click()
+        row = admin.get_by_test_id("source-row").filter(has_text="pw-source")
+        row.wait_for()
+        row.get_by_test_id("edit-source").click()
+        admin.get_by_test_id("source-name").fill("pw-source-renamed")
+        admin.get_by_test_id("source-submit").click()
+        row = admin.get_by_test_id("source-row").filter(has_text="pw-source-renamed")
+        row.wait_for()
+        row.get_by_test_id("toggle-source").click()
+        row = admin.get_by_test_id("source-row").filter(has_text="pw-source-renamed")
+        row.get_by_text("disabled").wait_for()
+        row.get_by_test_id("toggle-source").click()
+        admin.get_by_test_id("source-row").filter(has_text="pw-source-renamed").get_by_text("enabled").wait_for()
+        sql("DELETE FROM sources WHERE name = 'pw-source-renamed'")  # cleanup
+        admin.close()
+
+    @check("notification rule CRUD with escalation policy attach")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/escalation-policies")
+        admin.get_by_test_id("new-escalation-policy").click()
+        admin.get_by_test_id("policy-name").fill("pw-policy")
+        admin.get_by_test_id("policy-step-0").get_by_test_id("step-after").fill("600")
+        admin.get_by_test_id("policy-step-0").get_by_test_id("step-target").select_option(label="team: sre")
+        admin.get_by_test_id("policy-submit").click()
+        admin.get_by_test_id("escalation-policy-row").filter(has_text="pw-policy").wait_for()
+
+        admin.goto(f"{APP}/admin/notification-rules")
+        admin.get_by_test_id("new-notification-rule").click()
+        admin.get_by_test_id("rule-name").fill("pw-notify")
+        admin.get_by_test_id("rule-severity-threshold").select_option("critical")
+        admin.get_by_test_id("rule-target").select_option(label="team: sre")
+        admin.get_by_test_id("rule-throttle").fill("60")
+        admin.get_by_test_id("rule-escalation-policy").select_option(label="pw-policy")
+        admin.get_by_test_id("notification-rule-submit").click()
+        row = admin.get_by_test_id("notification-rule-row").filter(has_text="pw-notify")
+        row.wait_for()
+        assert "team: sre" in row.inner_text()
+        # cleanup: rule would otherwise escalate every critical test alert
+        sql("DELETE FROM notification_rules WHERE name = 'pw-notify'")
+        sql("DELETE FROM escalation_policies WHERE name = 'pw-policy'")
+        admin.close()
+
+    @check("teams admin: create team with members, edit, delete")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/teams")
+        admin.get_by_test_id("new-team").click()
+        admin.get_by_test_id("team-name").fill("pw-team")
+        admin.get_by_test_id("member-sre@dev").select_option("lead")
+        admin.get_by_test_id("team-submit").click()
+        row = admin.get_by_test_id("team-row").filter(has_text="pw-team")
+        row.wait_for()
+        row_text = row.inner_text()
+        assert "sre@dev (lead)" in row_text, f"members cell: {row_text!r}"
+        on_call = sql("""SELECT members->>0 FROM on_call_schedules s
+                         JOIN teams t ON t.id = s.team_id WHERE t.name = 'pw-team'""")
+        sre_id = sql("SELECT id FROM users WHERE email = 'sre@dev'")
+        assert on_call == sre_id, f"on-call {on_call!r} != sre {sre_id!r}"
+        row.get_by_test_id("edit-team").click()
+        admin.get_by_test_id("team-description").fill("edited")
+        admin.get_by_test_id("team-submit").click()
+        admin.get_by_test_id("team-row").filter(has_text="edited").wait_for()
+        admin.get_by_test_id("team-row").filter(has_text="pw-team").get_by_role("button", name="Delete").click()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if not sql("SELECT 1 FROM teams WHERE name = 'pw-team'"):
+                break
+            time.sleep(1)
+        assert not sql("SELECT 1 FROM teams WHERE name = 'pw-team'"), "team not deleted"
+        admin.close()
 
     browser.close()
 

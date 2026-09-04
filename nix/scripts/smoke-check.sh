@@ -59,6 +59,8 @@ SELECT id, :'generic_token' FROM sources WHERE type = 'grafana';
 -- kick the (zabbix-less here) self-rescheduling poller loop
 INSERT INTO poll_zabbix_jobs DEFAULT VALUES;
 INSERT INTO auto_close_jobs DEFAULT VALUES;
+INSERT INTO poll_grafana_jobs DEFAULT VALUES;
+INSERT INTO escalation_jobs DEFAULT VALUES;
 SQL
 
 # Dev users + roles (milestone 1 D2): same SQL-only path as seed-halemans.
@@ -84,6 +86,34 @@ SELECT u.id, r.id FROM users u, roles r
 WHERE u.email = :'email' AND r.name = :'role';
 SQL
 done
+
+# Teams + default routing rules (milestone 2 D4/D5): same SQL as
+# seed-halemans. The default notification rule reproduces milestone-1
+# dispatch: severity >= high pages the sre team, throttled to 5m.
+psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO teams (name, description) VALUES
+    ('sre', 'Site reliability engineering');
+
+INSERT INTO team_members (team_id, user_id, team_role)
+SELECT t.id, u.id, 'lead' FROM teams t, users u
+WHERE t.name = 'sre' AND u.email = 'sre@dev';
+
+INSERT INTO team_members (team_id, user_id, team_role)
+SELECT t.id, u.id, 'member' FROM teams t, users u
+WHERE t.name = 'sre' AND u.email = 'admin@dev';
+
+INSERT INTO on_call_schedules (team_id, members, rotation)
+SELECT t.id, jsonb_build_array(u.id::text), '{}'
+FROM teams t, users u
+WHERE t.name = 'sre' AND u.email = 'sre@dev';
+
+INSERT INTO notification_rules (position, name, enabled, match, severity_threshold, team_id, channel, channel_config, throttle_seconds)
+SELECT 0, 'default-high-severity', true, '{}', 'high', t.id, 'browser_push', '{}', 300
+FROM teams t WHERE t.name = 'sre';
+
+INSERT INTO grouping_rules (position, name, enabled, version, match, group_key_template)
+VALUES (0, 'env+host', true, 1, '{}', '{env}/{host}');
+SQL
 
 # --- alertmanager -------------------------------------------------------------
 amcfg="$DEVENV_STATE/alertmanager"
@@ -136,6 +166,7 @@ for i in $(seq 1 30); do
 done
 seed-zabbix
 export ZABBIX_TOKEN="$(cat "$DEVENV_STATE/zabbix/token")"
+export GRAFANA_TOKEN="$(cat "$DEVENV_STATE/grafana/token")"
 
 # --- app + worker ---------------------------------------------------------------
 cd "$DEVENV_ROOT"

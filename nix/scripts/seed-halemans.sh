@@ -57,6 +57,40 @@ seed_user "admin@dev"  "${HALEMANS_ADMIN_PASSWORD:?}"  "admin"
 seed_user "sre@dev"    "${HALEMANS_SRE_PASSWORD:?}"    "sre"
 seed_user "viewer@dev" "${HALEMANS_VIEWER_PASSWORD:?}" "viewer"
 
+# Teams + default routing rules (milestone 2 D4/D5). The default notification
+# rule reproduces milestone-1 dispatch: severity >= high pages the sre team,
+# throttled to 5m.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO teams (name, description) VALUES
+    ('sre', 'Site reliability engineering')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO team_members (team_id, user_id, team_role)
+SELECT t.id, u.id, 'lead' FROM teams t, users u
+WHERE t.name = 'sre' AND u.email = 'sre@dev'
+ON CONFLICT (team_id, user_id) DO NOTHING;
+
+INSERT INTO team_members (team_id, user_id, team_role)
+SELECT t.id, u.id, 'member' FROM teams t, users u
+WHERE t.name = 'sre' AND u.email = 'admin@dev'
+ON CONFLICT (team_id, user_id) DO NOTHING;
+
+INSERT INTO on_call_schedules (team_id, members, rotation)
+SELECT t.id, jsonb_build_array(u.id::text), '{}'
+FROM teams t, users u
+WHERE t.name = 'sre' AND u.email = 'sre@dev'
+ON CONFLICT (team_id) DO NOTHING;
+
+INSERT INTO notification_rules (position, name, enabled, match, severity_threshold, team_id, channel, channel_config, throttle_seconds)
+SELECT 0, 'default-high-severity', true, '{}', 'high', t.id, 'browser_push', '{}', 300
+FROM teams t WHERE t.name = 'sre'
+  AND NOT EXISTS (SELECT 1 FROM notification_rules WHERE name = 'default-high-severity');
+
+INSERT INTO grouping_rules (position, name, enabled, version, match, group_key_template)
+SELECT 0, 'env+host', true, 1, '{}', '{env}/{host}'
+WHERE NOT EXISTS (SELECT 1 FROM grouping_rules WHERE name = 'env+host');
+SQL
+
 # Kick off the zabbix polling loop (self-rescheduling job; the job itself
 # drops duplicate pending siblings, so re-running seed is safe).
 if [ -f "${DEVENV_ROOT:?}/Application/Script/EnqueuePollers.hs" ]; then

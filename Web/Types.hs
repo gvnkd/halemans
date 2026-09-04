@@ -33,6 +33,8 @@ data BlackoutsController
     = BlackoutsAction
     | NewBlackoutAction
     | CreateBlackoutAction
+    | EditBlackoutAction { blackoutId :: !(Id Blackout) }
+    | UpdateBlackoutAction { blackoutId :: !(Id Blackout) }
     | DeleteBlackoutAction { blackoutId :: !(Id Blackout) }
     deriving (Eq, Show)
 
@@ -49,6 +51,11 @@ data LiveController
     = LiveController
     deriving (Eq, Show, Data)
 
+data GroupsController
+    = ShowGroupAction { groupId :: !(Id AlertGroup) }
+    | AckGroupAction { groupId :: !(Id AlertGroup) }
+    deriving (Eq, Show)
+
 data HooksController
     = HookAlertmanagerAction { token :: !Text }
     | HookGenericAction { token :: !Text }
@@ -56,4 +63,46 @@ data HooksController
 
 data SourcesController
     = SourcesAction
+    | NewSourceAction
+    | CreateSourceAction
+    | EditSourceAction { sourceId :: !(Id Source) }
+    | UpdateSourceAction { sourceId :: !(Id Source) }
+    | ToggleSourceAction { sourceId :: !(Id Source) }
+    deriving (Eq, Show)
+
+data TeamsController
+    = TeamsAction
+    | NewTeamAction
+    | CreateTeamAction
+    | EditTeamAction { teamId :: !(Id Team) }
+    | UpdateTeamAction { teamId :: !(Id Team) }
+    | DeleteTeamAction { teamId :: !(Id Team) }
+    deriving (Eq, Show)
+
+data GroupingRulesController
+    = GroupingRulesAction
+    | NewGroupingRuleAction
+    | CreateGroupingRuleAction
+    | EditGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
+    | UpdateGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
+    | DeleteGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
+    | PreviewGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
+    deriving (Eq, Show)
+
+data NotificationRulesController
+    = NotificationRulesAction
+    | NewNotificationRuleAction
+    | CreateNotificationRuleAction
+    | EditNotificationRuleAction { notificationRuleId :: !(Id NotificationRule) }
+    | UpdateNotificationRuleAction { notificationRuleId :: !(Id NotificationRule) }
+    | DeleteNotificationRuleAction { notificationRuleId :: !(Id NotificationRule) }
+    deriving (Eq, Show)
+
+data EscalationPoliciesController
+    = EscalationPoliciesAction
+    | NewEscalationPolicyAction
+    | CreateEscalationPolicyAction
+    | EditEscalationPolicyAction { escalationPolicyId :: !(Id EscalationPolicy) }
+    | UpdateEscalationPolicyAction { escalationPolicyId :: !(Id EscalationPolicy) }
+    | DeleteEscalationPolicyAction { escalationPolicyId :: !(Id EscalationPolicy) }
     deriving (Eq, Show)

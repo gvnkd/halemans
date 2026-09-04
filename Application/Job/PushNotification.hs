@@ -10,6 +10,8 @@ import Generated.Types
 import Application.Service.Push (VapidKeys (..), PushResult (..), loadVapidKeys, sendPush)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (object, (.=))
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.Vector as Vector
 import Control.Monad (void)
 
 -- Delivers a browser push for one alert (design_docs/milestone_1.md §3 step
@@ -22,7 +24,9 @@ instance Job PushNotificationJob where
         case keysOrNothing of
             Nothing -> pure () -- no VAPID keys yet (seed not run); soft-fail
             Just keys -> do
-                subscriptions <- subscriptionsForViewers
+                subscriptions <- case targetUsers job of
+                    Just userIds -> subscriptionsForUsers userIds
+                    Nothing -> subscriptionsForViewers
                 forM_ subscriptions \subscription -> do
                     result <- sendPush keys subscription (payload alert)
                     case result of
@@ -41,6 +45,16 @@ instance Job PushNotificationJob where
 
     maxAttempts = 5
 
+-- | Phase-2 jobs carry the resolved rule targets (milestone_2.md §10); NULL
+-- keeps the milestone-1 "every viewer" behavior for legacy rows.
+targetUsers :: PushNotificationJob -> Maybe [Id User]
+targetUsers job = do
+    json <- job.targetUserIds
+    parseMaybe (Aeson.withArray "target_user_ids" (pure . mapMaybe parseId . Vector.toList)) json
+    where
+        parseId (Aeson.String raw) = Just (textToId raw)
+        parseId _ = Nothing
+
 -- | Push subscriptions belonging to users with the view (or admin) privilege.
 subscriptionsForViewers :: (?modelContext :: ModelContext) => IO [PushSubscription]
 subscriptionsForViewers = do
@@ -52,3 +66,8 @@ subscriptionsForViewers = do
         GROUP BY ps.id
     |]
     forM rows fetch
+
+subscriptionsForUsers :: (?modelContext :: ModelContext) => [Id User] -> IO [PushSubscription]
+subscriptionsForUsers userIds = do
+    subscriptions <- query @PushSubscription |> fetch
+    pure (filter (\subscription -> subscription.userId `elem` userIds) subscriptions)

@@ -55,24 +55,24 @@ buildCard counts hourly environment =
         , cardAcked = countFor "ack"
         , cardResolved = countFor "resolved"
         , cardSuppressed = suppressedCount
-        , cardWorstSeverity = worstSeverity severities
+        , cardWorstSeverity = cardWorst severities
         , cardHourly = hourlyBuckets
         }
 
 cardTotal :: EnvCard -> Int64
 cardTotal card = card.cardFiring + card.cardAcked + card.cardResolved
 
-severityRank :: Text -> Int
-severityRank = \case
+cardSeverityRank :: Text -> Int
+cardSeverityRank = \case
     "critical" -> 0
     "high" -> 1
     "warning" -> 2
     "info" -> 3
     _ -> 4
 
-worstSeverity :: [Text] -> Maybe Text
-worstSeverity [] = Nothing
-worstSeverity severities = Just (minimumBy (comparing severityRank) severities)
+cardWorst :: [Text] -> Maybe Text
+cardWorst [] = Nothing
+cardWorst severities = Just (minimumBy (comparing cardSeverityRank) severities)
 
 data IndexView = IndexView { cards :: [EnvCard], unassigned :: Maybe EnvCard }
 

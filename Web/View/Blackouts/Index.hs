@@ -33,6 +33,7 @@ renderBlackout (blackout, scopeName) = [hsx|
         <td>{show blackout.endsAt}</td>
         <td>{blackout.reason}</td>
         <td>
+            <a href={EditBlackoutAction blackout.id} class="btn btn-sm btn-outline-secondary" data-testid="edit-blackout">Edit</a>
             <form method="POST" action={DeleteBlackoutAction blackout.id} class="d-inline">
                 <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
             </form>

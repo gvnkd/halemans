@@ -121,6 +121,21 @@ fire-test-alert-grafana resolve || fail "grafana: resolve threshold set"
 wait_sql "grafana alert resolved" 90 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'grafana:%' AND status = 'resolved' LIMIT 1" \
     && pass "grafana alert resolved" || fail "grafana alert resolved"
 
+# milestone 2: dual-path grafana (webhook fast path + poller reconcile, §8).
+wait_sql "grafana poller loop runs" 90 "SELECT 1 FROM poll_grafana_jobs WHERE status = 'job_status_succeeded' LIMIT 1" \
+    && pass "grafana poller loop runs" || fail "grafana poller loop runs"
+grafana_fp=$(psql "$DATABASE_URL" -tA -c "SELECT fingerprint FROM alerts WHERE fingerprint LIKE 'grafana:%' ORDER BY created_at DESC LIMIT 1" 2>/dev/null)
+[ -n "$grafana_fp" ] \
+    && [ "$(psql "$DATABASE_URL" -tA -c "SELECT count(*) FROM alerts WHERE fingerprint = '$grafana_fp'" 2>/dev/null)" = "1" ] \
+    && pass "webhook+poller dedupe onto one alert" || fail "webhook+poller dedupe onto one alert"
+
+# milestone 2: correlation — seeded env+host grouping rule rolled the alerts
+# into a group (§6).
+wait_sql "alerts grouped" 60 "SELECT 1 FROM alert_groups WHERE member_count >= 1 LIMIT 1" \
+    && pass "alert groups rollup maintained" || fail "alert groups rollup maintained"
+[ -n "$(psql "$DATABASE_URL" -tA -c "SELECT 1 FROM alerts WHERE group_id IS NOT NULL LIMIT 1" 2>/dev/null)" ] \
+    && pass "alerts carry group_id" || fail "alerts carry group_id"
+
 # ---------------------------------------------------------------- rbac
 scenario "rbac"
 # All source scenarios above end resolved; fire a fresh alert to probe against.
@@ -138,10 +153,42 @@ if [ -n "$firing_id" ]; then
         && pass "viewer cannot ack (403)" || fail "viewer cannot ack (403)"
     [ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' -X POST "$APP_URL/alerts/$firing_id/close")" = "403" ] \
         && pass "viewer cannot close (403)" || fail "viewer cannot close (403)"
+    for admin_path in admin/teams admin/grouping-rules admin/notification-rules admin/escalation-policies; do
+        [ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$APP_URL/$admin_path")" = "403" ] \
+            && pass "viewer 403 on /$admin_path" || fail "viewer 403 on /$admin_path"
+    done
     login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
 else
     fail "rbac (no firing alert to probe)"
 fi
+
+# ------------------------------------------------- grafana poller reconcile
+# milestone 2 §8: with the webhook token removed, the poller must still pick
+# up the fire AND the resolve (single fingerprint, no duplicate).
+scenario "grafana poller reconcile"
+generic_token=$(cat "$STATE/halemans/generic-hook-token")
+grafana_source_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM sources WHERE type = 'grafana' LIMIT 1")
+psql "$DATABASE_URL" -c "DELETE FROM webhook_tokens WHERE token = '$generic_token'" > /dev/null 2>&1
+marker=$(psql "$DATABASE_URL" -tA -c "SELECT now()")
+fire-test-alert-grafana || fail "reconcile: fire threshold set"
+# The dev-cpu-sim fingerprint is stable, so this refires the earlier resolved
+# alert (last_seen_at moves), it does not create a new row.
+if wait_sql "poller refired the alert (webhook dead)" 120 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'grafana:%' AND last_seen_at > '$marker' AND status = 'firing' LIMIT 1"; then
+    pass "poller reconcile: firing state arrived without webhook"
+else
+    fail "poller reconcile: firing state arrived without webhook"
+fi
+reconcile_fp=$(psql "$DATABASE_URL" -tA -c "SELECT fingerprint FROM alerts WHERE fingerprint LIKE 'grafana:%' AND last_seen_at > '$marker' ORDER BY last_seen_at DESC LIMIT 1" 2>/dev/null)
+fire-test-alert-grafana resolve || fail "reconcile: resolve threshold set"
+# absence-based reconcile has a 60s grace window against listing lag
+wait_sql "poller resolved the alert" 180 "SELECT 1 FROM alerts WHERE fingerprint = '$reconcile_fp' AND status = 'resolved' AND last_seen_at > '$marker' LIMIT 1" \
+    && pass "poller reconcile: resolve arrived without webhook" || fail "poller reconcile: resolve arrived without webhook"
+[ -n "$reconcile_fp" ] \
+    && [ "$(psql "$DATABASE_URL" -tA -c "SELECT count(*) FROM alerts WHERE fingerprint = '$reconcile_fp'" 2>/dev/null)" = "1" ] \
+    && pass "poller reconcile: single fingerprint, no duplicate" || fail "poller reconcile: single fingerprint, no duplicate"
+# restore the webhook token (same statement as seed-halemans)
+psql "$DATABASE_URL" -c "INSERT INTO webhook_tokens (source_id, token) VALUES ('$grafana_source_id', '$generic_token') ON CONFLICT (token) DO NOTHING" > /dev/null 2>&1 \
+    && pass "webhook token restored" || fail "webhook token restored"
 
 echo
 if [ "$failures" = 0 ]; then

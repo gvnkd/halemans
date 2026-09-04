@@ -39,6 +39,7 @@ data Scope
     | ScopeAlerts
     | ScopeEnv Text
     | ScopeAlert UUID
+    | ScopeGroup UUID
     | ScopeNone
     deriving (Eq, Show)
 
@@ -78,6 +79,7 @@ parseScope message = do
             "alerts" -> pure ScopeAlerts
             "env" -> ScopeEnv <$> o Aeson..: "name"
             "alert" -> ScopeAlert <$> o Aeson..: "id"
+            "group" -> ScopeGroup <$> o Aeson..: "id"
             _ -> fail "unknown scope"
 
 -- | Idempotent process-wide LISTEN subscription. Called from the first
@@ -93,7 +95,8 @@ ensureBroadcaster = do
         pure ()
 
 data LiveEvent = LiveEvent
-    { leAlertId :: UUID
+    { leAlertId :: Maybe UUID
+    , leGroupId :: Maybe UUID
     , leEnv :: Maybe Text
     , leKind :: Text
     , leTitle :: Maybe Text
@@ -104,13 +107,15 @@ parseLiveEvent :: ByteString -> Maybe LiveEvent
 parseLiveEvent bytes = do
     value <- Aeson.decode (BL.fromStrict bytes)
     flip parseMaybe value $ Aeson.withObject "event" \o -> do
-        alertIdText <- o Aeson..: "alertId"
-        alertId <- maybe (fail "bad uuid") pure (UUID.fromText alertIdText)
+        alertId <- o Aeson..:? "alertId" >>= maybe (pure Nothing) (fmap Just . parseUuid)
+        groupId <- o Aeson..:? "groupId" >>= maybe (pure Nothing) (fmap Just . parseUuid)
         env <- o Aeson..:? "env"
         kind <- o Aeson..: "kind"
         title <- o Aeson..:? "title"
         severity <- o Aeson..:? "severity"
-        pure LiveEvent { leAlertId = alertId, leEnv = env, leKind = kind, leTitle = title, leSeverity = severity }
+        pure LiveEvent { leAlertId = alertId, leGroupId = groupId, leEnv = env, leKind = kind, leTitle = title, leSeverity = severity }
+    where
+        parseUuid raw = maybe (fail "bad uuid") pure (UUID.fromText raw)
 
 broadcast :: (?request :: Request) => ModelContext -> PGListener.Notification -> IO ()
 broadcast modelContext notification = do
@@ -124,31 +129,31 @@ broadcast modelContext notification = do
                 scope <- readIORef scopeRef
                 updates <- updatesFor scope event
                 unless (null updates && not (isBanner event)) do
-                    let banner = if isBanner event
-                            then Just (object ["title" .= event.leTitle, "severity" .= event.leSeverity, "alertId" .= event.leAlertId])
-                            else Nothing
+                    let banner = case (isBanner event, event.leAlertId) of
+                            (True, Just alertId) -> Just (object ["title" .= event.leTitle, "severity" .= event.leSeverity, "alertId" .= alertId])
+                            _ -> Nothing
                     send (cs (Aeson.encode (object ["updates" .= updates, "banner" .= banner])))
 
 isBanner :: LiveEvent -> Bool
-isBanner event = event.leKind == "created" && event.leSeverity `elem` [Just "critical", Just "high"]
+isBanner event = event.leKind == "created" && event.leSeverity `elem` [Just "critical", Just "high"] && isJust event.leAlertId
 
 -- | Compute the fragment updates relevant for a connection scope.
 updatesFor :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => Scope -> LiveEvent -> IO [Aeson.Value]
-updatesFor scope event = case scope of
-    ScopeDashboard -> do
+updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
+    (ScopeDashboard, Just alertId, _) -> do
         (cards, unassigned) <- computeEnvCards
         let allCards = cards ++ maybeToList unassigned
         relevant <- pure $ filter (cardMatches event) allCards
         pure [fragment (cardDomId card) (renderCard card) "replace" "" | card <- relevant]
-    ScopeAlerts -> rowUpdate "alerts-tbody"
-    ScopeEnv name
-        | event.leEnv == Just name -> rowUpdate "env-alerts-tbody"
+    (ScopeAlerts, Just alertId, _) -> rowUpdate "alerts-tbody" alertId
+    (ScopeEnv name, Just alertId, _)
+        | event.leEnv == Just name -> rowUpdate "env-alerts-tbody" alertId
         | otherwise -> pure []
-    ScopeAlert alertUuid
-        | event.leAlertId == alertUuid -> do
-            alert <- fetch (Id event.leAlertId)
+    (ScopeAlert alertUuid, Just alertId, _)
+        | alertId == alertUuid -> do
+            alert <- fetch (Id alertId)
             latestEvent <- query @AlertEvent
-                |> filterWhere (#alertId, Id event.leAlertId)
+                |> filterWhere (#alertId, Id alertId)
                 |> orderByDesc #createdAt
                 |> limit 1
                 |> fetchOne
@@ -157,10 +162,33 @@ updatesFor scope event = case scope of
                 , fragment timelineDomId (timelineEventHtml latestEvent) "prepend" ""
                 ]
         | otherwise -> pure []
-    ScopeNone -> pure []
+    -- Group events (kind "group", milestone_2.md §9): the group card header
+    -- for group-scoped connections, the env page group row for env scopes
+    -- (replace-only: a no-op while the page is in flat view).
+    (ScopeGroup groupUuid, _, Just groupId)
+        | groupId == groupUuid -> do
+            group <- fetch (Id groupId)
+            pure [fragment (groupHeaderDomId group) (groupHeaderHtml group) "replace" ""]
+        | otherwise -> pure []
+    (ScopeEnv name, _, Just groupId)
+        | event.leEnv == Just name -> do
+            group <- fetch (Id groupId)
+            members <- query @Alert
+                |> filterWhere (#groupId, Just (Id groupId))
+                |> orderByDesc #lastSeenAt
+                |> fetch
+            pure [fragment (groupRowDomId group) (groupRowHtml (group, members)) "replace" ""]
+        | otherwise -> pure []
+    -- Alert events also refresh the member row on an open group card.
+    (ScopeGroup groupUuid, Just alertId, Nothing) -> do
+        alert <- fetch (Id alertId)
+        if alert.groupId == Just (Id groupUuid)
+            then pure [fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "group-members-tbody"]
+            else pure []
+    _ -> pure []
     where
-        rowUpdate parentId = do
-            alert <- fetch (Id event.leAlertId)
+        rowUpdate parentId alertId = do
+            alert <- fetch (Id alertId)
             pure [fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" parentId]
 
 cardMatches :: LiveEvent -> EnvCard -> Bool

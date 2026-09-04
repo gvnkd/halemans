@@ -14,6 +14,9 @@ import qualified Data.Aeson as Aeson
 import Application.Pipeline.StateMachine (AlertState, Trigger (..))
 import qualified Application.Pipeline.StateMachine as SM
 import Application.Helper.Ingest (publishAlertUpdate)
+import Application.Service.Escalation (cancelTrackersFor, restartTrackersFor)
+import Application.Service.Groups (recomputeGroupRollup)
+import Control.Monad (void)
 
 -- User-initiated alert actions (milestone_1.md §4/§6). Every attempt writes
 -- an AlertEvent; illegal transitions are no-ops with a note.
@@ -40,6 +43,8 @@ ackAlert user alert comment timeoutMinutes = do
                 [ "comment" .= comment
                 , "expiresAt" .= ackExpiresAt
                 ])
+            cancelTrackersFor (get #id alert)
+            forM_ alert.groupId (void . recomputeGroupRollup)
             publishAlertUpdate updated "ack"
             pure updated
 
@@ -63,6 +68,8 @@ unackAlert actor alert note = do
             case actor of
                 Just user -> recordUserEvent user alert "unack" payload
                 Nothing -> recordSystemEvent alert "unack" payload
+            restartTrackersFor (get #id alert)
+            forM_ alert.groupId (void . recomputeGroupRollup)
             publishAlertUpdate updated "unack"
             pure updated
 
@@ -88,6 +95,8 @@ closeAlert actor alert reason = do
             case actor of
                 Just user -> recordUserEvent user alert "closed" payload
                 Nothing -> recordSystemEvent alert "closed" payload
+            cancelTrackersFor (get #id alert)
+            forM_ alert.groupId (void . recomputeGroupRollup)
             publishAlertUpdate updated "closed"
             pure updated
 

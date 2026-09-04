@@ -140,3 +140,15 @@ Per highlevel §8.2:
 - **Severity upgrade restart of escalation deferred** — alerts are immutable-severity in v1; noted in §6.
 - **Grafana stays dual-path** (webhook fast path + poller reconcile) rather than poller-only: keeps milestone-0/1 ingestion latency while gaining exactly-once-ish semantics via shared fingerprints.
 - **On-call rotation still stubbed** per highlevel §18 — schema lands now so Phase 3+ rotation needs no callers changed.
+
+## 14. Implementation notes (as built)
+
+- Schema: `Application/Schema.sql` phase-2 block + `Application/Migration/1788521591-phase2-schema.sql`. `push_notification_jobs` gained `target_user_ids`/`rule_id`/`group_id` (NULL = legacy "all viewers" fan-out).
+- Pure cores: `Application/Pipeline/Grouping.hs` (MatchExpr, globs, templates, severity ordering) and `Application/Pipeline/Escalation.hs` (step decode + `decideDueTracker` deadline arithmetic). DB-side services: `Application/Service/Groups.hs` (assignGroup + rollup + pg_notify), `Application/Service/Escalation.hs` (tracker lifecycle), `Application/Service/Notify.hs` (rule engine, throttle per rule × fingerprint|group_key keyed on AlertEvent(notified) payload, `currentOnCall` stub).
+- Subject-less alerts (env/host/service all absent) are never grouped — an all-dash template key would collapse unrelated alerts into one group.
+- Grafana poller: resolves reconcile by absence (see MEMORIES.md — the embedded alertmanager drops resolved alerts from the listing within seconds, and firing alerts carry a future endsAt). Refire guard: poller won't refire an alert the webhook resolved within 90s.
+- EscalationJob: 30s self-rescheduling; `runDueTrackers` exported for the integration suite. Ack/close/resolve cancel trackers (Actions/Ingest hooks); unack restarts from step 0.
+- Admin UIs under `/admin/{teams,grouping-rules,notification-rules,escalation-policies}`, all `requirePrivilege`-gated (`manage_users` for teams, `manage_rules` for rules/policies, `manage_sources` for sources). Match editor = two comma-separated inputs (field-equals, label-globs) per §13's no-query-language decision; `Application/Helper/RuleForm.hs` parses/pretty-prints them. Escalation steps are 5 fixed slots (after_seconds, target, unless-status); empty rows dropped.
+- Group card `/groups/:id` with ack-all-firing; env page `?view=grouped` toggle + `group` filter param; WS broadcaster learned `group:<id>` scope and group-row/group-header fragments.
+- Seeds (seed-halemans.sh AND smoke-check.sh inline copy — they drift apart deliberately): team `sre` (sre@dev lead, admin@dev member), on-call schedule [sre@dev], notification rule `default-high-severity` (severity ≥ high → sre team, 300s throttle), grouping rule `env+host` (`{env}/{host}`).
+- Tests: 66 unit + 19 integration examples; smoke gained poller-loop/dedupe/group assertions, admin-page RBAC 403s, and the webhook-dead reconcile scenario; Playwright gained grouping/group-card/group-ack, rule-edit version bump, blackout edit, sources CRUD, notification-rule + escalation-policy CRUD, teams CRUD, admin 403s. `nix flake check --impure` green at merge.

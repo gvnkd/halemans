@@ -16,7 +16,16 @@ instance Controller EnvironmentsController where
                 , filterHost = paramOrNothing @Text "host"
                 , filterService = paramOrNothing @Text "service"
                 , filterText = paramOrNothing @Text "q"
+                , filterGroup = paramOrNothing @Text "group"
                 }
+        let viewMode = fromMaybe "flat" (paramOrNothing @Text "view")
+        groupFilterIds <- case filters.filterGroup of
+            Nothing -> pure Nothing
+            Just pattern -> do
+                matchingGroups <- query @AlertGroup
+                    |> filterWhereILike (#groupKey, "%" <> pattern <> "%")
+                    |> fetch
+                pure (Just (map (Just . get #id) matchingGroups))
         alerts <- query @Alert
             |> filterWhere (#environmentId, Just (get #id environment))
             |> applyMaybe filters.filterSeverity (\value -> filterWhere (#severity, value))
@@ -24,9 +33,23 @@ instance Controller EnvironmentsController where
             |> applyMaybe filters.filterHost (\value -> filterWhere (#host, Just value))
             |> applyMaybe filters.filterService (\value -> filterWhere (#service, Just value))
             |> applyMaybe filters.filterText (\value -> filterWhereILike (#title, "%" <> value <> "%"))
+            |> applyMaybe groupFilterIds (\ids -> filterWhereIn (#groupId, ids))
             |> orderByDesc #lastSeenAt
             |> limit 200
             |> fetch
+        groups <- if viewMode == "grouped"
+            then do
+                envGroups <- query @AlertGroup
+                    |> filterWhere (#environmentId, Just (get #id environment))
+                    |> orderByDesc #createdAt
+                    |> fetch
+                forM envGroups \group -> do
+                    members <- query @Alert
+                        |> filterWhere (#groupId, Just (get #id group))
+                        |> orderByDesc #lastSeenAt
+                        |> fetch
+                    pure (group, members)
+            else pure []
         blackouts <- query @Blackout
             |> filterWhere (#environmentId, Just (get #id environment))
             |> filterWhereSql (#endsAt, "> NOW()")
