@@ -16,6 +16,7 @@ import qualified Application.Pipeline.StateMachine as SM
 import Application.Helper.Ingest (publishAlertUpdate)
 import Application.Service.Escalation (cancelTrackersFor, restartTrackersFor)
 import Application.Service.Groups (recomputeGroupRollup)
+import qualified Application.Service.WriteBack as WriteBack
 import Control.Monad (void)
 
 -- User-initiated alert actions (milestone_1.md §4/§6). Every attempt writes
@@ -46,6 +47,7 @@ ackAlert user alert comment timeoutMinutes = do
             cancelTrackersFor (get #id alert)
             forM_ alert.groupId (void . recomputeGroupRollup)
             publishAlertUpdate updated "ack"
+            WriteBack.enqueueForAction updated "ack"
             pure updated
 
 unackAlert :: (?modelContext :: ModelContext) => Maybe User -> Alert -> Text -> IO Alert
@@ -71,6 +73,8 @@ unackAlert actor alert note = do
             restartTrackersFor (get #id alert)
             forM_ alert.groupId (void . recomputeGroupRollup)
             publishAlertUpdate updated "unack"
+            when (isJust actor) do
+                WriteBack.enqueueForAction updated "unack"
             pure updated
 
 closeAlert :: (?modelContext :: ModelContext) => Maybe User -> Alert -> Maybe Text -> IO Alert
@@ -98,6 +102,8 @@ closeAlert actor alert reason = do
             cancelTrackersFor (get #id alert)
             forM_ alert.groupId (void . recomputeGroupRollup)
             publishAlertUpdate updated "closed"
+            when (isJust actor) do
+                WriteBack.enqueueForAction updated "close"
             pure updated
 
 addComment :: (?modelContext :: ModelContext) => User -> Alert -> Text -> IO Comment

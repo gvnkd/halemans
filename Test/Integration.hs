@@ -7,17 +7,28 @@ import IHP.QueryBuilder
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
-import System.Environment (lookupEnv, getEnv)
+import System.Environment (lookupEnv, getEnv, setEnv, unsetEnv)
 import System.Process (callProcess, readProcess)
 import Data.Aeson (object)
 import Data.UUID.V4 (nextRandom)
 import Control.Monad (void)
+import Control.Exception (try, finally, SomeException)
+import IHP.Job.Types (Job (..))
+import IHP.FrameworkConfig (FrameworkConfig, buildFrameworkConfig)
+import qualified Data.Text as Text
+import qualified Data.Aeson.Key as Key
+import Data.Aeson.Types (parseMaybe)
+import qualified Network.Wreq as Wreq
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert)
 import Application.Job.AutoClose (unackExpiredAcks, unsuppressExpired)
 import Application.Job.Escalation (runDueTrackers)
+import Application.Job.EnrichAlert ()
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
+import Application.Service.WriteBack (executeAttempt)
+import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
+import Application.Service.Jira (syncOpenLinks)
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
@@ -41,11 +52,13 @@ main = do
             , "-f", "Application/Schema.sql"
             , "-f", "Application/Fixtures.sql"
             ]
+    frameworkConfig <- buildFrameworkConfig noopLogger (pure ())
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
+        let ?context = frameworkConfig
         hspec spec
 
-spec :: (?modelContext :: ModelContext) => Spec
+spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
     it "creates an alert with inventory refs and audit events" do
         source <- testSource
@@ -414,6 +427,217 @@ spec = describe "alert pipeline (milestone 1)" do
             resolved <- fetch alertId
             resolved.status `shouldBe` "resolved"
 
+    describe "milestone 3: context layer" do
+        it "new alert enqueues EnrichAlertJob; refire does not" do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            jobs <- query @EnrichAlertJob
+                |> filterWhere (#alertId, alertId)
+                |> fetch
+            length jobs `shouldBe` 1
+            void (ingest source (testEvent fp Firing))
+            jobsAfterRefire <- query @EnrichAlertJob
+                |> filterWhere (#alertId, alertId)
+                |> fetch
+            length jobsAfterRefire `shouldBe` 1
+
+        it "enrich job populates cmdb cache and jira links" do
+            source <- integrationSource "zabbix" "itest-m3-enrich" "" (object
+                [ "writeBack" .= True
+                , "cmdbSpace" .= ("DEV" :: Text)
+                , "jiraProject" .= ("DEV" :: Text)
+                ])
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+                { host = Just "dev-host-01", checkName = Just "halemans test trigger" }
+            job <- query @EnrichAlertJob
+                |> filterWhere (#alertId, alertId)
+                |> fetchOneOrNothing
+                >>= maybe (error "enrich job missing") pure
+            perform job
+            alert <- fetch alertId
+            let Just hostId = alert.hostId
+            entry <- query @CmdbEntry
+                |> filterWhere (#hostId, Just hostId)
+                |> fetchOneOrNothing
+                >>= maybe (error "cmdb entry missing") pure
+            entry.pageId `shouldBe` Just "1001"
+            (not (Text.null entry.excerpt)) `shouldBe` True
+            host <- fetch hostId
+            host.cmdbPageId `shouldBe` Just "1001"
+            links <- query @JiraLink
+                |> filterWhere (#alertId, alertId)
+                |> fetch
+            case links of
+                [link] -> do
+                    link.ticketKey `shouldBe` "DEV-101"
+                    link.origin `shouldBe` "auto"
+                _ -> expectationFailure "expected exactly one auto jira link"
+            -- second run: fresh cache row is served, upserts are idempotent
+            perform job
+            entries <- query @CmdbEntry
+                |> filterWhere (#hostId, Just hostId)
+                |> fetch
+            length entries `shouldBe` 1
+            linksAfter <- query @JiraLink
+                |> filterWhere (#alertId, alertId)
+                |> fetch
+            length linksAfter `shouldBe` 1
+
+        it "enrich soft-fails per subsystem (confluence down, jira still runs)" do
+            oldConfluenceUrl <- lookupEnv "HALEMANS_CONFLUENCE_URL"
+            setEnv "HALEMANS_CONFLUENCE_URL" "http://127.0.0.1:9"
+            flip finally (maybe (unsetEnv "HALEMANS_CONFLUENCE_URL") (setEnv "HALEMANS_CONFLUENCE_URL") oldConfluenceUrl) do
+                source <- integrationSource "zabbix" "itest-m3-softfail" "" (object
+                    [ "writeBack" .= True
+                    , "cmdbSpace" .= ("DEV" :: Text)
+                    , "jiraProject" .= ("DEV" :: Text)
+                    ])
+                fp <- freshFingerprint
+                -- unique host (not dev-host-01): that host's cmdb_entries
+                -- row is cached by the previous test and would be served
+                -- fresh instead of failing against the dead Confluence URL.
+                Just alertId <- ingest source (testEvent fp Firing)
+                    { host = Just "itest-m3-softfail-host", checkName = Just "halemans test trigger" }
+                job <- query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "enrich job missing") pure
+                perform job
+                failures <- query @AlertEvent
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#kind, "enrichment_failed" :: Text)
+                    |> fetch
+                mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` ["cmdb"]
+                links <- query @JiraLink
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+                length links `shouldBe` 1
+
+        it "ack enqueues write-back; webhook sources record unsupported" do
+            user <- testUser
+            zabbixSource <- integrationSource "zabbix" "itest-m3-wb" "" (object ["writeBack" .= True])
+            fp <- freshFingerprint
+            Just alertId <- ingest zabbixSource (testEvent fp Firing)
+            alert <- fetch alertId
+            _ <- ackAlert user alert Nothing Nothing
+            attempts <- query @WriteBackAttempt
+                |> filterWhere (#alertId, alertId)
+                |> fetch
+            case attempts of
+                [attempt] -> do
+                    attempt.status `shouldBe` "queued"
+                    attempt.action `shouldBe` "ack"
+                    jobs <- query @WriteBackJob
+                        |> filterWhere (#attemptId, get #id attempt)
+                        |> fetch
+                    length jobs `shouldBe` 1
+                _ -> expectationFailure "expected exactly one write-back attempt"
+            webhookSource <- integrationSource "webhook" "itest-m3-wb-wh" "" (object ["writeBack" .= True])
+            fp2 <- freshFingerprint
+            Just alertId2 <- ingest webhookSource (testEvent fp2 Firing)
+            alert2 <- fetch alertId2
+            _ <- ackAlert user alert2 Nothing Nothing
+            attempts2 <- query @WriteBackAttempt
+                |> filterWhere (#alertId, alertId2)
+                |> fetch
+            case attempts2 of
+                [attempt] -> do
+                    attempt.status `shouldBe` "done"
+                    attempt.lastError `shouldSatisfy` maybe False ("unsupported" `Text.isInfixOf`)
+                    jobs <- query @WriteBackJob
+                        |> filterWhere (#attemptId, get #id attempt)
+                        |> fetch
+                    length jobs `shouldBe` 0
+                _ -> expectationFailure "expected exactly one write-back attempt"
+
+        it "write-back retries then fails terminally" do
+            user <- testUser
+            source <- integrationSource "zabbix" "itest-m3-wb-retry" "http://127.0.0.1:9" (object
+                [ "writeBack" .= True
+                , "tokenEnv" .= ("JIRA_TOKEN" :: Text)
+                ])
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing) { externalId = Just "424242" }
+            alert <- fetch alertId
+            _ <- ackAlert user alert Nothing Nothing
+            attempt <- query @WriteBackAttempt
+                |> filterWhere (#alertId, alertId)
+                |> fetchOneOrNothing
+                >>= maybe (error "write-back attempt missing") pure
+            final <- retryWriteBack 6 attempt
+            final.status `shouldBe` "failed"
+            final.attempts `shouldBe` 5
+            events <- eventKinds alertId
+            events `shouldSatisfy` ("writeback_failed" `elem`)
+
+        it "external ack mirror carries attribution and unmirrors" do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            alert <- fetch alertId
+            now <- getCurrentTime
+            acked <- mirrorExternalAck alert "zabbix" "admin" now
+            acked.status `shouldBe` "ack"
+            acked.acknowledgedBy `shouldBe` Nothing
+            externalEvents <- query @AlertEvent
+                |> filterWhere (#alertId, alertId)
+                |> filterWhere (#kind, "external" :: Text)
+                |> fetch
+            case externalEvents of
+                [event] -> do
+                    payloadText "action" event.payload `shouldBe` Just "ack"
+                    payloadText "source" event.payload `shouldBe` Just "zabbix"
+                    payloadText "actor" event.payload `shouldBe` Just "admin"
+                _ -> expectationFailure "expected exactly one external event"
+            wasExternal <- lastAckWasExternal acked
+            wasExternal `shouldBe` True
+            unacked <- mirrorExternalUnack acked "zabbix" "admin" now
+            unacked.status `shouldBe` "firing"
+
+        it "JiraSyncJob reflects status drift from jira" do
+            source <- integrationSource "zabbix" "itest-m3-jirasync" "" (object ["jiraProject" .= ("DEV" :: Text)])
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            now <- getCurrentTime
+            _ <- newRecord @JiraLink
+                |> set #alertId alertId
+                |> set #ticketKey "DEV-101"
+                |> set #summary "Investigate halemans test trigger on dev-host-01"
+                |> set #status "Open"
+                |> set #url "http://127.0.0.1:18083/browse/DEV-101"
+                |> set #origin "manual"
+                |> set #syncedAt now
+                |> createRecord
+            let postStatus status = void (Wreq.post "http://127.0.0.1:18083/debug/issue/DEV-101/status" (object ["status" .= (status :: Text)]))
+            flip finally (postStatus "Open") do
+                postStatus "In Progress"
+                refreshed <- syncOpenLinks
+                refreshed `shouldSatisfy` (>= 1)
+                link <- query @JiraLink
+                    |> filterWhere (#alertId, alertId)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "jira link missing") pure
+                link.status `shouldBe` "In Progress"
+
+        it "one default dashboard per user" do
+            user <- testUser
+            _ <- newRecord @Dashboard
+                |> set #userId (get #id user)
+                |> set #name "itest-dash-1"
+                |> set #config (Aeson.toJSON ([] :: [Aeson.Value]))
+                |> set #isDefault True
+                |> createRecord
+            let userUuid = unpackId (get #id user)
+            result <- try (void (sqlExecTyped [typedSql|
+                INSERT INTO dashboards (user_id, name, is_default)
+                VALUES (${userUuid}, 'itest-dash-2', true)
+            |])) :: IO (Either SomeException ())
+            case result of
+                Left _ -> pure ()
+                Right _ -> expectationFailure "second default dashboard should violate the partial unique index"
+
 schemaPresent :: String -> IO Bool
 schemaPresent databaseUrl = do
     output <- readProcess "psql" [databaseUrl, "-tA", "-c", "SELECT to_regclass('public.alerts') IS NOT NULL"] ""
@@ -424,6 +648,26 @@ testSource = query @Source
     |> filterWhere (#type_, "alertmanager" :: Text)
     |> fetchOneOrNothing
     >>= maybe (error "alertmanager source fixture missing") pure
+
+integrationSource :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO Source
+integrationSource sourceType name baseUrl config = newRecord @Source
+    |> set #type_ sourceType
+    |> set #name name
+    |> set #baseUrl baseUrl
+    |> set #config config
+    |> createRecord
+
+payloadText :: Text -> Aeson.Value -> Maybe Text
+payloadText key = parseMaybe (Aeson.withObject "payload" (\o -> o Aeson..: Key.fromText key))
+
+retryWriteBack :: (?modelContext :: ModelContext) => Int -> WriteBackAttempt -> IO WriteBackAttempt
+retryWriteBack 0 attempt = pure attempt
+retryWriteBack n attempt
+    | attempt.status == "failed" || attempt.status == "done" = pure attempt
+    | otherwise = do
+        executeAttempt attempt
+        updated <- fetch (get #id attempt)
+        retryWriteBack (n - 1) updated
 
 fetchEnvironment :: (?modelContext :: ModelContext) => Text -> IO Environment
 fetchEnvironment name = query @Environment

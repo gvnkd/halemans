@@ -64,7 +64,10 @@ in
             (config.ihp.ghcCompiler.ghcWithPackages (p: config.ihp.haskellPackages p ++ config.ihp.devHaskellPackages p ++ [p.ihp-ide p.ihp-schema-compiler]))
             gnumake
             postgresql
+            python3
         ];
+        MOCK_CONFLUENCE_PY = "${self}/nix/mocks/mock_confluence.py";
+        MOCK_JIRA_PY = "${self}/nix/mocks/mock_jira.py";
         buildPhase = ''
             export IHP_LIB=${ihpLib}
 
@@ -75,6 +78,30 @@ in
             echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
             echo "listen_addresses = '''" >> "$PGDATA/postgresql.conf"
             pg_ctl -D "$PGDATA" -l "$TMPDIR/pg.log" start
+
+            # milestone-3 mocks (confluence CMDB + jira), same wiring as
+            # nix/scripts/smoke-check.sh.
+            export CONFLUENCE_TOKEN="test-confluence-token"
+            export JIRA_TOKEN="test-jira-token"
+            export HALEMANS_CONFLUENCE_URL="http://127.0.0.1:18082"
+            export HALEMANS_JIRA_URL="http://127.0.0.1:18083"
+            export HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0"
+            python3 "$MOCK_CONFLUENCE_PY" > "$TMPDIR/mock-confluence.log" 2>&1 &
+            python3 "$MOCK_JIRA_PY" > "$TMPDIR/mock-jira.log" 2>&1 &
+            mocks_up=0
+            for i in $(seq 1 30); do
+                if python3 -c "
+import urllib.request
+for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health'):
+    assert urllib.request.urlopen(url, timeout=1).status == 200
+"; then mocks_up=1; break; fi
+                sleep 1
+            done
+            if [ "$mocks_up" != 1 ]; then
+                echo "mocks never came up" >&2
+                tail -20 "$TMPDIR/mock-confluence.log" "$TMPDIR/mock-jira.log" >&2
+                exit 1
+            fi
 
             createdb -h "$PGHOST" app
             export DATABASE_URL="postgresql:///app?host=$PGHOST"
@@ -126,6 +153,8 @@ in
         GRAFANA_INI = halemansLib.grafanaIni;
         GRAFANA_HOME = "${pkgs.grafana}/share/grafana";
         AM_TEMPLATE = halemansLib.alertmanagerConfigTemplate;
+        MOCK_CONFLUENCE_PY = "${self}/nix/mocks/mock_confluence.py";
+        MOCK_JIRA_PY = "${self}/nix/mocks/mock_jira.py";
         ZABBIX_SERVER_TEMPLATE = halemansLib.zabbixServerConfTemplate;
         ZABBIX_WEB_TEMPLATE = halemansLib.zabbixWebConfTemplate;
         ZABBIX_AGENT_TEMPLATE = halemansLib.zabbixAgentConfTemplate;

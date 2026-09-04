@@ -7,6 +7,7 @@ import Web.View.Sources.Edit
 import Data.Aeson (object, (.=))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 
 instance Controller SourcesController where
     beforeAction = ensureIsUser
@@ -31,7 +32,7 @@ instance Controller SourcesController where
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
             |> set #enabled True
-            |> set #config (tokenConfig (param @Text "tokenEnv"))
+            |> set #config (sourceConfig (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject"))
             |> createRecord
         setSuccessMessage "Source created"
         redirectTo SourcesAction
@@ -39,7 +40,13 @@ instance Controller SourcesController where
     action EditSourceAction { sourceId } = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
-        render EditView { source, tokenEnv = tokenEnvOf source }
+        render EditView
+            { source
+            , tokenEnv = tokenEnvOf source
+            , writeBack = configBool "writeBack" source
+            , cmdbSpace = configValue "cmdbSpace" source
+            , jiraProject = configValue "jiraProject" source
+            }
 
     action UpdateSourceAction { sourceId } = do
         requirePrivilege "manage_sources"
@@ -50,7 +57,7 @@ instance Controller SourcesController where
             |> set #baseUrl (param @Text "baseUrl")
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-            |> set #config (tokenConfig (param @Text "tokenEnv"))
+            |> set #config (sourceConfig (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject"))
             |> updateRecord
         setSuccessMessage "Source updated"
         redirectTo SourcesAction
@@ -65,11 +72,23 @@ instance Controller SourcesController where
         redirectTo SourcesAction
 
 -- | Credentials stay env-var references ({"tokenEnv":"GRAFANA_TOKEN"}), never
--- raw tokens in the row.
-tokenConfig :: Text -> Aeson.Value
-tokenConfig tokenEnv
-    | tokenEnv == "" = object []
-    | otherwise = object ["tokenEnv" .= tokenEnv]
+-- raw tokens in the row. Integration toggles (milestone_3.md §8): writeBack,
+-- cmdbSpace, jiraProject.
+sourceConfig :: Text -> Bool -> Text -> Text -> Aeson.Value
+sourceConfig tokenEnv writeBack cmdbSpace jiraProject = object $
+    [ "writeBack" .= writeBack ]
+    ++ [ "tokenEnv" .= tokenEnv | tokenEnv /= "" ]
+    ++ [ "cmdbSpace" .= cmdbSpace | cmdbSpace /= "" ]
+    ++ [ "jiraProject" .= jiraProject | jiraProject /= "" ]
+
+checkbox :: (?request :: Request, ?respond :: Respond) => ByteString -> Bool
+checkbox name = isJust (paramOrNothing @Text name)
 
 tokenEnvOf :: Source -> Text
-tokenEnvOf source = fromMaybe "" (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? "tokenEnv" Aeson..!= "")) source.config)
+tokenEnvOf source = configValue "tokenEnv" source
+
+configValue :: Text -> Source -> Text
+configValue key source = fromMaybe "" (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? Key.fromText key Aeson..!= "")) source.config)
+
+configBool :: Text -> Source -> Bool
+configBool key source = fromMaybe False (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? Key.fromText key Aeson..!= False)) source.config)

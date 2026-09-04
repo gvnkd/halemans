@@ -1,6 +1,6 @@
 module Web.View.Alerts.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId)
+import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, jiraLinksHtml, writeBackChipHtml)
 import qualified Data.Aeson as Aeson
 
 data ShowView = ShowView
@@ -9,6 +9,9 @@ data ShowView = ShowView
     , comments :: [Comment]
     , commentAuthors :: [User]
     , eventActors :: [User]
+    , cmdbEntry :: Maybe CmdbEntry
+    , jiraLinks :: [JiraLink]
+    , writeBackAttempts :: [WriteBackAttempt]
     , canAck :: Bool
     , canClose :: Bool
     }
@@ -21,6 +24,7 @@ instance View ShowView where
                 {alertStatusBadgeHtml alert}
                 <span class={"badge severity-badge severity-" <> alert.severity} data-testid="alert-severity">{alert.severity}</span>
                 {suppressedBadge}
+                {writeBackChipHtml (head writeBackAttempts)}
             </p>
             <dl>
                 <dt>Fingerprint</dt><dd>{alert.fingerprint}</dd>
@@ -39,9 +43,19 @@ instance View ShowView where
 
             {actionBar}
 
+            {cmdbPanelHtml alert cmdbEntry}
+
+            <section class="card mb-3" data-testid="jira-panel">
+                <div class="card-body">
+                    <h5 class="card-title">Jira</h5>
+                    {jiraLinksHtml alert jiraLinks}
+                    {jiraCreateForm}
+                </div>
+            </section>
+
             <h2>Timeline</h2>
             <ul class="timeline" id={timelineDomId} data-testid="alert-timeline">
-                {forEach events renderEvent}
+                {forEach events timelineEventHtml}
             </ul>
 
             <h2>Comments</h2>
@@ -75,6 +89,9 @@ instance View ShowView where
                 Just url -> [hsx|<p class="source-link" data-testid="alert-source-link"><a href={url} target="_blank">source: {url}</a></p>|]
                 Nothing -> mempty
             actionBar = renderActionBar alert canAck canClose
+            jiraCreateForm = if canAck && alert.status /= "closed"
+                then jiraTicketForm alert
+                else mempty
 
 renderActionBar :: Alert -> Bool -> Bool -> Html
 renderActionBar alert canAck canClose = [hsx|
@@ -117,14 +134,30 @@ renderActionBar alert canAck canClose = [hsx|
             |]
             else mempty
 
-renderEvent :: AlertEvent -> Html
-renderEvent event = [hsx|
-    <li class="timeline-event" data-kind={event.kind}>
-        <span class="timeline-kind">{event.kind}</span>
-        <span class="timeline-time" title={cs (show event.createdAt) :: Text}>{show event.createdAt}</span>
-        <span class="timeline-payload">{prettyJson event.payload}</span>
-    </li>
+-- Manual ticket creation (milestone_3.md §5): prefilled from the alert,
+-- v1 never auto-creates.
+jiraTicketForm :: Alert -> Html
+jiraTicketForm alert = [hsx|
+    <form method="POST" action={CreateJiraTicketAction alert.id} data-testid="jira-create-form">
+        <div class="mb-2">
+            <select name="issueType" class="form-select form-select-sm w-auto d-inline-block" data-testid="jira-issue-type">
+                <option value="Task">Task</option>
+                <option value="Bug">Bug</option>
+                <option value="Incident">Incident</option>
+            </select>
+        </div>
+        <div class="mb-2">
+            <input name="summary" type="text" class="form-control form-control-sm" value={alert.title} data-testid="jira-summary"/>
+        </div>
+        <div class="mb-2">
+            <textarea name="body" class="form-control form-control-sm" rows="3" data-testid="jira-body">{prefillBody}</textarea>
+        </div>
+        <button type="submit" class="btn btn-sm btn-primary" data-testid="jira-create-submit">Create Jira ticket</button>
+    </form>
 |]
+    where
+        prefillBody :: Text
+        prefillBody = alert.description <> "\n\nSource: " <> fromMaybe "-" alert.sourceUrl
 
 renderComment :: (Comment, User) -> Html
 renderComment (comment, author) = [hsx|

@@ -6,8 +6,8 @@ module Application.Service.Live
 
 import IHP.Prelude
 import IHP.ModelSupport
-import IHP.Fetch (fetch, fetchOne)
-import IHP.QueryBuilder (query, filterWhere, orderByDesc, limit)
+import IHP.Fetch (fetch, fetchOne, fetchOneOrNothing)
+import IHP.QueryBuilder (query, filterWhere, orderByAsc, orderByDesc, limit)
 import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.RequestVault ()
 import Generated.Types
@@ -43,7 +43,7 @@ data Scope
     | ScopeNone
     deriving (Eq, Show)
 
-type ConnectionEntry = (UUID, IORef Scope, Text -> IO ())
+type ConnectionEntry = (UUID, IORef [Scope], Text -> IO ())
 
 registry :: IORef [ConnectionEntry]
 registry = unsafePerformIO (newIORef [])
@@ -59,14 +59,16 @@ liveBroadcastLoop
     => IO ()
 liveBroadcastLoop = do
     connectionId <- UUIDV4.nextRandom
-    scopeRef <- newIORef ScopeNone
+    scopeRef <- newIORef []
     let send = WS.sendTextData ?connection
     modifyIORef' registry ((connectionId, scopeRef, send) :)
     flip Exception.finally (modifyIORef' registry (filter (\(id, _, _) -> id /= connectionId))) do
         forever do
             message <- receiveData @LByteString
             case parseScope message of
-                Just scope -> writeIORef scopeRef scope
+                -- A page may subscribe to several scopes (dashboard pages
+                -- cover one env:<name> scope per included card, §7).
+                Just scope -> modifyIORef' scopeRef (scope :)
                 Nothing -> pure ()
 
 parseScope :: LByteString -> Maybe Scope
@@ -126,8 +128,8 @@ broadcast modelContext notification = do
         Just event -> do
             connections <- readIORef registry
             forM_ connections \(_, scopeRef, send) -> do
-                scope <- readIORef scopeRef
-                updates <- updatesFor scope event
+                scopes <- readIORef scopeRef
+                updates <- concat <$> forM scopes \scope -> updatesFor scope event
                 unless (null updates && not (isBanner event)) do
                     let banner = case (isBanner event, event.leAlertId) of
                             (True, Just alertId) -> Just (object ["title" .= event.leTitle, "severity" .= event.leSeverity, "alertId" .= alertId])
@@ -157,10 +159,13 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                 |> orderByDesc #createdAt
                 |> limit 1
                 |> fetchOne
+            panelUpdates <- if event.leKind `elem` ["enriched", "writeback", "writeback_failed"]
+                then contextPanelUpdates alert
+                else pure []
             pure
-                [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
-                , fragment timelineDomId (timelineEventHtml latestEvent) "prepend" ""
-                ]
+                ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
+                  , fragment timelineDomId (timelineEventHtml latestEvent) "prepend" ""
+                  ] ++ panelUpdates )
         | otherwise -> pure []
     -- Group events (kind "group", milestone_2.md §9): the group card header
     -- for group-scoped connections, the env page group row for env scopes
@@ -195,6 +200,33 @@ cardMatches :: LiveEvent -> EnvCard -> Bool
 cardMatches event card = case card.cardEnvironment of
     Just environment -> event.leEnv == Just environment.name
     Nothing -> isNothing event.leEnv
+
+-- CMDB/Jira/write-back panels refresh when enrichment or write-back state
+-- changes land (milestone_3.md §3/§6).
+contextPanelUpdates :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => Alert -> IO [Aeson.Value]
+contextPanelUpdates alert = do
+    cmdbEntry <- case (alert.hostId, alert.serviceId) of
+        (Just hostId, _) -> query @CmdbEntry
+            |> filterWhere (#hostId, Just hostId)
+            |> fetchOneOrNothing
+        (Nothing, Just serviceId) -> query @CmdbEntry
+            |> filterWhere (#serviceId, Just serviceId)
+            |> fetchOneOrNothing
+        (Nothing, Nothing) -> pure Nothing
+    jiraLinks <- query @JiraLink
+        |> filterWhere (#alertId, get #id alert)
+        |> orderByAsc #createdAt
+        |> fetch
+    latestAttempt <- query @WriteBackAttempt
+        |> filterWhere (#alertId, get #id alert)
+        |> orderByDesc #createdAt
+        |> limit 1
+        |> fetchOneOrNothing
+    pure
+        [ fragment cmdbPanelDomId (cmdbPanelHtml alert cmdbEntry) "replace" ""
+        , fragment jiraLinksDomId (jiraLinksHtml alert jiraLinks) "replace" ""
+        , fragment writeBackChipDomId (writeBackChipHtml latestAttempt) "replace" ""
+        ]
 
 fragment :: Text -> Markup -> Text -> Text -> Aeson.Value
 fragment domId html mode parent =

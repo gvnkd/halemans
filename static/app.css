@@ -1,5 +1,5 @@
-/* Halemans theme tokens (milestone_1.md §6). Theme packs land in phase 3;
-   ship dark (default) + light now, switched via [data-theme] on <html>. */
+/* Halemans theme tokens (milestone_3.md §7). Theme packs switched via
+   [data-theme] on <html>. */
 
 :root, [data-theme="dark"] {
     --bg: #1e1e2e;
@@ -31,6 +31,70 @@
     --status-resolved: #40a02b;
     --status-closed: #6c6f85;
     --status-suppressed: #9ca0b0;
+}
+
+[data-theme="latte"] {
+    --bg: #eff1f5;
+    --surface: #ffffff;
+    --text: #4c4f69;
+    --text-muted: #6c6f85;
+    --severity-critical: #d20f39;
+    --severity-high: #fe640b;
+    --severity-warning: #df8e1d;
+    --severity-info: #1e66f5;
+    --status-firing: #d20f39;
+    --status-ack: #df8e1d;
+    --status-resolved: #40a02b;
+    --status-closed: #6c6f85;
+    --status-suppressed: #9ca0b0;
+}
+
+[data-theme="frappe"] {
+    --bg: #303446;
+    --surface: #414559;
+    --text: #c6d0f5;
+    --text-muted: #a5adce;
+    --severity-critical: #e78284;
+    --severity-high: #ef9f76;
+    --severity-warning: #e5c890;
+    --severity-info: #8caaee;
+    --status-firing: #e78284;
+    --status-ack: #e5c890;
+    --status-resolved: #a6d189;
+    --status-closed: #a5adce;
+    --status-suppressed: #737994;
+}
+
+[data-theme="macchiato"] {
+    --bg: #24273a;
+    --surface: #363a4f;
+    --text: #cad3f5;
+    --text-muted: #a5adcb;
+    --severity-critical: #ed8796;
+    --severity-high: #f5a97f;
+    --severity-warning: #eed49f;
+    --severity-info: #8aadf4;
+    --status-firing: #ed8796;
+    --status-ack: #eed49f;
+    --status-resolved: #a6da95;
+    --status-closed: #a5adcb;
+    --status-suppressed: #6e738d;
+}
+
+[data-theme="dracula"] {
+    --bg: #282a36;
+    --surface: #44475a;
+    --text: #f8f8f2;
+    --text-muted: #6272a4;
+    --severity-critical: #ff5555;
+    --severity-high: #ffb86c;
+    --severity-warning: #f1fa8c;
+    --severity-info: #8be9fd;
+    --status-firing: #ff5555;
+    --status-ack: #f1fa8c;
+    --status-resolved: #50fa7b;
+    --status-closed: #6272a4;
+    --status-suppressed: #bd93f9;
 }
 
 body {

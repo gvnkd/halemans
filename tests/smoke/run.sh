@@ -7,6 +7,7 @@ APP_URL="${HALEMANS_APP_URL:-http://127.0.0.1:28080}"
 ZABBIX_URL="${HALEMANS_ZABBIX_URL:-http://127.0.0.1:10080}"
 GRAFANA_URL="${HALEMANS_GRAFANA_URL:-http://127.0.0.1:3001}"
 AM_URL="${HALEMANS_ALERTMANAGER_URL:-http://127.0.0.1:9093}"
+MOCK_JIRA_URL="${HALEMANS_JIRA_URL:-http://127.0.0.1:18083}"
 STATE="${DEVENV_STATE:?}"
 
 failures=0
@@ -189,6 +190,198 @@ wait_sql "poller resolved the alert" 180 "SELECT 1 FROM alerts WHERE fingerprint
 # restore the webhook token (same statement as seed-halemans)
 psql "$DATABASE_URL" -c "INSERT INTO webhook_tokens (source_id, token) VALUES ('$grafana_source_id', '$generic_token') ON CONFLICT (token) DO NOTHING" > /dev/null 2>&1 \
     && pass "webhook token restored" || fail "webhook token restored"
+
+# ---------------------------------------------------------- milestone 3
+# The zabbix-backed scenarios share one alert row (fingerprint is
+# trigger-scoped, so refiring reuses it). $enrich_id threads through
+# scenarios 1-5.
+enrich_id=""
+zbx_event=""
+if [ "${SMOKE_ZABBIX:-1}" != 0 ]; then
+scenario "enrichment"
+fire-test-alert-zabbix || fail "enrichment: fire push accepted"
+if wait_sql "enrichment alert firing" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'zabbix:trigger:%' AND title = 'halemans test trigger' AND status = 'firing' LIMIT 1"; then
+    enrich_id=$(alert_id_by_fingerprint_prefix "zabbix:trigger:" "halemans test trigger")
+fi
+if [ -n "$enrich_id" ] \
+    && wait_sql "cmdb entry cached for dev-host-01" 60 "SELECT 1 FROM cmdb_entries c JOIN hosts h ON h.id = c.host_id WHERE h.fqdn = 'dev-host-01' LIMIT 1" \
+    && wait_sql "jira auto-link DEV-101" 60 "SELECT 1 FROM jira_links WHERE alert_id = '$enrich_id' AND ticket_key = 'DEV-101' AND origin = 'auto' LIMIT 1"; then
+    pass "enrichment: cmdb cache row + jira auto-link"
+else
+    fail "enrichment: cmdb cache row + jira auto-link"
+fi
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+if [ -n "$enrich_id" ]; then
+    card_html=$(curl -sf -b "$COOKIES" "$APP_URL/alerts/$enrich_id")
+    echo "$card_html" | grep -q 'cmdb-panel' && echo "$card_html" | grep -q 'jira-link' \
+        && pass "enrichment: card renders cmdb + jira panels" || fail "enrichment: card renders cmdb + jira panels"
+else
+    fail "enrichment: card renders cmdb + jira panels (no alert)"
+fi
+
+# ------------------------------------------------- milestone 3: jira create
+scenario "jira manual create"
+if [ -n "$enrich_id" ]; then
+    curl -sf -b "$COOKIES" -o /dev/null -X POST \
+        -d "issueType=Task" -d "summary=Smoke-ticket" -d "body=smoke" \
+        "$APP_URL/alerts/$enrich_id/jira" || fail "jira manual create: post"
+    wait_sql "manual jira link stored" 60 "SELECT 1 FROM jira_links WHERE alert_id = '$enrich_id' AND origin = 'manual' LIMIT 1" \
+        && pass "jira manual create: link stored (origin manual)" || fail "jira manual create: link stored (origin manual)"
+    # key comes from the stored link (DEV-102 on a fresh mock, later keys on a
+    # reused dev-stack mock)
+    manual_key=$(psql "$DATABASE_URL" -tA -c "SELECT ticket_key FROM jira_links WHERE alert_id = '$enrich_id' AND origin = 'manual' ORDER BY created_at DESC LIMIT 1" 2>/dev/null)
+    [ -n "$manual_key" ] \
+        && curl -sf -H "Authorization: Bearer test-jira-token" "$MOCK_JIRA_URL/rest/api/3/issue/$manual_key" | grep -q 'Smoke-ticket' \
+        && pass "jira manual create: ticket exists in mock jira" || fail "jira manual create: ticket exists in mock jira"
+else
+    fail "jira manual create (no alert)"
+fi
+
+# ------------------------------------------------- milestone 3: jira sync
+scenario "jira sync drift"
+if [ -n "$enrich_id" ]; then
+    curl -sf -H 'Content-Type: application/json' -d '{"status":"In Progress"}' \
+        "$MOCK_JIRA_URL/debug/issue/DEV-101/status" > /dev/null || fail "jira sync drift: mock backdoor set"
+    # the self-rescheduler runs every 5min; a fresh row with default run_at
+    # is picked up promptly by the worker
+    psql "$DATABASE_URL" -c "INSERT INTO jira_sync_jobs DEFAULT VALUES" > /dev/null 2>&1
+    wait_sql "jira link status drifted to In Progress" 90 "SELECT 1 FROM jira_links WHERE alert_id = '$enrich_id' AND ticket_key = 'DEV-101' AND status = 'In Progress' LIMIT 1" \
+        && pass "jira sync drift: status mirrored" || fail "jira sync drift: status mirrored"
+    curl -sf -H 'Content-Type: application/json' -d '{"status":"Open"}' \
+        "$MOCK_JIRA_URL/debug/issue/DEV-101/status" > /dev/null || fail "jira sync drift: mock backdoor restore"
+    psql "$DATABASE_URL" -c "INSERT INTO jira_sync_jobs DEFAULT VALUES" > /dev/null 2>&1
+    wait_sql "jira link status restored to Open" 90 "SELECT 1 FROM jira_links WHERE alert_id = '$enrich_id' AND ticket_key = 'DEV-101' AND status = 'Open' LIMIT 1" \
+        && pass "jira sync drift: status restored" || fail "jira sync drift: status restored"
+else
+    fail "jira sync drift (no alert)"
+fi
+else
+    echo "scenario: enrichment / jira (skipped, SMOKE_ZABBIX=0)"
+fi
+
+# ------------------------------------------------- milestone 3: write-back
+scenario "write-back ack"
+fire-test-alert-alertmanager || fail "write-back ack: fire posted"
+am_id=""
+# count of non-expired write-back silences in the alertmanager (0 on any error)
+silence_count() {
+    local n
+    n=$(curl -sf "$AM_URL/api/v2/silences" 2>/dev/null | jq '[.[] | select(.comment | contains("ack via Halemans")) | select(.status.state != "expired")] | length' 2>/dev/null)
+    echo "${n:-0}"
+}
+if wait_sql "write-back ack: am alert firing" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'alertmanager:%' AND title = 'Alertmanager dev test alert' AND status = 'firing' LIMIT 1"; then
+    am_id=$(alert_id_by_fingerprint_prefix "alertmanager:" "Alertmanager dev test alert")
+fi
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+if [ -n "$am_id" ]; then
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$am_id/ack" || fail "write-back ack: am ack post"
+    if wait_sql "am ack attempt done" 90 "SELECT 1 FROM write_back_attempts WHERE alert_id = '$am_id' AND action = 'ack' AND status = 'done' LIMIT 1" \
+        && [ "$(silence_count)" -ge 1 ]; then
+        pass "write-back ack: silence present in alertmanager"
+    else
+        fail "write-back ack: silence present in alertmanager"
+    fi
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$am_id/unack" || fail "write-back ack: am unack post"
+    silence_gone=0
+    if wait_sql "am unack attempt done" 90 "SELECT 1 FROM write_back_attempts WHERE alert_id = '$am_id' AND action = 'unack' AND status = 'done' LIMIT 1"; then
+        for i in $(seq 1 30); do
+            if [ "$(silence_count)" = "0" ]; then
+                silence_gone=1
+                break
+            fi
+            sleep 1
+        done
+    fi
+    [ "$silence_gone" = 1 ] && pass "write-back unack: silence removed" || fail "write-back unack: silence removed"
+    fire-test-alert-alertmanager resolve > /dev/null || fail "write-back ack: resolve posted"
+    wait_sql "am alert resolved" 60 "SELECT 1 FROM alerts WHERE id = '$am_id' AND status = 'resolved' LIMIT 1" \
+        && pass "write-back ack: am alert resolved" || fail "write-back ack: am alert resolved"
+else
+    fail "write-back ack (no am alert)"
+fi
+
+if [ "${SMOKE_ZABBIX:-1}" != 0 ]; then
+zbx_token="${ZABBIX_TOKEN:-$(cat "$STATE/zabbix/token")}"
+if [ -n "$enrich_id" ]; then
+    zbx_event=$(psql "$DATABASE_URL" -tA -c "SELECT external_id FROM alerts WHERE id = '$enrich_id'" 2>/dev/null)
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$enrich_id/ack" || fail "write-back ack: zabbix ack post"
+    if wait_sql "zabbix ack attempt done" 90 "SELECT 1 FROM write_back_attempts WHERE alert_id = '$enrich_id' AND action = 'ack' AND status = 'done' LIMIT 1" \
+        && [ "$(curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer $zbx_token" \
+            -d "$(jq -n --arg e "$zbx_event" '{jsonrpc:"2.0",method:"event.get",params:{eventids:[$e],selectAcknowledges:"extend"},id:1}')" \
+            "$ZABBIX_URL/api_jsonrpc.php" | jq -r '.result[0].acknowledged // empty')" = "1" ]; then
+        pass "write-back ack: zabbix event acknowledged"
+    else
+        fail "write-back ack: zabbix event acknowledged"
+    fi
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$enrich_id/unack" || fail "write-back ack: zabbix unack post"
+    if wait_sql "zabbix unack attempt done" 90 "SELECT 1 FROM write_back_attempts WHERE alert_id = '$enrich_id' AND action = 'unack' AND status = 'done' LIMIT 1" \
+        && [ "$(curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer $zbx_token" \
+            -d "$(jq -n --arg e "$zbx_event" '{jsonrpc:"2.0",method:"event.get",params:{eventids:[$e],selectAcknowledges:"extend"},id:1}')" \
+            "$ZABBIX_URL/api_jsonrpc.php" | jq -r '.result[0].acknowledged // empty')" = "0" ]; then
+        pass "write-back unack: zabbix event unacknowledged"
+    else
+        fail "write-back unack: zabbix event unacknowledged"
+    fi
+else
+    fail "write-back ack (no zabbix alert)"
+fi
+
+# --------------------------------------- milestone 3: external ack reconcile
+scenario "external ack reconcile (zabbix)"
+# refires the same trigger-scoped fingerprint (fire script is idempotent)
+fire-test-alert-zabbix || fail "reconcile: fire push accepted"
+if [ -n "$enrich_id" ] && [ -n "$zbx_event" ] \
+    && wait_sql "reconcile: alert refired" 60 "SELECT 1 FROM alerts WHERE id = '$enrich_id' AND status = 'firing' LIMIT 1"; then
+    curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer $zbx_token" \
+        -d "$(jq -n --arg e "$zbx_event" '{jsonrpc:"2.0",method:"event.acknowledge",params:{eventids:[$e],action:6,message:"smoke"},id:1}')" \
+        "$ZABBIX_URL/api_jsonrpc.php" | grep -q '"result"' || fail "reconcile: zabbix ack api"
+    wait_sql "reconcile: external ack mirrored" 60 "SELECT 1 FROM alerts a WHERE a.id = '$enrich_id' AND a.status = 'ack' AND EXISTS (SELECT 1 FROM alert_events e WHERE e.alert_id = a.id AND e.kind = 'external' AND e.payload->>'source' = 'zabbix' AND e.payload->>'action' = 'ack')" \
+        && pass "reconcile: source ack mirrored (external event)" || fail "reconcile: source ack mirrored (external event)"
+    # zabbix ack clocks are second-precision; keep sourceAt strictly newer
+    # than the local mirror's acknowledgedAt for the un-mirror LWW check
+    sleep 2
+    curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer $zbx_token" \
+        -d "$(jq -n --arg e "$zbx_event" '{jsonrpc:"2.0",method:"event.acknowledge",params:{eventids:[$e],action:20,message:"smoke unack"},id:1}')" \
+        "$ZABBIX_URL/api_jsonrpc.php" | grep -q '"result"' || fail "reconcile: zabbix unack api"
+    wait_sql "reconcile: external unack mirrored" 60 "SELECT 1 FROM alerts WHERE id = '$enrich_id' AND status = 'firing' LIMIT 1" \
+        && pass "reconcile: source unack mirrored" || fail "reconcile: source unack mirrored"
+    fire-test-alert-zabbix resolve > /dev/null || fail "reconcile: resolve push accepted"
+    wait_sql "reconcile: alert resolved" 60 "SELECT 1 FROM alerts WHERE id = '$enrich_id' AND status = 'resolved' LIMIT 1" \
+        && pass "reconcile: alert resolved" || fail "reconcile: alert resolved"
+else
+    fail "external ack reconcile (no alert)"
+fi
+else
+    echo "scenario: write-back ack (zabbix) / external ack reconcile (skipped, SMOKE_ZABBIX=0)"
+fi
+
+# -------------------------------------------- milestone 3: write-back chip
+scenario "write-back failure chip"
+dead_insert_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO sources (type, name, base_url, config) VALUES ('zabbix', 'smoke-dead-source', 'http://127.0.0.1:9', '{\"writeBack\": true}'::jsonb) RETURNING id" 2>&1)
+dead_source_id=$(printf '%s\n' "$dead_insert_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+dead_id=""
+if [ -n "$dead_source_id" ]; then
+    dead_insert_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO alerts (fingerprint, source_id, external_id, title, severity, status) VALUES ('smoke:dead-source', '$dead_source_id', '999', 'smoke dead source alert', 'warning', 'firing') RETURNING id" 2>&1)
+    dead_id=$(printf '%s\n' "$dead_insert_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+fi
+if [ -z "$dead_source_id" ]; then echo "source insert error: $dead_insert_out" >&2; fi
+if [ -n "$dead_source_id" ] && [ -z "$dead_id" ]; then echo "alert insert error: $dead_insert_out" >&2; fi
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+if [ -n "$dead_id" ]; then
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$dead_id/ack" || fail "write-back failure chip: ack post"
+    # backoff env is flattened to 0s by smoke-check, so retries burn through
+    # max attempts quickly
+    if wait_sql "dead-source attempt failed" 120 "SELECT 1 FROM write_back_attempts WHERE alert_id = '$dead_id' AND status = 'failed' LIMIT 1"; then
+        card_html=$(curl -sf -b "$COOKIES" "$APP_URL/alerts/$dead_id")
+        echo "$card_html" | grep -q 'writeback-status' && echo "$card_html" | grep -q 'failed' \
+            && pass "write-back failure chip: card shows failed chip" || fail "write-back failure chip: card shows failed chip"
+    else
+        fail "write-back failure chip: attempt never failed"
+    fi
+    psql "$DATABASE_URL" -c "DELETE FROM alert_events WHERE alert_id = '$dead_id'; DELETE FROM write_back_attempts WHERE alert_id = '$dead_id'; DELETE FROM alerts WHERE id = '$dead_id'; DELETE FROM sources WHERE id = '$dead_source_id'" > /dev/null 2>&1
+else
+    fail "write-back failure chip (insert failed)"
+fi
 
 echo
 if [ "$failures" = 0 ]; then

@@ -9,9 +9,19 @@ module Web.View.Fragments
 , groupRowDomId
 , groupHeaderHtml
 , groupHeaderDomId
+, cmdbPanelHtml
+, cmdbPanelDomId
+, jiraLinksHtml
+, jiraLinksDomId
+, writeBackChipHtml
+, writeBackChipDomId
+, eventSummary
 ) where
 
 import Web.View.Prelude
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import Data.Aeson.Types (parseMaybe)
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -60,9 +70,29 @@ timelineEventHtml event = [hsx|
     <li class="timeline-event" data-kind={event.kind}>
         <span class="timeline-kind">{event.kind}</span>
         <span class="timeline-time">{show event.createdAt}</span>
+        <span class="timeline-summary">{eventSummary event}</span>
         <span class="timeline-payload">{cs (show event.payload) :: Text}</span>
     </li>
 |]
+
+-- Human-readable summary for the kind-aware timeline (milestone_3.md §8):
+-- external actions render with source-side attribution ("acked in zabbix by
+-- admin"), enrichment/write-back failures with their subsystem/error.
+eventSummary :: AlertEvent -> Text
+eventSummary event = case event.kind of
+    "external" -> case (payloadText "action", payloadText "source", payloadText "actor") of
+        (Just action, Just source, actor) -> actionLabel action <> " in " <> source <> " by " <> fromMaybe "?" actor
+        _ -> ""
+    "writeback_failed" -> "write-back failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
+    "enrichment_failed" -> "enrichment failed" <> maybe "" (\s -> " (" <> s <> ")") (payloadText "subsystem")
+    _ -> ""
+    where
+        payloadText :: Text -> Maybe Text
+        payloadText key = parseMaybe (Aeson.withObject "payload" (\o -> o Aeson..: Key.fromText key)) event.payload
+        actionLabel = \case
+            "ack" -> "acked"
+            "unack" -> "unacked"
+            other -> other
 
 -- Group fragments (milestone_2.md §9): the env page grouped view and the
 -- group card share these with the websocket broadcaster.
@@ -112,3 +142,82 @@ groupHeaderHtml group = [hsx|
         </p>
     </div>
 |]
+
+-- Context panels on the alert card (milestone_3.md §8), shared by the
+-- initial render and the websocket broadcaster (kinds enriched/writeback).
+
+cmdbPanelDomId :: Text
+cmdbPanelDomId = "cmdb-panel"
+
+cmdbPanelHtml :: Alert -> Maybe CmdbEntry -> Html
+cmdbPanelHtml alert entry = [hsx|
+    <section class="card mb-3" id={cmdbPanelDomId} data-testid="cmdb-panel">
+        <div class="card-body">
+            <h5 class="card-title">CMDB {refreshButton}</h5>
+            {body}
+        </div>
+    </section>
+|]
+    where
+        refreshButton = [hsx|
+            <form method="POST" action={RefreshCmdbAction (get #id alert)} class="d-inline">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="cmdb-refresh">Refresh</button>
+            </form>
+        |]
+        body = case entry of
+            Nothing -> [hsx|<p class="text-muted" data-testid="cmdb-empty">No CMDB entry (no host/service subject, or lookup pending).</p>|]
+            Just cached
+                | isNothing cached.pageId -> [hsx|<p class="text-muted" data-testid="cmdb-negative">No Confluence page found for this subject (cached miss).</p>|]
+                | otherwise -> [hsx|
+                    <div data-testid="cmdb-entry">
+                        <p><strong>{cached.title}</strong></p>
+                        <p data-testid="cmdb-excerpt">{cached.excerpt}</p>
+                        <p>
+                            <a href={cached.url} target="_blank" data-testid="cmdb-link">Open in Confluence</a>
+                            <span class="text-muted"> · cached {show cached.fetchedAt}</span>
+                        </p>
+                    </div>
+                |]
+
+jiraLinksDomId :: Text
+jiraLinksDomId = "jira-links"
+
+jiraLinksHtml :: Alert -> [JiraLink] -> Html
+jiraLinksHtml alert links = [hsx|
+    <ul id={jiraLinksDomId} data-testid="jira-links">
+        {forEach links (jiraLinkItem alert)}
+    </ul>
+|]
+
+jiraLinkItem :: Alert -> JiraLink -> Html
+jiraLinkItem alert link = [hsx|
+    <li data-testid="jira-link">
+        <a href={link.url} target="_blank">{link.ticketKey}</a>
+        <span class="badge status-badge" data-testid="jira-status">{link.status}</span>
+        <span class="badge" data-testid="jira-origin">{link.origin}</span>
+        {link.summary}
+        {unlinkForm}
+    </li>
+|]
+    where
+        unlinkForm = if link.origin == "manual"
+            then [hsx|
+                <form method="POST" action={DeleteJiraLinkAction (get #id alert) (get #id link)} class="d-inline js-delete">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="jira-unlink">unlink</button>
+                </form>
+            |]
+            else mempty
+
+writeBackChipDomId :: Text
+writeBackChipDomId = "writeback-chip"
+
+writeBackChipHtml :: Maybe WriteBackAttempt -> Html
+writeBackChipHtml latest = [hsx|<span id={writeBackChipDomId}>{chip}</span>|]
+    where
+        chip = case latest of
+            Nothing -> mempty
+            Just attempt -> case attempt.status of
+                "queued" -> [hsx|<span class="badge status-ack" data-testid="writeback-status" title="write-back pending">write-back: {attempt.action} pending</span>|]
+                "failed" -> [hsx|<span class="badge status-firing" data-testid="writeback-status" title={fromMaybe "" attempt.lastError}>write-back: {attempt.action} failed</span>|]
+                "done" -> [hsx|<span class="badge status-resolved" data-testid="writeback-status">write-back: {attempt.action} synced</span>|]
+                _ -> mempty

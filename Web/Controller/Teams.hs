@@ -48,14 +48,28 @@ instance Controller TeamsController where
     action UpdateTeamAction { teamId } = do
         requirePrivilege "manage_users"
         team <- fetch teamId
-        updated <- team
-            |> set #name (param @Text "name")
-            |> set #description (param @Text "description")
-            |> updateRecord
-        _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
-        saveMembers updated
-        setSuccessMessage "Team updated"
-        redirectTo TeamsAction
+        let dashboardConfig = paramOrNothing @Text "defaultDashboardConfig"
+        case dashboardConfig of
+            Just raw | raw /= "" -> case Aeson.decode (cs raw) of
+                Nothing -> do
+                    setErrorMessage "Default dashboard config is not valid JSON"
+                    redirectTo EditTeamAction { teamId }
+                Just config -> do
+                    updateTeam team (Just config)
+                    redirectTo TeamsAction
+            _ -> do
+                updateTeam team Nothing
+                redirectTo TeamsAction
+        where
+            updateTeam team config = do
+                updated <- team
+                    |> set #name (param @Text "name")
+                    |> set #description (param @Text "description")
+                    |> set #defaultDashboardConfig config
+                    |> updateRecord
+                _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
+                saveMembers updated
+                setSuccessMessage "Team updated"
 
     action DeleteTeamAction { teamId } = do
         requirePrivilege "manage_users"

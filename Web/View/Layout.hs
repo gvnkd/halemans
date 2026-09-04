@@ -7,11 +7,12 @@ import Web.Types
 import Web.Routes
 import Application.Helper.View
 import Application.Helper.Controller () -- CurrentUserRecord instance for currentUserOrNothing
+import Application.Helper.Theme (themeFromSettings)
 
 defaultLayout :: Html -> Html
 defaultLayout inner = [hsx|
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme={activeTheme}>
     <head>
         {metaTags}
 
@@ -30,6 +31,11 @@ defaultLayout inner = [hsx|
     </body>
 </html>
 |]
+    where
+        activeTheme :: Text
+        activeTheme = case currentUserOrNothing of
+            Just user -> themeFromSettings user.settings
+            Nothing -> "dark"
 
 navigation :: Html
 navigation = [hsx|
@@ -38,6 +44,7 @@ navigation = [hsx|
         <a class="navbar-brand" href={DashboardAction}>Halemans</a>
         <ul class="navbar-nav me-auto">
             <li class="nav-item"><a class="nav-link" href={DashboardAction}>Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link" href={DashboardsAction}>Dashboards</a></li>
             <li class="nav-item"><a class="nav-link" href={AlertsAction}>Alerts</a></li>
             <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>Blackouts</a></li>
             <li class="nav-item"><a class="nav-link" href={SourcesAction}>Sources</a></li>
@@ -48,6 +55,7 @@ navigation = [hsx|
                     <li><a class="dropdown-item" href={GroupingRulesAction}>Grouping rules</a></li>
                     <li><a class="dropdown-item" href={NotificationRulesAction}>Notification rules</a></li>
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>Escalation policies</a></li>
+                    <li><a class="dropdown-item" href={IntegrationsAction}>Integrations</a></li>
                 </ul>
             </li>
         </ul>

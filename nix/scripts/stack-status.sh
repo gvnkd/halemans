@@ -18,15 +18,21 @@ check "grafana (:3001)" $?
 curl -sf "${HALEMANS_ALERTMANAGER_URL:-http://127.0.0.1:9093}/-/healthy" > /dev/null 2>&1
 check "alertmanager (:9093)" $?
 
+curl -sf "${HALEMANS_CONFLUENCE_URL:-http://127.0.0.1:18082}/health" > /dev/null 2>&1
+check "mock-confluence (:18082)" $?
+
+curl -sf "${HALEMANS_JIRA_URL:-http://127.0.0.1:18083}/health" > /dev/null 2>&1
+check "mock-jira (:18083)" $?
+
 pg_isready -q -h "${PGHOST:-/tmp}" > /dev/null 2>&1
 check "postgres" $?
 
 curl -sf "${HALEMANS_APP_URL:-http://127.0.0.1:28080}" > /dev/null 2>&1
-check "halemans app (:8000)" $?
+check "halemans app (:28080)" $?
 
 echo "tokens:"
 state="${DEVENV_STATE:-.devenv/state}"
-for f in "halemans/am-hook-token" "halemans/generic-hook-token" "zabbix/token" "grafana/token"; do
+for f in "halemans/am-hook-token" "halemans/generic-hook-token" "halemans/confluence-token" "halemans/jira-token" "zabbix/token" "grafana/token"; do
     if [ -s "$state/$f" ]; then check "$f" 0; else check "$f" 1; fi
 done
 

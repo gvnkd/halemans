@@ -213,6 +213,10 @@ with sync_playwright() as pw:
         viewer = context.new_page()
         login(viewer, "viewer")
         firing = sql("SELECT id FROM alerts WHERE status = 'firing' LIMIT 1")
+        if not firing:
+            fp = f"pw-rbac-{int(time.time())}"
+            fire_generic_alert(fp)
+            firing = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'", 30)
         assert firing, "no firing alert to probe"
         result = viewer.evaluate(f"""async () => {{
             const res = await fetch('/alerts/{firing}/ack', {{ method: 'POST' }});
@@ -411,6 +415,137 @@ with sync_playwright() as pw:
             time.sleep(1)
         assert not sql("SELECT 1 FROM teams WHERE name = 'pw-team'"), "team not deleted"
         admin.close()
+
+    # ---------------------------------------------------------- milestone 3
+
+    @check("cmdb panel renders on alert card and survives manual refresh")
+    def _():
+        fp = f"pw-cmdb-{int(time.time())}"
+        fire_generic_alert(fp)
+        alert_id = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'", 30)
+        assert alert_id, "alert never arrived"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("cmdb-panel").wait_for()
+        page.locator('[data-testid="cmdb-entry"], [data-testid="cmdb-negative"]').first.wait_for(timeout=15000)
+        page.get_by_test_id("cmdb-refresh").click()
+        page.get_by_test_id("cmdb-panel").wait_for()
+
+    @check("jira: create ticket from alert card links with origin manual")
+    def _():
+        alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
+        assert alert_id, "no alert from cmdb check"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("jira-create-form").wait_for()
+        page.get_by_test_id("jira-summary").fill(f"pw smoke ticket {int(time.time())}")
+        page.get_by_test_id("jira-create-submit").click()
+        page.get_by_test_id("jira-origin").filter(has_text="manual").first.wait_for()
+        link = sql(f"SELECT 1 FROM jira_links WHERE alert_id = '{alert_id}' AND origin = 'manual' LIMIT 1")
+        assert link == "1", "manual jira link row missing"
+
+    @check("dashboard CRUD: create, open, set default, move, delete")
+    def _():
+        sql("DELETE FROM dashboards WHERE name = 'My board'")  # pre-clean from failed runs
+        page.goto(f"{APP}/dashboards/new")
+        page.get_by_test_id("dashboard-form").wait_for()
+        page.get_by_test_id("dashboard-name").fill("My board")
+        page.get_by_test_id("dashboard-config").fill('[{"env":"dev","filters":{"status":["firing"],"severity":[]}}]')
+        page.get_by_test_id("dashboard-submit").click()
+        row = page.get_by_test_id("dashboard-row").filter(has_text="My board")
+        row.wait_for()
+        dash_id = sql("SELECT id FROM dashboards WHERE name = 'My board'")
+        assert dash_id, "dashboard row missing"
+        row.get_by_test_id("dashboard-link").click()
+        page.get_by_test_id("dashboard-title").wait_for()
+        assert "My board" in page.get_by_test_id("dashboard-title").inner_text()
+        page.get_by_test_id("dashboard-card-dev").wait_for()
+
+        page.goto(f"{APP}/dashboards")
+        row = page.get_by_test_id("dashboard-row").filter(has_text="My board")
+        row.get_by_test_id("set-default-dashboard").click()
+        row.get_by_test_id("dashboard-default").wait_for()
+        page.goto(APP + "/")
+        page.get_by_test_id("dashboard-title").wait_for()
+        assert page.url == f"{APP}/dashboards/{dash_id}", page.url
+
+        page.goto(f"{APP}/dashboards")
+        row = page.get_by_test_id("dashboard-row").filter(has_text="My board")
+        row.get_by_test_id("dashboard-position").fill("3")
+        row.get_by_role("button", name="Move").click()
+        page.get_by_test_id("dashboard-row").filter(has_text="My board").wait_for()
+
+        page.get_by_test_id("dashboard-row").filter(has_text="My board").get_by_test_id("delete-dashboard").click()
+        page.wait_for_function(
+            "() => ![...document.querySelectorAll('[data-testid=dashboard-row]')].some(r => r.innerText.includes('My board'))")
+        page.goto(APP + "/")
+        page.get_by_test_id("env-cards").wait_for()
+
+    @check("team default fallback: fresh user sees banner and saves team dashboard")
+    def _():
+        # pre-clean in case a previous run died mid-check
+        stale = sql("SELECT id FROM users WHERE email = 'pw-teamdefault@dev'")
+        if stale:
+            sql(f"DELETE FROM dashboards WHERE user_id = '{stale}'")
+            sql(f"DELETE FROM team_members WHERE user_id = '{stale}'")
+            sql(f"DELETE FROM user_roles WHERE user_id = '{stale}'")
+            sql(f"DELETE FROM users WHERE id = '{stale}'")
+        sql("""INSERT INTO users (email, password_hash, display_name)
+               SELECT 'pw-teamdefault@dev', password_hash, 'pw-teamdefault@dev'
+               FROM users WHERE email = 'sre@dev'""")
+        uid = sql("SELECT id FROM users WHERE email = 'pw-teamdefault@dev'")
+        sql(f"""INSERT INTO user_roles (user_id, role_id)
+                SELECT '{uid}', r.id FROM roles r WHERE r.name = 'viewer'""")
+        sql(f"""INSERT INTO team_members (team_id, user_id, team_role)
+                SELECT t.id, '{uid}', 'member' FROM teams t WHERE t.name = 'sre'""")
+        try:
+            fresh = context.new_page()
+            fresh.goto(f"{APP}/NewSession")
+            fresh.get_by_test_id("login-email").fill("pw-teamdefault@dev")
+            fresh.get_by_test_id("login-password").fill(password("sre"))
+            fresh.get_by_test_id("login-submit").click()
+            fresh.wait_for_url(APP + "/")
+            fresh.get_by_test_id("team-default-banner").wait_for()
+            fresh.get_by_test_id("save-team-default").click()
+            fresh.get_by_test_id("dashboard-row").filter(has_text="Team default").wait_for()
+            fresh.close()
+        finally:
+            sql(f"DELETE FROM dashboards WHERE user_id = '{uid}'")
+            sql(f"DELETE FROM team_members WHERE user_id = '{uid}'")
+            sql(f"DELETE FROM user_roles WHERE user_id = '{uid}'")
+            sql(f"DELETE FROM users WHERE id = '{uid}'")
+        # the fresh page's login overwrote the shared context cookie with a
+        # now-deleted user; restore the sre session for later checks
+        login(page, "sre")
+
+    @check("theme switch swaps data-theme without reload and persists")
+    def _():
+        page.goto(f"{APP}/profile")
+        page.get_by_test_id("theme-picker").wait_for()
+        url_before = page.url
+        with page.expect_response(lambda r: r.url.endswith("/profile/theme") and r.request.method == "POST"):
+            page.get_by_test_id("theme-choice-dracula").click()
+        page.wait_for_function("document.documentElement.dataset.theme === 'dracula'")
+        assert page.url == url_before, f"unexpected navigation: {page.url}"
+        page.reload()
+        page.wait_for_function("document.documentElement.dataset.theme === 'dracula'")
+        with page.expect_response(lambda r: r.url.endswith("/profile/theme") and r.request.method == "POST"):
+            page.get_by_test_id("theme-choice-dark").click()
+        page.wait_for_function("document.documentElement.dataset.theme === 'dark'")
+
+    @check("theme snapshots: screenshot per theme pack")
+    def _():
+        tmpdir = os.environ.get("TMPDIR", "/tmp")
+        snap_alert = sql("SELECT id FROM alerts ORDER BY created_at DESC LIMIT 1")
+        assert snap_alert, "no alert to screenshot"
+        for theme in ["latte", "frappe", "macchiato", "dracula", "light", "dark"]:
+            resp = page.request.post(f"{APP}/profile/theme",
+                                     data=json.dumps({"theme": theme}),
+                                     headers={"Content-Type": "application/json"})
+            assert resp.ok, f"theme {theme}: {resp.status}"
+            page.goto(f"{APP}/alerts/{snap_alert}")
+            page.get_by_test_id("alert-card").wait_for()
+            path = os.path.join(tmpdir, f"theme-{theme}.png")
+            page.screenshot(path=path, full_page=True)
+            assert os.path.getsize(path) > 0, f"empty screenshot: {path}"
 
     browser.close()
 

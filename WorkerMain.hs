@@ -10,6 +10,9 @@ import Application.Job.AutoClose ()
 import Application.Job.PushNotification ()
 import Application.Job.PollGrafana ()
 import Application.Job.Escalation ()
+import Application.Job.EnrichAlert ()
+import Application.Job.WriteBack ()
+import Application.Job.JiraSync ()
 
 instance Worker RootApplication where
     workers _ =
@@ -18,5 +21,8 @@ instance Worker RootApplication where
         , worker @PushNotificationJob
         , worker @PollGrafanaJob
         , worker @EscalationJob
+        , worker @EnrichAlertJob
+        , worker @WriteBackJob
+        , worker @JiraSyncJob
         -- Generator Marker
         ]

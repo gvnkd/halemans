@@ -1,7 +1,26 @@
 # Halemans project memories
 
+## IHP sources
+- Local IHP checkout: `/home/pion/work/dev/ihp` — read it directly for framework internals (IHP.ModelSupport, IHP.Job.*, IHP.HSX, LoginSupport, etc). Do NOT grep /nix/store for IHP sources.
+
 ## What this is
-IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: design_docs/01_highlevel.md; milestone 0 (dev/test env) done — see design_docs/milestone_0.md §10 for implementation notes. Milestone 2 (correlation & teams) done — see design_docs/milestone_2.md §14.
+IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: design_docs/01_highlevel.md; milestone 0 (dev/test env) done — see design_docs/milestone_0.md §10 for implementation notes. Milestone 2 (correlation & teams) done — see design_docs/milestone_2.md §14. Milestone 3 (context: CMDB/Jira/write-back/dashboards/themes) done — see design_docs/milestone_3.md.
+
+## Milestone 3 notes
+- Mocks: mock-confluence :18082, mock-jira :18083 (python stdlib, nix/mocks/). Tokens CONFLUENCE_TOKEN/JIRA_TOKEN + HALEMANS_CONFLUENCE_URL/HALEMANS_JIRA_URL in env.sh (ensureTokens). Mock jira has unauthenticated test backdoor POST /debug/issue/{key}/status.
+- Write-back retry timing overridable: HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0" + HALEMANS_WRITEBACK_MAX_ATTEMPTS (smoke sets them fast).
+- EnrichAlertJob/WriteBackJob are one-shot event jobs; JiraSyncJob self-reschedules (5min) — in tests INSERT a fresh jira_sync_jobs row to trigger promptly. EnqueuePollers seeds JiraSyncJob.
+- Alert card panels (cmdb/jira/writeback chip) live-update via WS kinds "enriched"/"writeback" (fragments in Web/View/Fragments.hs, contextPanelUpdates in Live.hs). WS supports multi-scope: data-live-scope="env:a,env:b".
+- Pure alertmanager sources have NO reverse silence reconcile (no poller exists for them); only grafana (PollGrafana) and zabbix (PollZabbix) mirror source acks.
+- users.settings.theme (validated against Application.Helper.Theme themes) drives `<html data-theme>`; app.js halemansApplyTheme persists via POST /profile/theme.
+
+## Test-suite pitfalls (hard-won in M3)
+- psql -c "INSERT ... RETURNING id" ALSO prints the command tag ("INSERT 0 1") on stdout — grep-extract the uuid, never capture raw.
+- Turbolinks (turbolinksMorphdom) replaces body WITHOUT pushState after form POSTs → Playwright `wait_for_url` never fires; wait on element testids instead. Real `page.goto` navigations DO fire URL changes (server 302s land).
+- Playwright: `context.new_page()` shares the context cookie jar — logging in a throwaway user overwrites the main page's session; re-login main page (or delete the throwaway user AND re-login) afterwards.
+- IHP dev server serves its LAST compile's error page forever; `touch` a source file to force recompile. Stale typedSql introspection postmasters linger in /tmp/ihp-typed-sql--* — kill + rm when schema errors look wrong.
+- Dev DB rebuild (when the dev DB is stale/partially migrated): terminate backends, DROP+CREATE DATABASE app, apply ihp-schema + Schema.sql + Fixtures, then `INSERT INTO schema_migrations` all revision numbers (table shape: `revision BIGINT NOT NULL UNIQUE`), rm seed.done, `process-compose process restart seed` (one process at a time; the multi-arg form prints usage).
+
 
 ## Commands
 - Full stack: `nix develop .#default --impure -c devenv-flake-up -D` (detached). Attach: `process-compose -u /run/user/1000/devenv-*/pc.sock process list`.

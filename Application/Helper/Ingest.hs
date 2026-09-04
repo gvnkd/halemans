@@ -96,6 +96,12 @@ ingest source event = do
             unless suppressedNow do
                 void (dispatchNotification grouped)
             publishAlertUpdate grouped "created"
+            -- Step 8 enrichment (milestone_3.md §3): CMDB + Jira lookups run
+            -- async so ingestion never blocks on external systems.
+            void do
+                newRecord @EnrichAlertJob
+                    |> set #alertId (get #id grouped)
+                    |> createRecord
             pure (Just (get #id grouped))
         (Just alert, sourceStatus) -> do
             let currentState = fromMaybe SM.Firing (SM.alertStateFromText alert.status)

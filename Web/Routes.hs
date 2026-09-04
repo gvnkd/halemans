@@ -20,6 +20,9 @@ POST /alerts/{alertId}/ack              AckAlertAction
 POST /alerts/{alertId}/unack            UnackAlertAction
 POST /alerts/{alertId}/close            CloseAlertAction
 POST /alerts/{alertId}/comments         CreateCommentAction
+POST /alerts/{alertId}/cmdb/refresh     RefreshCmdbAction
+POST /alerts/{alertId}/jira             CreateJiraTicketAction
+POST /alerts/{alertId}/jira/{jiraLinkId}/delete  DeleteJiraLinkAction
 |]
 
 [routes|BlackoutsController
@@ -32,7 +35,26 @@ POST /blackouts/{blackoutId}/delete  DeleteBlackoutAction
 |]
 
 [routes|ProfileController
-GET /profile    ProfileAction
+GET  /profile         ProfileAction
+POST /profile/theme   UpdateThemeAction
+|]
+
+[routes|DashboardsController
+GET  /dashboards                              DashboardsAction
+GET  /dashboards/new                          NewDashboardAction
+POST /dashboards                              CreateDashboardAction
+GET  /dashboards/{dashboardId}                ShowDashboardAction
+GET  /dashboards/{dashboardId}/edit           EditDashboardAction
+POST /dashboards/{dashboardId}/update         UpdateDashboardAction
+POST /dashboards/{dashboardId}/delete         DeleteDashboardAction
+POST /dashboards/{dashboardId}/default        SetDefaultDashboardAction
+POST /dashboards/{dashboardId}/move           MoveDashboardAction
+|]
+
+[routes|IntegrationsController
+GET  /admin/integrations                      IntegrationsAction
+POST /admin/integrations/test-confluence      TestConfluenceAction
+POST /admin/integrations/test-jira            TestJiraAction
 |]
 
 [routes|PushSubscriptionsController

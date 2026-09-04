@@ -27,6 +27,9 @@ data AlertsController
     | UnackAlertAction { alertId :: !(Id Alert) }
     | CloseAlertAction { alertId :: !(Id Alert) }
     | CreateCommentAction { alertId :: !(Id Alert) }
+    | RefreshCmdbAction { alertId :: !(Id Alert) }
+    | CreateJiraTicketAction { alertId :: !(Id Alert) }
+    | DeleteJiraLinkAction { alertId :: !(Id Alert), jiraLinkId :: !(Id JiraLink) }
     deriving (Eq, Show)
 
 data BlackoutsController
@@ -40,6 +43,25 @@ data BlackoutsController
 
 data ProfileController
     = ProfileAction
+    | UpdateThemeAction
+    deriving (Eq, Show)
+
+data DashboardsController
+    = DashboardsAction
+    | NewDashboardAction
+    | CreateDashboardAction
+    | ShowDashboardAction { dashboardId :: !(Id Dashboard) }
+    | EditDashboardAction { dashboardId :: !(Id Dashboard) }
+    | UpdateDashboardAction { dashboardId :: !(Id Dashboard) }
+    | DeleteDashboardAction { dashboardId :: !(Id Dashboard) }
+    | SetDefaultDashboardAction { dashboardId :: !(Id Dashboard) }
+    | MoveDashboardAction { dashboardId :: !(Id Dashboard) }
+    deriving (Eq, Show)
+
+data IntegrationsController
+    = IntegrationsAction
+    | TestConfluenceAction
+    | TestJiraAction
     deriving (Eq, Show)
 
 data PushSubscriptionsController

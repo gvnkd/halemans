@@ -70,3 +70,48 @@
         });
     });
 })();
+
+// Theme packs (milestone_3.md §7): swap [data-theme] on <html>, persist to
+// localStorage, POST to /profile/theme (fire-and-forget).
+(function () {
+    var THEMES = ['latte', 'frappe', 'macchiato', 'dracula', 'light', 'dark'];
+    var STORAGE_KEY = 'halemans-theme';
+
+    function isValidTheme(theme) {
+        return THEMES.indexOf(theme) !== -1;
+    }
+
+    function applyLocal(theme) {
+        document.documentElement.dataset.theme = theme;
+        try { window.localStorage.setItem(STORAGE_KEY, theme); } catch (e) {}
+        var choices = document.querySelectorAll('[data-theme-choice]');
+        for (var i = 0; i < choices.length; ++i) {
+            choices[i].classList.toggle('active', choices[i].dataset.themeChoice === theme);
+        }
+    }
+
+    window.halemansApplyTheme = function (theme) {
+        if (!isValidTheme(theme)) return;
+        applyLocal(theme);
+        try {
+            fetch('/profile/theme', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme: theme })
+            }).catch(function () {});
+        } catch (e) {}
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var stored = null;
+        try { stored = window.localStorage.getItem(STORAGE_KEY); } catch (e) {}
+        if (stored && isValidTheme(stored) && stored !== document.documentElement.dataset.theme) {
+            applyLocal(stored);
+        }
+        document.addEventListener('click', function (event) {
+            var el = event.target.closest('[data-theme-choice]');
+            if (el) window.halemansApplyTheme(el.dataset.themeChoice);
+        });
+    });
+})();

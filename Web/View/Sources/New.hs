@@ -36,6 +36,18 @@ instance View NewView where
                 <label class="form-label">Token env var</label>
                 <input name="tokenEnv" type="text" class="form-control" data-testid="source-token-env" placeholder="GRAFANA_TOKEN"/>
             </div>
+            <div class="mb-3 form-check">
+                <input name="writeBack" type="checkbox" class="form-check-input" data-testid="source-write-back"/>
+                <label class="form-check-label">Write-back (ack/close propagates to the source)</label>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">CMDB space</label>
+                <input name="cmdbSpace" type="text" class="form-control" data-testid="source-cmdb-space" placeholder="DEV"/>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Jira project key</label>
+                <input name="jiraProject" type="text" class="form-control" data-testid="source-jira-project" placeholder="DEV"/>
+            </div>
             <button type="submit" class="btn btn-primary" data-testid="source-submit">Create</button>
         </form>
     |]

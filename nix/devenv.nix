@@ -10,6 +10,7 @@ in
         ./alertmanager.nix
         ./grafana.nix
         ./zabbix.nix
+        ./mocks.nix
         ./scripts.nix
     ];
 
@@ -28,6 +29,8 @@ in
     #   alertmanager : 9093
     #   zabbix web   : 10080
     #   zabbix server/trapper : 10051
+    #   mock-confluence : 18082
+    #   mock-jira       : 18083
     env = {
         HALEMANS_GRAFANA_URL = "http://127.0.0.1:3001";
         HALEMANS_ALERTMANAGER_URL = "http://127.0.0.1:9093";

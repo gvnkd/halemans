@@ -10,6 +10,12 @@ import qualified Test.PushSpec
 import qualified Test.GroupingSpec
 import qualified Test.EscalationSpec
 import qualified Test.AlertmanagerSpec
+import qualified Test.CmdbSpec
+import qualified Test.JiraSpec
+import qualified Test.WriteBackSpec
+import qualified Test.ReconcileSpec
+import qualified Test.DashboardConfigSpec
+import qualified Test.ThemeSpec
 
 main :: IO ()
 main = hspec do
@@ -19,3 +25,9 @@ main = hspec do
     Test.GroupingSpec.spec
     Test.EscalationSpec.spec
     Test.AlertmanagerSpec.spec
+    Test.CmdbSpec.spec
+    Test.JiraSpec.spec
+    Test.WriteBackSpec.spec
+    Test.ReconcileSpec.spec
+    Test.DashboardConfigSpec.spec
+    Test.ThemeSpec.spec

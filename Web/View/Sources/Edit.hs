@@ -4,6 +4,9 @@ import Web.View.Prelude
 data EditView = EditView
     { source :: Source
     , tokenEnv :: Text
+    , writeBack :: Bool
+    , cmdbSpace :: Text
+    , jiraProject :: Text
     }
 
 instance View EditView where
@@ -35,6 +38,18 @@ instance View EditView where
             <div class="mb-3">
                 <label class="form-label">Token env var</label>
                 <input name="tokenEnv" type="text" class="form-control" value={tokenEnv} data-testid="source-token-env"/>
+            </div>
+            <div class="mb-3 form-check">
+                <input name="writeBack" type="checkbox" class="form-check-input" checked={writeBack} data-testid="source-write-back"/>
+                <label class="form-check-label">Write-back (ack/close propagates to the source)</label>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">CMDB space</label>
+                <input name="cmdbSpace" type="text" class="form-control" value={cmdbSpace} data-testid="source-cmdb-space"/>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Jira project key</label>
+                <input name="jiraProject" type="text" class="form-control" value={jiraProject} data-testid="source-jira-project"/>
             </div>
             <button type="submit" class="btn btn-primary" data-testid="source-submit">Save</button>
         </form>

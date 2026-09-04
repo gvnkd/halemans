@@ -88,6 +88,8 @@ in
                 zabbix-web.condition = "process_healthy";
                 grafana.condition = "process_healthy";
                 alertmanager.condition = "process_healthy";
+                mock-confluence.condition = "process_healthy";
+                mock-jira.condition = "process_healthy";
             };
         };
     };

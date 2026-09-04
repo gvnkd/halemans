@@ -5,6 +5,7 @@ import IHP.TypedSql.RowType (SqlRow)
 import IHP.QueryBuilder (orderByAsc)
 import qualified IHP.QueryBuilder as QB (query)
 import qualified IHP.Fetch as Fetch (fetch)
+import qualified Data.Aeson as Aeson
 
 data EnvCard = EnvCard
     { cardEnvironment :: Maybe Environment
@@ -74,16 +75,39 @@ cardWorst :: [Text] -> Maybe Text
 cardWorst [] = Nothing
 cardWorst severities = Just (minimumBy (comparing cardSeverityRank) severities)
 
-data IndexView = IndexView { cards :: [EnvCard], unassigned :: Maybe EnvCard }
+data IndexView = IndexView
+    { cards :: [EnvCard]
+    , unassigned :: Maybe EnvCard
+    , teamDefault :: Maybe Aeson.Value
+    }
 
 instance View IndexView where
     html IndexView { .. } = [hsx|
         <h1>Overview</h1>
+        {teamDefaultBanner}
         <div class="row" data-testid="env-cards" data-live-scope="dashboard">
             {forEach cards renderCard}
             {forEach unassigned renderCard}
         </div>
     |]
+        where
+            teamDefaultBanner = case teamDefault of
+                Nothing -> mempty
+                Just config -> teamBanner config
+
+-- Team default fallback (milestone_3.md §7): a user with no dashboards sees
+-- the team's default_dashboard_config offer and can copy it in one click.
+teamBanner :: Aeson.Value -> Html
+teamBanner config = [hsx|
+    <div class="alert alert-info d-flex justify-content-between align-items-center" data-testid="team-default-banner">
+        <span>Your team has a default dashboard template.</span>
+        <form method="POST" action={CreateDashboardAction}>
+            <input type="hidden" name="name" value="Team default"/>
+            <input type="hidden" name="config" value={cs (Aeson.encode config) :: Text}/>
+            <button type="submit" class="btn btn-sm btn-primary" data-testid="save-team-default">Save as my dashboard</button>
+        </form>
+    </div>
+|]
 
 renderCard :: EnvCard -> Html
 renderCard card = [hsx|

@@ -12,6 +12,10 @@ let
             [ -f "$state/am-hook-token" ]      || gen > "$state/am-hook-token"
             [ -f "$state/generic-hook-token" ] || gen > "$state/generic-hook-token"
 
+            # Mock Confluence/Jira bearer tokens (milestone 3 D9).
+            [ -f "$state/confluence-token" ]   || gen > "$state/confluence-token"
+            [ -f "$state/jira-token" ]         || gen > "$state/jira-token"
+
             # Dev user passwords (milestone 1 D2): fixed-per-environment,
             # gitignored like the other tokens.
             [ -f "$state/admin-password" ]  || gen > "$state/admin-password"
@@ -41,6 +45,10 @@ let
             {
                 printf 'export HALEMANS_AM_HOOK_TOKEN="%s"\n'      "$(cat "$state/am-hook-token")"
                 printf 'export HALEMANS_GENERIC_HOOK_TOKEN="%s"\n' "$(cat "$state/generic-hook-token")"
+                printf 'export CONFLUENCE_TOKEN="%s"\n'            "$(cat "$state/confluence-token")"
+                printf 'export JIRA_TOKEN="%s"\n'                  "$(cat "$state/jira-token")"
+                printf 'export HALEMANS_CONFLUENCE_URL="%s"\n'     "http://127.0.0.1:18082"
+                printf 'export HALEMANS_JIRA_URL="%s"\n'           "http://127.0.0.1:18083"
                 printf 'export HALEMANS_ADMIN_PASSWORD="%s"\n'     "$(cat "$state/admin-password")"
                 printf 'export HALEMANS_SRE_PASSWORD="%s"\n'       "$(cat "$state/sre-password")"
                 printf 'export HALEMANS_VIEWER_PASSWORD="%s"\n'    "$(cat "$state/viewer-password")"

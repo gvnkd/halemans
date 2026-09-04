@@ -9,6 +9,8 @@ import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
+import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
+import qualified Application.Connector.Alertmanager as Am
 import qualified Application.Connector.Grafana as Grafana
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
@@ -74,6 +76,7 @@ pollSource source = do
                         skip <- refireGuard now event
                         unless skip (void (ingest source event))
                     reconcileAbsences source now alerts
+                    reconcileSilences source token now
                     _ <- source
                         |> set #lastSyncCursor (Just now)
                         |> updateRecord
@@ -128,3 +131,28 @@ reconcileAbsences source now alerts = do
             , startedAt = alert.startedAt
             , sourceUrl = alert.sourceUrl
             })
+
+-- Silence-based ack reconciliation (milestone_3.md §6): an active silence
+-- covering a firing alert mirrors in as an external ack; silence expiry
+-- reverts only acks that came from this mirror (never a local user's ack).
+reconcileSilences :: (?modelContext :: ModelContext) => Source -> Text -> UTCTime -> IO ()
+reconcileSilences source token now = do
+    alerts <- query @Alert
+        |> filterWhere (#sourceId, Just (get #id source))
+        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+        |> fetch
+    result <- Am.silencesGet source.baseUrl (Just token) "/api/alertmanager/grafana/api/v2"
+    case result of
+        Left _err -> pure ()
+        Right silences -> forM_ alerts \alert -> do
+            let covering = filter (\silence -> Am.silenceCoversLabels silence alert.labels) silences
+            case (alert.status, covering) of
+                ("firing", (silence:_)) -> do
+                    let sourceAt = fromMaybe now silence.silenceUpdatedAt
+                    when (shouldMirror alert.acknowledgedAt sourceAt) do
+                        void (mirrorExternalAck alert "grafana" silence.silenceCreatedBy sourceAt)
+                ("ack", []) -> do
+                    external <- lastAckWasExternal alert
+                    when external do
+                        void (mirrorExternalUnack alert "grafana" "silence expired" now)
+                _ -> pure ()

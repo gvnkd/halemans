@@ -27,6 +27,23 @@ SELECT id, :'generic_token' FROM sources WHERE type = 'grafana'
 ON CONFLICT (token) DO NOTHING;
 SQL
 
+# Enrichment/write-back source config (milestone 3 D9). Fixtures.sql carries
+# the same values declaratively; this idempotent jsonb merge fixes databases
+# initialized before the fixtures changed.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+UPDATE sources
+SET config = config || '{"writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
+WHERE type IN ('zabbix', 'grafana', 'alertmanager');
+
+INSERT INTO cmdb_entries (host_id, page_id, title, excerpt, url)
+SELECT h.id, '1001', 'dev-host-01',
+       'Owner: team-sre. Runbook: https://wiki.example/runbooks/dev-host-01',
+       '/spaces/DEV/pages/1001'
+FROM hosts h
+WHERE h.fqdn = 'dev-host-01'
+  AND NOT EXISTS (SELECT 1 FROM cmdb_entries c WHERE c.host_id = h.id);
+SQL
+
 # Roles + dev users (milestone 1 D2). Passwords are hashed with the
 # pwstore-fast replica (nix/scripts/hash-password.py) so this stays pure SQL.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
@@ -89,6 +106,12 @@ FROM teams t WHERE t.name = 'sre'
 INSERT INTO grouping_rules (position, name, enabled, version, match, group_key_template)
 SELECT 0, 'env+host', true, 1, '{}', '{env}/{host}'
 WHERE NOT EXISTS (SELECT 1 FROM grouping_rules WHERE name = 'env+host');
+
+-- Team dashboard default (milestone 3 D7): fresh team members land on this
+-- template until they save their own dashboard. Idempotent update.
+UPDATE teams
+SET default_dashboard_config = '[{"env":"dev","filters":{"status":[],"severity":[]}}]'::jsonb
+WHERE name = 'sre';
 SQL
 
 # Kick off the zabbix polling loop (self-rescheduling job; the job itself

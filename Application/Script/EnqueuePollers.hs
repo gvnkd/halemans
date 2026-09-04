@@ -10,4 +10,5 @@ run = do
     _ <- newRecord @AutoCloseJob |> createRecord
     _ <- newRecord @PollGrafanaJob |> createRecord
     _ <- newRecord @EscalationJob |> createRecord
+    _ <- newRecord @JiraSyncJob |> createRecord
     pure ()

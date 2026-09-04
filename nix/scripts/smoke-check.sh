@@ -22,7 +22,7 @@ cleanup() {
             -H "Authorization: Bearer $(cat "$DEVENV_STATE/zabbix/token")" \
             -d '{"jsonrpc":"2.0","method":"problem.get","params":{"output":"extend"},"id":1}' \
             "http://127.0.0.1:10080/api_jsonrpc.php" >&2 || true
-        for f in zabbix-server zabbix-web app worker; do
+        for f in zabbix-server zabbix-web app worker mock-confluence mock-jira; do
             if [ -f "$T/$f.log" ]; then
                 echo "=== tail $f.log ===" >&2
                 tail -20 "$T/$f.log" >&2
@@ -62,6 +62,47 @@ INSERT INTO auto_close_jobs DEFAULT VALUES;
 INSERT INTO poll_grafana_jobs DEFAULT VALUES;
 INSERT INTO escalation_jobs DEFAULT VALUES;
 SQL
+
+# Enrichment/write-back source config + seeded CMDB cache row (milestone 3 D9):
+# same SQL as seed-halemans (keep both in sync per project convention).
+psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
+UPDATE sources
+SET config = config || '{"writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
+WHERE type IN ('zabbix', 'grafana', 'alertmanager');
+
+INSERT INTO cmdb_entries (host_id, page_id, title, excerpt, url)
+SELECT h.id, '1001', 'dev-host-01',
+       'Owner: team-sre. Runbook: https://wiki.example/runbooks/dev-host-01',
+       '/spaces/DEV/pages/1001'
+FROM hosts h
+WHERE h.fqdn = 'dev-host-01'
+  AND NOT EXISTS (SELECT 1 FROM cmdb_entries c WHERE c.host_id = h.id);
+SQL
+
+# --- mock confluence + jira (milestone 3 D9) -----------------------------------
+# Fixed test tokens override the random ones env.sh exported above.
+export CONFLUENCE_TOKEN="test-confluence-token"
+export JIRA_TOKEN="test-jira-token"
+export HALEMANS_CONFLUENCE_URL="http://127.0.0.1:18082"
+export HALEMANS_JIRA_URL="http://127.0.0.1:18083"
+# Flatten write-back retry backoff (1m/5m/15m) so the failure-chip smoke
+# scenario reaches terminal 'failed' fast; inherited by the worker.
+export HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0"
+python3 "$MOCK_CONFLUENCE_PY" > "$T/mock-confluence.log" 2>&1 &
+pids="$pids $!"
+python3 "$MOCK_JIRA_PY" > "$T/mock-jira.log" 2>&1 &
+pids="$pids $!"
+for i in $(seq 1 30); do
+    curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null 2>&1 \
+        && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null 2>&1 && break
+    sleep 1
+done
+curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null \
+    && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null || {
+        echo "mocks never came up" >&2
+        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" >&2
+        exit 1
+    }
 
 # Dev users + roles (milestone 1 D2): same SQL-only path as seed-halemans.
 psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
@@ -113,6 +154,11 @@ FROM teams t WHERE t.name = 'sre';
 
 INSERT INTO grouping_rules (position, name, enabled, version, match, group_key_template)
 VALUES (0, 'env+host', true, 1, '{}', '{env}/{host}');
+
+-- Team dashboard default (milestone 3 D7): same as seed-halemans.
+UPDATE teams
+SET default_dashboard_config = '[{"env":"dev","filters":{"status":[],"severity":[]}}]'::jsonb
+WHERE name = 'sre';
 SQL
 
 # --- alertmanager -------------------------------------------------------------

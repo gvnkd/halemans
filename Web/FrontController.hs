@@ -20,6 +20,8 @@ import Web.Controller.Teams
 import Web.Controller.GroupingRules
 import Web.Controller.NotificationRules
 import Web.Controller.EscalationPolicies
+import Web.Controller.Dashboards
+import Web.Controller.Integrations
 
 instance FrontController WebApplication where
     controllers =
@@ -40,6 +42,8 @@ instance FrontController WebApplication where
         , parseRoute @GroupingRulesController
         , parseRoute @NotificationRulesController
         , parseRoute @EscalationPoliciesController
+        , parseRoute @DashboardsController
+        , parseRoute @IntegrationsController
         ]
 
 instance InitControllerContext WebApplication where
