@@ -6,27 +6,58 @@ import Generated.Types
 import Web.Types
 import Web.Routes
 import Application.Helper.View
+import Application.Helper.Controller () -- CurrentUserRecord instance for currentUserOrNothing
 
 defaultLayout :: Html -> Html
 defaultLayout inner = [hsx|
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
     <head>
         {metaTags}
 
         {stylesheets}
         {scripts}
 
-        <title>{pageTitleOrDefault "App"}</title>
+        <title>{pageTitleOrDefault "Halemans"}</title>
     </head>
     <body>
+        {navigation}
         <div class="container mt-4">
             {renderFlashMessages}
+            <div id="push-banner" class="alert alert-warning d-none" data-testid="push-banner"></div>
             {inner}
         </div>
     </body>
 </html>
 |]
+
+navigation :: Html
+navigation = [hsx|
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark" data-testid="nav">
+    <div class="container-fluid">
+        <a class="navbar-brand" href={DashboardAction}>Halemans</a>
+        <ul class="navbar-nav me-auto">
+            <li class="nav-item"><a class="nav-link" href={DashboardAction}>Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link" href={AlertsAction}>Alerts</a></li>
+            <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>Blackouts</a></li>
+            <li class="nav-item"><a class="nav-link" href={SourcesAction}>Sources</a></li>
+        </ul>
+        <ul class="navbar-nav">
+            {userMenu}
+        </ul>
+    </div>
+</nav>
+|]
+
+userMenu :: Html
+userMenu = case currentUserOrNothing of
+    Just user -> [hsx|
+        <li class="nav-item"><a class="nav-link" href={ProfileAction}>{user.email}</a></li>
+        <li class="nav-item"><a class="nav-link js-delete js-delete-no-confirm" href={DeleteSessionAction} data-testid="logout">Logout</a></li>
+    |]
+    Nothing -> [hsx|
+        <li class="nav-item"><a class="nav-link" href={NewSessionAction}>Login</a></li>
+    |]
 
 -- The 'assetPath' function used below appends a `?v=SOME_VERSION` to the static assets in production
 -- This is useful to avoid users having old CSS and JS files in their browser cache once a new version is deployed
@@ -53,6 +84,7 @@ scripts = [hsx|
         <script src={assetPath "/vendor/turbolinksMorphdom.js"}></script>
         <script src={assetPath "/helpers.js"}></script>
         <script src={assetPath "/ihp-auto-refresh.js"}></script>
+        <script src={assetPath "/halemans-live.js"}></script>
         <script src={assetPath "/app.js"}></script>
     |]
 
@@ -65,9 +97,6 @@ metaTags :: Html
 metaTags = [hsx|
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"/>
-    <meta property="og:title" content="App"/>
-    <meta property="og:type" content="website"/>
-    <meta property="og:url" content="TODO"/>
-    <meta property="og:description" content="TODO"/>
+    <meta property="og:title" content="Halemans"/>
     {autoRefreshMeta}
 |]

@@ -4,7 +4,7 @@
 let
     seedHalemans = pkgs.writeShellApplication {
         name = "seed-halemans";
-        runtimeInputs = [ pkgs.postgresql pkgs.coreutils halemansLib.ensureTokens ];
+        runtimeInputs = [ pkgs.postgresql pkgs.coreutils halemansLib.ensureTokens halemansLib.hashPassword ];
         text = builtins.readFile ./scripts/seed-halemans.sh;
     };
 

@@ -4,18 +4,56 @@
 let
     ensureTokens = pkgs.writeShellApplication {
         name = "halemans-ensure-tokens";
-        runtimeInputs = [ pkgs.coreutils ];
+        runtimeInputs = [ pkgs.coreutils pkgs.openssl pkgs.gnused pkgs.jq ];
         text = ''
             state="''${DEVENV_STATE:?}/halemans"
             mkdir -p "$state"
             gen() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
             [ -f "$state/am-hook-token" ]      || gen > "$state/am-hook-token"
             [ -f "$state/generic-hook-token" ] || gen > "$state/generic-hook-token"
+
+            # Dev user passwords (milestone 1 D2): fixed-per-environment,
+            # gitignored like the other tokens.
+            [ -f "$state/admin-password" ]  || gen > "$state/admin-password"
+            [ -f "$state/sre-password" ]    || gen > "$state/sre-password"
+            [ -f "$state/viewer-password" ] || gen > "$state/viewer-password"
+
+            # VAPID keypair for Web Push (milestone 1 D10). vapid.json holds
+            # base64url raw keys: private = 32-byte scalar, public = 65-byte
+            # uncompressed point (0x04 || X || Y).
+            if [ ! -f "$state/vapid.json" ]; then
+                openssl ecparam -name prime256v1 -genkey -noout -out "$state/vapid.pem.tmp"
+                priv_hex="$(openssl ec -in "$state/vapid.pem.tmp" -noout -text 2>/dev/null \
+                    | awk '/^priv:/{f=1;next} /^pub:/{f=0} f' | tr -d ' :\n')"
+                # shellcheck disable=SC2034 # pub block ends at ASN1 OID
+                pub_hex="$(openssl ec -in "$state/vapid.pem.tmp" -noout -text 2>/dev/null \
+                    | awk '/^pub:/{f=1;next} /^ASN1 OID:/{f=0} f' | tr -d ' :\n')"
+                rm -f "$state/vapid.pem.tmp"
+                # strip a leading 00 padding byte from the scalar if present
+                if [ "''${#priv_hex}" = 66 ]; then priv_hex="''${priv_hex#00}"; fi
+                b64url() { sed 's/\(..\)/\\x\1/g' | { IFS= read -r esc; printf '%b' "$esc"; } | base64 -w0 | tr '+/' '-_' | tr -d '='; }
+                priv_b64="$(printf %s "$priv_hex" | b64url)"
+                pub_b64="$(printf %s "$pub_hex" | b64url)"
+                jq -n --arg pub "$pub_b64" --arg priv "$priv_b64" \
+                    '{publicKey: $pub, privateKey: $priv}' > "$state/vapid.json"
+            fi
+
             {
                 printf 'export HALEMANS_AM_HOOK_TOKEN="%s"\n'      "$(cat "$state/am-hook-token")"
                 printf 'export HALEMANS_GENERIC_HOOK_TOKEN="%s"\n' "$(cat "$state/generic-hook-token")"
+                printf 'export HALEMANS_ADMIN_PASSWORD="%s"\n'     "$(cat "$state/admin-password")"
+                printf 'export HALEMANS_SRE_PASSWORD="%s"\n'       "$(cat "$state/sre-password")"
+                printf 'export HALEMANS_VIEWER_PASSWORD="%s"\n'    "$(cat "$state/viewer-password")"
+                printf 'export HALEMANS_VAPID_JSON="%s"\n'         "$state/vapid.json"
+                printf 'export HALEMANS_VAPID_PUBLIC_KEY="%s"\n'   "$(jq -r .publicKey "$state/vapid.json")"
             } > "$state/env.sh"
         '';
+    };
+
+    hashPassword = pkgs.writeShellApplication {
+        name = "halemans-hash-password";
+        runtimeInputs = [ pkgs.python3 ];
+        text = ''exec python3 ${./scripts/hash-password.py} "$1"'';
     };
 
     # @HALEMANS_AM_HOOK_TOKEN@ is substituted at process start (runtime secret).
@@ -133,6 +171,6 @@ let
     '';
 in
 {
-    inherit ensureTokens alertmanagerConfigTemplate grafanaIni grafanaProvisioning;
+    inherit ensureTokens hashPassword alertmanagerConfigTemplate grafanaIni grafanaProvisioning;
     inherit zabbixServerConfTemplate zabbixWebConfTemplate zabbixAgentConfTemplate;
 }

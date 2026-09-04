@@ -4,10 +4,12 @@ import Test.Hspec
 import IHP.Prelude
 
 -- Import your test specs here:
--- import Test.MySpec
+import qualified Test.StateMachineSpec
+import qualified Test.BlackoutsSpec
+import qualified Test.PushSpec
 
 main :: IO ()
 main = hspec do
-    describe "Example" do
-        it "should pass" do
-            1 + 1 `shouldBe` (2 :: Int)
+    Test.StateMachineSpec.spec
+    Test.BlackoutsSpec.spec
+    Test.PushSpec.spec

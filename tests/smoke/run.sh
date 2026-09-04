@@ -31,6 +31,16 @@ alert_id_by_fingerprint_prefix() { # <prefix> <title>
         "SELECT id FROM alerts WHERE fingerprint LIKE '$1%' AND title = '$2' ORDER BY created_at DESC LIMIT 1" 2>/dev/null
 }
 
+# Auth (milestone 1): UI assertions run as sre@dev in a cookie jar.
+COOKIES="$TMPDIR/halemans-smoke-cookies.txt"
+login_as() { # <email> <password>
+    rm -f "$COOKIES"
+    curl -sf -c "$COOKIES" "$APP_URL/NewSession" > /dev/null || return 1
+    curl -sf -b "$COOKIES" -c "$COOKIES" -o /dev/null \
+        -d "email=$1" -d "password=$2" "$APP_URL/CreateSession" || return 1
+    curl -sf -b "$COOKIES" -o /dev/null "$APP_URL/"
+}
+
 # assert_alert_card <title-substring> <fingerprint-prefix>
 assert_alert_card() {
     local title="$1" prefix="$2" id
@@ -38,14 +48,18 @@ assert_alert_card() {
     if [ -z "$id" ]; then
         return 1
     fi
-    curl -sf "$APP_URL/alerts/$id" | grep -q "$title"
+    curl -sf -b "$COOKIES" "$APP_URL/alerts/$id" | grep -q "$title"
 }
 
 scenario() { printf 'scenario: %s\n' "$1"; }
 
 # ---------------------------------------------------------------- stack health
 scenario "stack health"
-curl -sf "$APP_URL/alerts" > /dev/null && pass "app reachable" || fail "app reachable"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/alerts")" = "302" ] \
+    && pass "anonymous /alerts redirects to login" || fail "anonymous /alerts redirects to login"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" \
+    && pass "login as sre@dev" || fail "login as sre@dev"
+curl -sf -b "$COOKIES" "$APP_URL/alerts" > /dev/null && pass "app reachable (authed)" || fail "app reachable (authed)"
 psql "$DATABASE_URL" -tA -c "SELECT 1" > /dev/null 2>&1 && pass "app db reachable" || fail "app db reachable"
 [ -n "$(psql "$DATABASE_URL" -tA -c "SELECT 1 FROM poll_zabbix_jobs WHERE status = 'job_status_succeeded' LIMIT 1" 2>/dev/null)" ] \
     && pass "worker runs poller jobs" || fail "worker runs poller jobs"
@@ -106,6 +120,28 @@ fi
 fire-test-alert-grafana resolve || fail "grafana: resolve threshold set"
 wait_sql "grafana alert resolved" 90 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'grafana:%' AND status = 'resolved' LIMIT 1" \
     && pass "grafana alert resolved" || fail "grafana alert resolved"
+
+# ---------------------------------------------------------------- rbac
+scenario "rbac"
+# All source scenarios above end resolved; fire a fresh alert to probe against.
+generic_token=$(cat "$STATE/halemans/generic-hook-token")
+now_rfc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+curl -sf -H 'Content-Type: application/json' -d "{\"version\":\"4\",\"status\":\"firing\",\"receiver\":\"halemans\",\"alerts\":[{\"status\":\"firing\",\"labels\":{\"alertname\":\"rbac-probe\",\"env\":\"dev\",\"host\":\"dev-host-01\",\"severity\":\"warning\",\"check\":\"rbac\"},\"annotations\":{\"summary\":\"rbac probe\"},\"startsAt\":\"$now_rfc\",\"fingerprint\":\"rbac-probe-$RANDOM\"}]}" \
+    "$APP_URL/hooks/generic/$generic_token" > /dev/null || fail "rbac: probe alert post"
+rbac_fp=$(psql "$DATABASE_URL" -tA -c "SELECT fingerprint FROM alerts WHERE check_name = 'rbac' ORDER BY created_at DESC LIMIT 1" 2>/dev/null)
+wait_sql "rbac probe alert firing" 30 "SELECT 1 FROM alerts WHERE fingerprint = '$rbac_fp' AND status = 'firing' LIMIT 1" || true
+firing_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM alerts WHERE fingerprint = '$rbac_fp' LIMIT 1" 2>/dev/null)
+if [ -n "$firing_id" ]; then
+    rm -f "$COOKIES"
+    login_as "viewer@dev" "$(cat "$STATE/halemans/viewer-password")" > /dev/null 2>&1
+    [ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' -X POST "$APP_URL/alerts/$firing_id/ack")" = "403" ] \
+        && pass "viewer cannot ack (403)" || fail "viewer cannot ack (403)"
+    [ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' -X POST "$APP_URL/alerts/$firing_id/close")" = "403" ] \
+        && pass "viewer cannot close (403)" || fail "viewer cannot close (403)"
+    login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+else
+    fail "rbac (no firing alert to probe)"
+fi
 
 echo
 if [ "$failures" = 0 ]; then

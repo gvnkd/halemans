@@ -4,6 +4,8 @@ import Web.Controller.Prelude
 import Web.View.Sources.Index
 
 instance Controller SourcesController where
+    beforeAction = ensureIsUser
+
     action SourcesAction = do
         sources <- query @Source
             |> orderByAsc #name

@@ -1,0 +1,83 @@
+/* Halemans theme tokens (milestone_1.md §6). Theme packs land in phase 3;
+   ship dark (default) + light now, switched via [data-theme] on <html>. */
+
+:root, [data-theme="dark"] {
+    --bg: #1e1e2e;
+    --surface: #2a2a3c;
+    --text: #cdd6f4;
+    --text-muted: #9399b2;
+    --severity-critical: #f38ba8;
+    --severity-high: #fab387;
+    --severity-warning: #f9e2af;
+    --severity-info: #89b4fa;
+    --status-firing: #f38ba8;
+    --status-ack: #f9e2af;
+    --status-resolved: #a6e3a1;
+    --status-closed: #9399b2;
+    --status-suppressed: #6c7086;
+}
+
+[data-theme="light"] {
+    --bg: #eff1f5;
+    --surface: #ffffff;
+    --text: #4c4f69;
+    --text-muted: #6c6f85;
+    --severity-critical: #d20f39;
+    --severity-high: #fe640b;
+    --severity-warning: #df8e1d;
+    --severity-info: #1e66f5;
+    --status-firing: #d20f39;
+    --status-ack: #df8e1d;
+    --status-resolved: #40a02b;
+    --status-closed: #6c6f85;
+    --status-suppressed: #9ca0b0;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+}
+
+.card, .table, .form-control, .form-select {
+    background: var(--surface);
+    color: var(--text);
+}
+.table { --bs-table-bg: var(--surface); --bs-table-color: var(--text); }
+
+.severity-badge.severity-critical { background: var(--severity-critical); color: var(--bg); }
+.severity-badge.severity-high { background: var(--severity-high); color: var(--bg); }
+.severity-badge.severity-warning { background: var(--severity-warning); color: var(--bg); }
+.severity-badge.severity-info { background: var(--severity-info); color: var(--bg); }
+
+.status-badge.status-firing { background: var(--status-firing); color: var(--bg); }
+.status-badge.status-ack { background: var(--status-ack); color: var(--bg); }
+.status-badge.status-resolved { background: var(--status-resolved); color: var(--bg); }
+.status-badge.status-closed { background: var(--status-closed); color: var(--bg); }
+.status-suppressed { background: var(--status-suppressed); color: var(--text); }
+
+.alert-row.suppressed { opacity: 0.5; }
+
+.env-card { border-left: 4px solid var(--status-closed); }
+.env-card-critical { border-left-color: var(--severity-critical); }
+.env-card-high { border-left-color: var(--severity-high); }
+.env-card-warning { border-left-color: var(--severity-warning); }
+.env-card-info { border-left-color: var(--severity-info); }
+
+.env-counts .count { margin-right: 0.75rem; font-size: 0.9rem; }
+.count.status-firing { color: var(--status-firing); }
+.count.status-ack { color: var(--status-ack); }
+.count.status-resolved { color: var(--status-resolved); }
+.count.status-suppressed { color: var(--text-muted); }
+
+.env-hourly { margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); }
+.hourly-bucket { margin-right: 0.5rem; }
+
+.timeline { list-style: none; padding-left: 0; }
+.timeline-event { padding: 0.25rem 0; border-bottom: 1px solid var(--surface); }
+.timeline-kind { display: inline-block; min-width: 7rem; font-weight: 600; }
+.timeline-time { color: var(--text-muted); margin-right: 0.5rem; }
+.timeline-payload { color: var(--text-muted); font-size: 0.85rem; }
+
+.json-viewer { background: var(--surface); padding: 0.75rem; overflow-x: auto; }
+
+#push-banner { cursor: pointer; }

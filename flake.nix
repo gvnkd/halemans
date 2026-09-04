@@ -20,7 +20,7 @@
 
             perSystem = { pkgs, config, lib, ... }: {
                 # Smoke check (milestone 0 §6) lives in ./nix/checks.nix.
-                checks = import ./nix/checks.nix { inherit pkgs lib config self; };
+                checks = import ./nix/checks.nix { inherit pkgs lib config self; ihpLib = inputs.ihp.packages.${pkgs.system}.ihp-env-var-backwards-compat; };
 
                 ihp = {
                     appName = "app"; # Change this to your project name
@@ -40,6 +40,14 @@
                         vector
                         wreq
                         ihp-typed-sql
+                        # milestone 1: websocket fan-out + web push
+                        ihp-pglistener
+                        cryptonite
+                        memory
+                        http-client
+                        http-client-tls
+                        http-types
+                        base64-bytestring
                         # ihp-mail           # Email support: https://ihp.digitallyinduced.com/Guide/mail.html
                         # ihp-datasync       # Real-time DataSync
                         # ihp-job-dashboard  # Job dashboard UI
@@ -51,6 +59,7 @@
                         hlint
                         hspec
                         ihp-hspec
+                        process
                     ];
 
                     # Hoogle documentation server (enabled by default on port 8002)

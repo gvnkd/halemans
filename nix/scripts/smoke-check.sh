@@ -58,7 +58,32 @@ INSERT INTO webhook_tokens (source_id, token)
 SELECT id, :'generic_token' FROM sources WHERE type = 'grafana';
 -- kick the (zabbix-less here) self-rescheduling poller loop
 INSERT INTO poll_zabbix_jobs DEFAULT VALUES;
+INSERT INTO auto_close_jobs DEFAULT VALUES;
 SQL
+
+# Dev users + roles (milestone 1 D2): same SQL-only path as seed-halemans.
+psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO roles (name, privileges) VALUES
+    ('admin',  '{view,ack,close,escalate,manage_blackouts,manage_rules,manage_users,manage_sources,admin}'),
+    ('sre',    '{view,ack,close,escalate}'),
+    ('viewer', '{view}');
+SQL
+# Passwords are hex (halemans-ensure-tokens `gen`), so colon-split is safe.
+printf '%s\n' \
+    "admin@dev:$HALEMANS_ADMIN_PASSWORD:admin" \
+    "sre@dev:$HALEMANS_SRE_PASSWORD:sre" \
+    "viewer@dev:$HALEMANS_VIEWER_PASSWORD:viewer" \
+| while IFS=: read -r email pass role; do
+    hash="$(halemans-hash-password "$pass")"
+    psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+        -v email="$email" -v hash="$hash" -v role="$role" <<'SQL'
+INSERT INTO users (email, password_hash, display_name)
+VALUES (:'email', :'hash', :'email');
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r
+WHERE u.email = :'email' AND r.name = :'role';
+SQL
+done
 
 # --- alertmanager -------------------------------------------------------------
 amcfg="$DEVENV_STATE/alertmanager"
@@ -132,5 +157,10 @@ curl -sf "$HALEMANS_APP_URL/alerts" > /dev/null || {
 
 # --- smoke ----------------------------------------------------------------------
 bash "$SMOKE_RUN"
+
+# --- playwright (milestone 1 §10) -------------------------------------------------
+export HOME="$T/home" # chromium wants a writable home in the sandbox
+mkdir -p "$HOME"
+python3 "$PLAYWRIGHT_SUITE"
 
 echo "smoke check: OK" > "$out"
