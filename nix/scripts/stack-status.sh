@@ -6,9 +6,6 @@ check() { # name ok?
     if [ "$2" = 0 ]; then printf '  %-22s OK\n' "$1"; else printf '  %-22s FAIL\n' "$1"; ok=1; fi
 }
 
-echo "docker:"
-if docker info > /dev/null 2>&1; then check "daemon" 0; else check "daemon" 1; fi
-
 echo "services:"
 curl -sf "${HALEMANS_ZABBIX_URL:-http://127.0.0.1:10080}/api_jsonrpc.php" \
     -H 'Content-Type: application/json' \

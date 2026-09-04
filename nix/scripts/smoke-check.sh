@@ -11,8 +11,24 @@ export PATH="$HALEMANS_PROFILE/bin:$PATH"
 
 pids=""
 cleanup() {
+    rc=$?
     for p in $pids; do kill "$p" 2>/dev/null || true; done
     pg_ctl -D "$T/pgdata" stop -m immediate > /dev/null 2>&1 || true
+    if [ "$rc" != 0 ]; then
+        echo "=== poll_zabbix_jobs ===" >&2
+        psql -h "$PGHOST" -d app -c "SELECT status, attempts_count, left(coalesce(last_error,''), 200) AS err FROM poll_zabbix_jobs ORDER BY created_at DESC LIMIT 5" >&2 || true
+        echo "=== zabbix problem.get ===" >&2
+        curl -s -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $(cat "$DEVENV_STATE/zabbix/token")" \
+            -d '{"jsonrpc":"2.0","method":"problem.get","params":{"output":"extend"},"id":1}' \
+            "http://127.0.0.1:10080/api_jsonrpc.php" >&2 || true
+        for f in zabbix-server zabbix-web app worker; do
+            if [ -f "$T/$f.log" ]; then
+                echo "=== tail $f.log ===" >&2
+                tail -20 "$T/$f.log" >&2
+            fi
+        done
+    fi
 }
 trap cleanup EXIT
 
@@ -66,6 +82,36 @@ for i in $(seq 1 30); do
 done
 seed-grafana
 
+# --- zabbix (native: server + PHP web frontend + agent) --------------------------
+zstate="$DEVENV_STATE/zabbix"
+mkdir -p "$zstate/sock"
+dbuser=$(psql -h "$PGHOST" -d postgres -tA -c "SELECT current_user")
+sed -e "s|@PGHOST@|$PGHOST|g" -e "s|@PGPORT@|5432|g" \
+    -e "s|@DBUSER@|$dbuser|g" -e "s|@STATE@|$zstate|g" \
+    "$ZABBIX_SERVER_TEMPLATE" > "$zstate/zabbix_server.conf"
+sed -e "s|@PGHOST@|$PGHOST|g" -e "s|@PGPORT@|5432|g" -e "s|@DBUSER@|$dbuser|g" \
+    "$ZABBIX_WEB_TEMPLATE" > "$zstate/zabbix.conf.php"
+sed -e "s|@STATE@|$zstate|g" \
+    "$ZABBIX_AGENT_TEMPLATE" > "$zstate/zabbix_agentd.conf"
+halemans-zabbix-db-init
+"$ZABBIX_SERVER_BIN" -c "$zstate/zabbix_server.conf" -f > "$T/zabbix-server.log" 2>&1 &
+pids="$pids $!"
+export ZABBIX_CONFIG="$zstate/zabbix.conf.php"
+"$PHP_BIN" -d memory_limit=256M -d max_execution_time=300 -d max_input_time=300 \
+    -d post_max_size=16M -d date.timezone=UTC \
+    -S 127.0.0.1:10080 -t "$ZABBIX_WEB_DIR" > "$T/zabbix-web.log" 2>&1 &
+pids="$pids $!"
+"$ZABBIX_AGENT_BIN" -c "$zstate/zabbix_agentd.conf" -f > "$T/zabbix-agent.log" 2>&1 &
+pids="$pids $!"
+for i in $(seq 1 30); do
+    curl -sf -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","method":"apiinfo.version","params":{},"id":1}' \
+        "http://127.0.0.1:10080/api_jsonrpc.php" 2>/dev/null | grep -q '"result"' && break
+    sleep 2
+done
+seed-zabbix
+export ZABBIX_TOKEN="$(cat "$DEVENV_STATE/zabbix/token")"
+
 # --- app + worker ---------------------------------------------------------------
 cd "$DEVENV_ROOT"
 PORT=28080 DATABASE_URL="$DATABASE_URL" "$RUN_PROD_SERVER" > "$T/app.log" 2>&1 &
@@ -85,6 +131,6 @@ curl -sf "$HALEMANS_APP_URL/alerts" > /dev/null || {
 }
 
 # --- smoke ----------------------------------------------------------------------
-SMOKE_ZABBIX=0 bash "$SMOKE_RUN"
+bash "$SMOKE_RUN"
 
 echo "smoke check: OK" > "$out"

@@ -18,9 +18,22 @@ item_id=$(curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer
     "$API" | jq -r '.result[0].itemid // empty')
 [ -n "$item_id" ] || { echo "fire-test-alert-zabbix: item $ITEM_KEY not found; run seed-zabbix first" >&2; exit 1; }
 
-curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
-    -d "$(jq -n --arg i "$item_id" --arg v "$value" \
-        '{jsonrpc:"2.0",method:"history.push",params:[{itemid:$i,value:$v}],id:1}')" \
-    "$API" | jq -e '.result' > /dev/null
+# history.push rejects items the server's config cache doesn't know yet
+# (freshly seeded items; cache syncs every CacheUpdateFrequency=5s). Retry
+# until accepted.
+pushed=0
+# shellcheck disable=SC2034
+for i in $(seq 1 30); do
+    resp=$(curl -sf -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+        -d "$(jq -n --arg i "$item_id" --arg v "$value" \
+            '{jsonrpc:"2.0",method:"history.push",params:[{itemid:$i,value:$v}],id:1}')" \
+        "$API")
+    if echo "$resp" | jq -e '.result.response == "success" and (.result.data | all(has("itemid")))' > /dev/null; then
+        pushed=1
+        break
+    fi
+    sleep 2
+done
+[ "$pushed" = 1 ] || { echo "fire-test-alert-zabbix: push never accepted" >&2; exit 1; }
 
 echo "fire-test-alert-zabbix: pushed value=$value to $ITEM_KEY"

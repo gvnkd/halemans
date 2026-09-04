@@ -1,13 +1,9 @@
-# checks.smoke — milestone 0 §6: boots an isolated instance of the Halemans
-# stack (postgres + grafana + alertmanager + app + jobs worker) inside the
-# nix build sandbox and runs the smoke suite against it.
-#
-# Zabbix is excluded here (SMOKE_ZABBIX=0): it runs in docker, and the docker
-# daemon socket is unreachable from the nix sandbox. The full three-source
-# suite runs against the dev stack via `smoke-test` (doc §7).
-#
-# Loopback networking works inside the sandbox, so the check uses the same
-# ports as the dev stack (28080/3001/9093) without conflicts.
+# checks.smoke — milestone 0 §6: boots an isolated instance of the full
+# Halemans stack (postgres + zabbix + grafana + alertmanager + app + jobs
+# worker) inside the nix build sandbox and runs the smoke suite against it.
+# All sources are native nixpkgs builds, so no docker is needed and the suite
+# covers all three sources. Loopback networking works inside the sandbox, so
+# the check uses the same ports as the dev stack without conflicts.
 { pkgs, lib, config, self }:
 let
     shell = config.devenv.shells.default;
@@ -32,6 +28,9 @@ in
             pkgs.gnused
             pkgs.grafana
             pkgs.prometheus-alertmanager
+            pkgs.zabbix70.server-pgsql
+            pkgs.zabbix70.agent
+            pkgs.php
         ];
 
         # Referenced by nix/scripts/smoke-check.sh
@@ -41,6 +40,13 @@ in
         GRAFANA_INI = halemansLib.grafanaIni;
         GRAFANA_HOME = "${pkgs.grafana}/share/grafana";
         AM_TEMPLATE = halemansLib.alertmanagerConfigTemplate;
+        ZABBIX_SERVER_TEMPLATE = halemansLib.zabbixServerConfTemplate;
+        ZABBIX_WEB_TEMPLATE = halemansLib.zabbixWebConfTemplate;
+        ZABBIX_AGENT_TEMPLATE = halemansLib.zabbixAgentConfTemplate;
+        ZABBIX_SERVER_BIN = "${pkgs.zabbix70.server-pgsql}/sbin/zabbix_server";
+        ZABBIX_WEB_DIR = "${pkgs.zabbix70.web}/share/zabbix";
+        ZABBIX_AGENT_BIN = "${pkgs.zabbix70.agent}/bin/zabbix_agentd";
+        PHP_BIN = "${pkgs.php}/bin/php";
         IHP_SCHEMA = "${config.packages.ihp-schema}/IHPSchema.sql";
         APP_SCHEMA = "${config.packages.schema}/Schema.sql";
         APP_FIXTURES = "${self}/Application/Fixtures.sql";

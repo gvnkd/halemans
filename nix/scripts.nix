@@ -85,7 +85,7 @@ in
             availability.restart = "no";
             depends_on = {
                 postgres.condition = "process_healthy";
-                zabbix-compose.condition = "process_started";
+                zabbix-web.condition = "process_healthy";
                 grafana.condition = "process_healthy";
                 alertmanager.condition = "process_healthy";
             };

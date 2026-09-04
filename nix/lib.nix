@@ -93,7 +93,46 @@ let
             group_interval: 10s
             repeat_interval: 1h
     '';
+
+    # @PGHOST@/@PGPORT@ and @STATE@ are substituted at process start.
+    zabbixServerConfTemplate = pkgs.writeText "zabbix_server.conf.tpl" ''
+        LogFile=@STATE@/server.log
+        PidFile=@STATE@/server.pid
+        SocketDir=@STATE@/sock
+        DBHost=@PGHOST@
+        DBPort=@PGPORT@
+        DBName=zabbix
+        DBUser=@DBUSER@
+        ListenIP=127.0.0.1
+        ListenPort=10051
+        StatsAllowedIP=127.0.0.1
+        CacheUpdateFrequency=5
+    '';
+
+    zabbixWebConfTemplate = pkgs.writeText "zabbix.conf.php.tpl" ''
+        <?php
+        $DB["TYPE"] = "POSTGRESQL";
+        $DB["SERVER"] = "@PGHOST@";
+        $DB["PORT"] = "@PGPORT@";
+        $DB["DATABASE"] = "zabbix";
+        $DB["USER"] = "@DBUSER@";
+        $DB["PASSWORD"] = "";
+        $DB["SCHEMA"] = "";
+        $ZBX_SERVER = "127.0.0.1";
+        $ZBX_SERVER_PORT = "10051";
+        $ZBX_SERVER_NAME = "halemans-dev";
+    '';
+
+    zabbixAgentConfTemplate = pkgs.writeText "zabbix_agentd.conf.tpl" ''
+        LogFile=@STATE@/agent.log
+        PidFile=@STATE@/agent.pid
+        Server=127.0.0.1
+        ListenIP=127.0.0.1
+        ListenPort=10050
+        Hostname=dev-host-01
+    '';
 in
 {
     inherit ensureTokens alertmanagerConfigTemplate grafanaIni grafanaProvisioning;
+    inherit zabbixServerConfTemplate zabbixWebConfTemplate zabbixAgentConfTemplate;
 }

@@ -26,15 +26,15 @@ wait_sql() {
     return 1
 }
 
-alert_id_by_fingerprint_prefix() {
+alert_id_by_fingerprint_prefix() { # <prefix> <title>
     psql "$DATABASE_URL" -tA -c \
-        "SELECT id FROM alerts WHERE fingerprint LIKE '$1%' ORDER BY created_at DESC LIMIT 1" 2>/dev/null
+        "SELECT id FROM alerts WHERE fingerprint LIKE '$1%' AND title = '$2' ORDER BY created_at DESC LIMIT 1" 2>/dev/null
 }
 
 # assert_alert_card <title-substring> <fingerprint-prefix>
 assert_alert_card() {
     local title="$1" prefix="$2" id
-    id=$(alert_id_by_fingerprint_prefix "$prefix")
+    id=$(alert_id_by_fingerprint_prefix "$prefix" "$title")
     if [ -z "$id" ]; then
         return 1
     fi
@@ -60,23 +60,22 @@ curl -sf -H "Authorization: Bearer $(cat "$STATE/grafana/token")" \
 curl -sf "$AM_URL/-/healthy" > /dev/null && pass "alertmanager healthy" || fail "alertmanager healthy"
 
 # ---------------------------------------------------------------- zabbix
-# Zabbix runs in docker and is only reachable from the devenv stack, so the
-# scenario is skipped when SMOKE_ZABBIX=0 (sandboxed nix flake check).
+# SMOKE_ZABBIX=0 is kept for running a native-only subset manually.
 if [ "${SMOKE_ZABBIX:-1}" != 0 ]; then
 scenario "zabbix"
 # On a fresh boot the worker's first GHCi compile can take minutes; wait for
 # the poller loop before firing so the 60s windows below stay meaningful.
 wait_sql "worker poller warm" 600 "SELECT 1 FROM poll_zabbix_jobs WHERE status = 'job_status_succeeded' LIMIT 1" \
     || fail "worker poller warm"
-fire-test-alert-zabbix
-if wait_sql "zabbix alert in db" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'zabbix:trigger:%' AND status = 'firing' LIMIT 1" \
+fire-test-alert-zabbix || fail "zabbix: fire push accepted"
+if wait_sql "zabbix alert in db" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'zabbix:trigger:%' AND title = 'halemans test trigger' AND status = 'firing' LIMIT 1" \
     && assert_alert_card "halemans test trigger" "zabbix:trigger:"; then
     pass "zabbix alert arrived and renders"
 else
     fail "zabbix alert arrived and renders"
 fi
-fire-test-alert-zabbix resolve
-wait_sql "zabbix alert resolved" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'zabbix:trigger:%' AND status = 'resolved' LIMIT 1" \
+fire-test-alert-zabbix resolve || fail "zabbix: resolve push accepted"
+wait_sql "zabbix alert resolved" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'zabbix:trigger:%' AND title = 'halemans test trigger' AND status = 'resolved' LIMIT 1" \
     && pass "zabbix alert resolved" || fail "zabbix alert resolved"
 else
     echo "scenario: zabbix (skipped, SMOKE_ZABBIX=0)"
@@ -84,27 +83,27 @@ fi
 
 # ---------------------------------------------------------------- alertmanager
 scenario "alertmanager"
-fire-test-alert-alertmanager
+fire-test-alert-alertmanager || fail "alertmanager: fire posted"
 if wait_sql "alertmanager alert in db" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'alertmanager:%' AND status = 'firing' LIMIT 1" \
     && assert_alert_card "Alertmanager dev test alert" "alertmanager:"; then
     pass "alertmanager alert arrived and renders"
 else
     fail "alertmanager alert arrived and renders"
 fi
-fire-test-alert-alertmanager resolve
+fire-test-alert-alertmanager resolve || fail "alertmanager: resolve posted"
 wait_sql "alertmanager alert resolved" 60 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'alertmanager:%' AND status = 'resolved' LIMIT 1" \
     && pass "alertmanager alert resolved" || fail "alertmanager alert resolved"
 
 # ---------------------------------------------------------------- grafana
 scenario "grafana"
-fire-test-alert-grafana
+fire-test-alert-grafana || fail "grafana: fire threshold set"
 if wait_sql "grafana alert in db" 90 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'grafana:%' AND status = 'firing' LIMIT 1" \
     && assert_alert_card "Dev CPU simulation alert" "grafana:"; then
     pass "grafana alert arrived and renders"
 else
     fail "grafana alert arrived and renders"
 fi
-fire-test-alert-grafana resolve
+fire-test-alert-grafana resolve || fail "grafana: resolve threshold set"
 wait_sql "grafana alert resolved" 90 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'grafana:%' AND status = 'resolved' LIMIT 1" \
     && pass "grafana alert resolved" || fail "grafana alert resolved"
 

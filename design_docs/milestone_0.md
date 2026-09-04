@@ -45,12 +45,12 @@ Grafana and Alertmanager are single static Go binaries in nixpkgs — run them a
 
 ### 3.1 Zabbix
 
-- **Approach: OCI containers via docker-compose (docker runtime), wrapped in a devenv process.** `zabbix-server-pgsql` + `zabbix-web-nginx-pgsql` + `zabbix-agent` official images, dedicated postgres service inside the compose project (isolated from the Halemans DB). Zabbix-server has no clean native nixpkgs service path outside NixOS modules; containerizing keeps the dev shell reproducible and matches upstream docs.
-- **Provisioning (idempotent script `seed-zabbix`)**: waits for API health, logs in with default `Admin/zabbix`, then via JSON-RPC:
-  - creates a dev API token (fixed name `halemans-dev`), writes it to `.devenv/state/zabbix/token` (gitignored) and exports `ZABBIX_TOKEN` via devenv env;
-  - registers host `dev-host-01` (zabbix-agent, env label `dev`);
-  - creates a controllable trigger pair: one item the seed script can flip problem/OK on demand (`fire-test-alert-zabbix`) so alert generation is deterministic, not timer-based.
-- Ports: API/web `10051/8080→localhost:10080` (avoid clash with IHP :8000).
+- **Approach: native nixpkgs processes (`zabbix70.server-pgsql` + `zabbix70.web` + `zabbix70.agent`), no docker.** (Revised during implementation — see §9.) The PHP frontend is served by `php -S` (built-in server) on `localhost:10080`; the JSON-RPC API lives there, not in `zabbix_server`. The zabbix DB is a separate `zabbix` database inside the devenv postgres; schema import (`schema.sql`/`images.sql`/`data.sql` shipped in the server package) runs idempotently from the server wrapper (`halemans-zabbix-db-init`). Server listens on `10051`, agent on `10050`.
+- **Provisioning (idempotent script `seed-zabbix`)**: waits for API health, then via JSON-RPC:
+  - creates a dev API token (fixed name `halemans-dev`, via `token.create` + `token.generate`), writes it to `.devenv/state/zabbix/token` (gitignored) and exports `ZABBIX_TOKEN` via devenv env;
+  - registers host `dev-host-01` (zabbix-agent, env label `dev`) and disables the default self-monitoring `Zabbix server` host (its OS template alerts are noise and confuse the smoke suite);
+  - creates a controllable trigger pair: one trapper item the seed script can flip problem/OK on demand (`fire-test-alert-zabbix`, via `history.push`) so alert generation is deterministic, not timer-based.
+- Ports: API/web `10080`, server `10051`, agent `10050` (localhost).
 
 ### 3.2 Grafana
 
@@ -78,16 +78,18 @@ Grafana and Alertmanager are single static Go binaries in nixpkgs — run them a
 
 ```
 process-compose (devenv up)
-├── postgres          (Halemans DB)
-├── zabbix-compose    (zabbix-server + zabbix-web + zabbix-agent + zabbix-db)
+├── postgres          (Halemans DB + zabbix DB)
+├── zabbix-server     (native; imports zabbix schema on first boot)
+├── zabbix-web        (native PHP frontend/API, php -S :10080)
+├── zabbix-agent      (native, dev-host-01)
 ├── grafana
 ├── alertmanager
-├── seed              (oneshot: seeds sources, tokens, fixtures; depends_on healthy)
-├── app               (IHP web)
-└── worker            (WorkerMain jobs)
+├── seed              (oneshot: seeds sources, tokens, fixtures; writes seed.done marker)
+├── app               (IHP web; waits for seed.done)
+└── worker            (WorkerMain jobs; waits for seed.done)
 ```
 
-Health gates: `seed` runs only after zabbix API, grafana API, alertmanager, and postgres all answer; `app`/`worker` start after `seed` completes so webhook tokens exist before receivers point at them.
+Health gates: `seed` runs only after zabbix-web (implies zabbix DB ready), grafana API, alertmanager, and postgres all answer; `app`/`worker` wait for the `seed.done` marker file (devenv 2.0's task wrapper never reports one-shot completion to process-compose, so a marker file replaces `process_completed_successfully`).
 
 ## 6. Smoke / E2E suite
 
@@ -125,7 +127,7 @@ These smoke tests double as the harness for Phase 1+: golden-payload unit tests 
 
 ## 9. Decisions
 
-- **Zabbix container runtime**: docker. The devenv module requires a docker daemon on the dev machine; no podman fallback.
+- **Zabbix runtime: native nixpkgs** (`zabbix70.server-pgsql`/`web`/`agent` as devenv processes). Initially docker-compose was chosen, but native turned out clean enough (schema SQL ships in the server package; the PHP frontend runs under `php -S`; zabbix DB is a separate database in the devenv postgres). This removes the docker daemon requirement entirely and lets the sandboxed `nix flake check` smoke suite cover zabbix too.
 - **Grafana unified alerting**: direct webhook to Halemans (`POST /hooks/generic/:token` contact point). The Alertmanager-forwarding path is deferred until the Phase 2 Alertmanager connector lands.
 
 ## 10. Implementation notes (as built)
@@ -137,7 +139,8 @@ These smoke tests double as the harness for Phase 1+: golden-payload unit tests 
 - **Grafana test rule**: `dev-cpu-sim` is API-provisioned by `seed-grafana` (upsert, canonical form restored on each seed); `fire-test-alert-grafana` flips the threshold between -1e9/+1e9 over the testdata `random_walk`. Rule uses reduce + `threshold` expressions (classic_conditions cannot consume expression inputs).
 - **Grafana timing**: scheduler tick stays at the default 10s; rule-group interval is 10s, notification policy group_wait 5s / group_interval 10s.
 - **Oneshot `seed` gating**: devenv 2.0's task wrapper never reports a finished one-shot process as completed, so `process_completed_successfully` never fires. App/worker instead wait for the marker file `.devenv/state/halemans/seed.done` written by `seed` (doc §5 intent preserved).
-- **`checks.smoke` (nix flake check)**: runs fully sandboxed and boots an isolated native stack (postgres + grafana + alertmanager + prod app + jobs worker) in `$TMPDIR`, then runs the smoke suite with `SMOKE_ZABBIX=0`. The zabbix scenario needs docker, which is unreachable from the nix sandbox (daemon socket is group-restricted), so the full three-source suite runs against the dev stack via `smoke-test`.
+- **`checks.smoke` (nix flake check)**: runs fully sandboxed and boots an isolated full stack (postgres + zabbix + grafana + alertmanager + prod app + jobs worker) in `$TMPDIR` — all sources native, no docker — then runs the complete smoke suite including the zabbix scenario.
+- **Zabbix config-cache timing**: `history.push` rejects items the server's config cache hasn't loaded yet (`data[].error` — note the 200/"success" envelope is misleading). The server template sets `CacheUpdateFrequency=5` and `fire-test-alert-zabbix` retries the push until accepted.
 - **First boot latency**: the worker's first GHCi compile takes minutes; the smoke suite waits for the poller loop to be warm before firing the zabbix test alert.
 - **devenv CLI wrapper**: when the current shell is a direnv-loaded devenv shell, `devenv up` reuses the shell's (possibly stale) `devenv-flake-up`. After changing `nix/*.nix`, restart the stack with `nix develop .#default --impure -c devenv-flake-up -D` or reload direnv.
 

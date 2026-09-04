@@ -34,7 +34,13 @@ if [ -f "$TOKEN_FILE" ] \
         | jq -e '.result' > /dev/null 2>&1; then
     echo "seed-zabbix: existing API token still valid, keeping it"
 else
-    session=$(api user.login '{"username":"Admin","password":"zabbix"}' | jq -r '.result')
+    session=""
+    for i in $(seq 1 30); do
+        session=$(api user.login '{"username":"Admin","password":"zabbix"}' 2>/dev/null | jq -r '.result // empty') || true
+        [ -n "$session" ] && break
+        sleep 2
+    done
+    [ -n "$session" ] || { echo "seed-zabbix: user.login failed" >&2; exit 1; }
     # token secrets are only shown by token.generate; drop stale ones and re-issue.
     old=$(api token.get '{"filter":{"name":["halemans-dev"]}}' "$session" \
         | jq -r '[.result[].tokenid] | join(",")')
@@ -57,6 +63,15 @@ if [ -z "$group_id" ]; then
 fi
 
 # --- host dev-host-01 ----------------------------------------------------------
+# Silence the default self-monitoring host (its OS/template alerts are noise
+# for the dev stack and confuse the smoke suite).
+zbx_srv_host=$(api host.get '{"filter":{"host":["Zabbix server"]},"output":["hostid","status"]}' "$TOKEN" \
+    | jq -r '.result[0] | select(.status == "0") | .hostid // empty')
+if [ -n "$zbx_srv_host" ]; then
+    api host.update "{\"hostid\":\"$zbx_srv_host\",\"status\":1}" "$TOKEN" > /dev/null
+    echo "seed-zabbix: disabled default 'Zabbix server' host"
+fi
+
 host_id=$(api host.get "{\"filter\":{\"host\":[\"$HOST_NAME\"]}}" "$TOKEN" \
     | jq -r '.result[0].hostid // empty')
 if [ -z "$host_id" ]; then
