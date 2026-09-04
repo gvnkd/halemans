@@ -26,3 +26,4 @@ IHP
 .devenv*
 devenv.local.nix
 .direnv
+__pycache__/
