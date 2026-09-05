@@ -47,6 +47,18 @@ POST /blackouts/{blackoutId}/delete  DeleteBlackoutAction
 [routes|ProfileController
 GET  /profile         ProfileAction
 POST /profile/theme   UpdateThemeAction
+POST /profile/api-tokens                          CreateApiTokenAction
+POST /profile/api-tokens/{apiTokenId}/revoke      RevokeApiTokenAction
+|]
+
+[routes|ApiController
+GET /api/v1/alerts              ApiAlertsAction
+GET /api/v1/alerts/{alertId}    ApiAlertAction
+GET /api/v1/environments        ApiEnvironmentsAction
+|]
+
+[routes|MetricsController
+GET /metrics    MetricsAction
 |]
 
 [routes|DashboardsController
@@ -130,6 +142,7 @@ POST /sources/{sourceId}/toggle     ToggleSourceAction
 
 [routes|AdminController
 GET  /admin    AdminAction
+POST /admin/api-tokens/{apiTokenId}/revoke    AdminRevokeApiTokenAction
 |]
 
 [routes|AuditController

@@ -25,6 +25,8 @@ import Web.Controller.Integrations
 import Web.Controller.LlmAdmin
 import Web.Controller.Admin
 import Web.Controller.Audit
+import Web.Controller.Api
+import Web.Controller.Metrics
 
 instance FrontController WebApplication where
     controllers =
@@ -50,6 +52,8 @@ instance FrontController WebApplication where
         , parseRoute @LlmAdminController
         , parseRoute @AdminController
         , parseRoute @AuditController
+        , parseRoute @ApiController
+        , parseRoute @MetricsController
         ]
 
 instance InitControllerContext WebApplication where

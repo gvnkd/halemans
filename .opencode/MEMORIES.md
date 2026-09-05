@@ -47,6 +47,17 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - Dev DB rebuild (when the dev DB is stale/partially migrated): terminate backends, DROP+CREATE DATABASE app, apply ihp-schema + Schema.sql + Fixtures, then `INSERT INTO schema_migrations` all revision numbers (table shape: `revision BIGINT NOT NULL UNIQUE`), rm seed.done, `process-compose process restart seed` (one process at a time; the multi-arg form prints usage).
 
 
+## Milestone 6 notes (public API + metrics)
+- Milestone 6 done: read-only JSON API (`/api/v1/alerts`, `/api/v1/alerts/:id`, `/api/v1/environments`), `/metrics` Prometheus exporter, `api_tokens` table, profile UI token mgmt + admin revoke-any (on `/admin`), per-token in-memory rate limit (Application/Service/Api/*).
+- typedSql: `LIMIT (${n} + 1)` infers Int (NOT Int64); UNION ALL string-literal columns (`'x' AS job`) and `status::text` decode as **Maybe** Text/Int64 — `fromMaybe` them. `coalesce(...)` counts as NOT NULL.
+- Token hash = sha256 hex via cryptonite `convertToBase Base16` (same as Llm/Prompt.hs); prefix = first 8 chars of plaintext. resolveToken touches last_used_at at most once/min.
+- Rate limits: 120/min API, 6/min /metrics; env overrides HALEMANS_API_RATE_LIMIT / HALEMANS_METRICS_RATE_LIMIT (read per request, tests/smoke rely on defaults).
+- Smoke token: checks.smoke exports HALEMANS_API_TOKEN="halemans-smoke-api-token-v1" (fixed test secret, sre@dev, both scopes); dev seed generates a random one into `.devenv/state/halemans/api-token` (name demo-cli). run.sh falls back to the state file.
+- Dev stack live DB socket is `/run/user/1000/devenv-*/postgres` — the stale direnv `/tmp/devenv-*` path fails; the running app's DATABASE_URL is in /proc/<RunDevServer>/environ.
+- Integration tests against the DEV db race the dev worker (it writes LLM analyses/events onto test alerts) — use future created_at (2999) and order-tolerant assertions; sandboxed check has no worker so it's deterministic there.
+- Run subsets: `ghci -v0 Test/Main.hs -e 'main'` / `ghci -v0 Test/Integration.hs -e 'System.Environment.withArgs ["--match","milestone 6"] main'` with DATABASE_URL exported.
+- Dev-DB smoke runs can fail pre-existing scenarios (write-back chip, audit csv header) from polluted dev state — only the sandboxed `nix flake check --impure` is authoritative.
+
 ## Commands
 - Full stack: `nix develop .#default --impure -c devenv-flake-up -D` (detached). Attach: `process-compose -u /run/user/1000/devenv-*/pc.sock process list`.
 - **Do NOT use the `devenv` CLI wrapper from a direnv-loaded shell** — it reuses the stale in-shell `devenv-flake-up` after nix/*.nix changes. Use the `nix develop` form above (or reload direnv).

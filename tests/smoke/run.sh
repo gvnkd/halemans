@@ -488,6 +488,81 @@ login_as "viewer@dev" "$(cat "$STATE/halemans/viewer-password")" > /dev/null 2>&
     && pass "audit export: viewer denied (403)" || fail "audit export: viewer denied (403)"
 login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
 
+# ------------------------------------------------- milestone 6: public API + metrics
+scenario "public API"
+API_TOKEN="${HALEMANS_API_TOKEN:-}"
+if [ -z "$API_TOKEN" ] && [ -f "$STATE/halemans/api-token" ]; then API_TOKEN="$(cat "$STATE/halemans/api-token")"; fi
+if [ -z "$API_TOKEN" ]; then
+    fail "public API (no demo token seeded)"
+else
+    api_body=$(curl -sf -H "Authorization: Bearer $API_TOKEN" "$APP_URL/api/v1/alerts?environment=dev&limit=500" || true)
+    echo "$api_body" | grep -q '"alerts"' \
+        && pass "api: alerts list responds" || fail "api: alerts list responds"
+    echo "$api_body" | grep -q '"check_name":"rbac"' \
+        && pass "api: fired probe alert appears in filtered list" || fail "api: fired probe alert appears in filtered list"
+    echo "$api_body" | grep -q '"next_cursor"' \
+        && pass "api: list envelope has next_cursor" || fail "api: list envelope has next_cursor"
+    detail_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM alerts WHERE check_name = 'rbac' ORDER BY created_at DESC LIMIT 1" 2>/dev/null)
+    detail_body=$(curl -sf -H "Authorization: Bearer $API_TOKEN" "$APP_URL/api/v1/alerts/$detail_id" || true)
+    echo "$detail_body" | grep -q '"timeline"' \
+        && echo "$detail_body" | grep -q '"llm_analysis"' \
+        && pass "api: alert detail has timeline + llm_analysis" || fail "api: alert detail has timeline + llm_analysis"
+    curl -sf -H "Authorization: Bearer $API_TOKEN" "$APP_URL/api/v1/environments" | grep -q '"worst_severity"' \
+        && pass "api: environments rollup" || fail "api: environments rollup"
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/api/v1/alerts")" = "401" ] \
+        && pass "api: missing token -> 401" || fail "api: missing token -> 401"
+    bad_body=$(curl -s -H "Authorization: Bearer $API_TOKEN" "$APP_URL/api/v1/alerts?cursor=garbage")
+    echo "$bad_body" | grep -q '"error":"bad_request"' \
+        && pass "api: bad cursor -> 400 json" || fail "api: bad cursor -> 400 json"
+    page1=$(curl -sf -H "Authorization: Bearer $API_TOKEN" "$APP_URL/api/v1/alerts?limit=1" || true)
+    cursor1=$(echo "$page1" | grep -o '"next_cursor":"[^"]*"' | head -1 | cut -d'"' -f4)
+    if [ -n "$cursor1" ]; then
+        curl -sf -H "Authorization: Bearer $API_TOKEN" "$APP_URL/api/v1/alerts?limit=1&cursor=$cursor1" | grep -q '"alerts"' \
+            && pass "api: cursor page 2" || fail "api: cursor page 2"
+    else
+        fail "api: cursor page 2 (no next_cursor)"
+    fi
+    wait_sql "api: last_used_at touched" 15 "SELECT 1 FROM api_tokens WHERE last_used_at IS NOT NULL LIMIT 1" \
+        && pass "api: last_used_at touched" || fail "api: last_used_at touched"
+
+    # metrics-only token: allowed on /metrics, forbidden on the alerts API,
+    # 401 once revoked.
+    METRICS_TOKEN="halemans-smoke-metrics-token-v1"
+    metrics_hash=$(printf %s "$METRICS_TOKEN" | sha256sum | cut -d' ' -f1)
+    metrics_token_id=$(psql "$DATABASE_URL" -tA -c \
+        "INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes)
+         SELECT id, 'smoke-metrics', '$metrics_hash', '${METRICS_TOKEN:0:8}', '{metrics}' FROM users WHERE email = 'sre@dev'
+         RETURNING id" 2>&1 | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $METRICS_TOKEN" "$APP_URL/api/v1/alerts")" = "403" ] \
+        && pass "api: metrics-only token -> 403 on alerts" || fail "api: metrics-only token -> 403 on alerts"
+    metrics_body=$(curl -sf -H "Authorization: Bearer $METRICS_TOKEN" "$APP_URL/metrics" || true)
+    echo "$metrics_body" | grep -q 'halemans_alerts{' \
+        && echo "$metrics_body" | grep -q 'halemans_source_healthy{' \
+        && echo "$metrics_body" | grep -q 'halemans_build_info{' \
+        && pass "metrics: scrape exposes alert/source/build series" || fail "metrics: scrape exposes alert/source/build series"
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/metrics")" = "401" ] \
+        && pass "metrics: missing token -> 401" || fail "metrics: missing token -> 401"
+
+    # rate limit (default 6/min for /metrics): hammer until 429, then recover.
+    got_429=""
+    for i in $(seq 1 10); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $METRICS_TOKEN" "$APP_URL/metrics")
+        if [ "$code" = "429" ]; then got_429=1; break; fi
+    done
+    [ -n "$got_429" ] \
+        && pass "metrics: rate limit -> 429" || fail "metrics: rate limit -> 429"
+    retry_after=$(curl -s -D - -o /dev/null -H "Authorization: Bearer $METRICS_TOKEN" "$APP_URL/metrics" | grep -i '^retry-after:' | tr -d '\r' | cut -d' ' -f2)
+    [ -n "$retry_after" ] \
+        && pass "metrics: 429 carries Retry-After" || fail "metrics: 429 carries Retry-After"
+    sleep 12
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $METRICS_TOKEN" "$APP_URL/metrics")" = "200" ] \
+        && pass "metrics: bucket refills after waiting" || fail "metrics: bucket refills after waiting"
+
+    psql "$DATABASE_URL" -c "UPDATE api_tokens SET revoked_at = NOW() WHERE id = '$metrics_token_id'" > /dev/null 2>&1
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $METRICS_TOKEN" "$APP_URL/metrics")" = "401" ] \
+        && pass "metrics: revoked token -> 401" || fail "metrics: revoked token -> 401"
+fi
+
 echo
 if [ "$failures" = 0 ]; then
     echo "smoke: all scenarios passed"

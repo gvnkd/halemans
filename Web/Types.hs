@@ -46,6 +46,8 @@ data BlackoutsController
 data ProfileController
     = ProfileAction
     | UpdateThemeAction
+    | CreateApiTokenAction
+    | RevokeApiTokenAction { apiTokenId :: !(Id ApiToken) }
     deriving (Eq, Show)
 
 data DashboardsController
@@ -76,6 +78,7 @@ data LlmAdminController
 
 data AdminController
     = AdminAction
+    | AdminRevokeApiTokenAction { apiTokenId :: !(Id ApiToken) }
     deriving (Eq, Show, Data)
 
 data AuditController
@@ -91,6 +94,16 @@ data PushSubscriptionsController
 data LiveController
     = LiveController
     deriving (Eq, Show, Data)
+
+data ApiController
+    = ApiAlertsAction
+    | ApiAlertAction { alertId :: !(Id Alert) }
+    | ApiEnvironmentsAction
+    deriving (Eq, Show)
+
+data MetricsController
+    = MetricsAction
+    deriving (Eq, Show)
 
 data GroupsController
     = ShowGroupAction { groupId :: !(Id AlertGroup) }

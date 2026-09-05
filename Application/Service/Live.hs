@@ -2,6 +2,7 @@ module Application.Service.Live
 ( Scope (..)
 , liveBroadcastLoop
 , ensureBroadcaster
+, liveConnectionCount
 ) where
 
 import IHP.Prelude
@@ -52,6 +53,10 @@ registry = unsafePerformIO (newIORef [])
 broadcasterStarted :: IORef Bool
 broadcasterStarted = unsafePerformIO (newIORef False)
 {-# NOINLINE broadcasterStarted #-}
+
+-- Live connection gauge for the /metrics exporter (milestone_6.md §5).
+liveConnectionCount :: IO Int
+liveConnectionCount = length <$> readIORef registry
 
 -- | Connection loop of the /ws WSApp (see Web.Controller.Live).
 liveBroadcastLoop

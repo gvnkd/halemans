@@ -772,6 +772,70 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
+    # milestone 6: token management UI (design_docs/milestone_6.md §4/§9)
+    @check("profile API tokens: create (shown once), use, revoke")
+    def _():
+        page.goto(f"{APP}/profile")
+        page.get_by_test_id("api-token-create-form").wait_for()
+        page.get_by_test_id("api-token-name").fill("pw-token")
+        page.get_by_test_id("scope_metrics").check()
+        page.get_by_test_id("api-token-create").click()
+        # plaintext shown exactly once post-creation (rendered, not redirected)
+        page.get_by_test_id("api-token-plaintext").wait_for()
+        token = page.get_by_test_id("api-token-plaintext").inner_text().strip()
+        assert len(token) > 20, token
+        row = page.get_by_test_id("api-token-row").filter(has_text="pw-token")
+        row.wait_for()
+        # reload: the plaintext banner is gone
+        page.goto(f"{APP}/profile")
+        page.get_by_test_id("api-tokens-table").wait_for()
+        assert page.get_by_test_id("api-token-plaintext").count() == 0
+        # bearer call works; last_used_at fills
+        req = urllib.request.Request(f"{APP}/api/v1/alerts?limit=1",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200, resp.status
+            assert '"alerts"' in resp.read().decode()
+        used = wait_sql_value(f"SELECT last_used_at IS NOT NULL FROM api_tokens WHERE prefix = '{token[:8]}'", 15)
+        assert used == "t", used
+        # metrics scope works too
+        req = urllib.request.Request(f"{APP}/metrics",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200, resp.status
+        # revoke via the UI; the token dies immediately
+        page.get_by_test_id("api-token-row").filter(has_text="pw-token") \
+            .get_by_test_id("api-token-revoke").click()
+        page.get_by_test_id("api-token-row").filter(has_text="pw-token") \
+            .get_by_test_id("api-token-revoked").wait_for()
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{APP}/api/v1/alerts", headers={"Authorization": f"Bearer {token}"}))
+            raise AssertionError("expected 401 after revoke")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401, e.code
+
+    @check("admin revokes any user's API token")
+    def _():
+        token = os.environ.get("HALEMANS_API_TOKEN")
+        if not token:
+            token = open(os.path.join(STATE, "halemans", "api-token")).read().strip()
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin")
+        admin.get_by_test_id("admin-api-tokens-table").wait_for()
+        row = admin.get_by_test_id("admin-api-token-row").filter(has_text=token[:8])
+        row.get_by_test_id("admin-api-token-revoke").click()
+        row.get_by_text("revoked").wait_for()
+        admin.close()
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                f"{APP}/api/v1/alerts", headers={"Authorization": f"Bearer {token}"}))
+            raise AssertionError("expected 401 after admin revoke")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401, e.code
+        login(page, "sre")
+
     browser.close()
 
 print()

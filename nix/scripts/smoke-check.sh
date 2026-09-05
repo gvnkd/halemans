@@ -175,6 +175,18 @@ WHERE u.email = :'email' AND r.name = :'role';
 SQL
 done
 
+# Demo API token for the smoke API/metrics assertions (milestone 6 D8): fixed
+# test-only secret (the sandboxed DB is discarded after the check), both
+# scopes, for sre@dev. Keep in sync with seed-halemans.
+export HALEMANS_API_TOKEN="halemans-smoke-api-token-v1"
+api_token_hash="$(printf %s "$HALEMANS_API_TOKEN" | sha256sum | cut -d' ' -f1)"
+psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+    -v hash="$api_token_hash" -v prefix="${HALEMANS_API_TOKEN:0:8}" <<'SQL'
+INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes)
+SELECT u.id, 'smoke-cli', :'hash', :'prefix', '{alerts:read,metrics}'
+FROM users u WHERE u.email = 'sre@dev';
+SQL
+
 # Teams + default routing rules (milestone 2 D4/D5): same SQL as
 # seed-halemans. The default notification rule reproduces milestone-1
 # dispatch: severity >= high pages the sre team, throttled to 5m.

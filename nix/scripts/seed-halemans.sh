@@ -117,6 +117,23 @@ seed_user "admin@dev"  "${HALEMANS_ADMIN_PASSWORD:?}"  "admin"
 seed_user "sre@dev"    "${HALEMANS_SRE_PASSWORD:?}"    "sre"
 seed_user "viewer@dev" "${HALEMANS_VIEWER_PASSWORD:?}" "viewer"
 
+# Demo API token for the sre@dev user (milestone 6 D8): both scopes, plaintext
+# stored next to the other dev tokens; the DB only holds the sha256 hash.
+api_token_file="${DEVENV_STATE:?}/halemans/api-token"
+if [ ! -s "$api_token_file" ]; then
+    head -c 32 /dev/urandom | base64 -w0 | tr '+/' '-_' | tr -d '=' > "$api_token_file"
+fi
+api_token="$(cat "$api_token_file")"
+api_token_hash="$(printf %s "$api_token" | sha256sum | cut -d' ' -f1)"
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 \
+    -v hash="$api_token_hash" -v prefix="${api_token:0:8}" <<'SQL'
+INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes)
+SELECT u.id, 'demo-cli', :'hash', :'prefix', '{alerts:read,metrics}'
+FROM users u
+WHERE u.email = 'sre@dev'
+  AND NOT EXISTS (SELECT 1 FROM api_tokens t WHERE t.user_id = u.id AND t.name = 'demo-cli');
+SQL
+
 # Teams + default routing rules (milestone 2 D4/D5). The default notification
 # rule reproduces milestone-1 dispatch: severity >= high pages the sre team,
 # throttled to 5m.
