@@ -17,6 +17,8 @@ import qualified Test.ReconcileSpec
 import qualified Test.DashboardConfigSpec
 import qualified Test.ThemeSpec
 import qualified Test.LlmSpec
+import qualified Test.SourceHealthSpec
+import qualified Test.AuditExportSpec
 
 main :: IO ()
 main = hspec do
@@ -33,3 +35,5 @@ main = hspec do
     Test.DashboardConfigSpec.spec
     Test.ThemeSpec.spec
     Test.LlmSpec.spec
+    Test.SourceHealthSpec.spec
+    Test.AuditExportSpec.spec

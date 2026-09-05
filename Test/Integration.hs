@@ -13,6 +13,7 @@ import Data.Aeson (object)
 import Data.UUID.V4 (nextRandom)
 import Control.Monad (void, replicateM_)
 import Control.Exception (try, finally, SomeException)
+import Data.Int (Int64)
 import IHP.Job.Types (Job (..))
 import IHP.FrameworkConfig (FrameworkConfig, buildFrameworkConfig)
 import qualified Data.Text as Text
@@ -26,6 +27,9 @@ import Application.Job.AutoClose (unackExpiredAcks, unsuppressExpired)
 import Application.Job.Escalation (runDueTrackers)
 import Application.Job.EnrichAlert ()
 import Application.Job.LlmAnalysis ()
+import Application.Job.Retention ()
+import Application.Job.SourceHealth (checkSilence)
+import Application.Service.SourceHealth (healthFingerprint, recordFailure, recordSuccess)
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.WriteBack (executeAttempt)
 import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
@@ -57,7 +61,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec (spec >> llmSpec)
+        hspec (spec >> llmSpec >> m5Spec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -797,6 +801,110 @@ llmSpec = describe "llm enrichment (milestone 4)" do
             |> filterWhere (#analysisId, get #id analysis)
             |> fetch
         map (get #score) votes `shouldBe` [-1]
+
+m5Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+m5Spec = describe "milestone 5 hardening" do
+    it "retention prunes rows older than the configured window, keeps newer, idempotent" do
+        _ <- newRecord @RetentionConfig |> set #rawEventsDays 1 |> set #enabled True |> createRecord
+        stale <- newRecord @RawEvent |> set #payload (object []) |> createRecord
+        let staleId = get #id stale
+        _ <- sqlExecTyped [typedSql| UPDATE raw_events SET received_at = NOW() - INTERVAL '2 days' WHERE id = ${staleId} |]
+        fresh <- newRecord @RawEvent |> set #payload (object []) |> createRecord
+        perform =<< (newRecord @RetentionJob |> createRecord)
+        staleGone <- query @RawEvent |> filterWhere (#id, staleId) |> fetchOneOrNothing
+        staleGone `shouldBe` Nothing
+        freshKept <- query @RawEvent |> filterWhere (#id, get #id fresh) |> fetchOneOrNothing
+        isJust freshKept `shouldBe` True
+        oldRows <- sqlQueryTyped [typedSql| SELECT count(*) FROM raw_events WHERE received_at < NOW() - INTERVAL '1 day' |]
+        perform =<< (newRecord @RetentionJob |> createRecord)
+        oldRowsAfter <- sqlQueryTyped [typedSql| SELECT count(*) FROM raw_events WHERE received_at < NOW() - INTERVAL '1 day' |]
+        oldRowsAfter `shouldBe` (oldRows :: [Int64])
+        head oldRowsAfter `shouldBe` Just 0
+
+    it "disabled retention config skips deletion" do
+        _ <- newRecord @RetentionConfig |> set #rawEventsDays 0 |> set #enabled False |> createRecord
+        stale <- newRecord @RawEvent |> set #payload (object []) |> createRecord
+        let staleId = get #id stale
+        _ <- sqlExecTyped [typedSql| UPDATE raw_events SET received_at = NOW() - INTERVAL '2 days' WHERE id = ${staleId} |]
+        perform =<< (newRecord @RetentionJob |> createRecord)
+        kept <- query @RawEvent |> filterWhere (#id, staleId) |> fetchOneOrNothing
+        isJust kept `shouldBe` True
+        _ <- sqlExecTyped [typedSql| DELETE FROM raw_events WHERE id = ${staleId} |]
+        _ <- newRecord @RetentionConfig |> set #rawEventsDays 3650 |> set #enabled True |> createRecord
+        pure ()
+
+    it "source failures raise a warning internal alert, escalate at 5, recovery resolves" do
+        source <- integrationSource "webhook" "itest-webhook-health" "" (object [])
+        recordFailure source "connection refused"
+        Just alert <- query @Alert
+            |> filterWhere (#fingerprint, healthFingerprint (get #id source))
+            |> fetchOneOrNothing
+        alert.severity `shouldBe` "warning"
+        alert.status `shouldBe` "firing"
+        after1 <- fetch (get #id source)
+        after1.consecutiveFailures `shouldBe` 1
+        isJust after1.nextPollAt `shouldBe` True
+        after1.lastError `shouldBe` Just "connection refused"
+        replicateM_ 4 do
+            current <- fetch (get #id source)
+            recordFailure current "connection refused"
+        escalated <- fetch (get #id alert)
+        escalated.severity `shouldBe` "high"
+        events <- eventKinds (get #id alert)
+        events `shouldSatisfy` ("severity_upgraded" `elem`)
+        recovered <- fetch (get #id source)
+        recordSuccess recovered
+        reset <- fetch (get #id source)
+        reset.consecutiveFailures `shouldBe` 0
+        reset.nextPollAt `shouldBe` Nothing
+        resolved <- fetch (get #id alert)
+        resolved.status `shouldBe` "resolved"
+
+    it "webhook silence check flags a push source past 3x its expected interval" do
+        source <- integrationSource "alertmanager" "itest-silent" "" (object ["expectedIntervalSeconds" .= (10 :: Int)])
+        let sourceId = get #id source
+        _ <- sqlExecTyped [typedSql| UPDATE sources SET created_at = NOW() - INTERVAL '1 hour' WHERE id = ${sourceId} |]
+        checkSilence
+        alert <- query @Alert
+            |> filterWhere (#fingerprint, healthFingerprint sourceId)
+            |> fetchOneOrNothing
+        isJust alert `shouldBe` True
+
+    it "enrichment completion re-analyzes an alert analyzed before enrichment landed, exactly once" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        -- dev-host-01 + the trigger check are the subject the mocks carry
+        -- context for (milestone 3): the jira auto-link lands on enrichment,
+        -- after the first analysis, and changes the rendered prompt.
+        Just alertId <- ingest source (testEvent fp Firing)
+            { host = Just "dev-host-01", checkName = Just "halemans test trigger" }
+        first <- latestAnalysis alertId
+        performLatestJob (get #id first)
+        doneFirst <- fetch (get #id first)
+        doneFirst.status `shouldBe` "done"
+        enrichJob <- query @EnrichAlertJob
+            |> filterWhere (#alertId, alertId)
+            |> fetchOneOrNothing
+            >>= maybe (error "enrich job missing") pure
+        perform enrichJob
+        analyses <- query @LlmAnalysis
+            |> filterWhere (#alertId, alertId)
+            |> orderByAsc #createdAt
+            |> fetch
+        length analyses `shouldBe` 2
+        let second = analyses !! 1
+        second.errorMessage `shouldBe` Just "enrichment_retrigger"
+        performLatestJob (get #id second)
+        doneSecond <- fetch (get #id second)
+        doneSecond.status `shouldBe` "done"
+        doneSecond.dedupedFrom `shouldBe` Nothing
+        doneSecond.promptHash `shouldNotBe` doneFirst.promptHash
+        perform enrichJob
+        analysesAgain <- query @LlmAnalysis
+            |> filterWhere (#alertId, alertId)
+            |> fetch
+        length analysesAgain `shouldBe` 2
 
 ensureTemplate :: (?modelContext :: ModelContext) => IO LlmPromptTemplate
 ensureTemplate = do

@@ -15,6 +15,17 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 ## Milestone 4 notes
 - Mock LLM: mock-llm :18084 (nix/mocks/mock_llm.py, no auth). LLM_ENDPOINT/LLM_MODEL in env.sh (ensureTokens). Unauthenticated backdoors: POST /debug/fail/{429,500,malformed} (body {"times":N}), POST /debug/reset. Deterministic completions: "disk" in last user msg → disk analysis, else generic; fenced ```json block convention.
 
+## Milestone 5 notes (hardening)
+- wreq THROWS on connection failure (dead port) — connector `Either Text` only covers HTTP/parse errors. Pollers wrap calls in `try SomeException` before SourceHealth.recordFailure.
+- Source-health: fingerprint `halemans:source-health:<source_id>`, warning → high at 5 failures (severity_upgraded event); recordSuccess posts Resolved + resets backoff. Backoff: `interval × 2^failures` cap 30min, deterministic ±10% jitter from fingerprint hash (no random dep). Pollers skip sources with next_poll_at > now.
+- Webhook silence: SourceHealthJob (30s self-reschedule) checks sources with config.expectedIntervalSeconds; baseline = max(raw_events.received_at) or sources.created_at.
+- Enrichment re-analysis marker: llm_analyses.error_message = 'enrichment_retrigger' caps at one per alert; dedupe legitimately suppresses when context didn't change the prompt hash. Integration test needs host dev-host-01 + check "halemans test trigger" (only subject the mocks carry context for).
+- Audit export: GET /admin/audit/export (admin privilege), CSV/JSONL, scope ≤1 of environment/alert + time range (default 7d); audit_exports row inserted before streaming, row_count updated after. Job metrics page: /admin (JobMetrics.hs reads the 11 job tables; statuses job_status_*).
+- Session cookie name is SESSION (wai-session). WS clients must send {"type":"env","name":...} subscribe frames (masked) before receiving broadcasts.
+- typedSql: `${utctime}` params work (inferred from column/cast); `::timestamptz` cast on a Text param makes it infer UTCTime — pass UTCTime. `${uuid}` from Data.UUID. Multi-col results = labeled SqlRow, single-col = bare value (no `get #col`).
+- Perf harness: nix/scripts/perf-harness.sh (manual gate, not a flake check). psql generate_series seeding (deviation from design's Haskell seeder — ORM seeding too slow). 10k alerts: dashboard p95 ~6ms, WS fan-out ~5ms. Composite alert_events(alert_id,created_at) was NOT picked by the planner (alert_events_alert_id_idx suffices at 10k) → dropped; final index list: alerts(environment_id,status), alerts(fingerprint) WHERE status<>'closed'.
+- Playwright/smoke INSERT...RETURNING: grep-extract uuid (see inserted_id helper); M5 smoke cleans up its probe source with `UPDATE enabled=false` (alerts FK blocks DELETE).
+
 ## Milestone 4 notes (LLM enrichment)
 - Never name a column `error`: the generated `LlmAnalysis.error` field clashes with Prelude.error in every module importing Generated.Types (phase-4 uses `error_message`).
 - LlmAnalysisJob retries count `llm_analysis_jobs` ROWS per analysis (fresh requeued rows reset attempts_count — EnrichAlert's attemptsCount guard has the same unbounded-retry bug shape). Backoff via HALEMANS_LLM_BACKOFF_SECONDS="0,0,0" in checks; queuePollInterval 10s (default 60s makes 4-cycle retry tests time out).

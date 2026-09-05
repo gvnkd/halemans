@@ -3,6 +3,7 @@
 # Runs against the stack booted by smoke-check.sh; reads the same state dir.
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -60,6 +61,14 @@ def fire_generic_alert(fingerprint, severity="warning", status="firing", title="
         headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200, resp.status
+
+
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def inserted_id(insert_output):
+    # psql prints the command tag ("INSERT 0 1") after the RETURNING value
+    return UUID_RE.search(insert_output).group(0)
 
 
 def wait_sql_value(query, timeout=30):
@@ -671,6 +680,97 @@ with sync_playwright() as pw:
             urllib.request.urlopen(urllib.request.Request(
                 "http://127.0.0.1:18084/debug/reset", data=b"{}",
                 headers={"Content-Type": "application/json"}))
+
+    # ---------------------------------------------------------- milestone 5
+
+    @check("source health: dashboard shows the internal alert without reload")
+    def _():
+        page.goto(APP + "/")
+        page.get_by_test_id("env-cards").wait_for()
+        card = page.get_by_test_id("env-card").filter(has_text="dev").first
+        before = card.get_by_test_id("count-firing").inner_text()
+        src = sql("""INSERT INTO sources (type, name, base_url, poll_interval_seconds, config)
+                     VALUES ('zabbix', 'pw-health-source', 'http://127.0.0.1:9', 5,
+                             '{"tokenEnv":"ZABBIX_TOKEN"}'::jsonb) RETURNING id""")
+        src_id = inserted_id(src)
+        try:
+            deadline = time.time() + 180
+            while time.time() < deadline:
+                if sql(f"SELECT 1 FROM alerts WHERE fingerprint = 'halemans:source-health:{src_id}' AND status = 'firing' LIMIT 1"):
+                    break
+                time.sleep(1)
+            else:
+                raise AssertionError("source-health alert never appeared")
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                now_text = card.get_by_test_id("count-firing").inner_text()
+                if now_text != before:
+                    break
+                time.sleep(1)
+            else:
+                raise AssertionError(f"dashboard count never moved (was {before!r})")
+        finally:
+            # the alert row references the source; disabling stops the flapping
+            sql(f"UPDATE sources SET enabled = false WHERE id = '{src_id}'")
+    def _():
+        src = sql("""INSERT INTO sources (type, name, base_url, consecutive_failures, last_error, next_poll_at)
+                     VALUES ('webhook', 'pw-flaky-source', 'http://127.0.0.1:9', 3, 'boom', NOW() + interval '10 min')
+                     RETURNING id""")
+        src_id = inserted_id(src)
+        try:
+            admin = context.new_page()
+            login(admin, "admin")
+            admin.goto(f"{APP}/sources")
+            row = admin.get_by_test_id("source-row").filter(has_text="pw-flaky-source")
+            row.wait_for()
+            assert "failing" in row.get_by_test_id("source-health").inner_text()
+            assert row.get_by_test_id("source-failures").inner_text() == "3"
+            assert "boom" in row.get_by_test_id("source-last-error").inner_text()
+            sql(f"UPDATE sources SET consecutive_failures = 0, last_error = NULL, next_poll_at = NULL WHERE id = '{src_id}'")
+            admin.goto(f"{APP}/sources")
+            row = admin.get_by_test_id("source-row").filter(has_text="pw-flaky-source")
+            row.wait_for()
+            assert "healthy" in row.get_by_test_id("source-health").inner_text()
+            admin.close()
+        finally:
+            sql(f"DELETE FROM sources WHERE id = '{src_id}'")
+
+    @check("audit export: download + export log row, viewer denied")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        resp = admin.request.get(f"{APP}/admin/audit/export?format=csv")
+        assert resp.status == 200, resp.status
+        assert "attachment" in (resp.headers.get("content-disposition") or "")
+        body = resp.text()
+        assert body.startswith("event_id,created_at,alert_id"), body[:120]
+        row_count = wait_sql_value("SELECT row_count::text FROM audit_exports WHERE format = 'csv' ORDER BY created_at DESC LIMIT 1", 15)
+        assert row_count and int(row_count) >= 0, row_count
+        admin.goto(f"{APP}/admin/audit")
+        admin.get_by_test_id("audit-exports-table").wait_for()
+        admin.get_by_test_id("audit-export-row").first.wait_for()
+        admin.close()
+        viewer = context.new_page()
+        login(viewer, "viewer")
+        denied = viewer.evaluate("""async () => {
+            const res = await fetch('/admin/audit/export?format=csv');
+            return res.status;
+        }""")
+        assert denied == 403, denied
+        viewer.close()
+        login(page, "sre")
+
+    @check("admin job metrics page renders counters and failures table")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin")
+        admin.get_by_test_id("job-metrics-table").wait_for()
+        rows = admin.get_by_test_id("job-metrics-row").all()
+        assert len(rows) >= 10, f"metrics rows: {len(rows)}"
+        admin.get_by_test_id("job-failures-table").wait_for()
+        admin.close()
+        login(page, "sre")
 
     browser.close()
 

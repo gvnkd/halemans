@@ -10,12 +10,14 @@ import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
+import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import qualified Application.Connector.Alertmanager as Am
 import qualified Application.Connector.Grafana as Grafana
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Control.Monad (void)
+import Control.Exception (try, SomeException)
 import System.Environment (lookupEnv)
 
 -- Reconcile poller for grafana sources (design_docs/milestone_2.md §8): the
@@ -32,11 +34,12 @@ import System.Environment (lookupEnv)
 -- resolved.
 instance Job PollGrafanaJob where
     perform _job = do
+        now <- getCurrentTime
         sources <- query @Source
             |> filterWhere (#type_, "grafana" :: Text)
             |> filterWhere (#enabled, True)
             |> fetch
-        forM_ sources pollSource
+        forM_ (filter (pollDue now) sources) pollSource
 
         now <- getCurrentTime
         next <- newRecord @PollGrafanaJob
@@ -63,10 +66,14 @@ pollSource source = do
         Nothing -> pure () -- token not issued yet (seed not run); try next cycle
         Just token -> do
             now <- getCurrentTime
-            result <- Grafana.alertsGet source.baseUrl token
+            outcome <- try (Grafana.alertsGet source.baseUrl token)
+            result <- pure case outcome of
+                Left err -> Left (tshow (err :: SomeException))
+                Right result -> result
             case result of
-                Left _err -> pure () -- soft-fail; surfaced via logs in phase 5 (source health)
+                Left err -> recordFailure source err
                 Right alerts -> do
+                    recordSuccess source
                     -- 5-min overlap window on the cursor (§8) so a restarted
                     -- poller re-sees the tail and dedupe handles the rest.
                     let cutoff = addUTCTime (-300) (fromMaybe now source.lastSyncCursor)

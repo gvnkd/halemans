@@ -11,4 +11,6 @@ run = do
     _ <- newRecord @PollGrafanaJob |> createRecord
     _ <- newRecord @EscalationJob |> createRecord
     _ <- newRecord @JiraSyncJob |> createRecord
+    _ <- newRecord @RetentionJob |> createRecord
+    _ <- newRecord @SourceHealthJob |> createRecord
     pure ()

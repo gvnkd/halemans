@@ -79,6 +79,14 @@ $tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1);
 SQL
 
+# Default retention config (milestone 5 D10): 30 days raw_events, enabled.
+# Keep in sync with the inline seeding in nix/scripts/smoke-check.sh.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO retention_configs (raw_events_days, enabled)
+SELECT 30, true
+WHERE NOT EXISTS (SELECT 1 FROM retention_configs);
+SQL
+
 # Roles + dev users (milestone 1 D2). Passwords are hashed with the
 # pwstore-fast replica (nix/scripts/hash-password.py) so this stays pure SQL.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'

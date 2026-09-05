@@ -74,6 +74,15 @@ data LlmAdminController
     | TestLlmConnectionAction
     deriving (Eq, Show)
 
+data AdminController
+    = AdminAction
+    deriving (Eq, Show, Data)
+
+data AuditController
+    = AuditExportsAction
+    | ExportAuditAction
+    deriving (Eq, Show, Data)
+
 data PushSubscriptionsController
     = SubscribePushAction
     | UnsubscribePushAction

@@ -12,6 +12,8 @@ import Application.Helper.Ingest (publishAlertUpdate)
 import Data.Aeson (object, (.=))
 import Control.Exception (try, SomeException)
 import Control.Monad (void)
+import IHP.QueryBuilder
+import IHP.Fetch (fetchOneOrNothing)
 
 -- Enrichment pipeline step 8 (design_docs/milestone_3.md §3): on new alert
 -- only. CMDB + Jira lookups soft-fail independently — Confluence down still
@@ -19,6 +21,7 @@ import Control.Monad (void)
 -- with a subsystem tag and the job re-enqueues with a delay (max 3 runs).
 instance Job EnrichAlertJob where
     perform job = do
+        startedAt <- getCurrentTime
         alert <- fetch job.alertId
         source <- fetchMaybeSource alert
         failures <- case source of
@@ -52,8 +55,45 @@ instance Job EnrichAlertJob where
                     |> set #runAt (addUTCTime 60 now)
                     |> createRecord
         publishAlertUpdate alert "enriched"
+        maybeRetriggerAnalysis alert startedAt
 
     maxAttempts = 3
+
+-- Enrichment-triggered re-analysis (design_docs/milestone_5.md §7): an alert
+-- whose LLM analysis completed before this enrichment run gets exactly one
+-- automatic re-analysis so the fresh CMDB/Jira context is included. The
+-- marker (error_message = 'enrichment_retrigger') caps it at one per alert;
+-- prompt-hash dedupe in LlmAnalysisJob legitimately suppresses the rerun
+-- when the context did not actually change the prompt.
+retriggerMarker :: Text
+retriggerMarker = "enrichment_retrigger"
+
+maybeRetriggerAnalysis :: (?modelContext :: ModelContext) => Alert -> UTCTime -> IO ()
+maybeRetriggerAnalysis alert startedAt = do
+    doneBefore <- query @LlmAnalysis
+        |> filterWhere (#alertId, get #id alert)
+        |> filterWhere (#status, "done" :: Text)
+        |> filterWhereSql (#createdAt, "< " <> sqlQuote startedAt)
+        |> limit 1
+        |> fetchOneOrNothing
+    alreadyRetriggered <- query @LlmAnalysis
+        |> filterWhere (#alertId, get #id alert)
+        |> filterWhere (#errorMessage, Just retriggerMarker)
+        |> limit 1
+        |> fetchOneOrNothing
+    when (isJust doneBefore && isNothing alreadyRetriggered) do
+        void do
+            analysis <- newRecord @LlmAnalysis
+                |> set #alertId (get #id alert)
+                |> set #errorMessage (Just retriggerMarker)
+                |> createRecord
+            void do
+                newRecord @LlmAnalysisJob
+                    |> set #analysisId (get #id analysis)
+                    |> createRecord
+
+sqlQuote :: UTCTime -> Text
+sqlQuote time = "'" <> tshow time <> "'"
 
 fetchMaybeSource :: (?modelContext :: ModelContext) => Alert -> IO (Maybe Source)
 fetchMaybeSource alert = mapM fetch alert.sourceId

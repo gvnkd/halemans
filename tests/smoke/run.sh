@@ -427,6 +427,67 @@ else
     fail "write-back failure chip (insert failed)"
 fi
 
+# ------------------------------------------------- milestone 5: source health
+scenario "source health"
+# A polled zabbix source with a dead base_url: the poller records failures,
+# backs off, and raises an internal alert through the normal pipeline (§4).
+health_insert_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO sources (type, name, base_url, poll_interval_seconds, config) VALUES ('zabbix', 'smoke-health-source', 'http://127.0.0.1:9', 5, '{\"tokenEnv\":\"ZABBIX_TOKEN\"}'::jsonb) RETURNING id" 2>&1)
+health_src_id=$(printf '%s\n' "$health_insert_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+if [ -z "$health_src_id" ]; then echo "health source insert error: $health_insert_out" >&2; fi
+if [ -n "$health_src_id" ]; then
+    wait_sql "source-health alert firing" 120 "SELECT 1 FROM alerts WHERE fingerprint = 'halemans:source-health:$health_src_id' AND status = 'firing' AND severity = 'warning' LIMIT 1" \
+        && pass "source health: internal alert created" || fail "source health: internal alert created"
+    wait_sql "backoff state persisted" 30 "SELECT 1 FROM sources WHERE id = '$health_src_id' AND consecutive_failures >= 1 AND last_error IS NOT NULL AND next_poll_at IS NOT NULL LIMIT 1" \
+        && pass "source health: backoff state on source row" || fail "source health: backoff state on source row"
+    # recovery: point the source at the real zabbix; the next due poll
+    # succeeds, resets the backoff state and resolves the internal alert
+    psql "$DATABASE_URL" -c "UPDATE sources SET base_url = 'http://127.0.0.1:10080' WHERE id = '$health_src_id'" > /dev/null 2>&1
+    wait_sql "source-health alert resolved" 180 "SELECT 1 FROM alerts WHERE fingerprint = 'halemans:source-health:$health_src_id' AND status = 'resolved' LIMIT 1" \
+        && pass "source health: recovery resolves the alert" || fail "source health: recovery resolves the alert"
+    wait_sql "backoff state reset" 30 "SELECT 1 FROM sources WHERE id = '$health_src_id' AND consecutive_failures = 0 AND next_poll_at IS NULL LIMIT 1" \
+        && pass "source health: backoff reset on recovery" || fail "source health: backoff reset on recovery"
+    psql "$DATABASE_URL" -c "UPDATE sources SET enabled = false WHERE id = '$health_src_id'" > /dev/null 2>&1
+else
+    fail "source health (insert failed)"
+fi
+
+# ------------------------------------------------- milestone 5: retention
+scenario "retention"
+old_raw_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO raw_events (payload) VALUES ('{\"smoke\":\"old\"}'::jsonb) RETURNING id" 2>&1)
+old_raw_id=$(printf '%s\n' "$old_raw_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+psql "$DATABASE_URL" -c "UPDATE raw_events SET received_at = NOW() - INTERVAL '40 days' WHERE id = '$old_raw_id'" > /dev/null 2>&1
+fresh_raw_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO raw_events (payload) VALUES ('{\"smoke\":\"fresh\"}'::jsonb) RETURNING id" 2>&1)
+fresh_raw_id=$(printf '%s\n' "$fresh_raw_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+psql "$DATABASE_URL" -c "INSERT INTO retention_jobs DEFAULT VALUES" > /dev/null 2>&1
+for i in $(seq 1 90); do
+    if [ -z "$(psql "$DATABASE_URL" -tA -c "SELECT 1 FROM raw_events WHERE id = '$old_raw_id'" 2>/dev/null)" ]; then break; fi
+    sleep 1
+done
+[ -z "$(psql "$DATABASE_URL" -tA -c "SELECT 1 FROM raw_events WHERE id = '$old_raw_id'" 2>/dev/null)" ] \
+    && pass "retention: old raw event pruned" || fail "retention: old raw event pruned"
+[ -n "$(psql "$DATABASE_URL" -tA -c "SELECT 1 FROM raw_events WHERE id = '$fresh_raw_id'" 2>/dev/null)" ] \
+    && pass "retention: fresh raw event kept" || fail "retention: fresh raw event kept"
+
+# ------------------------------------------------- milestone 5: audit export
+scenario "audit export"
+login_as "admin@dev" "$(cat "$STATE/halemans/admin-password")" > /dev/null 2>&1 \
+    || fail "audit export: login as admin@dev"
+export_body=$(curl -sf -b "$COOKIES" "$APP_URL/admin/audit/export?format=csv" || true)
+echo "$export_body" | grep -q '^event_id,created_at,alert_id' \
+    && pass "audit export: csv header" || fail "audit export: csv header"
+wait_sql "audit_exports row recorded" 30 "SELECT 1 FROM audit_exports WHERE format = 'csv' AND row_count > 0 LIMIT 1" \
+    && pass "audit export: audit_exports row with row count" || fail "audit export: audit_exports row with row count"
+curl -sf -b "$COOKIES" "$APP_URL/admin/audit/export?format=jsonl" | head -1 | grep -q '"event_id"' \
+    && pass "audit export: jsonl rows" || fail "audit export: jsonl rows"
+curl -sf -b "$COOKIES" "$APP_URL/admin/audit" | grep -q 'audit-exports-table' \
+    && pass "audit export: admin page lists exports" || fail "audit export: admin page lists exports"
+curl -sf -b "$COOKIES" "$APP_URL/admin" | grep -q 'job-metrics-table' \
+    && pass "job metrics: admin page renders counters" || fail "job metrics: admin page renders counters"
+login_as "viewer@dev" "$(cat "$STATE/halemans/viewer-password")" > /dev/null 2>&1
+[ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$APP_URL/admin/audit/export?format=csv")" = "403" ] \
+    && pass "audit export: viewer denied (403)" || fail "audit export: viewer denied (403)"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+
 echo
 if [ "$failures" = 0 ]; then
     echo "smoke: all scenarios passed"

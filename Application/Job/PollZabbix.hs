@@ -10,6 +10,7 @@ import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingestEvents)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
+import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import qualified Application.Connector.Zabbix as Zabbix
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
@@ -18,6 +19,7 @@ import Data.Bits ((.&.))
 import Data.Either (fromRight)
 import Data.List (nub, sortOn)
 import Control.Monad (void)
+import Control.Exception (try, SomeException)
 import System.Environment (lookupEnv)
 
 -- Self-rescheduling zabbix poller (milestone 0). Seeded by EnqueuePollers
@@ -25,11 +27,12 @@ import System.Environment (lookupEnv)
 -- re-running seed never spawns a second loop.
 instance Job PollZabbixJob where
     perform _job = do
+        now <- getCurrentTime
         sources <- query @Source
             |> filterWhere (#type_, "zabbix" :: Text)
             |> filterWhere (#enabled, True)
             |> fetch
-        forM_ sources pollSource
+        forM_ (filter (pollDue now) sources) pollSource
 
         now <- getCurrentTime
         next <- newRecord @PollZabbixJob
@@ -57,10 +60,14 @@ pollSource source = do
         Nothing -> pure () -- token not issued yet (seed not run); try next cycle
         Just token -> do
             let cursor = fromMaybe 0 ((\t -> floor (utcTimeToPOSIXSeconds t) :: Integer) <$> source.lastSyncCursor)
-            result <- Zabbix.eventGet source.baseUrl token cursor
+            outcome <- try (Zabbix.eventGet source.baseUrl token cursor)
+            result <- pure case outcome of
+                Left err -> Left (tshow (err :: SomeException))
+                Right result -> result
             case result of
-                Left err -> pure () -- soft-fail; surfaced via logs in phase 5 (source health)
+                Left err -> recordFailure source err
                 Right events -> do
+                    recordSuccess source
                     ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl) events)
                     reconcileAcks source token
                     case maximumMaybe (map (.clock) events) of

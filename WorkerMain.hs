@@ -14,6 +14,8 @@ import Application.Job.EnrichAlert ()
 import Application.Job.WriteBack ()
 import Application.Job.JiraSync ()
 import Application.Job.LlmAnalysis ()
+import Application.Job.Retention ()
+import Application.Job.SourceHealth ()
 
 instance Worker RootApplication where
     workers _ =
@@ -26,5 +28,7 @@ instance Worker RootApplication where
         , worker @WriteBackJob
         , worker @JiraSyncJob
         , worker @LlmAnalysisJob
+        , worker @RetentionJob
+        , worker @SourceHealthJob
         -- Generator Marker
         ]

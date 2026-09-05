@@ -20,6 +20,10 @@ instance View IndexView where
                     <th>Base URL</th>
                     <th>Env</th>
                     <th>Enabled</th>
+                    <th>Health</th>
+                    <th>Failures</th>
+                    <th>Last error</th>
+                    <th>Next poll</th>
                     <th>Poll interval</th>
                     <th>Last sync</th>
                     {actionsHeader}
@@ -42,6 +46,9 @@ renderSourceRow :: Bool -> Source -> Html
 renderSourceRow canManage source =
     let sourceType = get #type_ source :: Text
         lastSync = maybe "never" (cs . show) source.lastSyncCursor :: Text
+        failures = show source.consecutiveFailures :: Text
+        lastError = fromMaybe "" source.lastError
+        nextPoll = maybe "on schedule" (cs . show) source.nextPollAt :: Text
     in [hsx|
     <tr data-source-type={sourceType} data-testid="source-row">
         <td>{source.name}</td>
@@ -49,6 +56,10 @@ renderSourceRow canManage source =
         <td>{source.baseUrl}</td>
         <td>{source.env}</td>
         <td>{enabledBadge}</td>
+        <td data-testid="source-health">{healthBadge}</td>
+        <td data-testid="source-failures">{failures}</td>
+        <td data-testid="source-last-error">{lastError}</td>
+        <td data-testid="source-next-poll">{nextPoll}</td>
         <td>{source.pollIntervalSeconds}s</td>
         <td data-testid="source-last-sync">{lastSync}</td>
         {actions}
@@ -58,6 +69,9 @@ renderSourceRow canManage source =
         enabledBadge = if source.enabled
             then [hsx|<span class="badge bg-success">enabled</span>|]
             else [hsx|<span class="badge bg-secondary">disabled</span>|]
+        healthBadge = if source.consecutiveFailures > 0
+            then [hsx|<span class="badge bg-danger">failing</span>|]
+            else [hsx|<span class="badge bg-success">healthy</span>|]
         actions = if not canManage
             then mempty
             else [hsx|

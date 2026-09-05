@@ -2,6 +2,7 @@ module Web.Controller.Hooks where
 
 import Web.Controller.Prelude
 import Application.Helper.Ingest (NormalizedEvent, ingestEvents)
+import Application.Service.SourceHealth (recordSuccess)
 import qualified Application.Connector.Alertmanager as Alertmanager
 import qualified Application.Connector.Grafana as Grafana
 import qualified Data.Aeson as Aeson
@@ -40,4 +41,5 @@ handleHook token normalize = do
                                         |> set #payload payload
                                         |> createRecord
                                     ingestEvents source events
+                                    recordSuccess source
                                     renderJson (Aeson.object ["status" .= ("ok" :: Text)])

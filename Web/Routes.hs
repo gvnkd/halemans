@@ -127,3 +127,12 @@ GET  /sources/{sourceId}/edit       EditSourceAction
 POST /sources/{sourceId}/update     UpdateSourceAction
 POST /sources/{sourceId}/toggle     ToggleSourceAction
 |]
+
+[routes|AdminController
+GET  /admin    AdminAction
+|]
+
+[routes|AuditController
+GET  /admin/audit           AuditExportsAction
+GET  /admin/audit/export    ExportAuditAction
+|]

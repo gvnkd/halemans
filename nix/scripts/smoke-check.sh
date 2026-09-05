@@ -61,6 +61,8 @@ INSERT INTO poll_zabbix_jobs DEFAULT VALUES;
 INSERT INTO auto_close_jobs DEFAULT VALUES;
 INSERT INTO poll_grafana_jobs DEFAULT VALUES;
 INSERT INTO escalation_jobs DEFAULT VALUES;
+INSERT INTO retention_jobs DEFAULT VALUES;
+INSERT INTO source_health_jobs DEFAULT VALUES;
 SQL
 
 # Enrichment/write-back source config + seeded CMDB cache row (milestone 3 D9):
@@ -109,6 +111,11 @@ SELECT 'alert_enrichment', 1, $tpl$You are an SRE assistant enriching an ops ale
 Analyze the probable cause of this alert using the context above and suggest concrete next steps for the on-call engineer.
 $tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1);
+
+-- Default retention config (milestone 5 D10): same as seed-halemans.
+INSERT INTO retention_configs (raw_events_days, enabled)
+SELECT 30, true
+WHERE NOT EXISTS (SELECT 1 FROM retention_configs);
 SQL
 
 # --- mock confluence + jira (milestone 3 D9) -----------------------------------
