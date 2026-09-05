@@ -90,6 +90,7 @@ in
                 alertmanager.condition = "process_healthy";
                 mock-confluence.condition = "process_healthy";
                 mock-jira.condition = "process_healthy";
+                mock-llm.condition = "process_healthy";
             };
         };
     };

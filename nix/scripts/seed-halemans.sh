@@ -44,6 +44,41 @@ WHERE h.fqdn = 'dev-host-01'
   AND NOT EXISTS (SELECT 1 FROM cmdb_entries c WHERE c.host_id = h.id);
 SQL
 
+# Default LLM prompt template (milestone 4 D9). Idempotent; keep in sync with
+# the inline seeding in nix/scripts/smoke-check.sh.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'alert_enrichment', 1, $tpl$You are an SRE assistant enriching an ops alert for the on-call engineer. Be concise; do not invent facts.
+
+## Alert
+- Title: {{alert.title}}
+- Severity: {{alert.severity}}
+- Environment: {{alert.env}}
+- Host: {{alert.host}}
+- Service: {{alert.service}}
+- Check: {{alert.check_name}}
+- Labels: {{alert.labels}}
+- Annotations: {{alert.annotations}}
+
+{{alert.description}}
+
+## Recent events
+{{events}}
+
+## CMDB context
+{{cmdb_excerpt}}
+
+## Similar past alerts
+{{similar_alerts}}
+
+## Linked Jira tickets
+{{jira_links}}
+
+Analyze the probable cause of this alert using the context above and suggest concrete next steps for the on-call engineer.
+$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1);
+SQL
+
 # Roles + dev users (milestone 1 D2). Passwords are hashed with the
 # pwstore-fast replica (nix/scripts/hash-password.py) so this stays pure SQL.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'

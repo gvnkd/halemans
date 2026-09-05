@@ -56,6 +56,7 @@ navigation = [hsx|
                     <li><a class="dropdown-item" href={NotificationRulesAction}>Notification rules</a></li>
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>Escalation policies</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>Integrations</a></li>
+                    <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>
                 </ul>
             </li>
         </ul>

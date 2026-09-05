@@ -1,0 +1,235 @@
+module Application.Job.LlmAnalysis where
+
+import IHP.Prelude
+import IHP.Job.Types
+import IHP.ModelSupport
+import IHP.QueryBuilder
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
+import Generated.Types
+import Data.Aeson (Value, object, (.=))
+import qualified Data.Aeson as Aeson
+import Control.Monad (void)
+import Application.Service.Llm
+import Application.Service.Llm.Prompt (buildPromptForAlert, BuiltPrompt (..))
+import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
+import Application.Service.Llm.Tools (toolDefinitions, executeToolCall)
+import qualified Application.Service.Llm.Budget as Budget
+import Application.Helper.Ingest (publishAlertUpdate)
+
+-- LLM enrichment job (design_docs/milestone_4.md §4/§6). One-shot per
+-- llm_analyses row; soft-fails only (D8) — the analysis result never feeds
+-- pipeline actions, notifications, or external calls.
+--
+-- Flow: queued -> gates (dedupe -> budget -> rate) -> prompt build (already
+-- done at this point for hashing) -> provider call (with optional read-only
+-- tool loop) -> store markdown + jsonb + usage -> done. Terminal states
+-- publish kind "enriched" on halemans_events so an open card live-updates.
+instance Job LlmAnalysisJob where
+    perform job = do
+        analysis <- fetch job.analysisId
+        when (analysis.status == "queued") do
+            alert <- fetch analysis.alertId
+            maybeConfig <- llmConfigFromEnv
+            case maybeConfig of
+                Nothing -> failAnalysis analysis alert "llm_not_configured" "llm_skipped"
+                Just config -> runAnalysis job analysis alert config
+
+    maxAttempts = 3
+
+    -- 10s poll (default 60s): analyses should land on open cards promptly,
+    -- and backoff-requeued retries must not wait a full minute each.
+    queuePollInterval = 10 * 1000000
+
+runAnalysis :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmConfig -> IO ()
+runAnalysis job analysis alert config = do
+    tokenBudget <- Budget.promptTokenBudget
+    promptResult <- buildPromptForAlert tokenBudget alert
+    case promptResult of
+        Nothing -> failAnalysis analysis alert "no active prompt template" "llm_failed"
+        Just built -> do
+            now <- getCurrentTime
+            _ <- analysis
+                |> set #status "running"
+                |> set #provider config.providerName
+                |> set #model config.model
+                |> set #promptTemplateId (Just built.templateId)
+                |> set #promptVersion (Just built.templateVersion)
+                |> set #promptHash built.hash
+                |> set #updatedAt now
+                |> updateRecord
+            dedupeWindow <- Budget.dedupeWindowSeconds
+            prior <- findDedupeSource (get #id analysis) built.hash (addUTCTime (fromIntegral (-dedupeWindow)) now)
+            case prior of
+                Just priorAnalysis -> copyDeduped analysis alert priorAnalysis
+                Nothing -> do
+                    overBudget <- checkBudget config.providerName
+                    if overBudget
+                        then failAnalysis analysis alert "budget_exceeded" "llm_skipped"
+                        else do
+                            delayed <- checkRateLimit config.providerName now
+                            case delayed of
+                                Just delaySeconds -> requeue analysis job delaySeconds
+                                Nothing -> callProvider job analysis alert config built
+
+findDedupeSource :: (?modelContext :: ModelContext) => Id LlmAnalysis -> Text -> UTCTime -> IO (Maybe LlmAnalysis)
+findDedupeSource selfId hash cutoff = query @LlmAnalysis
+    |> filterWhere (#promptHash, hash)
+    |> filterWhereNot (#id, selfId)
+    |> filterWhere (#status, "done" :: Text)
+    |> filterWhereSql (#dedupedFrom, "IS NULL")
+    |> filterWhereSql (#createdAt, ">= " <> sqlQuote cutoff)
+    |> orderByDesc #createdAt
+    |> limit 1
+    |> fetchOneOrNothing
+
+sqlQuote :: UTCTime -> Text
+sqlQuote time = "'" <> tshow time <> "'"
+
+-- §6: identical prompt within the dedupe window copies the prior result into
+-- a fresh row — per-alert history stays self-contained and the card query
+-- remains "latest by alert".
+copyDeduped :: (?modelContext :: ModelContext) => LlmAnalysis -> Alert -> LlmAnalysis -> IO ()
+copyDeduped analysis alert prior = do
+    now <- getCurrentTime
+    _ <- analysis
+        |> set #status "done"
+        |> set #resultMd prior.resultMd
+        |> set #result prior.result
+        |> set #tokensIn prior.tokensIn
+        |> set #tokensOut prior.tokensOut
+        |> set #dedupedFrom (Just (get #id prior))
+        |> set #updatedAt now
+        |> updateRecord
+    publishAlertUpdate alert "enriched"
+
+checkBudget :: (?modelContext :: ModelContext) => Text -> IO Bool
+checkBudget provider = do
+    cap <- Budget.dailyTokenBudget
+    rows <- sqlQueryTyped [typedSql|
+        SELECT tokens_in, tokens_out FROM llm_budget_counters
+        WHERE provider = ${provider} AND day = CURRENT_DATE
+    |]
+    pure case rows of
+        [] -> False
+        (row:_) -> Budget.budgetExceeded cap (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
+
+checkRateLimit :: (?modelContext :: ModelContext) => Text -> UTCTime -> IO (Maybe Int)
+checkRateLimit provider now = do
+    perMinute <- Budget.rateLimitPerMinute
+    recent <- sqlQueryTyped [typedSql|
+        SELECT updated_at FROM llm_analyses
+        WHERE provider = ${provider} AND status = 'done' AND deduped_from IS NULL
+            AND updated_at > NOW() - INTERVAL '60 seconds'
+        ORDER BY updated_at DESC
+    |]
+    pure (Budget.rateLimitDelaySeconds perMinute now recent)
+
+-- §6: over the rate limit the job re-queues itself with a delay instead of
+-- failing; the analysis row drops back to queued for the next attempt.
+requeue :: (?modelContext :: ModelContext) => LlmAnalysis -> LlmAnalysisJob -> Int -> IO ()
+requeue analysis job delaySeconds = do
+    now <- getCurrentTime
+    void do
+        analysis
+            |> set #status "queued"
+            |> set #updatedAt now
+            |> updateRecord
+    void do
+        newRecord @LlmAnalysisJob
+            |> set #analysisId job.analysisId
+            |> set #runAt (addUTCTime (fromIntegral delaySeconds) now)
+            |> createRecord
+
+callProvider :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmConfig -> BuiltPrompt -> IO ()
+callProvider job analysis alert config built = do
+    source <- mapM fetch alert.sourceId
+    let messages = [userMessage built.rendered]
+        tools = if config.toolsEnabled then toolDefinitions else []
+    outcome <- runWithToolLoop config source 3 messages tools []
+    case outcome of
+        Left (Retriable err) -> do
+            backoffs <- Budget.backoffSeconds
+            -- Fresh requeued job rows reset attempts_count, so the retry
+            -- budget counts llm_analysis_jobs rows for this analysis instead
+            -- (the original enqueue counts as the first attempt).
+            attempts <- query @LlmAnalysisJob
+                |> filterWhere (#analysisId, get #id analysis)
+                |> fetch
+            if length attempts <= length backoffs
+                then requeue analysis job (backoffs !! (length attempts - 1))
+                else failAnalysis analysis alert err "llm_failed"
+        Left (Terminal err) -> failAnalysis analysis alert err "llm_failed"
+        Right (completion, toolLog) -> do
+            let parsed = parseCompletionOutput completion.content
+            now <- getCurrentTime
+            _ <- analysis
+                |> set #status "done"
+                |> set #resultMd (Just parsed.markdown)
+                |> set #result parsed.structured
+                |> set #tokensIn completion.tokensIn
+                |> set #tokensOut completion.tokensOut
+                |> set #toolCalls (if null toolLog then Nothing else Just (Aeson.toJSON toolLog))
+                |> set #updatedAt now
+                |> updateRecord
+            recordUsage config.providerName completion
+            publishAlertUpdate alert "enriched"
+
+-- Optional tool loop (D4a): with tools enabled, model-requested read-only
+-- tool calls are executed and their results fed back, up to 3 rounds. Every
+-- call is logged for the analysis row.
+runWithToolLoop
+    :: (?modelContext :: ModelContext)
+    => LlmConfig -> Maybe Source -> Int -> [LlmMessage] -> [Value] -> [Value]
+    -> IO (Either LlmError (Completion, [Value]))
+runWithToolLoop _ _ 0 _ _ toolLog = pure (Left (Terminal ("tool loop exhausted; calls: " <> tshow (length toolLog))))
+runWithToolLoop config source roundsLeft messages tools toolLog = do
+    result <- complete (OpenAiCompat config) (Prompt messages tools)
+    case result of
+        Left err -> pure (Left err)
+        Right completion
+            | null completion.toolCalls -> pure (Right (completion, toolLog))
+            | otherwise -> do
+                results <- forM completion.toolCalls \call -> do
+                    output <- executeToolCall source call
+                    pure (toolResultMessage call.callId output, object
+                        [ "name" .= call.callName
+                        , "arguments" .= call.callArguments
+                        , "result" .= output
+                        ])
+                let messages' = messages
+                        ++ [assistantMessage completion.toolCalls]
+                        ++ map fst results
+                runWithToolLoop config source (roundsLeft - 1) messages' tools (toolLog ++ map snd results)
+
+recordUsage :: (?modelContext :: ModelContext) => Text -> Completion -> IO ()
+recordUsage provider completion = do
+    let tokensIn = fromIntegral (fromMaybe 0 completion.tokensIn) :: Int64
+        tokensOut = fromIntegral (fromMaybe 0 completion.tokensOut) :: Int64
+    void do
+        sqlExecTyped [typedSql|
+            INSERT INTO llm_budget_counters (provider, day, tokens_in, tokens_out, requests)
+            VALUES (${provider}, CURRENT_DATE, ${tokensIn}, ${tokensOut}, 1)
+            ON CONFLICT (provider, day) DO UPDATE SET
+                tokens_in = llm_budget_counters.tokens_in + EXCLUDED.tokens_in,
+                tokens_out = llm_budget_counters.tokens_out + EXCLUDED.tokens_out,
+                requests = llm_budget_counters.requests + 1
+        |]
+
+failAnalysis :: (?modelContext :: ModelContext) => LlmAnalysis -> Alert -> Text -> Text -> IO ()
+failAnalysis analysis alert err eventKind = do
+    now <- getCurrentTime
+    void do
+        analysis
+            |> set #status "failed"
+            |> set #errorMessage (Just err)
+            |> set #updatedAt now
+            |> updateRecord
+    void do
+        newRecord @AlertEvent
+            |> set #alertId (get #id alert)
+            |> set #userId Nothing
+            |> set #kind eventKind
+            |> set #payload (object ["error" .= err])
+            |> createRecord
+    publishAlertUpdate alert "enriched"

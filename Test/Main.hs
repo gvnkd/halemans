@@ -16,6 +16,7 @@ import qualified Test.WriteBackSpec
 import qualified Test.ReconcileSpec
 import qualified Test.DashboardConfigSpec
 import qualified Test.ThemeSpec
+import qualified Test.LlmSpec
 
 main :: IO ()
 main = hspec do
@@ -31,3 +32,4 @@ main = hspec do
     Test.ReconcileSpec.spec
     Test.DashboardConfigSpec.spec
     Test.ThemeSpec.spec
+    Test.LlmSpec.spec

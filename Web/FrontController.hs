@@ -22,6 +22,7 @@ import Web.Controller.NotificationRules
 import Web.Controller.EscalationPolicies
 import Web.Controller.Dashboards
 import Web.Controller.Integrations
+import Web.Controller.LlmAdmin
 
 instance FrontController WebApplication where
     controllers =
@@ -44,6 +45,7 @@ instance FrontController WebApplication where
         , parseRoute @EscalationPoliciesController
         , parseRoute @DashboardsController
         , parseRoute @IntegrationsController
+        , parseRoute @LlmAdminController
         ]
 
 instance InitControllerContext WebApplication where

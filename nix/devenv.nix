@@ -31,6 +31,7 @@ in
     #   zabbix server/trapper : 10051
     #   mock-confluence : 18082
     #   mock-jira       : 18083
+    #   mock-llm        : 18084
     env = {
         HALEMANS_GRAFANA_URL = "http://127.0.0.1:3001";
         HALEMANS_ALERTMANAGER_URL = "http://127.0.0.1:9093";

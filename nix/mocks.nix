@@ -24,9 +24,17 @@ let
             exec python3 ${./mocks/mock_jira.py}
         '';
     };
+
+    mockLlm = pkgs.writeShellApplication {
+        name = "mock-llm";
+        runtimeInputs = [ pkgs.python3 ];
+        text = ''
+            exec python3 ${./mocks/mock_llm.py}
+        '';
+    };
 in
 {
-    packages = [ mockConfluence mockJira ];
+    packages = [ mockConfluence mockJira mockLlm ];
 
     processes.mock-confluence = {
         exec = "${mockConfluence}/bin/mock-confluence";
@@ -45,6 +53,17 @@ in
             readiness_probe.http_get = {
                 host = "127.0.0.1";
                 port = 18083;
+                path = "/health";
+            };
+        };
+    };
+
+    processes.mock-llm = {
+        exec = "${mockLlm}/bin/mock-llm";
+        process-compose = {
+            readiness_probe.http_get = {
+                host = "127.0.0.1";
+                port = 18084;
                 path = "/health";
             };
         };

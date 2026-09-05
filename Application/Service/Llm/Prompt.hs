@@ -1,0 +1,203 @@
+module Application.Service.Llm.Prompt
+( PromptInputs (..)
+, emptyInputs
+, renderTemplate
+, bindingsFor
+, charBudgetForTokens
+, fitPrompt
+, truncationMarker
+, sha256Hex
+, BuiltPrompt (..)
+, buildPromptForAlert
+) where
+
+import IHP.Prelude
+import IHP.ModelSupport
+import IHP.QueryBuilder
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import Generated.Types
+import qualified Data.Aeson as Aeson
+import qualified Data.Text as Text
+import "cryptonite" Crypto.Hash (hashWith, SHA256 (..))
+import Data.ByteArray.Encoding (convertToBase, Base (Base16))
+import Data.List (nubBy)
+import Application.Service.Llm.Output (outputContract)
+
+-- Prompt construction (design_docs/milestone_4.md §5): the active
+-- llm_prompt_templates row for name "alert_enrichment" is filled with alert
+-- fields, recent events, CMDB excerpt, similar past alerts and Jira links.
+--
+-- Token budget: hard cap in prompt tokens, counted with the chars/4 heuristic
+-- (no tokenizer dependency — milestone_4.md §12). Truncation order when over
+-- budget: similar_alerts -> events -> cmdb_excerpt -> jira_links ->
+-- description. Title, severity, labels and annotations are never truncated.
+-- Truncation points are marked with truncationMarker in the rendered prompt.
+
+truncationMarker :: Text
+truncationMarker = "…[truncated]"
+
+data PromptInputs = PromptInputs
+    { piTitle :: Text
+    , piSeverity :: Text
+    , piEnv :: Text
+    , piHost :: Text
+    , piService :: Text
+    , piCheckName :: Text
+    , piDescription :: Text
+    , piLabels :: Text
+    , piAnnotations :: Text
+    , piEvents :: Text
+    , piCmdbExcerpt :: Text
+    , piSimilarAlerts :: Text
+    , piJiraLinks :: Text
+    } deriving (Eq, Show)
+
+emptyInputs :: PromptInputs
+emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" ""
+
+renderTemplate :: Text -> [(Text, Text)] -> Text
+renderTemplate body bindings = foldl' step body bindings
+    where
+        step acc (key, value) = Text.replace ("{{" <> key <> "}}") value acc
+
+bindingsFor :: PromptInputs -> [(Text, Text)]
+bindingsFor inputs =
+    [ ("alert.title", inputs.piTitle)
+    , ("alert.severity", inputs.piSeverity)
+    , ("alert.env", inputs.piEnv)
+    , ("alert.host", inputs.piHost)
+    , ("alert.service", inputs.piService)
+    , ("alert.check_name", inputs.piCheckName)
+    , ("alert.description", inputs.piDescription)
+    , ("alert.labels", inputs.piLabels)
+    , ("alert.annotations", inputs.piAnnotations)
+    , ("events", inputs.piEvents)
+    , ("cmdb_excerpt", inputs.piCmdbExcerpt)
+    , ("similar_alerts", inputs.piSimilarAlerts)
+    , ("jira_links", inputs.piJiraLinks)
+    ]
+
+charBudgetForTokens :: Int -> Int
+charBudgetForTokens tokens = tokens * 4
+
+-- Fill + budget enforcement. Truncates fields in the documented order until
+-- the rendered prompt fits the char budget; the final hard fallback trims the
+-- rendered text itself so the cap can never be exceeded.
+fitPrompt :: Int -> Text -> PromptInputs -> Text
+fitPrompt tokenBudget template inputs = go inputs truncatable
+    where
+        budget = charBudgetForTokens tokenBudget
+        renderedWith i = renderTemplate template (bindingsFor i)
+        go current []
+            | Text.length (renderedWith current) <= budget = renderedWith current
+            | otherwise = Text.take budget (renderedWith current)
+        go current (field:rest)
+            | Text.length (renderedWith current) <= budget = renderedWith current
+            | otherwise = go (field (Text.length (renderedWith current) - budget) current) rest
+        truncatable =
+            [ \excess i -> i { piSimilarAlerts = shrink excess i.piSimilarAlerts }
+            , \excess i -> i { piEvents = shrink excess i.piEvents }
+            , \excess i -> i { piCmdbExcerpt = shrink excess i.piCmdbExcerpt }
+            , \excess i -> i { piJiraLinks = shrink excess i.piJiraLinks }
+            , \excess i -> i { piDescription = shrink excess i.piDescription }
+            ]
+        shrink excess value
+            | excess <= 0 = value
+            | Text.length value <= excess + Text.length truncationMarker = ""
+            | otherwise = Text.take (Text.length value - excess) value <> truncationMarker
+
+sha256Hex :: Text -> Text
+sha256Hex input = cs (convertToBase Base16 digest :: ByteString)
+    where
+        digest = hashWith SHA256 (cs input :: ByteString)
+
+data BuiltPrompt = BuiltPrompt
+    { templateId :: Id LlmPromptTemplate
+    , templateVersion :: Int
+    , rendered :: Text
+    , hash :: Text
+    } deriving (Eq, Show)
+
+-- Reads whatever context is present at build time (milestone_4.md §4: no
+-- ordering dependency on EnrichAlertJob; absent context renders as empty
+-- sections).
+buildPromptForAlert :: (?modelContext :: ModelContext) => Int -> Alert -> IO (Maybe BuiltPrompt)
+buildPromptForAlert tokenBudget alert = do
+    template <- query @LlmPromptTemplate
+        |> filterWhere (#name, "alert_enrichment" :: Text)
+        |> filterWhere (#active, True)
+        |> fetchOneOrNothing
+    forM template \template -> do
+        inputs <- gatherInputs alert
+        let rendered = fitPrompt tokenBudget template.body inputs
+                <> outputContract
+        pure BuiltPrompt
+            { templateId = get #id template
+            , templateVersion = template.version
+            , rendered
+            , hash = sha256Hex rendered
+            }
+
+gatherInputs :: (?modelContext :: ModelContext) => Alert -> IO PromptInputs
+gatherInputs alert = do
+    events <- query @AlertEvent
+        |> filterWhere (#alertId, get #id alert)
+        |> orderByDesc #createdAt
+        |> limit 10
+        |> fetch
+    cmdbEntry <- case (alert.hostId, alert.serviceId) of
+        (Just hostId, _) -> query @CmdbEntry
+            |> filterWhere (#hostId, Just hostId)
+            |> fetchOneOrNothing
+        (Nothing, Just serviceId) -> query @CmdbEntry
+            |> filterWhere (#serviceId, Just serviceId)
+            |> fetchOneOrNothing
+        (Nothing, Nothing) -> pure Nothing
+    let baseSimilar = query @Alert
+            |> filterWhereNot (#id, get #id alert)
+            |> filterWhereIn (#status, ["resolved", "closed"] :: [Text])
+            |> orderByDesc #resolvedAt
+            |> limit 5
+    byFingerprint <- baseSimilar
+        |> filterWhere (#fingerprint, alert.fingerprint)
+        |> fetch
+    byCheckName <- case alert.checkName of
+        Just checkName -> baseSimilar
+            |> filterWhere (#checkName, Just checkName)
+            |> fetch
+        Nothing -> pure []
+    let similar = take 5 (nubBy (\a b -> get #id a == get #id b) (byFingerprint ++ byCheckName))
+    jiraLinks <- query @JiraLink
+        |> filterWhere (#alertId, get #id alert)
+        |> orderByDesc #createdAt
+        |> limit 5
+        |> fetch
+    pure emptyInputs
+        { piTitle = alert.title
+        , piSeverity = alert.severity
+        , piEnv = fromMaybe "unknown" alert.env
+        , piHost = fromMaybe "unknown" alert.host
+        , piService = fromMaybe "unknown" alert.service
+        , piCheckName = fromMaybe "unknown" alert.checkName
+        , piDescription = alert.description
+        , piLabels = cs (Aeson.encode alert.labels)
+        , piAnnotations = cs (Aeson.encode alert.annotations)
+        , piEvents = Text.intercalate "\n" (map eventLine events)
+        , piCmdbExcerpt = maybe "" (.excerpt) cmdbEntry
+        , piSimilarAlerts = Text.intercalate "\n" (map similarLine similar)
+        , piJiraLinks = Text.intercalate "\n" (map jiraLine jiraLinks)
+        }
+
+eventLine :: AlertEvent -> Text
+eventLine event = "- " <> tshow event.createdAt <> " " <> event.kind
+
+similarLine :: Alert -> Text
+similarLine past = mconcat
+    [ "- ", past.title, " [", past.severity, "]"
+    , maybe "" (\at -> " resolved " <> tshow at) past.resolvedAt
+    , maybe "" (\reason -> "; close reason: " <> reason) past.closeReason
+    , maybe "" (\comment -> "; ack: " <> comment) past.ackComment
+    ]
+
+jiraLine :: JiraLink -> Text
+jiraLine link = "- " <> link.ticketKey <> " " <> link.summary <> " [" <> link.status <> "]"

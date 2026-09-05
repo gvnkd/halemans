@@ -30,6 +30,8 @@ data AlertsController
     | RefreshCmdbAction { alertId :: !(Id Alert) }
     | CreateJiraTicketAction { alertId :: !(Id Alert) }
     | DeleteJiraLinkAction { alertId :: !(Id Alert), jiraLinkId :: !(Id JiraLink) }
+    | ReanalyzeAlertAction { alertId :: !(Id Alert) }
+    | LlmFeedbackAction { alertId :: !(Id Alert), analysisId :: !(Id LlmAnalysis) }
     deriving (Eq, Show)
 
 data BlackoutsController
@@ -62,6 +64,14 @@ data IntegrationsController
     = IntegrationsAction
     | TestConfluenceAction
     | TestJiraAction
+    deriving (Eq, Show)
+
+data LlmAdminController
+    = LlmAdminAction
+    | EditLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
+    | UpdateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
+    | ActivateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
+    | TestLlmConnectionAction
     deriving (Eq, Show)
 
 data PushSubscriptionsController

@@ -7,6 +7,7 @@ import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert, addCommen
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
 import IHP.TypedSql (sqlQueryTyped, typedSql)
+import Control.Monad (void)
 
 instance Controller AlertsController where
     beforeAction = ensureIsUser
@@ -48,6 +49,17 @@ instance Controller AlertsController where
             |> orderByDesc #createdAt
             |> limit 5
             |> fetch
+        analyses <- query @LlmAnalysis
+            |> filterWhere (#alertId, alertId)
+            |> orderByDesc #createdAt
+            |> limit 10
+            |> fetch
+        feedback <- case analyses of
+            [] -> pure []
+            _ -> query @LlmFeedback
+                |> filterWhereIn (#analysisId, map (get #id) analyses)
+                |> filterWhere (#userId, get #id currentUser)
+                |> fetch
         canAck <- currentUserHasPrivilege "ack"
         canClose <- currentUserHasPrivilege "close"
         render ShowView { .. }
@@ -119,4 +131,42 @@ instance Controller AlertsController where
                 deleteRecord link
                 setSuccessMessage ("Unlinked " <> link.ticketKey)
             else setErrorMessage "Only manual links can be removed"
+        redirectTo ShowAlertAction { alertId }
+
+    -- Manual re-analyze (milestone_4.md §4): advisory and non-destructive, so
+    -- "view" privilege suffices. Appends a fresh analysis row; the card shows
+    -- the latest done.
+    action ReanalyzeAlertAction { alertId } = do
+        requirePrivilege "view"
+        _ <- fetch alertId :: IO Alert
+        analysis <- newRecord @LlmAnalysis
+            |> set #alertId alertId
+            |> createRecord
+        _ <- newRecord @LlmAnalysisJob
+            |> set #analysisId (get #id analysis)
+            |> createRecord
+        setSuccessMessage "LLM analysis queued"
+        redirectTo ShowAlertAction { alertId }
+
+    -- 👍/👎 feedback (milestone_4.md D6): one vote per user per analysis,
+    -- re-vote updates in place.
+    action LlmFeedbackAction { alertId, analysisId } = do
+        requirePrivilege "view"
+        analysis <- fetch analysisId
+        if analysis.alertId /= alertId
+            then setErrorMessage "Analysis does not belong to this alert"
+            else do
+                let score = param @Int "score"
+                existing <- query @LlmFeedback
+                    |> filterWhere (#analysisId, analysisId)
+                    |> filterWhere (#userId, get #id currentUser)
+                    |> fetchOneOrNothing
+                case existing of
+                    Just vote -> void (vote |> set #score score |> updateRecord)
+                    Nothing -> void do
+                        newRecord @LlmFeedback
+                            |> set #analysisId analysisId
+                            |> set #userId (get #id currentUser)
+                            |> set #score score
+                            |> createRecord
         redirectTo ShowAlertAction { alertId }

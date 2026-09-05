@@ -15,6 +15,8 @@ module Web.View.Fragments
 , jiraLinksDomId
 , writeBackChipHtml
 , writeBackChipDomId
+, llmPanelHtml
+, llmPanelDomId
 , eventSummary
 ) where
 
@@ -22,6 +24,7 @@ import Web.View.Prelude
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
+import qualified Data.Text as Text
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -85,6 +88,8 @@ eventSummary event = case event.kind of
         _ -> ""
     "writeback_failed" -> "write-back failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
     "enrichment_failed" -> "enrichment failed" <> maybe "" (\s -> " (" <> s <> ")") (payloadText "subsystem")
+    "llm_failed" -> "LLM analysis failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
+    "llm_skipped" -> "LLM analysis skipped" <> maybe "" (\err -> ": " <> err) (payloadText "error")
     _ -> ""
     where
         payloadText :: Text -> Maybe Text
@@ -221,3 +226,144 @@ writeBackChipHtml latest = [hsx|<span id={writeBackChipDomId}>{chip}</span>|]
                 "failed" -> [hsx|<span class="badge status-firing" data-testid="writeback-status" title={fromMaybe "" attempt.lastError}>write-back: {attempt.action} failed</span>|]
                 "done" -> [hsx|<span class="badge status-resolved" data-testid="writeback-status">write-back: {attempt.action} synced</span>|]
                 _ -> mempty
+
+-- LLM analysis panel (milestone_4.md §7). Latest analysis wins; older rows
+-- are expandable history. Feedback is per analysis; the `feedback` list
+-- carries the viewing user's own votes (empty on the websocket path, which
+-- renders the neutral state). Markdown renders as escaped pre text (no
+-- markdown library in the dependency set).
+
+llmPanelDomId :: Text
+llmPanelDomId = "llm-panel"
+
+llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> Html
+llmPanelHtml alert analyses feedback = [hsx|
+    <section class="card mb-3" id={llmPanelDomId} data-testid="llm-panel">
+        <div class="card-body">
+            <h5 class="card-title">LLM analysis {reanalyzeButton}</h5>
+            {body}
+            {historyBlock}
+        </div>
+    </section>
+|]
+    where
+        reanalyzeButton = [hsx|
+            <form method="POST" action={ReanalyzeAlertAction (get #id alert)} class="d-inline">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="llm-reanalyze">Re-analyze</button>
+            </form>
+        |]
+        body = case analyses of
+            [] -> [hsx|<p class="text-muted" data-testid="llm-empty">No analysis yet.</p>|]
+            (latest:_) -> llmAnalysisHtml alert latest feedback
+        historyBlock = case analyses of
+            (_:older@(_:_)) -> [hsx|
+                <details data-testid="llm-history">
+                    <summary>History ({length older})</summary>
+                    {forEach older olderAnalysis}
+                </details>
+            |]
+            _ -> mempty
+        olderAnalysis analysis = llmAnalysisHtml alert analysis feedback
+
+llmAnalysisHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Html
+llmAnalysisHtml alert analysis feedback = case analysis.status of
+    "done" -> [hsx|
+        <div class="llm-analysis" data-testid="llm-analysis">
+            {dedupedBadge}
+            <pre class="llm-markdown" data-testid="llm-markdown">{fromMaybe "" analysis.resultMd}</pre>
+            {structuredBlock}
+            <p class="text-muted llm-footer" data-testid="llm-footer">
+                provider {analysis.provider} · model {analysis.model} · template v{versionText} · {show analysis.updatedAt}
+            </p>
+            {llmFeedbackHtml alert analysis feedback}
+        </div>
+    |]
+        where
+            versionText :: Text
+            versionText = maybe "-" tshow analysis.promptVersion
+            dedupedBadge = if isJust analysis.dedupedFrom
+                then [hsx|<span class="badge status-ack" data-testid="llm-deduped">deduped copy</span>|]
+                else mempty
+            structuredBlock = case analysis.result of
+                Nothing -> mempty
+                Just result -> [hsx|
+                    <div class="llm-structured" data-testid="llm-structured">
+                        <p data-testid="llm-probable-cause"><strong>Probable cause:</strong> {fieldText "probable_cause" result}</p>
+                        {confidenceBadge result}
+                        {actionsList result}
+                        {referencesList result}
+                    </div>
+                |]
+    "failed" -> [hsx|
+        <div data-testid="llm-unavailable">
+            <span class="badge status-firing" title={fromMaybe "" analysis.errorMessage}>analysis unavailable</span>
+            <span class="text-muted"> {fromMaybe "" analysis.errorMessage}</span>
+        </div>
+    |]
+    _ -> [hsx|<p class="text-muted" data-testid="llm-pending">analysis pending…</p>|]
+
+fieldText :: Text -> Aeson.Value -> Text
+fieldText key value = fromMaybe "" (parseMaybe (Aeson.withObject "result" (\o -> o Aeson..: Key.fromText key)) value)
+
+fieldTexts :: Text -> Aeson.Value -> [Text]
+fieldTexts key value = fromMaybe [] (parseMaybe (Aeson.withObject "result" (\o -> o Aeson..: Key.fromText key)) value)
+
+fieldDouble :: Text -> Aeson.Value -> Maybe Double
+fieldDouble key value = parseMaybe (Aeson.withObject "result" (\o -> o Aeson..: Key.fromText key)) value
+
+confidenceBadge :: Aeson.Value -> Html
+confidenceBadge result = case fieldDouble "confidence" result of
+    Nothing -> mempty
+    Just confidence -> [hsx|<span class="badge status-badge" data-testid="llm-confidence">confidence {confidenceText confidence}</span>|]
+    where
+        confidenceText :: Double -> Text
+        confidenceText confidence = tshow (round (confidence * 100) :: Int) <> "%"
+
+actionItem :: Text -> Html
+actionItem action = [hsx|<li>{action}</li>|]
+
+actionsList :: Aeson.Value -> Html
+actionsList result = case fieldTexts "suggested_actions" result of
+    [] -> mempty
+    actions -> [hsx|
+        <div data-testid="llm-actions">
+            <strong>Suggested actions:</strong>
+            <ul>{forEach actions actionItem}</ul>
+        </div>
+    |]
+
+referencesList :: Aeson.Value -> Html
+referencesList result = case fieldTexts "references" result of
+    [] -> mempty
+    references -> [hsx|
+        <div data-testid="llm-references">
+            <strong>References:</strong>
+            <ul>{forEach references referenceItem}</ul>
+        </div>
+    |]
+    where
+        referenceItem reference = if "http" `Text.isPrefixOf` reference
+            then [hsx|<li><a href={reference} target="_blank">{reference}</a></li>|]
+            else [hsx|<li>{reference}</li>|]
+
+llmFeedbackHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Html
+llmFeedbackHtml alert analysis feedback = [hsx|
+    <div class="llm-feedback" data-testid="llm-feedback">
+        <form method="POST" action={LlmFeedbackAction (get #id alert) (get #id analysis)} class="d-inline">
+            <input type="hidden" name="score" value="1"/>
+            <button type="submit" class={upClass} data-testid="llm-feedback-up">👍</button>
+        </form>
+        <form method="POST" action={LlmFeedbackAction (get #id alert) (get #id analysis)} class="d-inline">
+            <input type="hidden" name="score" value="-1"/>
+            <button type="submit" class={downClass} data-testid="llm-feedback-down">👎</button>
+        </form>
+    </div>
+|]
+    where
+        vote = case [f | f <- feedback, f.analysisId == get #id analysis] of
+            (own:_) -> Just own.score
+            [] -> Nothing
+        upClass :: Text
+        upClass = if vote == Just 1 then "btn btn-sm btn-success" else "btn btn-sm btn-outline-secondary"
+        downClass :: Text
+        downClass = if vote == Just (-1) then "btn btn-sm btn-danger" else "btn btn-sm btn-outline-secondary"

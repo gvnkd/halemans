@@ -11,6 +11,20 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - Write-back retry timing overridable: HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0" + HALEMANS_WRITEBACK_MAX_ATTEMPTS (smoke sets them fast).
 - EnrichAlertJob/WriteBackJob are one-shot event jobs; JiraSyncJob self-reschedules (5min) — in tests INSERT a fresh jira_sync_jobs row to trigger promptly. EnqueuePollers seeds JiraSyncJob.
 - Alert card panels (cmdb/jira/writeback chip) live-update via WS kinds "enriched"/"writeback" (fragments in Web/View/Fragments.hs, contextPanelUpdates in Live.hs). WS supports multi-scope: data-live-scope="env:a,env:b".
+
+## Milestone 4 notes
+- Mock LLM: mock-llm :18084 (nix/mocks/mock_llm.py, no auth). LLM_ENDPOINT/LLM_MODEL in env.sh (ensureTokens). Unauthenticated backdoors: POST /debug/fail/{429,500,malformed} (body {"times":N}), POST /debug/reset. Deterministic completions: "disk" in last user msg → disk analysis, else generic; fenced ```json block convention.
+
+## Milestone 4 notes (LLM enrichment)
+- Never name a column `error`: the generated `LlmAnalysis.error` field clashes with Prelude.error in every module importing Generated.Types (phase-4 uses `error_message`).
+- LlmAnalysisJob retries count `llm_analysis_jobs` ROWS per analysis (fresh requeued rows reset attempts_count — EnrichAlert's attemptsCount guard has the same unbounded-retry bug shape). Backoff via HALEMANS_LLM_BACKOFF_SECONDS="0,0,0" in checks; queuePollInterval 10s (default 60s makes 4-cycle retry tests time out).
+- Prompt-hash dedupe runs in the JOB (not at ingest): hash needs the rendered prompt. Dedupe only ever hits for same-alert re-analysis — AlertEvent timestamps make cross-alert prompts unique by construction.
+- Generic-hook alerts get fingerprint prefix `grafana:` (quirk, not `generic:`) → PollGrafana's absence-reconcile can resolve them mid-scenario: smoke/Playwright must NOT assert dedupe copies (integration suite covers dedupe deterministically with testSource alerts).
+- LLM structured output = fenced ```json, parsed best-effort in Application/Service/Llm/Output.hs; card renders markdown as escaped <pre> (no markdown lib in deps).
+- Record field selectors must be IMPORTED to get GHC's magic HasField (`import M (ParsedOutput (..))`), or cross-module `parsed.markdown` fails with Could-not-deduce-HasField.
+- typedSql `${...}` interpolation can't lex `get #field rec` — bind to a local first. BIGINT columns need Int64 params. sqlExecTyped returns IO Int64 (rows affected), void it.
+- wreq: disable status-check exceptions with `checkResponse .~ Just (\_ _ -> pure ())`, read code via `statusCode (resp ^. Wreq.responseStatus)` (http-types statusCode is a function, not a lens). No connect-timeout knob in this http-client version; only managerResponseTimeout.
+- cache.digitallyinduced.com 500s on a narinfo block substitution entirely; the path is often already local → re-run `nix build ... --offline`.
 - Pure alertmanager sources have NO reverse silence reconcile (no poller exists for them); only grafana (PollGrafana) and zabbix (PollZabbix) mirror source acks.
 - users.settings.theme (validated against Application.Helper.Theme themes) drives `<html data-theme>`; app.js halemansApplyTheme persists via POST /profile/theme.
 

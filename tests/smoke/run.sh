@@ -259,6 +259,50 @@ else
     echo "scenario: enrichment / jira (skipped, SMOKE_ZABBIX=0)"
 fi
 
+# ------------------------------------------------- milestone 4: llm analysis
+scenario "llm analysis"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+# unique fingerprint: a fresh alert gets its own analysis row (refires of an
+# existing alert never enqueue one, and its event log would have drifted, so
+# no dedupe hit — integration covers the identical-context copy precisely)
+llm_fp="smoke-llm-$(date +%s)"
+curl -sf -X POST "$APP_URL/hooks/generic/$(cat "$STATE/halemans/generic-hook-token")" \
+    -H 'Content-Type: application/json' \
+    -d "{\"version\":\"4\",\"status\":\"firing\",\"receiver\":\"halemans\",\"alerts\":[{\"status\":\"firing\",\"labels\":{\"alertname\":\"smoke-llm\",\"env\":\"dev\",\"host\":\"dev-host-01\",\"severity\":\"high\",\"check\":\"smoke-llm\"},\"annotations\":{\"summary\":\"smoke llm analysis probe\"},\"startsAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"fingerprint\":\"$llm_fp\"}]}" > /dev/null \
+    || fail "llm analysis: fire posted"
+llm_id=""
+if wait_sql "llm analysis: alert firing" 60 "SELECT 1 FROM alerts WHERE fingerprint = 'grafana:$llm_fp' AND status = 'firing' LIMIT 1"; then
+    llm_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM alerts WHERE fingerprint = 'grafana:$llm_fp' LIMIT 1" 2>/dev/null)
+fi
+if [ -n "$llm_id" ]; then
+    wait_sql "llm analysis done" 120 "SELECT 1 FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done' LIMIT 1" \
+        && pass "llm analysis: done" || fail "llm analysis: done"
+    wait_sql "llm result fields populated" 30 "SELECT 1 FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done' AND result_md IS NOT NULL AND result ? 'probable_cause' AND tokens_in IS NOT NULL LIMIT 1" \
+        && pass "llm analysis: result fields" || fail "llm analysis: result fields"
+    card_html=$(curl -sf -b "$COOKIES" "$APP_URL/alerts/$llm_id" || true)
+    echo "$card_html" | grep -q 'llm-panel' && echo "$card_html" | grep -q 'llm-probable-cause' \
+        && pass "llm analysis: card panel renders" || fail "llm analysis: card panel renders"
+    # re-analyze appends a fresh row and the card shows the latest (dedupe of
+    # identical context is asserted deterministically in the integration
+    # suite; here the grafana-absence reconcile can add events mid-scenario)
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$llm_id/reanalyze" || fail "llm analysis: re-analyze post"
+    wait_sql "re-analyze appended" 90 "SELECT 1 FROM (SELECT 1, COUNT(*) OVER () AS n FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done') t WHERE n >= 2 LIMIT 1" \
+        && pass "llm analysis: re-analyze appended" || fail "llm analysis: re-analyze appended"
+    # feedback round-trip: up-vote then re-vote down
+    analysis_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done' ORDER BY created_at DESC LIMIT 1" 2>/dev/null | grep -oE '[0-9a-f-]{36}' | head -1)
+    if [ -n "$analysis_id" ]; then
+        curl -sf -b "$COOKIES" -o /dev/null -X POST -d "score=1" "$APP_URL/alerts/$llm_id/analyses/$analysis_id/feedback" || fail "llm feedback: up-vote post"
+        curl -sf -b "$COOKIES" -o /dev/null -X POST -d "score=-1" "$APP_URL/alerts/$llm_id/analyses/$analysis_id/feedback" || fail "llm feedback: down-vote post"
+        vote=$(psql "$DATABASE_URL" -tA -c "SELECT score FROM llm_feedback WHERE analysis_id = '$analysis_id'" 2>/dev/null)
+        [ "$vote" = "-1" ] \
+            && pass "llm feedback: re-vote flips score" || fail "llm feedback: re-vote flips score (got '$vote')"
+    else
+        fail "llm feedback (no analysis id)"
+    fi
+else
+    fail "llm analysis (no alert)"
+fi
+
 # ------------------------------------------------- milestone 3: write-back
 scenario "write-back ack"
 fire-test-alert-alertmanager || fail "write-back ack: fire posted"

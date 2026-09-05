@@ -49,6 +49,9 @@ let
                 printf 'export JIRA_TOKEN="%s"\n'                  "$(cat "$state/jira-token")"
                 printf 'export HALEMANS_CONFLUENCE_URL="%s"\n'     "http://127.0.0.1:18082"
                 printf 'export HALEMANS_JIRA_URL="%s"\n'           "http://127.0.0.1:18083"
+                # Mock LLM (milestone 4 D9): local endpoint, no token needed.
+                printf 'export LLM_ENDPOINT="%s"\n'                 "http://127.0.0.1:18084"
+                printf 'export LLM_MODEL="%s"\n'                    "mock-llm-1"
                 printf 'export HALEMANS_ADMIN_PASSWORD="%s"\n'     "$(cat "$state/admin-password")"
                 printf 'export HALEMANS_SRE_PASSWORD="%s"\n'       "$(cat "$state/sre-password")"
                 printf 'export HALEMANS_VIEWER_PASSWORD="%s"\n'    "$(cat "$state/viewer-password")"

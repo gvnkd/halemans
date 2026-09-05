@@ -23,6 +23,16 @@ POST /alerts/{alertId}/comments         CreateCommentAction
 POST /alerts/{alertId}/cmdb/refresh     RefreshCmdbAction
 POST /alerts/{alertId}/jira             CreateJiraTicketAction
 POST /alerts/{alertId}/jira/{jiraLinkId}/delete  DeleteJiraLinkAction
+POST /alerts/{alertId}/reanalyze           ReanalyzeAlertAction
+POST /alerts/{alertId}/analyses/{analysisId}/feedback  LlmFeedbackAction
+|]
+
+[routes|LlmAdminController
+GET  /admin/llm                                LlmAdminAction
+GET  /admin/llm/templates/{templateId}/edit    EditLlmTemplateAction
+POST /admin/llm/templates/{templateId}/update  UpdateLlmTemplateAction
+POST /admin/llm/templates/{templateId}/activate  ActivateLlmTemplateAction
+POST /admin/llm/test                           TestLlmConnectionAction
 |]
 
 [routes|BlackoutsController

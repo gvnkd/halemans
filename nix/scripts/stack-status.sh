@@ -24,6 +24,9 @@ check "mock-confluence (:18082)" $?
 curl -sf "${HALEMANS_JIRA_URL:-http://127.0.0.1:18083}/health" > /dev/null 2>&1
 check "mock-jira (:18083)" $?
 
+curl -sf "${LLM_ENDPOINT:-http://127.0.0.1:18084}/health" > /dev/null 2>&1
+check "mock-llm (:18084)" $?
+
 pg_isready -q -h "${PGHOST:-/tmp}" > /dev/null 2>&1
 check "postgres" $?
 

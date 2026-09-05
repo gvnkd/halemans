@@ -102,6 +102,17 @@ ingest source event = do
                 newRecord @EnrichAlertJob
                     |> set #alertId (get #id grouped)
                     |> createRecord
+            -- Step 8 extension (milestone_4.md §4): queue an LLM analysis on
+            -- new alerts only (never on dedupe hits). The row gets its prompt
+            -- hash when the job builds the prompt.
+            void do
+                analysis <- newRecord @LlmAnalysis
+                    |> set #alertId (get #id grouped)
+                    |> createRecord
+                void do
+                    newRecord @LlmAnalysisJob
+                        |> set #analysisId (get #id analysis)
+                        |> createRecord
             pure (Just (get #id grouped))
         (Just alert, sourceStatus) -> do
             let currentState = fromMaybe SM.Firing (SM.alertStateFromText alert.status)

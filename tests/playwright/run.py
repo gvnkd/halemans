@@ -230,7 +230,7 @@ with sync_playwright() as pw:
         viewer = context.new_page()
         login(viewer, "viewer")
         for path in ["/admin/teams", "/admin/grouping-rules", "/admin/notification-rules",
-                     "/admin/escalation-policies", "/sources/new"]:
+                     "/admin/escalation-policies", "/sources/new", "/admin/llm"]:
             result = viewer.evaluate(f"""async () => {{
                 const res = await fetch('{path}');
                 return res.status;
@@ -546,6 +546,131 @@ with sync_playwright() as pw:
             path = os.path.join(tmpdir, f"theme-{theme}.png")
             page.screenshot(path=path, full_page=True)
             assert os.path.getsize(path) > 0, f"empty screenshot: {path}"
+
+    # ---------------------------------------------------------- milestone 4
+
+    @check("llm: analysis panel fills via websocket without reload")
+    def _():
+        fp = f"pw-llm-{int(time.time())}"
+        fire_generic_alert(fp, title="pw disk pressure alert")
+        alert_id = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'", 30)
+        assert alert_id, "alert never arrived"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("alert-card").wait_for()
+        # the worker completes the analysis and pushes an "enriched" fragment
+        page.get_by_test_id("llm-markdown").wait_for(timeout=90000)
+        page.get_by_test_id("llm-probable-cause").wait_for()
+        page.get_by_test_id("llm-actions").wait_for()
+        page.get_by_test_id("llm-references").wait_for()
+        footer = page.get_by_test_id("llm-footer").inner_text()
+        assert "mock-llm-1" in footer and "v1" in footer, footer
+
+    @check("llm: re-analyze appends, latest wins, older in history")
+    def _():
+        alert_id = sql("SELECT alert_id FROM llm_analyses WHERE status = 'done' ORDER BY created_at DESC LIMIT 1")
+        assert alert_id, "no completed analysis"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("llm-reanalyze").click()
+        page.get_by_test_id("llm-markdown").wait_for()
+        # NB: no dedupe assertion here — the grafana-absence reconcile can add
+        # an event between the two runs, changing the prompt hash; identical-
+        # context dedupe is covered deterministically in the integration suite
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            count = sql(f"SELECT COUNT(*) FROM llm_analyses WHERE alert_id = '{alert_id}' AND status = 'done'")
+            if count and int(count) >= 2:
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError("re-analyze never landed")
+        page.reload()
+        page.get_by_test_id("llm-history").wait_for()
+
+    @check("llm: feedback up/down round-trip persists")
+    def _():
+        alert_id = sql("SELECT alert_id FROM llm_analyses WHERE status = 'done' ORDER BY created_at DESC LIMIT 1")
+        analysis_id = sql(f"SELECT id FROM llm_analyses WHERE alert_id = '{alert_id}' AND status = 'done' ORDER BY created_at DESC LIMIT 1")
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("llm-feedback-up").first.click()
+        page.get_by_test_id("llm-feedback-up").first.wait_for()
+        score = wait_sql_value(f"SELECT score FROM llm_feedback WHERE analysis_id = '{analysis_id}'", 15)
+        assert score == "1", score
+        page.get_by_test_id("llm-feedback-down").first.click()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            score = sql(f"SELECT score FROM llm_feedback WHERE analysis_id = '{analysis_id}'")
+            if score == "-1":
+                break
+            time.sleep(1)
+        assert score == "-1", score
+
+    @check("llm: admin template edit bumps version; next analysis records v2")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/llm")
+        admin.get_by_test_id("llm-templates").wait_for()
+        admin.get_by_test_id("llm-template-edit").first.click()
+        admin.get_by_test_id("llm-template-form").wait_for()
+        body = admin.get_by_test_id("llm-template-body").input_value()
+        admin.get_by_test_id("llm-template-body").fill(body + "\nKeep answers short.")
+        admin.get_by_test_id("llm-template-save").click()
+        admin.get_by_test_id("llm-templates").wait_for()
+        v2 = wait_sql_value("SELECT id FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2", 15)
+        assert v2, "v2 template row missing"
+        # activate v2 (flip), fire, assert the analysis records version 2
+        admin.get_by_test_id("llm-template-activate").first.click()
+        admin.get_by_test_id("llm-templates").wait_for()
+        assert sql("SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2 AND active"), "v2 not active"
+        fp = f"pw-llmv2-{int(time.time())}"
+        fire_generic_alert(fp, title="pw v2 template alert")
+        deadline = time.time() + 90
+        version = None
+        while time.time() < deadline:
+            version = sql(f"""SELECT a.prompt_version::text FROM llm_analyses a
+                              JOIN alerts al ON al.id = a.alert_id
+                              WHERE al.fingerprint = 'grafana:{fp}' AND a.status = 'done'""")
+            if version:
+                break
+            time.sleep(1)
+        assert version == "2", f"expected prompt_version 2, got {version!r}"
+        # restore v1 active for the rest of the suite
+        v1 = sql("SELECT id FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1")
+        sql(f"UPDATE llm_prompt_templates SET active = false WHERE name = 'alert_enrichment'")
+        sql(f"UPDATE llm_prompt_templates SET active = true WHERE id = '{v1}'")
+        admin.close()
+        login(page, "sre")
+
+    @check("llm: forced provider failure shows analysis unavailable")
+    def _():
+        urllib.request.urlopen(urllib.request.Request(
+            "http://127.0.0.1:18084/debug/fail/500",
+            data=json.dumps({"times": 10}).encode(),
+            headers={"Content-Type": "application/json"}))
+        try:
+            fp = f"pw-llmfail-{int(time.time())}"
+            fire_generic_alert(fp, title="pw failing analysis alert")
+            alert_id = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'", 30)
+            assert alert_id, "alert never arrived"
+            # job path first: with 0s backoff all retries can finish before
+            # the browser's websocket subscription is up, so don't rely on
+            # the live push for this check
+            deadline = time.time() + 120
+            status = None
+            while time.time() < deadline:
+                status = sql(f"SELECT status FROM llm_analyses WHERE alert_id = '{alert_id}' ORDER BY created_at DESC LIMIT 1")
+                if status in ("done", "failed"):
+                    break
+                time.sleep(1)
+            assert status == "failed", f"analysis status: {status!r}"
+            page.goto(f"{APP}/alerts/{alert_id}")
+            page.get_by_test_id("llm-unavailable").wait_for(timeout=30000)
+            kinds = page.get_by_test_id("alert-timeline").inner_text()
+            assert "llm_failed" in kinds, kinds
+        finally:
+            urllib.request.urlopen(urllib.request.Request(
+                "http://127.0.0.1:18084/debug/reset", data=b"{}",
+                headers={"Content-Type": "application/json"}))
 
     browser.close()
 

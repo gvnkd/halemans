@@ -5,13 +5,13 @@ import IHP.Prelude
 import IHP.ModelSupport
 import IHP.QueryBuilder
 import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlExecTyped, typedSql)
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import Generated.Types
 import System.Environment (lookupEnv, getEnv, setEnv, unsetEnv)
 import System.Process (callProcess, readProcess)
 import Data.Aeson (object)
 import Data.UUID.V4 (nextRandom)
-import Control.Monad (void)
+import Control.Monad (void, replicateM_)
 import Control.Exception (try, finally, SomeException)
 import IHP.Job.Types (Job (..))
 import IHP.FrameworkConfig (FrameworkConfig, buildFrameworkConfig)
@@ -25,6 +25,7 @@ import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert)
 import Application.Job.AutoClose (unackExpiredAcks, unsuppressExpired)
 import Application.Job.Escalation (runDueTrackers)
 import Application.Job.EnrichAlert ()
+import Application.Job.LlmAnalysis ()
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.WriteBack (executeAttempt)
 import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
@@ -56,7 +57,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec spec
+        hspec (spec >> llmSpec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -637,6 +638,220 @@ spec = describe "alert pipeline (milestone 1)" do
             case result of
                 Left _ -> pure ()
                 Right _ -> expectationFailure "second default dashboard should violate the partial unique index"
+
+-- LLM enrichment (design_docs/milestone_4.md §10): against the mock
+-- OpenAI-compatible server on 18084 (launched by the check; deterministic
+-- completions with /debug/fail backdoors for 429/500/malformed).
+llmSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+llmSpec = describe "llm enrichment (milestone 4)" do
+    it "a new alert enqueues an analysis; the job completes against the mock" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+            { title = "disk pressure on itest-host", description = "disk usage above 90%" }
+        analysis <- latestAnalysis alertId
+        analysis.status `shouldBe` "queued"
+        -- refire does not enqueue another analysis (milestone_4.md §4)
+        void (ingest source (testEvent fp Firing))
+        analyses <- query @LlmAnalysis
+            |> filterWhere (#alertId, alertId)
+            |> fetch
+        length analyses `shouldBe` 1
+        performLatestJob (get #id analysis)
+        done <- fetch (get #id analysis)
+        done.status `shouldBe` "done"
+        done.resultMd `shouldSatisfy` maybe False (not . Text.null)
+        done.provider `shouldBe` "default"
+        done.model `shouldBe` "mock-llm-1"
+        done.promptVersion `shouldBe` Just 1
+        done.dedupedFrom `shouldBe` Nothing
+        case done.result of
+            Just result -> payloadText "probable_cause" result `shouldSatisfy` isJust
+            Nothing -> expectationFailure "structured result missing"
+        countered <- counterRequestsAfter "default"
+        countered `shouldSatisfy` (>= 1)
+
+    it "identical context within the window dedupes into a copy (one provider call)" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        first <- latestAnalysis alertId
+        performLatestJob (get #id first)
+        requestsBefore <- counterRequestsAfter "default"
+        second <- enqueueAnalysis alertId
+        performLatestJob (get #id second)
+        copy <- fetch (get #id second)
+        copy.status `shouldBe` "done"
+        copy.dedupedFrom `shouldBe` Just (get #id first)
+        original <- fetch (get #id first)
+        copy.result `shouldBe` original.result
+        copy.resultMd `shouldBe` original.resultMd
+        requestsAfter <- counterRequestsAfter "default"
+        requestsAfter `shouldBe` requestsBefore
+
+    it "daily budget cap soft-skips with an llm_skipped event" do
+        _ <- ensureTemplate
+        oldBudget <- lookupEnv "LLM_DAILY_TOKEN_BUDGET"
+        setEnv "LLM_DAILY_TOKEN_BUDGET" "0"
+        flip finally (maybe (unsetEnv "LLM_DAILY_TOKEN_BUDGET") (setEnv "LLM_DAILY_TOKEN_BUDGET") oldBudget) do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            analysis <- latestAnalysis alertId
+            performLatestJob (get #id analysis)
+            skipped <- fetch (get #id analysis)
+            skipped.status `shouldBe` "failed"
+            skipped.errorMessage `shouldBe` Just "budget_exceeded"
+            events <- eventKinds alertId
+            events `shouldSatisfy` ("llm_skipped" `elem`)
+
+    it "a retriable 429 requeues the job, then completes" do
+        _ <- ensureTemplate
+        mockFail "429" 1
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        performLatestJob (get #id analysis)
+        requeued <- fetch (get #id analysis)
+        requeued.status `shouldBe` "queued"
+        jobs <- query @LlmAnalysisJob
+            |> filterWhere (#analysisId, get #id analysis)
+            |> fetch
+        length jobs `shouldBe` 2
+        performLatestJob (get #id analysis)
+        done <- fetch (get #id analysis)
+        done.status `shouldBe` "done"
+
+    it "persistent 500s exhaust the retry budget into failed" do
+        _ <- ensureTemplate
+        mockFail "500" 4
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        replicateM_ 4 (performLatestJob (get #id analysis))
+        failed <- fetch (get #id analysis)
+        failed.status `shouldBe` "failed"
+        failed.errorMessage `shouldSatisfy` maybe False ("500" `Text.isInfixOf`)
+        events <- eventKinds alertId
+        events `shouldSatisfy` ("llm_failed" `elem`)
+
+    it "malformed json degrades to markdown-only" do
+        _ <- ensureTemplate
+        mockFail "malformed" 1
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        performLatestJob (get #id analysis)
+        done <- fetch (get #id analysis)
+        done.status `shouldBe` "done"
+        done.resultMd `shouldSatisfy` maybe False (not . Text.null)
+        done.result `shouldBe` Nothing
+
+    it "missing provider config soft-fails the analysis" do
+        _ <- ensureTemplate
+        oldEndpoint <- lookupEnv "LLM_ENDPOINT"
+        unsetEnv "LLM_ENDPOINT"
+        flip finally (maybe (unsetEnv "LLM_ENDPOINT") (setEnv "LLM_ENDPOINT") oldEndpoint) do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            analysis <- latestAnalysis alertId
+            performLatestJob (get #id analysis)
+            failed <- fetch (get #id analysis)
+            failed.status `shouldBe` "failed"
+            failed.errorMessage `shouldBe` Just "llm_not_configured"
+            events <- eventKinds alertId
+            events `shouldSatisfy` ("llm_skipped" `elem`)
+
+    it "feedback is one vote per user per analysis; re-vote updates" do
+        user <- testUser
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        _ <- newRecord @LlmFeedback
+            |> set #analysisId (get #id analysis)
+            |> set #userId (get #id user)
+            |> set #score 1
+            |> createRecord
+        duplicate <- try (void (newRecord @LlmFeedback
+            |> set #analysisId (get #id analysis)
+            |> set #userId (get #id user)
+            |> set #score (-1)
+            |> createRecord)) :: IO (Either SomeException ())
+        case duplicate of
+            Left _ -> pure ()
+            Right _ -> expectationFailure "duplicate feedback should violate the unique index"
+        existing <- query @LlmFeedback
+            |> filterWhere (#analysisId, get #id analysis)
+            |> filterWhere (#userId, get #id user)
+            |> fetchOneOrNothing
+            >>= maybe (error "feedback missing") pure
+        void (existing |> set #score (-1) |> updateRecord)
+        votes <- query @LlmFeedback
+            |> filterWhere (#analysisId, get #id analysis)
+            |> fetch
+        map (get #score) votes `shouldBe` [-1]
+
+ensureTemplate :: (?modelContext :: ModelContext) => IO LlmPromptTemplate
+ensureTemplate = do
+    existing <- query @LlmPromptTemplate
+        |> filterWhere (#name, "alert_enrichment" :: Text)
+        |> filterWhere (#version, 1)
+        |> fetchOneOrNothing
+    case existing of
+        Just template -> pure template
+        Nothing -> newRecord @LlmPromptTemplate
+            |> set #name "alert_enrichment"
+            |> set #version 1
+            |> set #body "Alert: {{alert.title}}\n{{alert.description}}\nEvents:\n{{events}}\nCMDB:\n{{cmdb_excerpt}}\nSimilar:\n{{similar_alerts}}\nJira:\n{{jira_links}}"
+            |> set #active True
+            |> createRecord
+
+latestAnalysis :: (?modelContext :: ModelContext) => Id Alert -> IO LlmAnalysis
+latestAnalysis alertId = query @LlmAnalysis
+    |> filterWhere (#alertId, alertId)
+    |> orderByDesc #createdAt
+    |> limit 1
+    |> fetchOneOrNothing
+    >>= maybe (error "llm analysis missing") pure
+
+enqueueAnalysis :: (?modelContext :: ModelContext) => Id Alert -> IO LlmAnalysis
+enqueueAnalysis alertId = do
+    analysis <- newRecord @LlmAnalysis
+        |> set #alertId alertId
+        |> createRecord
+    void do
+        newRecord @LlmAnalysisJob
+            |> set #analysisId (get #id analysis)
+            |> createRecord
+    pure analysis
+
+performLatestJob :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Id LlmAnalysis -> IO ()
+performLatestJob analysisId = do
+    job <- query @LlmAnalysisJob
+        |> filterWhere (#analysisId, analysisId)
+        |> orderByDesc #createdAt
+        |> limit 1
+        |> fetchOneOrNothing
+        >>= maybe (error "llm job missing") pure
+    perform job
+
+counterRequestsAfter :: (?modelContext :: ModelContext) => Text -> IO Int
+counterRequestsAfter provider = do
+    rows <- sqlQueryTyped [typedSql|
+        SELECT requests FROM llm_budget_counters
+        WHERE provider = ${provider} AND day = CURRENT_DATE
+    |]
+    pure (fromMaybe 0 (head rows))
+
+mockFail :: Text -> Int -> IO ()
+mockFail kind times = void (Wreq.post ("http://127.0.0.1:18084/debug/fail/" <> cs kind) (object ["times" .= times]))
 
 schemaPresent :: String -> IO Bool
 schemaPresent databaseUrl = do

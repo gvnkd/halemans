@@ -222,10 +222,16 @@ contextPanelUpdates alert = do
         |> orderByDesc #createdAt
         |> limit 1
         |> fetchOneOrNothing
+    analyses <- query @LlmAnalysis
+        |> filterWhere (#alertId, get #id alert)
+        |> orderByDesc #createdAt
+        |> limit 10
+        |> fetch
     pure
         [ fragment cmdbPanelDomId (cmdbPanelHtml alert cmdbEntry) "replace" ""
         , fragment jiraLinksDomId (jiraLinksHtml alert jiraLinks) "replace" ""
         , fragment writeBackChipDomId (writeBackChipHtml latestAttempt) "replace" ""
+        , fragment llmPanelDomId (llmPanelHtml alert analyses []) "replace" ""
         ]
 
 fragment :: Text -> Markup -> Text -> Text -> Aeson.Value

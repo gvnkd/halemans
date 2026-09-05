@@ -13,6 +13,7 @@ import Application.Job.Escalation ()
 import Application.Job.EnrichAlert ()
 import Application.Job.WriteBack ()
 import Application.Job.JiraSync ()
+import Application.Job.LlmAnalysis ()
 
 instance Worker RootApplication where
     workers _ =
@@ -24,5 +25,6 @@ instance Worker RootApplication where
         , worker @EnrichAlertJob
         , worker @WriteBackJob
         , worker @JiraSyncJob
+        , worker @LlmAnalysisJob
         -- Generator Marker
         ]
