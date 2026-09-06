@@ -67,6 +67,13 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - Smoke provision scenario (run.sh, last) is gated on `SMOKE_APP_MANAGED=1` — only smoke-check.sh sets it (exports SMOKE_APP_PID/SMOKE_APP_LOG; run.sh `restart_app` kill/relaunches `$RUN_PROD_SERVER` with HALEMANS_PROVISION_CONFIG). Dev-stack smoke skips it (process-compose owns the app there). Strict-teams pass keeps `sre` with its seeded members.
 - halemans-gen-password (nix/lib.nix genPassword, script nix/scripts/gen-password.sh) prints `password:`/`passwordHash:` lines + a users.items JSON fragment; pwgen + genPassword are in devenv packages and checks.smoke nativeBuildInputs.
 
+## Docker deployment (deploy/docker/)
+- End-user flow needs NO nix: image carries RunProdServer/RunJobs/EnqueuePollers/GenPassword/psql/busybox-sh + schema bundle at /share/db-init (dockerTools links contents' bin/* into /bin automatically — no manual symlinks). `/bin/db-init` (deploy/docker/db-init.sh, baked via extraCommands) applies 00-ihp-schema/01-app-schema/02-roles/99-schema-migrations guarded on to_regclass('alerts').
+- `.#db-init` standalone package was removed — bundle is built inline in flake.nix docker-image and baked at /share/db-init. roles.sql lives at deploy/docker/roles.sql (keep in sync with seed-halemans.sh + smoke-check.sh role privileges).
+- GenPassword = Application/Script/GenPassword.hs → `script-GenPassword` package (IHP flake module auto-packages Application/Script/*.hs, EXCLUDING Prelude.hs). Runs without a DB (hasql-pool acquires lazily; Config.hs provision hook skips when env unset). Script getArgs returns [Text] (CorePrelude), not [String].
+- CI: .github/workflows/docker-images.yaml builds .#docker-image via nix (needs the devenv-root override dance: mkdir .devenv + printf $PWD > .devenv/root, --impure --override-input) and pushes ghcr.io/<repo>:{latest,sha,v*}.
+- compose: deploy/docker/docker-compose.yaml, env via .env.example→.env (env_file passthrough for optional LLM_*/ZABBIX_TOKEN/GRAFANA_TOKEN; required POSTGRES_PASSWORD/IHP_SESSION_SECRET/HALEMANS_GENERIC_HOOK_TOKEN). Host port HALEMANS_PORT (8000 clashes with local Taiga). Tested live on this machine: docker daemon IS reachable interactively as pion (rootless restriction is nix-sandbox-only).
+
 ## Commands
 - Full stack: `nix develop .#default --impure -c devenv-flake-up -D` (detached). Attach: `process-compose -u /run/user/1000/devenv-*/pc.sock process list`.
 - **Do NOT use the `devenv` CLI wrapper from a direnv-loaded shell** — it reuses the stale in-shell `devenv-flake-up` after nix/*.nix changes. Use the `nix develop` form above (or reload direnv).

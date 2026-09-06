@@ -1,0 +1,104 @@
+# Halemans contained deployment (milestone 7): postgres + app + worker,
+# bootstrapped by a provision config (design_docs/milestone_7.md).
+# No nix required — the halemans image (built by GitHub Actions) carries the
+# server, worker, schema bootstrap and the GenPassword tool.
+#
+# First-boot setup:
+#   cd deploy/docker
+#   cp .env.example .env            # fill in the required values
+#   cp provision.example.json provision.json
+#   docker run --rm ghcr.io/omg/halemans:latest /bin/GenPassword 'your-plaintext-password'
+#     # paste the printed hash into provision.json (users.items[].passwordHash)
+#   docker compose up -d
+#
+# The app listens on HALEMANS_PORT (default 8000). The provision config is
+# applied on every app/worker boot (idempotent upserts); edit provision.json
+# and `docker compose up -d --force-recreate app worker` to re-apply.
+
+name: halemans
+
+x-halemans-env: &halemans-env
+  DATABASE_URL: postgresql://halemans:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/app
+  HALEMANS_PROVISION_CONFIG: /provision/provision.json
+
+x-halemans-image: &halemans-image
+  image: ${HALEMANS_IMAGE:-ghcr.io/omg/halemans:latest}
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: halemans
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U halemans -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Applies the baked schema bundle on an empty database (no-op afterwards).
+  db-init:
+    <<: *halemans-image
+    command: ["/bin/db-init"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://halemans:${POSTGRES_PASSWORD}@db:5432/app
+
+  # Seeds the background poller jobs once per deployment.
+  enqueue-pollers:
+    <<: *halemans-image
+    command: ["/bin/EnqueuePollers"]
+    restart: "no"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      <<: *halemans-env
+    volumes:
+      - ./provision.json:/provision/provision.json:ro
+
+  app:
+    <<: *halemans-image
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      enqueue-pollers:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      <<: *halemans-env
+      PORT: "8000"
+    volumes:
+      - ./provision.json:/provision/provision.json:ro
+    ports:
+      - "${HALEMANS_PORT:-8000}:8000"
+
+  worker:
+    <<: *halemans-image
+    command: ["/bin/RunJobs"]
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      enqueue-pollers:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      <<: *halemans-env
+    volumes:
+      - ./provision.json:/provision/provision.json:ro
+
+volumes:
+  db-data:

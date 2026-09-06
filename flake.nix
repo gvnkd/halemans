@@ -22,14 +22,53 @@
                 # Smoke check (milestone 0 §6) lives in ./nix/checks.nix.
                 checks = import ./nix/checks.nix { inherit pkgs lib config self; ihpLib = inputs.ihp.packages.${pkgs.system}.ihp-env-var-backwards-compat; };
 
-                packages = {
+                packages = let
+                    prodServer = config.packages.optimized-prod-server;
+                    # Schema bootstrap bundle baked into the image at
+                    # /share/db-init: IHP framework schema, app schema,
+                    # standard roles, and the schema_migrations ledger for
+                    # every migration already folded into Schema.sql
+                    # (fresh-deploy bootstrap; upgrades apply new migrations
+                    # by hand).
+                    dbInit = let
+                        revisions = lib.mapAttrsToList (name: _: builtins.head (lib.splitString "-" name))
+                            (lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".sql" name)
+                                (builtins.readDir ./Application/Migration));
+                        migrationsSql = pkgs.writeText "99-schema-migrations.sql" ''
+                            CREATE TABLE IF NOT EXISTS schema_migrations (revision BIGINT NOT NULL UNIQUE);
+                            INSERT INTO schema_migrations (revision) VALUES
+                                ${lib.concatMapStringsSep ", " (revision: "(${revision})") revisions}
+                            ON CONFLICT DO NOTHING;
+                        '';
+                    in pkgs.runCommand "halemans-db-init" {} ''
+                        mkdir -p $out
+                        cp ${config.packages.ihp-schema}/IHPSchema.sql $out/00-ihp-schema.sql
+                        cp ${config.packages.schema}/Schema.sql $out/01-app-schema.sql
+                        cp ${./deploy/docker/roles.sql} $out/02-roles.sql
+                        cp ${migrationsSql} $out/99-schema-migrations.sql
+                    '';
+                in {
                     # contents land in the image /bin (RunProdServer, RunJobs,
-                    # EnqueuePollers) — docker-compose overrides the command
-                    # with those stable paths.
+                    # EnqueuePollers, GenPassword, psql, sh) — docker-compose
+                    # overrides the command with those stable paths.
                     docker-image = pkgs.dockerTools.buildLayeredImage {
                         name = "halemans";
                         tag = "latest";
-                        contents = [ pkgs.cacert config.packages.optimized-prod-server config.packages.script-EnqueuePollers ];
+                        contents = [
+                            pkgs.cacert
+                            prodServer
+                            config.packages.script-EnqueuePollers
+                            config.packages.script-GenPassword
+                            pkgs.busybox
+                            pkgs.postgresql
+                            dbInit
+                        ];
+                        extraCommands = ''
+                            mkdir -p share bin
+                            ln -s ${dbInit} share/db-init
+                            cp ${./deploy/docker/db-init.sh} bin/db-init
+                            chmod +x bin/db-init
+                        '';
                         config = {
                             Cmd = [ "/bin/RunProdServer" ];
                             Env = [ "PORT=8000" ];
@@ -45,31 +84,6 @@
                             Cmd = [ "${config.packages.optimized-prod-server}/bin/RunJobs" ];
                         };
                     };
-
-                    # Postgres initdb bundle for the docker-compose deployment:
-                    # IHP framework schema, app schema, standard roles, and the
-                    # schema_migrations ledger for every migration already
-                    # folded into Schema.sql (fresh-deploy bootstrap; upgrades
-                    # apply new migrations by hand). Real file copies (not
-                    # linkFarm symlinks) so the bind-mounted files resolve
-                    # inside the db container.
-                    db-init = let
-                        revisions = lib.mapAttrsToList (name: _: builtins.head (lib.splitString "-" name))
-                            (lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".sql" name)
-                                (builtins.readDir ./Application/Migration));
-                        migrationsSql = pkgs.writeText "99-schema-migrations.sql" ''
-                            CREATE TABLE IF NOT EXISTS schema_migrations (revision BIGINT NOT NULL UNIQUE);
-                            INSERT INTO schema_migrations (revision) VALUES
-                                ${lib.concatMapStringsSep ", " (revision: "(${revision})") revisions}
-                            ON CONFLICT DO NOTHING;
-                        '';
-                    in pkgs.runCommand "halemans-db-init" {} ''
-                        mkdir -p $out
-                        cp ${config.packages.ihp-schema}/IHPSchema.sql $out/00-ihp-schema.sql
-                        cp ${config.packages.schema}/Schema.sql $out/01-app-schema.sql
-                        cp ${./deploy/roles.sql} $out/02-roles.sql
-                        cp ${migrationsSql} $out/99-schema-migrations.sql
-                    '';
                 };
 
                 ihp = {
