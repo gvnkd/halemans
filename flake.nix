@@ -22,6 +22,28 @@
                 # Smoke check (milestone 0 §6) lives in ./nix/checks.nix.
                 checks = import ./nix/checks.nix { inherit pkgs lib config self; ihpLib = inputs.ihp.packages.${pkgs.system}.ihp-env-var-backwards-compat; };
 
+                packages = {
+                    docker-image = pkgs.dockerTools.buildLayeredImage {
+                        name = "halemans";
+                        tag = "latest";
+                        contents = [ pkgs.cacert ];
+                        config = {
+                            Cmd = [ "${config.packages.optimized-prod-server}/bin/RunProdServer" ];
+                            Env = [ "PORT=8000" ];
+                            ExposedPorts = { "8000/tcp" = { }; };
+                        };
+                    };
+
+                    docker-image-worker = pkgs.dockerTools.buildLayeredImage {
+                        name = "halemans-worker";
+                        tag = "latest";
+                        contents = [ pkgs.cacert ];
+                        config = {
+                            Cmd = [ "${config.packages.optimized-prod-server}/bin/RunJobs" ];
+                        };
+                    };
+                };
+
                 ihp = {
                     appName = "app"; # Change this to your project name
                     enable = true;
