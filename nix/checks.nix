@@ -148,6 +148,7 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
             pkgs.zabbix70.agent
             pkgs.php
             halemansLib.hashPassword
+            halemansLib.genPassword
             (pkgs.python3.withPackages (p: [ p.playwright ]))
         ];
 

@@ -1,5 +1,5 @@
 module Application.Service.Llm
-( LlmConfig (..)
+( LlmProviderConfig (..)
 , llmConfigFromEnv
 , LlmError (..)
 , Completion (..)
@@ -32,7 +32,11 @@ import System.Environment (lookupEnv)
 -- llama.cpp/vLLM endpoints and hosted APIs. Advisory only — nothing in this
 -- module may feed back into pipeline actions (milestone_4.md D8).
 
-data LlmConfig = LlmConfig
+-- Runtime-resolved provider config (the generated LlmConfig record is the
+-- llm_configs table row; milestone_7.md §7). DB-first resolution lives in
+-- Application.Service.Llm.DbConfig (separate module: the generated record
+-- shares field names with this one).
+data LlmProviderConfig = LlmProviderConfig
     { providerName :: Text
     , endpoint :: Text
     , model :: Text
@@ -40,11 +44,11 @@ data LlmConfig = LlmConfig
     , toolsEnabled :: Bool
     } deriving (Eq, Show)
 
--- Config is env-only (01_highlevel.md §14: secrets never in DB plaintext).
+-- Env fallback (01_highlevel.md §14: secrets never in DB plaintext).
 -- LLM_ENDPOINT/LLM_MODEL required; LLM_API_KEY optional (local endpoints);
 -- LLM_PROVIDER_NAME defaults to "default" (budget counters key on it);
 -- LLM_TOOLS=1 enables read-only tool calling (milestone_4.md D4a).
-llmConfigFromEnv :: IO (Maybe LlmConfig)
+llmConfigFromEnv :: IO (Maybe LlmProviderConfig)
 llmConfigFromEnv = do
     endpoint <- lookupEnv "LLM_ENDPOINT"
     model <- lookupEnv "LLM_MODEL"
@@ -52,7 +56,7 @@ llmConfigFromEnv = do
     providerName <- lookupEnv "LLM_PROVIDER_NAME"
     tools <- lookupEnv "LLM_TOOLS"
     pure case (endpoint, model) of
-        (Just endpoint, Just model) -> Just LlmConfig
+        (Just endpoint, Just model) -> Just LlmProviderConfig
             { providerName = maybe "default" cs providerName
             , endpoint = cs endpoint
             , model = cs model
@@ -100,20 +104,20 @@ data Prompt = Prompt
 class LlmProvider p where
     complete :: p -> Prompt -> IO (Either LlmError Completion)
 
-data OpenAiCompat = OpenAiCompat { config :: LlmConfig }
+data OpenAiCompat = OpenAiCompat { config :: LlmProviderConfig }
 
 instance LlmProvider OpenAiCompat where
     complete provider prompt = chatCompletion provider.config prompt
 
 -- Admin "connection test": GET /v1/models (milestone_4.md §7).
-connectionOk :: LlmConfig -> IO Bool
+connectionOk :: LlmProviderConfig -> IO Bool
 connectionOk config = do
     result <- try (Wreq.getWith (opts config) (cs (config.endpoint <> "/v1/models")))
     pure case result of
         Left (err :: SomeException) -> False
         Right response -> statusCode (response ^. Wreq.responseStatus) == 200
 
-chatCompletion :: LlmConfig -> Prompt -> IO (Either LlmError Completion)
+chatCompletion :: LlmProviderConfig -> Prompt -> IO (Either LlmError Completion)
 chatCompletion config prompt = do
     let payload = object
             [ "model" .= config.model
@@ -130,7 +134,7 @@ chatCompletion config prompt = do
                 | code == 429 || code >= 500 -> Left (Retriable ("http " <> tshow code))
                 | otherwise -> Left (Terminal ("http " <> tshow code))
 
-opts :: LlmConfig -> Wreq.Options
+opts :: LlmProviderConfig -> Wreq.Options
 opts config = Wreq.defaults
     & Wreq.manager .~ Left (HTTP.tlsManagerSettings
         { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro (120 * 1000000) })

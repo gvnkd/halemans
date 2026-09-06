@@ -20,7 +20,9 @@ in
         curl
         jq
         coreutils
+        pwgen
         halemansLib.ensureTokens
+        halemansLib.genPassword
     ];
 
     # Port map (avoid clashes with IHP tooling :8001/:8002 and local Taiga :8000):

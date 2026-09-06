@@ -58,6 +58,15 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - Run subsets: `ghci -v0 Test/Main.hs -e 'main'` / `ghci -v0 Test/Integration.hs -e 'System.Environment.withArgs ["--match","milestone 6"] main'` with DATABASE_URL exported.
 - Dev-DB smoke runs can fail pre-existing scenarios (write-back chip, audit csv header) from polluted dev state — only the sandboxed `nix flake check --impure` is authoritative.
 
+## Milestone 7 notes (provisioning)
+- Generated `LlmConfig` (llm_configs table) clashed with the M4 service record → service record renamed to `LlmProviderConfig`; DB-first resolution (`llmConfigFromDb`/`currentLlmConfig`) lives in `Application/Service/Llm/DbConfig.hs` — a separate module because both records share field names (providerName/endpoint/model/toolsEnabled) and local selectors shadow imported ones. Callers that use `.endpoint` etc must import `LlmProviderConfig (..)`.
+- Config.hs provisioning hook: ConfigBuilder is evaluated before `ihpDefaultConfig`, so `DatabaseUrl` isn't in the tmap — call `defaultDatabaseUrl` + `withModelContext <url> noopLogger` inside `configIO`. Covers web + worker + dev server + run-script (all eval Config.hs). ghci `-e` exits 0 even when the evaluated expression throws — always capture stderr.
+- typedSql: `${idParam}` of type `Id' "t"` needs the `Id` constructor in scope (`import IHP.ModelSupport (Id' (..))`) or you get a `GHC.Prim.coerce` not-in-scope error. pg void functions (pg_advisory_xact_lock): `SELECT 1 WHERE pg_advisory_xact_lock(hashtextextended(${cat}, 0)) IS NULL` (same IS NULL trick as pg_notify).
+- Provision module `Application/Service/Provision.hs`: `applyProvisionConfig :: (?modelContext) => FilePath -> IO ()`, strict aeson parsers reject unknown keys; per-category advisory-locked transaction; strict delete FK violations are caught per row and rethrown as `ProvisionError` naming entity + blocking constraint. Strict-users/teams/sources integration tests build keep-lists from live DB rows (order-independent, dev-DB safe).
+- sources.name is now unique (migration 1788686328, also inline in Schema.sql).
+- Smoke provision scenario (run.sh, last) is gated on `SMOKE_APP_MANAGED=1` — only smoke-check.sh sets it (exports SMOKE_APP_PID/SMOKE_APP_LOG; run.sh `restart_app` kill/relaunches `$RUN_PROD_SERVER` with HALEMANS_PROVISION_CONFIG). Dev-stack smoke skips it (process-compose owns the app there). Strict-teams pass keeps `sre` with its seeded members.
+- halemans-gen-password (nix/lib.nix genPassword, script nix/scripts/gen-password.sh) prints `password:`/`passwordHash:` lines + a users.items JSON fragment; pwgen + genPassword are in devenv packages and checks.smoke nativeBuildInputs.
+
 ## Commands
 - Full stack: `nix develop .#default --impure -c devenv-flake-up -D` (detached). Attach: `process-compose -u /run/user/1000/devenv-*/pc.sock process list`.
 - **Do NOT use the `devenv` CLI wrapper from a direnv-loaded shell** — it reuses the stale in-shell `devenv-flake-up` after nix/*.nix changes. Use the `nix develop` form above (or reload direnv).

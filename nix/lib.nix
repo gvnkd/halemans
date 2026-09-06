@@ -67,6 +67,13 @@ let
         text = ''exec python3 ${./scripts/hash-password.py} "$1"'';
     };
 
+    # Milestone 7 D4: plaintext from pwgen + pbkdf1 hash + users.items fragment.
+    genPassword = pkgs.writeShellApplication {
+        name = "halemans-gen-password";
+        runtimeInputs = [ pkgs.pwgen pkgs.jq hashPassword ];
+        text = builtins.readFile ./scripts/gen-password.sh;
+    };
+
     # @HALEMANS_AM_HOOK_TOKEN@ is substituted at process start (runtime secret).
     alertmanagerConfigTemplate = pkgs.writeText "alertmanager.yml.tpl" ''
         global:
@@ -182,6 +189,6 @@ let
     '';
 in
 {
-    inherit ensureTokens hashPassword alertmanagerConfigTemplate grafanaIni grafanaProvisioning;
+    inherit ensureTokens hashPassword genPassword alertmanagerConfigTemplate grafanaIni grafanaProvisioning;
     inherit zabbixServerConfTemplate zabbixWebConfTemplate zabbixAgentConfTemplate;
 }

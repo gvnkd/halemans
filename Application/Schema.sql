@@ -631,3 +631,24 @@ CREATE TABLE api_tokens (
 ALTER TABLE api_tokens ADD CONSTRAINT api_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id);
 CREATE UNIQUE INDEX api_tokens_token_hash_idx ON api_tokens(token_hash);
 CREATE INDEX api_tokens_user_id_idx ON api_tokens(user_id);
+
+-- Milestone 7 (phase 7) schema delta, per design_docs/milestone_7.md §5/§7.
+
+-- sources.name becomes the provisioning upsert key (milestone_7.md §5).
+CREATE UNIQUE INDEX sources_name_idx ON sources(name);
+
+-- DB-resident LLM provider config; at most one enabled row. api_key_env
+-- stores the env var NAME, never the key (milestone_7.md §7).
+CREATE TABLE llm_configs (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    provider_name TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    model TEXT NOT NULL,
+    api_key_env TEXT DEFAULT NULL,
+    tools_enabled BOOLEAN NOT NULL DEFAULT false,
+    enabled BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE UNIQUE INDEX llm_configs_provider_name_idx ON llm_configs(provider_name);
+CREATE UNIQUE INDEX llm_configs_enabled_idx ON llm_configs(enabled) WHERE enabled;

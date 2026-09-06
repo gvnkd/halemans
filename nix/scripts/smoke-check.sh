@@ -276,9 +276,15 @@ export GRAFANA_TOKEN="$(cat "$DEVENV_STATE/grafana/token")"
 # --- app + worker ---------------------------------------------------------------
 cd "$DEVENV_ROOT"
 PORT=28080 DATABASE_URL="$DATABASE_URL" "$RUN_PROD_SERVER" > "$T/app.log" 2>&1 &
-pids="$pids $!"
+app_pid=$!
+pids="$pids $app_pid"
 DATABASE_URL="$DATABASE_URL" "$RUN_JOBS" > "$T/worker.log" 2>&1 &
 pids="$pids $!"
+
+# The milestone-7 provision scenario restarts the app process itself.
+export SMOKE_APP_MANAGED=1
+export SMOKE_APP_PID="$app_pid"
+export SMOKE_APP_LOG="$T/app.log"
 
 export HALEMANS_APP_URL="http://127.0.0.1:28080"
 for i in $(seq 1 60); do

@@ -11,6 +11,7 @@ import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
 import Control.Monad (void)
 import Application.Service.Llm
+import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Prompt (buildPromptForAlert, BuiltPrompt (..))
 import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
 import Application.Service.Llm.Tools (toolDefinitions, executeToolCall)
@@ -30,7 +31,7 @@ instance Job LlmAnalysisJob where
         analysis <- fetch job.analysisId
         when (analysis.status == "queued") do
             alert <- fetch analysis.alertId
-            maybeConfig <- llmConfigFromEnv
+            maybeConfig <- currentLlmConfig
             case maybeConfig of
                 Nothing -> failAnalysis analysis alert "llm_not_configured" "llm_skipped"
                 Just config -> runAnalysis job analysis alert config
@@ -41,7 +42,7 @@ instance Job LlmAnalysisJob where
     -- and backoff-requeued retries must not wait a full minute each.
     queuePollInterval = 10 * 1000000
 
-runAnalysis :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmConfig -> IO ()
+runAnalysis :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmProviderConfig -> IO ()
 runAnalysis job analysis alert config = do
     tokenBudget <- Budget.promptTokenBudget
     promptResult <- buildPromptForAlert tokenBudget alert
@@ -141,7 +142,7 @@ requeue analysis job delaySeconds = do
             |> set #runAt (addUTCTime (fromIntegral delaySeconds) now)
             |> createRecord
 
-callProvider :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmConfig -> BuiltPrompt -> IO ()
+callProvider :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmProviderConfig -> BuiltPrompt -> IO ()
 callProvider job analysis alert config built = do
     source <- mapM fetch alert.sourceId
     let messages = [userMessage built.rendered]
@@ -180,7 +181,7 @@ callProvider job analysis alert config built = do
 -- call is logged for the analysis row.
 runWithToolLoop
     :: (?modelContext :: ModelContext)
-    => LlmConfig -> Maybe Source -> Int -> [LlmMessage] -> [Value] -> [Value]
+    => LlmProviderConfig -> Maybe Source -> Int -> [LlmMessage] -> [Value] -> [Value]
     -> IO (Either LlmError (Completion, [Value]))
 runWithToolLoop _ _ 0 _ _ toolLog = pure (Left (Terminal ("tool loop exhausted; calls: " <> tshow (length toolLog))))
 runWithToolLoop config source roundsLeft messages tools toolLog = do

@@ -563,6 +563,79 @@ else
         && pass "metrics: revoked token -> 401" || fail "metrics: revoked token -> 401"
 fi
 
+# ---------------------------------------------------------------- provision (milestone 7)
+# Restarts the app process against a provision config. Only runs when the
+# harness owns the app process (checks.smoke sets SMOKE_APP_MANAGED=1); the
+# dev stack's process-compose owns it there, so the scenario skips.
+if [ "${SMOKE_APP_MANAGED:-0}" = "1" ]; then
+scenario "provision (milestone 7)"
+
+restart_app() { # <provision-config-path-or-empty>
+    kill "$SMOKE_APP_PID" 2>/dev/null
+    for _ in $(seq 1 30); do kill -0 "$SMOKE_APP_PID" 2>/dev/null || break; sleep 1; done
+    if [ -n "$1" ]; then export HALEMANS_PROVISION_CONFIG="$1"; else unset HALEMANS_PROVISION_CONFIG; fi
+    PORT=28080 DATABASE_URL="$DATABASE_URL" "$RUN_PROD_SERVER" >> "$SMOKE_APP_LOG" 2>&1 &
+    SMOKE_APP_PID=$!
+    for _ in $(seq 1 60); do
+        curl -sf -o /dev/null "$APP_URL/NewSession" 2>/dev/null && return 0
+        sleep 1
+    done
+    echo "  app did not come up after provision restart; log tail:" >&2
+    tail -20 "$SMOKE_APP_LOG" >&2
+    return 1
+}
+
+PROV_DIR="$TMPDIR/provision"
+mkdir -p "$PROV_DIR"
+gen_out="$(halemans-gen-password "smoke-prov@dev")"
+prov_password="$(printf '%s\n' "$gen_out" | awk '/^password:/ {print $2}')"
+prov_hash="$(printf '%s\n' "$gen_out" | awk '/^passwordHash:/ {print $2}')"
+[ -n "$prov_password" ] && [ -n "$prov_hash" ] \
+    && pass "gen-password produced plaintext + hash" || fail "gen-password produced plaintext + hash"
+
+cat > "$PROV_DIR/pass1.json" <<EOF
+{
+  "users": {"items": [{"email": "smoke-prov@dev", "passwordHash": "$prov_hash", "roles": ["viewer"], "settings": {"theme": "dark"}}]},
+  "sources": {"items": [{"type": "webhook", "name": "smoke-prov-hook", "enabled": false}]},
+  "teams": {"items": [{"name": "smoke-prov-team", "members": [{"email": "smoke-prov@dev", "role": "lead"}]}]},
+  "llm": {"items": [{"providerName": "smoke-prov", "endpoint": "http://127.0.0.1:18084", "model": "mock-llm-1", "enabled": true}]}
+}
+EOF
+
+restart_app "$PROV_DIR/pass1.json" && pass "app boots with provision config" || fail "app boots with provision config"
+psql "$DATABASE_URL" -tA -c "SELECT 1 FROM users WHERE email = 'smoke-prov@dev'" 2>/dev/null | grep -q 1 \
+    && pass "provisioned user row exists" || fail "provisioned user row exists"
+[ "$(psql "$DATABASE_URL" -tA -c "SELECT tm.team_role FROM team_members tm JOIN teams t ON t.id = tm.team_id JOIN users u ON u.id = tm.user_id WHERE t.name = 'smoke-prov-team' AND u.email = 'smoke-prov@dev'" 2>/dev/null)" = "lead" ] \
+    && pass "provisioned team + membership exist" || fail "provisioned team + membership exist"
+psql "$DATABASE_URL" -tA -c "SELECT 1 FROM sources WHERE name = 'smoke-prov-hook' AND enabled = false" 2>/dev/null | grep -q 1 \
+    && pass "provisioned disabled source exists" || fail "provisioned disabled source exists"
+[ "$(psql "$DATABASE_URL" -tA -c "SELECT provider_name || ':' || endpoint FROM llm_configs WHERE enabled" 2>/dev/null)" = "smoke-prov:http://127.0.0.1:18084" ] \
+    && pass "llm_configs row is the active config" || fail "llm_configs row is the active config"
+login_as "smoke-prov@dev" "$prov_password" \
+    && pass "provisioned user logs in with generated password" || fail "provisioned user logs in with generated password"
+
+# Second pass: strict teams with the extra team removed (sre kept with its
+# seeded membership) deletes smoke-prov-team and nothing else.
+cat > "$PROV_DIR/pass2.json" <<EOF
+{
+  "users": {"items": [{"email": "smoke-prov@dev", "passwordHash": "$prov_hash", "roles": ["viewer"]}]},
+  "sources": {"items": [{"type": "webhook", "name": "smoke-prov-hook", "enabled": false}]},
+  "teams": {"strict": true, "items": [
+    {"name": "sre", "members": [{"email": "sre@dev", "role": "lead"}, {"email": "admin@dev", "role": "member"}]}
+  ]},
+  "llm": {"items": [{"providerName": "smoke-prov", "endpoint": "http://127.0.0.1:18084", "model": "mock-llm-1", "enabled": true}]}
+}
+EOF
+restart_app "$PROV_DIR/pass2.json" && pass "app reboots with strict teams" || fail "app reboots with strict teams"
+[ -z "$(psql "$DATABASE_URL" -tA -c "SELECT 1 FROM teams WHERE name = 'smoke-prov-team'" 2>/dev/null)" ] \
+    && pass "strict teams deleted the extra team" || fail "strict teams deleted the extra team"
+psql "$DATABASE_URL" -tA -c "SELECT 1 FROM teams WHERE name = 'sre'" 2>/dev/null | grep -q 1 \
+    && pass "strict teams kept the sre team" || fail "strict teams kept the sre team"
+login_as "smoke-prov@dev" "$prov_password" \
+    && pass "provisioned user still logs in after strict reboot" || fail "provisioned user still logs in after strict reboot"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1 || true
+fi
+
 echo
 if [ "$failures" = 0 ]; then
     echo "smoke: all scenarios passed"

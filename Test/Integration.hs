@@ -41,9 +41,13 @@ import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.WriteBack (executeAttempt)
 import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
 import Application.Service.Jira (syncOpenLinks)
+import Application.Service.Provision (applyProvisionConfig, ProvisionError (..))
+import Application.Service.Llm (LlmProviderConfig (..))
+import Application.Service.Llm.DbConfig (currentLlmConfig)
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LBS
 
 -- Pipeline integration tests (design_docs/milestone_1.md §10). The check
 -- derivation boots a temp PostgreSQL; we apply IHPSchema + Schema.sql +
@@ -68,7 +72,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec (spec >> llmSpec >> m5Spec >> m6Spec)
+        hspec (spec >> llmSpec >> m5Spec >> m6Spec >> m7Spec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -1255,3 +1259,319 @@ notificationRule name userRef policyRef = newRecord @NotificationRule
     |> set #throttleSeconds 300
     |> set #escalationPolicyId policyRef
     |> createRecord
+
+-- Milestone 7: declarative provisioning (design_docs/milestone_7.md §9).
+-- Keep-lists for strict tests are built from current DB rows so the specs are
+-- order-independent and safe against a populated dev DB.
+m7Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+m7Spec = describe "provisioning (milestone 7)" do
+    it "applies a full config idempotently (users, sources, teams, llm)" do
+        suffix <- tshow <$> nextRandom
+        setEnv "M7_TEST_HOOK_TOKEN" ("tok-" <> cs suffix)
+        let email = "m7-" <> suffix <> "@dev"
+            sourceName = "m7-src-" <> suffix
+            teamName = "m7-team-" <> suffix
+            provider = "m7-llm-" <> suffix
+            templateName = "m7_tmpl_" <> Text.replace "-" "_" suffix
+            token = "tok-" <> suffix
+            config = object
+                [ "users" .= object ["items" .= [object
+                    [ "email" .= email, "passwordHash" .= ("sha256|17|a|b" :: Text)
+                    , "displayName" .= ("M7 " <> suffix)
+                    , "roles" .= (["m7-role-" <> suffix] :: [Text])
+                    , "settings" .= object ["theme" .= ("latte" :: Text)] ]]]
+                , "sources" .= object ["items" .= [object
+                    [ "type" .= ("webhook" :: Text), "name" .= sourceName
+                    , "enabled" .= False
+                    , "webhookTokens" .= [object ["tokenEnv" .= ("M7_TEST_HOOK_TOKEN" :: Text)]] ]]]
+                , "teams" .= object ["items" .= [object
+                    [ "name" .= teamName, "description" .= ("m7 team " <> suffix)
+                    , "hostGroups" .= (["Linux servers"] :: [Text])
+                    , "members" .= [object ["email" .= email, "role" .= ("lead" :: Text)]] ]]]
+                , "llm" .= object ["items" .= [object
+                    [ "providerName" .= provider, "endpoint" .= ("http://m7.example" :: Text)
+                    , "model" .= ("m7-model" :: Text), "enabled" .= False
+                    , "promptTemplates" .= [object
+                        [ "name" .= templateName, "version" .= (1 :: Int)
+                        , "body" .= ("body one" :: Text), "active" .= True ]] ]]]
+                ]
+        m7Apply config
+        m7Apply config
+        users <- query @User |> filterWhere (#email, email) |> fetch
+        length users `shouldBe` 1
+        user <- case users of
+            [user] -> pure user
+            _ -> expectationFailure "expected exactly one provisioned user" >> error "unreachable"
+        user.displayName `shouldBe` "M7 " <> suffix
+        roles <- sqlQueryTyped [typedSql|
+            SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+            JOIN users u ON u.id = ur.user_id WHERE u.email = ${email}
+        |]
+        roles `shouldBe` ["m7-role-" <> suffix]
+        sources <- query @Source |> filterWhere (#name, sourceName) |> fetch
+        source <- case sources of
+            [source] -> pure source
+            _ -> expectationFailure "expected exactly one provisioned source" >> error "unreachable"
+        hookToken <- query @WebhookToken |> filterWhere (#token, token) |> fetchOneOrNothing
+        fmap (get #sourceId) hookToken `shouldBe` Just (get #id source)
+        teams <- query @Team |> filterWhere (#name, teamName) |> fetch
+        team <- case teams of
+            [team] -> pure team
+            _ -> expectationFailure "expected exactly one provisioned team" >> error "unreachable"
+        members <- query @TeamMember |> filterWhere (#teamId, get #id team) |> fetch
+        map (get #teamRole) members `shouldBe` ["lead"]
+        llmConfigs <- query @LlmConfig |> filterWhere (#providerName, provider) |> fetch
+        length llmConfigs `shouldBe` 1
+        templates <- query @LlmPromptTemplate |> filterWhere (#name, templateName) |> fetch
+        map (\t -> (t.version, t.active)) templates `shouldBe` [(1, True)]
+
+    it "re-applies changed password_hash, enabled and member role in place" do
+        suffix <- tshow <$> nextRandom
+        let email = "m7-" <> suffix <> "@dev"
+            sourceName = "m7-src-" <> suffix
+            teamName = "m7-team-" <> suffix
+            config hash enabled role = object
+                [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= hash]]]
+                , "sources" .= object ["items" .= [object ["type" .= ("webhook" :: Text), "name" .= sourceName, "enabled" .= enabled]]]
+                , "teams" .= object ["items" .= [object ["name" .= teamName, "members" .= [object ["email" .= email, "role" .= role]]]]]
+                ]
+        m7Apply (config ("hash-one" :: Text) False ("member" :: Text))
+        m7Apply (config ("hash-two" :: Text) True ("lead" :: Text))
+        user <- query @User |> filterWhere (#email, email) |> fetchOneOrNothing >>= maybe (error "user missing") pure
+        user.passwordHash `shouldBe` "hash-two"
+        source <- query @Source |> filterWhere (#name, sourceName) |> fetchOneOrNothing >>= maybe (error "source missing") pure
+        source.enabled `shouldBe` True
+        team <- query @Team |> filterWhere (#name, teamName) |> fetchOneOrNothing >>= maybe (error "team missing") pure
+        members <- query @TeamMember |> filterWhere (#teamId, get #id team) |> fetch
+        map (get #teamRole) members `shouldBe` ["lead"]
+
+    it "merges user settings instead of replacing them" do
+        suffix <- tshow <$> nextRandom
+        let email = "m7-" <> suffix <> "@dev"
+            config = object ["users" .= object ["items" .= [object
+                ["email" .= email, "passwordHash" .= ("x" :: Text), "settings" .= object ["theme" .= ("frappe" :: Text)]]]]]
+        m7Apply config
+        let patch = object ["ui_note" .= ("kept" :: Text)]
+        void $ sqlExecTyped [typedSql| UPDATE users SET settings = settings || ${patch} WHERE email = ${email} |]
+        m7Apply config
+        user <- query @User |> filterWhere (#email, email) |> fetchOneOrNothing >>= maybe (error "user missing") pure
+        payloadText "theme" user.settings `shouldBe` Just "frappe"
+        payloadText "ui_note" user.settings `shouldBe` Just "kept"
+
+    it "aborts on an unresolvable team member email" do
+        suffix <- tshow <$> nextRandom
+        m7Apply (object ["teams" .= object ["items" .= [object
+            ["name" .= ("m7-team-" <> suffix), "members" .= [object ["email" .= ("m7-missing-" <> suffix <> "@dev")]]]]]])
+            `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "does not resolve to any user" msg
+
+    it "aborts on an unset tokenEnv reference" do
+        suffix <- tshow <$> nextRandom
+        unsetEnv "M7_MISSING_TOKEN"
+        m7Apply (object ["sources" .= object ["items" .= [object
+            [ "type" .= ("zabbix" :: Text), "name" .= ("m7-src-" <> suffix)
+            , "config" .= object ["tokenEnv" .= ("M7_MISSING_TOKEN" :: Text)] ]]]])
+            `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "M7_MISSING_TOKEN" msg
+
+    it "currentLlmConfig prefers the enabled DB row, env is the fallback" do
+        oldEndpoint <- lookupEnv "LLM_ENDPOINT"
+        oldModel <- lookupEnv "LLM_MODEL"
+        flip finally (restoreEnv "LLM_ENDPOINT" oldEndpoint >> restoreEnv "LLM_MODEL" oldModel) do
+            setEnv "LLM_ENDPOINT" "http://m7-env.example"
+            setEnv "LLM_MODEL" "env-model"
+            void $ sqlExecTyped [typedSql| DELETE FROM llm_configs |]
+            fromEnv <- currentLlmConfig
+            fmap (.endpoint) fromEnv `shouldBe` Just "http://m7-env.example"
+            suffix <- tshow <$> nextRandom
+            let provider = "m7-llm-" <> suffix
+            m7Apply (object ["llm" .= object ["items" .= [object
+                [ "providerName" .= provider, "endpoint" .= ("http://m7-db.example" :: Text)
+                , "model" .= ("m7-db-model" :: Text), "enabled" .= True ]]]])
+            fromDb <- currentLlmConfig
+            fmap (.endpoint) fromDb `shouldBe` Just "http://m7-db.example"
+            fmap (.providerName) fromDb `shouldBe` Just provider
+
+    it "prompt template provisioning swaps the active version" do
+        suffix <- tshow <$> nextRandom
+        let provider = "m7-llm-" <> suffix
+            templateName = "m7_tmpl_" <> Text.replace "-" "_" suffix
+            config version = object ["llm" .= object ["items" .= [object
+                [ "providerName" .= provider, "endpoint" .= ("http://m7.example" :: Text)
+                , "model" .= ("m" :: Text)
+                , "promptTemplates" .= [object
+                    [ "name" .= templateName, "version" .= version
+                    , "body" .= ("body" :: Text), "active" .= True ]] ]]]]
+        m7Apply (config (1 :: Int))
+        m7Apply (config (2 :: Int))
+        m7Apply (config (2 :: Int))
+        templates <- query @LlmPromptTemplate
+            |> filterWhere (#name, templateName)
+            |> orderByAsc #version
+            |> fetch
+        map (\t -> (t.version, t.active)) templates `shouldBe` [(1, False), (2, True)]
+
+    it "strict teams deletes absent teams and prunes members of kept teams" do
+        suffix <- tshow <$> nextRandom
+        let doomedName = "m7-doomed-" <> suffix
+            keepName = "m7-keep-" <> suffix
+        user1 <- m7User ("m7-a-" <> suffix <> "@dev")
+        user2 <- m7User ("m7-b-" <> suffix <> "@dev")
+        doomed <- newRecord @Team |> set #name doomedName |> createRecord
+        void $ newRecord @TeamMember |> set #teamId (get #id doomed) |> set #userId (get #id user1) |> createRecord
+        keep <- newRecord @Team |> set #name keepName |> createRecord
+        void $ newRecord @TeamMember |> set #teamId (get #id keep) |> set #userId (get #id user1) |> set #teamRole "lead" |> createRecord
+        void $ newRecord @TeamMember |> set #teamId (get #id keep) |> set #userId (get #id user2) |> createRecord
+        keepItems <- m7TeamKeepItems [doomedName, keepName]
+        let keepItem = object ["name" .= keepName, "members" .= [object ["email" .= get #email user1, "role" .= ("lead" :: Text)]]]
+        m7Apply (object ["teams" .= object ["strict" .= True, "items" .= (keepItems <> [keepItem])]])
+        query @Team |> filterWhere (#name, doomedName) |> fetch `shouldReturn` []
+        members <- query @TeamMember |> filterWhere (#teamId, get #id keep) |> fetch
+        map (get #userId) members `shouldBe` [get #id user1]
+
+    it "strict llm deletes absent providers and unreferenced template versions" do
+        suffix <- tshow <$> nextRandom
+        let templateName = "m7_strict_" <> Text.replace "-" "_" suffix
+        keepProviders <- m7LlmKeepItems
+        void $ newRecord @LlmConfig
+            |> set #providerName ("m7-doomed-llm-" <> suffix)
+            |> set #endpoint "http://doomed.example"
+            |> set #model "m"
+            |> createRecord
+        v1 <- newRecord @LlmPromptTemplate |> set #name templateName |> set #version 1 |> set #body "one" |> createRecord
+        void $ newRecord @LlmPromptTemplate |> set #name templateName |> set #version 2 |> set #body "two" |> createRecord
+        m7Apply (object ["llm" .= object ["strict" .= True, "items" .= (keepProviders <> [object
+            [ "providerName" .= ("m7-strict-llm-" <> suffix), "endpoint" .= ("http://kept.example" :: Text)
+            , "model" .= ("m" :: Text)
+            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (1 :: Int), "body" .= ("one" :: Text), "active" .= True]] ]])]])
+        query @LlmConfig |> filterWhere (#providerName, "m7-doomed-llm-" <> suffix) |> fetch `shouldReturn` []
+        templates <- query @LlmPromptTemplate |> filterWhere (#name, templateName) |> fetch
+        map (get #id) templates `shouldBe` [get #id v1]
+
+    it "strict llm template delete aborts when an analysis references the version" do
+        suffix <- tshow <$> nextRandom
+        let templateName = "m7_fk_" <> Text.replace "-" "_" suffix
+        v1 <- newRecord @LlmPromptTemplate |> set #name templateName |> set #version 1 |> set #body "one" |> createRecord
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        void $ newRecord @LlmAnalysis
+            |> set #alertId alertId
+            |> set #promptTemplateId (Just (get #id v1))
+            |> set #promptHash fp
+            |> createRecord
+        keepProviders <- m7LlmKeepItems
+        m7Apply (object ["llm" .= object ["strict" .= True, "items" .= (keepProviders <> [object
+            [ "providerName" .= ("m7-strict-llm-" <> suffix), "endpoint" .= ("http://kept.example" :: Text)
+            , "model" .= ("m" :: Text)
+            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (2 :: Int), "body" .= ("two" :: Text)]] ]])]])
+            `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "cannot delete prompt template" msg
+
+    it "strict users deletes unreferenced users and aborts on alert-history references" do
+        suffix <- tshow <$> nextRandom
+        doomedPlain <- m7User ("m7-doomed-" <> suffix <> "@dev")
+        doomedReferenced <- m7User ("m7-fk-" <> suffix <> "@dev")
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        void $ newRecord @AlertEvent
+            |> set #alertId alertId
+            |> set #userId (Just (get #id doomedReferenced))
+            |> set #kind "external"
+            |> createRecord
+        -- Transactional: the FK-blocked delete rolls the whole category back,
+        -- so even the unreferenced doomed user survives this apply.
+        keepWithoutReferenced <- m7UserKeepItems [get #email doomedReferenced]
+        m7Apply (object ["users" .= object ["strict" .= True, "items" .= keepWithoutReferenced]])
+            `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf ("cannot delete user \"m7-fk-" <> suffix <> "@dev\"") msg
+        surviving <- query @User |> filterWhere (#email, get #email doomedPlain) |> fetch
+        map (get #id) surviving `shouldBe` [get #id doomedPlain]
+        -- Without the referenced user in scope the plain one is deleted.
+        keepWithoutPlain <- m7UserKeepItems [get #email doomedPlain]
+        m7Apply (object ["users" .= object ["strict" .= True, "items" .= keepWithoutPlain]])
+        query @User |> filterWhere (#email, get #email doomedPlain) |> fetch `shouldReturn` []
+        kept <- query @User |> filterWhere (#email, get #email doomedReferenced) |> fetch
+        map (get #id) kept `shouldBe` [get #id doomedReferenced]
+
+    it "strict sources delete aborts when alerts reference the source" do
+        suffix <- tshow <$> nextRandom
+        doomed <- integrationSource "webhook" ("m7-doomed-src-" <> suffix) "" (object [])
+        fp <- freshFingerprint
+        Just _ <- ingest doomed (testEvent fp Firing)
+        -- The keep-list replays existing sources whose config tokenEnv refs
+        -- (fixture zabbix/grafana) must resolve at apply time (§5).
+        oldZabbix <- lookupEnv "ZABBIX_TOKEN"
+        oldGrafana <- lookupEnv "GRAFANA_TOKEN"
+        flip finally (restoreEnv "ZABBIX_TOKEN" oldZabbix >> restoreEnv "GRAFANA_TOKEN" oldGrafana) do
+            setEnv "ZABBIX_TOKEN" "m7-dummy-zabbix"
+            setEnv "GRAFANA_TOKEN" "m7-dummy-grafana"
+            keepItems <- m7SourceKeepItems [get #name doomed]
+            m7Apply (object ["sources" .= object ["strict" .= True, "items" .= keepItems]])
+                `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf ("cannot delete source \"m7-doomed-src-" <> suffix <> "\"") msg
+
+m7Apply :: (?modelContext :: ModelContext) => Aeson.Value -> IO ()
+m7Apply config = do
+    suffix <- tshow <$> nextRandom
+    let path = "/tmp/halemans-m7-" <> cs suffix <> ".json"
+    LBS.writeFile path (Aeson.encode config)
+    applyProvisionConfig path
+
+m7User :: (?modelContext :: ModelContext) => Text -> IO User
+m7User email = newRecord @User
+    |> set #email email
+    |> set #passwordHash "unused"
+    |> createRecord
+
+-- Rows currently in the DB rendered back as config items (minus the excluded
+-- natural keys), so strict applies keep them untouched.
+m7UserKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
+m7UserKeepItems exclude = do
+    users <- query @User |> fetch
+    pure [object
+        [ "email" .= get #email user
+        , "passwordHash" .= get #passwordHash user
+        , "displayName" .= get #displayName user
+        ] | user <- users, get #email user `notElem` exclude]
+
+m7SourceKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
+m7SourceKeepItems exclude = do
+    sources <- query @Source |> fetch
+    pure [object
+        [ "type" .= get #type_ source
+        , "name" .= get #name source
+        , "baseUrl" .= get #baseUrl source
+        , "env" .= get #env source
+        , "pollIntervalSeconds" .= get #pollIntervalSeconds source
+        , "enabled" .= get #enabled source
+        , "config" .= get #config source
+        ] | source <- sources, get #name source `notElem` exclude]
+
+m7TeamKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
+m7TeamKeepItems exclude = do
+    teams <- query @Team |> fetch
+    forM (filter (\team -> get #name team `notElem` exclude) teams) \team -> do
+        let teamId = get #id team
+        members <- sqlQueryTyped [typedSql|
+            SELECT u.email, tm.team_role FROM team_members tm
+            JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ${teamId}
+        |]
+        pure $ object
+            [ "name" .= get #name team
+            , "description" .= get #description team
+            , "hostGroups" .= get #hostGroups team
+            , "defaults" .= get #defaults team
+            , "members" .= map (\row -> object ["email" .= get #email row, "role" .= get #team_role row]) members
+            ]
+
+m7LlmKeepItems :: (?modelContext :: ModelContext) => IO [Aeson.Value]
+m7LlmKeepItems = do
+    rows <- query @LlmConfig |> fetch
+    pure [object
+        [ "providerName" .= get #providerName row
+        , "endpoint" .= get #endpoint row
+        , "model" .= get #model row
+        , "apiKeyEnv" .= get #apiKeyEnv row
+        , "toolsEnabled" .= get #toolsEnabled row
+        , "enabled" .= get #enabled row
+        ] | row <- rows]
+
+restoreEnv :: String -> Maybe String -> IO ()
+restoreEnv name = maybe (unsetEnv name) (setEnv name)

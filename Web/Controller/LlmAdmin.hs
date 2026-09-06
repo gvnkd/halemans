@@ -3,10 +3,10 @@ module Web.Controller.LlmAdmin where
 import Web.Controller.Prelude
 import Web.View.LlmAdmin.Index
 import Web.View.LlmAdmin.Edit
-import Application.Service.Llm (LlmConfig (..), llmConfigFromEnv, connectionOk)
+import Application.Service.Llm (LlmProviderConfig (..), connectionOk)
+import Application.Service.Llm.DbConfig (currentLlmConfig)
 import qualified Application.Service.Llm.Budget as Budget
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
-import System.Environment (lookupEnv)
 import Data.Functor ((<&>))
 import Control.Monad (void)
 
@@ -50,13 +50,11 @@ instance Controller LlmAdminController where
                 , tokensOut = get #tokens_out row
                 , requests = get #requests row
                 }
-        endpoint <- lookupEnv "LLM_ENDPOINT"
-        model <- lookupEnv "LLM_MODEL"
-        tools <- lookupEnv "LLM_TOOLS"
+        maybeConfig <- currentLlmConfig
         dailyBudget <- Budget.dailyTokenBudget
         rateLimit <- Budget.rateLimitPerMinute
-        render IndexView { endpoint = cs <$> endpoint, model = cs <$> model
-                         , toolsEnabled = tools == Just "1", .. }
+        render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
+                         , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
 
     action EditLlmTemplateAction { templateId } = do
         requirePrivilege "manage_rules"
@@ -103,9 +101,9 @@ instance Controller LlmAdminController where
 
     action TestLlmConnectionAction = do
         requirePrivilege "manage_rules"
-        maybeConfig <- llmConfigFromEnv
+        maybeConfig <- currentLlmConfig
         case maybeConfig of
-            Nothing -> setErrorMessage "LLM not configured (LLM_ENDPOINT/LLM_MODEL missing)"
+            Nothing -> setErrorMessage "LLM not configured (no enabled llm_configs row, LLM_ENDPOINT/LLM_MODEL missing)"
             Just config -> do
                 ok <- connectionOk config
                 if ok
