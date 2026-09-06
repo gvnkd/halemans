@@ -1,7 +1,7 @@
 module Application.Job.PollGrafana where
 
 import IHP.Prelude
-import IHP.FrameworkConfig (FrameworkConfig)
+import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.Job.Types
 import IHP.ModelSupport
 import IHP.QueryBuilder
@@ -11,6 +11,7 @@ import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
+import Application.Service.Log (logDebug, logInfo, logWarn)
 import qualified Application.Connector.Alertmanager as Am
 import qualified Application.Connector.Grafana as Grafana
 import qualified Data.Aeson as Aeson
@@ -41,16 +42,23 @@ instance Job PollGrafanaJob where
             |> fetch
         forM_ (filter (pollDue now) sources) pollSource
 
-        now <- getCurrentTime
-        next <- newRecord @PollGrafanaJob
-            |> set #runAt (addUTCTime 5 now)
-            |> createRecord
-        let nextId = get #id next
-        _ <- sqlExecTyped [typedSql|
-            DELETE FROM poll_grafana_jobs
-            WHERE status = 'job_status_not_started' AND id <> ${nextId}
-        |]
-        pure ()
+        if null sources
+            then do
+                logInfo "no enabled grafana sources; poll loop stopped (re-arms on source create/enable)"
+                void $ sqlExecTyped [typedSql|
+                    DELETE FROM poll_grafana_jobs
+                    WHERE status = 'job_status_not_started'
+                |]
+            else do
+                now <- getCurrentTime
+                next <- newRecord @PollGrafanaJob
+                    |> set #runAt (addUTCTime 5 now)
+                    |> createRecord
+                let nextId = get #id next
+                void $ sqlExecTyped [typedSql|
+                    DELETE FROM poll_grafana_jobs
+                    WHERE status = 'job_status_not_started' AND id <> ${nextId}
+                |]
 
     queuePollInterval = 3 * 1000000
     maxAttempts = 3
@@ -63,7 +71,7 @@ pollSource source = do
         Just envVar -> fmap cs <$> lookupEnv (cs envVar)
         Nothing -> pure Nothing
     case token of
-        Nothing -> pure () -- token not issued yet (seed not run); try next cycle
+        Nothing -> logDebug ("grafana source \"" <> source.name <> "\": token env var " <> fromMaybe "<none configured>" tokenEnv <> " not set; skipping poll cycle")
         Just token -> do
             now <- getCurrentTime
             outcome <- try (Grafana.alertsGet source.baseUrl token)
@@ -71,8 +79,11 @@ pollSource source = do
                 Left err -> Left (tshow (err :: SomeException))
                 Right result -> result
             case result of
-                Left err -> recordFailure source err
+                Left err -> do
+                    recordFailure source err
+                    logWarn ("grafana source \"" <> source.name <> "\" poll failed: " <> err)
                 Right alerts -> do
+                    logDebug ("grafana source \"" <> source.name <> "\": alertmanager listing returned " <> tshow (length alerts) <> " alerts")
                     recordSuccess source
                     -- 5-min overlap window on the cursor (§8) so a restarted
                     -- poller re-sees the tail and dedupe handles the rest.

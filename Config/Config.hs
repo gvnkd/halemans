@@ -3,6 +3,7 @@ module Config (config) where
 import IHP.Prelude
 import IHP.Environment
 import IHP.FrameworkConfig
+import IHP.EnvVar (envOrDefault)
 import IHP.LoginSupport.Middleware
 import IHP.ModelSupport (withModelContext, noopLogger)
 import Control.Monad.IO.Class (liftIO)
@@ -10,6 +11,7 @@ import System.Environment (lookupEnv)
 import Generated.Types (User)
 import Application.Helper.Controller ()
 import Application.Service.Provision (applyProvisionConfig)
+import Application.Service.Log (LogLevel (..))
 
 config :: ConfigBuilder
 config = do
@@ -17,6 +19,16 @@ config = do
     -- for what you can do here
     option $ AuthMiddleware (authMiddleware @User)
     configIO provisionAtBoot
+
+    -- App log verbosity (Application.Service.Log): HALEMANS_LOG_LEVEL is
+    -- debug|info|warn|error (default info). Validated here so a bad value
+    -- aborts startup instead of silently degrading to info.
+    _ <- envOrDefault "HALEMANS_LOG_LEVEL" LogInfo
+    -- HALEMANS_ACCESS_LOG=0 disables the wai request logger. option is
+    -- first-wins against ihpDefaultConfig, so installing identity here
+    -- suppresses access logging entirely.
+    accessLog <- envOrDefault "HALEMANS_ACCESS_LOG" True
+    unless accessLog $ option $ RequestLoggerMiddleware id
 
 -- Milestone 7 (D2, design_docs/milestone_7.md §3): the ConfigBuilder runs in
 -- IO and is evaluated by RunProdServer, RunJobs and the dev server alike, so

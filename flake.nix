@@ -103,6 +103,7 @@
                         lens
                         vector
                         wreq
+                        fast-logger
                         ihp-typed-sql
                         # milestone 1: websocket fan-out + web push
                         ihp-pglistener

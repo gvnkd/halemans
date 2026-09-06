@@ -78,6 +78,8 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - compose: deploy/docker/docker-compose.yaml, env via .env.example→.env (env_file passthrough for optional LLM_*/ZABBIX_TOKEN/GRAFANA_TOKEN; required POSTGRES_PASSWORD/IHP_SESSION_SECRET/HALEMANS_GENERIC_HOOK_TOKEN). Host port HALEMANS_PORT (8000 clashes with local Taiga). Tested live on this machine: docker daemon IS reachable interactively as pion (rootless restriction is nix-sandbox-only).
 
 ## Commands
+- Poll loops (PollZabbix/PollGrafana) STOP rescheduling when no enabled sources of their type exist; re-arm via `ensurePollerForSourceType` (Application/Service/PollerControl.hs) — called from SourcesController create/update/toggle + Provision.upsertSource. Sources inserted via raw SQL (seeds) need EnqueuePollers afterwards (seed-halemans.sh runs it last).
+- App logging: HALEMANS_LOG_LEVEL=debug|info|warn|error (default info, validated at boot in Config.hs, read per call in Application/Service/Log.hs); HALEMANS_ACCESS_LOG=0 disables wai request logging (RequestLoggerMiddleware override — `option` is first-wins vs ihpDefaultConfig).
 - Full stack: `nix develop .#default --impure -c devenv-flake-up -D` (detached). Attach: `process-compose -u /run/user/1000/devenv-*/pc.sock process list`.
 - **Do NOT use the `devenv` CLI wrapper from a direnv-loaded shell** — it reuses the stale in-shell `devenv-flake-up` after nix/*.nix changes. Use the `nix develop` form above (or reload direnv).
 - Smoke suite (needs running stack): `nix develop .#default --impure -c smoke-test`.

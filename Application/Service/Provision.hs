@@ -24,6 +24,7 @@ import Generated.Types
 import Application.Helper.Theme (isValidTheme)
 import Application.Connector.Zabbix (ZabbixGroup)
 import Application.Service.HostGroups (replaceHostGroupCache)
+import Application.Service.PollerControl (ensurePollerForSourceType)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (Value, FromJSON, parseJSON, (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser, parseEither)
@@ -355,6 +356,7 @@ upsertSource item = do
                     SELECT id, ${token} FROM sources WHERE name = ${name}
                     ON CONFLICT (token) DO NOTHING
                 |]
+    when enabled (ensurePollerForSourceType sourceType)
     forM_ item.hostGroupsFile (applyHostGroupsFile item.name)
 
 -- hostGroupsFile (zabbix sources only): replace the source's

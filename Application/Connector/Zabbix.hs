@@ -76,7 +76,7 @@ eventGet baseUrl token timeFrom groupIds = do
         Right decoded ->
             case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
                 Just events -> pure (Right events)
-                Nothing -> pure (Left "zabbix rpc: response has no result field")
+                Nothing -> pure (Left (rpcError decoded))
 
 -- | A zabbix host group (hostgroup.get).
 data ZabbixGroup = ZabbixGroup
@@ -111,7 +111,7 @@ hostGroupsGetAll baseUrl token = do
         Right decoded ->
             case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
                 Just groups -> pure (Right groups)
-                Nothing -> pure (Left "zabbix rpc: response has no result field")
+                Nothing -> pure (Left (rpcError decoded))
 
 -- Fingerprint is trigger-scoped (a zabbix trigger has at most one open
 -- problem at a time), so the OK event resolves the alert created by the

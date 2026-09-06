@@ -11,6 +11,7 @@ import qualified Data.Aeson.Key as Key
 import Text.Read (readMaybe)
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Service.HostGroups (replaceHostGroupCache)
+import Application.Service.PollerControl (ensurePollerForSourceType)
 import Control.Exception (try, SomeException)
 import System.Environment (lookupEnv)
 
@@ -39,6 +40,7 @@ instance Controller SourcesController where
             |> set #enabled True
             |> set #config (sourceConfig (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
             |> createRecord
+        ensurePollerForSourceType (param @Text "type")
         setSuccessMessage "Source created"
         redirectTo SourcesAction
 
@@ -66,6 +68,7 @@ instance Controller SourcesController where
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
             |> set #config (sourceConfig (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
             |> updateRecord
+        when source.enabled (ensurePollerForSourceType (param @Text "type"))
         setSuccessMessage "Source updated"
         redirectTo SourcesAction
 
@@ -75,6 +78,7 @@ instance Controller SourcesController where
         _ <- source
             |> set #enabled (not source.enabled)
             |> updateRecord
+        unless source.enabled (ensurePollerForSourceType (get #type_ source))
         setSuccessMessage (if source.enabled then "Source disabled" else "Source enabled")
         redirectTo SourcesAction
 

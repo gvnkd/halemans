@@ -1,7 +1,7 @@
 module Application.Job.PollZabbix where
 
 import IHP.Prelude
-import IHP.FrameworkConfig (FrameworkConfig)
+import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.Job.Types
 import IHP.ModelSupport
 import IHP.QueryBuilder
@@ -12,6 +12,7 @@ import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), inges
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
+import Application.Service.Log (logDebug, logInfo, logWarn)
 import qualified Application.Connector.Zabbix as Zabbix
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -26,7 +27,9 @@ import System.Environment (lookupEnv)
 
 -- Self-rescheduling zabbix poller (milestone 0). Seeded by EnqueuePollers
 -- (via `seed`); drops duplicate pending siblings before rescheduling so
--- re-running seed never spawns a second loop.
+-- re-running seed never spawns a second loop. Stops rescheduling when no
+-- enabled zabbix sources exist; creating/enabling one re-arms the loop via
+-- Application.Service.PollerControl.
 instance Job PollZabbixJob where
     perform _job = do
         now <- getCurrentTime
@@ -36,16 +39,23 @@ instance Job PollZabbixJob where
             |> fetch
         forM_ (filter (pollDue now) sources) pollSource
 
-        now <- getCurrentTime
-        next <- newRecord @PollZabbixJob
-            |> set #runAt (addUTCTime 5 now)
-            |> createRecord
-        let nextId = get #id next
-        _ <- sqlExecTyped [typedSql|
-            DELETE FROM poll_zabbix_jobs
-            WHERE status = 'job_status_not_started' AND id <> ${nextId}
-        |]
-        pure ()
+        if null sources
+            then do
+                logInfo "no enabled zabbix sources; poll loop stopped (re-arms on source create/enable)"
+                void $ sqlExecTyped [typedSql|
+                    DELETE FROM poll_zabbix_jobs
+                    WHERE status = 'job_status_not_started'
+                |]
+            else do
+                now <- getCurrentTime
+                next <- newRecord @PollZabbixJob
+                    |> set #runAt (addUTCTime 5 now)
+                    |> createRecord
+                let nextId = get #id next
+                void $ sqlExecTyped [typedSql|
+                    DELETE FROM poll_zabbix_jobs
+                    WHERE status = 'job_status_not_started' AND id <> ${nextId}
+                |]
 
     -- Pick up future-run_at reschedules quickly (default is 60s).
     queuePollInterval = 3 * 1000000
@@ -59,7 +69,7 @@ pollSource source = do
         Just envVar -> fmap cs <$> lookupEnv (cs envVar)
         Nothing -> pure Nothing
     case token of
-        Nothing -> pure () -- token not issued yet (seed not run); try next cycle
+        Nothing -> logDebug ("zabbix source \"" <> source.name <> "\": token env var " <> fromMaybe "<none configured>" tokenEnv <> " not set; skipping poll cycle")
         Just token -> do
             now <- getCurrentTime
             let cursor = initialCursor now source
@@ -68,16 +78,21 @@ pollSource source = do
                 Left err -> Left (tshow (err :: SomeException))
                 Right result -> result
             case scope of
-                Left err -> recordFailure source err
-                Right Nothing -> pure () -- teams scope, no host groups configured yet
+                Left err -> do
+                    recordFailure source err
+                    logWarn ("zabbix source \"" <> source.name <> "\" host group scope failed: " <> err)
+                Right Nothing -> logDebug ("zabbix source \"" <> source.name <> "\": hostGroupScope=teams but no cached groups match; skipping poll cycle")
                 Right (Just groupIds) -> do
                     outcome <- try (Zabbix.eventGet source.baseUrl token cursor groupIds)
                     result <- pure case outcome of
                         Left err -> Left (tshow (err :: SomeException))
                         Right result -> result
                     case result of
-                        Left err -> recordFailure source err
+                        Left err -> do
+                            recordFailure source err
+                            logWarn ("zabbix source \"" <> source.name <> "\" poll failed: " <> err)
                         Right events -> do
+                            logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (length events) <> " events")
                             recordSuccess source
                             ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl) events)
                             reconcileAcks source token

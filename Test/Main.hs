@@ -23,6 +23,7 @@ import qualified Test.ApiSpec
 import qualified Test.PollZabbixSpec
 import qualified Test.HostGroupsSpec
 import qualified Test.ProvisionSpec
+import qualified Test.LogSpec
 
 main :: IO ()
 main = hspec do
@@ -45,3 +46,4 @@ main = hspec do
     Test.PollZabbixSpec.spec
     Test.HostGroupsSpec.spec
     Test.ProvisionSpec.spec
+    Test.LogSpec.spec

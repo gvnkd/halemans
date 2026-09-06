@@ -29,6 +29,8 @@ import Application.Job.EnrichAlert ()
 import Application.Job.LlmAnalysis ()
 import Application.Job.Retention ()
 import Application.Job.SourceHealth (checkSilence)
+import Application.Job.PollZabbix ()
+import Application.Service.PollerControl (ensurePollerForSourceType)
 import Application.Service.SourceHealth (healthFingerprint, recordFailure, recordSuccess)
 import Application.Service.Api.Token (newApiToken, resolveToken, hashToken)
 import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage, alertDetail, AlertDetail (..))
@@ -72,7 +74,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec (spec >> llmSpec >> m5Spec >> m6Spec >> m7Spec)
+        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -966,6 +968,45 @@ counterRequestsAfter provider = do
     rows <- sqlQueryTyped [typedSql|
         SELECT requests FROM llm_budget_counters
         WHERE provider = ${provider} AND day = CURRENT_DATE
+    |]
+    pure (fromMaybe 0 (head rows))
+
+pollerLifecycleSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+pollerLifecycleSpec = describe "poll loop lifecycle" do
+    -- Poll loops stop rescheduling when no enabled sources of their type
+    -- exist; source create/enable paths re-arm them. Race note: a live dev
+    -- worker mutates poll_zabbix_jobs concurrently, so exact counts are
+    -- only deterministic in the sandboxed check (no worker there).
+    it "stops rescheduling when no enabled zabbix sources exist" do
+        void $ sqlExecTyped [typedSql| UPDATE sources SET enabled = false WHERE type = 'zabbix' |]
+        void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_not_started' |]
+        perform =<< (newRecord @PollZabbixJob |> createRecord)
+        pending <- pendingZabbixJobs
+        void $ sqlExecTyped [typedSql| UPDATE sources SET enabled = true WHERE type = 'zabbix' |]
+        pending `shouldBe` 0
+
+    it "ensurePollerForSourceType re-arms a stopped loop idempotently" do
+        void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_not_started' |]
+        ensurePollerForSourceType "zabbix"
+        ensurePollerForSourceType "zabbix"
+        pending <- pendingZabbixJobs
+        pending `shouldBe` 1
+        ensurePollerForSourceType "alertmanager" -- push-only type: no poller, no-op
+
+    it "reschedules while an enabled zabbix source exists" do
+        void $ sqlExecTyped [typedSql| UPDATE sources SET enabled = false WHERE type = 'zabbix' |]
+        name <- ("itest-zabbix-lifecycle-" <>) . tshow <$> nextRandom
+        _ <- integrationSource "zabbix" name "" (object [])
+        void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_not_started' |]
+        perform =<< (newRecord @PollZabbixJob |> createRecord)
+        pending <- pendingZabbixJobs
+        void $ sqlExecTyped [typedSql| UPDATE sources SET enabled = true WHERE type = 'zabbix' |]
+        pending `shouldBe` 1
+
+pendingZabbixJobs :: (?modelContext :: ModelContext) => IO Int64
+pendingZabbixJobs = do
+    rows <- sqlQueryTyped [typedSql|
+        SELECT count(*) FROM poll_zabbix_jobs WHERE status = 'job_status_not_started'
     |]
     pure (fromMaybe 0 (head rows))
 
