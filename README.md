@@ -1,43 +1,96 @@
-# IHP Project
+# Halemans
 
-This is an IHP (Integrated Haskell Platform) project with a GitHub Actions workflow for continuous integration. For more information about IHP, see the [IHP Documentation](https://ihp.digitallyinduced.com/Guide/).
+**H**ome **ALE**rt **MAN**agement **S**ystem — a single-node alert aggregation and management server. It collects alerts from Zabbix, Grafana, Prometheus Alertmanager and generic webhooks, deduplicates and groups them, enriches them with CMDB/Jira/LLM context, and presents a unified operational picture to SRE teams.
 
-## GitHub Actions Workflow
+Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, server-rendered HSX UI and WebSocket live updates. All async work runs on a DB-backed job queue — no extra broker.
 
-This project includes a GitHub Actions workflow that builds the project and runs its test suite via `nix flake check`. The workflow is defined in [`.github/workflows/nix-flake-check.yml`](.github/workflows/nix-flake-check.yml).
+## Features
 
-### Workflow Triggers
+- **Multi-source ingestion** — polling connectors (Zabbix JSON-RPC, Grafana unified alerting) and webhook endpoints (Alertmanager, generic), with cursor-based idempotent polling and fingerprint dedupe.
+- **Alert pipeline** — normalize → dedupe → blackout check → grouping rules → state machine (firing / ack / resolved / closed / suppressed) → notification dispatch. Every mutation lands in an append-only audit log.
+- **Grouping & dedup** — DB-backed ordered grouping rules; exact dedupe by source-scoped fingerprint with occurrence counters.
+- **Teams & RBAC** — roles as data (composable privilege sets), team-based notification/escalation routing, blackouts (maintenance windows) per environment/host/service.
+- **Context enrichment** — Confluence CMDB lookup (TTL-cached), Jira issue linking/status sync, hybrid write-back (ack/close/silence propagated back to Zabbix/Grafana/Alertmanager).
+- **LLM enrichment** — advisory-only analysis (probable cause, suggested actions) via any OpenAI-compatible endpoint; prompt-hash dedupe, retry with backoff, per-DB config.
+- **Live UI** — server-rendered pages with WebSocket fragment updates, per-environment scopes, browser notifications, theme packs.
+- **Public API & metrics** — read-only JSON API (`/api/v1/alerts`, `/api/v1/environments`) with per-token rate limits, `/metrics` Prometheus exporter, audit export (CSV/JSONL).
+- **Provisioning** — declarative JSON config (users/teams/sources/rules) applied idempotently at boot; env-var indirection for secrets.
+- **Source health** — connector failure tracking with exponential backoff, webhook silence detection, internal health alerts.
 
-The `Test` workflow runs on:
-- Push to the `master` (or `main`) branch
-- Pull requests targeting the `master` (or `main`) branch
+Full design: [`design_docs/01_highlevel.md`](design_docs/01_highlevel.md); per-milestone notes in `design_docs/milestone_*.md`.
 
-Both branch names are listed so the workflow works whether the default branch is `master` (as in this repository) or `main` (the default for new repositories created from this boilerplate).
+## Quick start (development)
 
-### What the workflow does
+Requires Nix with flakes.
 
-The `test` job runs on `ubuntu-latest` and performs the following steps:
-1. Checks out the code
-2. Frees up disk space for large Nix builds ([nothing-but-nix](https://github.com/wimpysworld/nothing-but-nix))
-3. Installs Nix using the [Determinate Nix installer](https://github.com/DeterminateSystems/nix-installer-action) with lazy trees enabled
-4. Configures the [`digitallyinduced` Cachix cache](https://app.cachix.org/cache/digitallyinduced) for faster builds (pull only — `skipPush: true`)
-5. Enables the [Magic Nix Cache](https://github.com/DeterminateSystems/magic-nix-cache-action)
-6. Runs `nix flake check --impure -L`, which builds the project and runs the test suite
+```bash
+# Full dev stack: postgres, app (port 28080), worker, mocks, zabbix/grafana/alertmanager
+nix develop .#default --impure -c devenv-flake-up -D
 
-## Running the checks locally
+# Status / logs
+process-compose -u /run/user/1000/devenv-*/pc.sock process list
+```
 
-You can run the same checks that CI runs:
+The dev stack seeds demo users, sources and a random API token (into `.devenv/state/halemans/api-token`). Tokens for the bundled Zabbix/Grafana/Alertmanager live in `.devenv/state/` (gitignored).
+
+Useful commands inside the dev shell:
+
+```bash
+seed           # idempotent seeding
+stack-status   # health report
+smoke-test     # end-to-end smoke suite (needs running stack)
+```
+
+## Testing
 
 ```bash
 nix flake check --impure
 ```
 
-## Deployment
+This is the canonical check: it builds the project and runs unit tests, integration tests and the full sandboxed smoke suite (three sources, prod binaries, Playwright browser tests). For fast iteration:
 
-This boilerplate does not include an automated deployment job. To deploy your project, follow the [IHP Deployment Guide](https://ihp.digitallyinduced.com/Guide/deployment.html#deploying-with-deploytonixos) to set up a NixOS server.
+```bash
+ghci -v0 Test/Main.hs -e 'main'                  # unit tests
+ghci -v0 Test/Integration.hs -e 'main'           # integration tests (needs DATABASE_URL)
+```
 
-## Support
+## Deployment (Docker, no Nix required)
 
-For issues related to IHP or this project's setup, please refer to the [IHP documentation](https://ihp.digitallyinduced.com/Guide/) or seek help on the [IHP Forum](https://ihp.digitallyinduced.com/community/).
+Pre-built images carry the server, worker, schema bootstrap and password tool:
 
-For project-specific issues, please open an issue in this repository.
+```bash
+cd deploy/docker
+cp .env.example .env                       # fill in required values
+cp provision.example.json provision.json
+docker run --rm ghcr.io/omg/halemans:latest /bin/GenPassword 'your-plaintext-password'
+# paste the printed hash into provision.json (users.items[].passwordHash)
+docker compose up -d
+```
+
+The app listens on `HALEMANS_PORT` (default 8000). `provision.json` is re-applied on every boot — edit and `docker compose up -d --force-recreate app worker` to update. Images are built by GitHub Actions (`.github/workflows/docker-images.yaml`) and pushed to `ghcr.io/<repo>:{latest,sha,v*}`.
+
+See [`deploy/docker/.env.example`](deploy/docker/.env.example) for all configuration options (source tokens, Jira/Confluence, LLM endpoint, session secret).
+
+## API
+
+- `GET /api/v1/alerts`, `GET /api/v1/alerts/:id`, `GET /api/v1/environments` — read-only JSON, bearer-token auth (`api_tokens` table, managed via the profile UI), per-token rate limits.
+- `GET /metrics` — Prometheus exporter.
+- `POST /hooks/alertmanager/:token`, `POST /hooks/generic/:token` — ingestion webhooks.
+- `GET /admin/audit/export` — audit log export (CSV/JSONL, admin only).
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `Application/` | domain logic: connectors, pipeline, jobs, services, schema, migrations |
+| `Web/` | controllers, views (HSX), websocket broadcaster |
+| `Config/`, `Main.hs`, `WorkerMain.hs` | IHP wiring: web and worker entry points |
+| `design_docs/` | high-level design + per-milestone docs |
+| `nix/` | dev environment, checks, mocks, scripts |
+| `deploy/docker/` | contained production deployment |
+| `Test/`, `tests/` | hspec unit/integration tests, smoke suite |
+| `flake.nix` | build, dev shell, checks, docker image |
+
+## CI
+
+`.github/workflows/nix-flake-check.yml` runs `nix flake check --impure -L` on every push/PR to `master`, using the digitallyinduced Cachix cache and Magic Nix Cache.
