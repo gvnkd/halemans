@@ -71,6 +71,30 @@ The app listens on `HALEMANS_PORT` (default 8000). `provision.json` is re-applie
 
 See [`deploy/docker/.env.example`](deploy/docker/.env.example) for all configuration options (source tokens, Jira/Confluence, LLM endpoint, session secret).
 
+## Zabbix token permissions
+
+Halemans authenticates to Zabbix with an API token (`Authorization: Bearer`, referenced from source config via `tokenEnv`). In Zabbix ≥ 6.4 token permissions come from the user's **role** (Administration → User roles → *API access* → allowed methods) plus the user's **host group permissions** — `event.get` only returns events for hosts the token's user can read. Grant read access to the relevant host groups via the user's group membership.
+
+A **read-only** token needs exactly one API method:
+
+| Method | Required | Used for |
+|---|---|---|
+| `event.get` | **yes** | Trigger event polling (problem/OK) and ack-state reconciliation |
+| `user.get` | optional | Resolving ack author names when mirroring Zabbix acks; without it acks still mirror, but the actor shows as a raw userid |
+| `hostgroup.get` | optional | The "Sync host groups" button (host-group cache for `hostGroupScope: "teams"`). Skip it when provisioning the cache from `hostGroupsFile` instead |
+
+`event.acknowledge` is called only when the source config sets `"writeBack": true` — with write-back enabled the token is no longer read-only.
+
+Quick check that a token is sufficient (this is the exact call the poller makes):
+
+```bash
+curl -s -X POST 'https://<zabbix>/api_jsonrpc.php' \
+  -H 'Content-Type: application/json-rpc' -H "Authorization: Bearer $ZABBIX_TOKEN" \
+  --data '{"jsonrpc":"2.0","method":"event.get","id":1,"params":{"source":0,"object":0,"limit":1}}'
+```
+
+A `result` array (even empty) means the polling path works; an `error` object like `No permissions to call "event.get"` means the role's API allow-list is missing the method. At runtime the rpc error text is shown verbatim in the source's `last_error` on the Sources page.
+
 ## API
 
 - `GET /api/v1/alerts`, `GET /api/v1/alerts/:id`, `GET /api/v1/environments` — read-only JSON, bearer-token auth (`api_tokens` table, managed via the profile UI), per-token rate limits.
