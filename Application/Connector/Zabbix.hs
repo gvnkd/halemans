@@ -1,6 +1,8 @@
 module Application.Connector.Zabbix
 ( ZabbixEvent (..)
 , eventGet
+, ZabbixGroup (..)
+, hostGroupsGetAll
 , toNormalizedEvent
 , eventAcknowledge
 , ZabbixEventAck (..)
@@ -47,16 +49,18 @@ instance Aeson.FromJSON ZabbixEvent where
                 _ -> Nothing
         pure ZabbixEvent { .. }
 
--- | Fetch trigger events (problems and OKs) newer than the cursor.
-eventGet :: Text -> Text -> Integer -> IO (Either Text [ZabbixEvent])
-eventGet baseUrl token timeFrom = do
+-- | Fetch trigger events (problems and OKs) newer than the cursor. Empty
+-- groupIds means no host group restriction; otherwise event.get is limited
+-- to the given host groups.
+eventGet :: Text -> Text -> Integer -> [Text] -> IO (Either Text [ZabbixEvent])
+eventGet baseUrl token timeFrom groupIds = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
         body = Aeson.object
             [ "jsonrpc" .= ("2.0" :: Text)
             , "method" .= ("event.get" :: Text)
             , "id" .= (1 :: Int)
             , "params" .= Aeson.object
-                [ "source" .= (0 :: Int)
+                ([ "source" .= (0 :: Int)
                 , "object" .= (0 :: Int)
                 , "value" .= ([0, 1] :: [Int])
                 , "time_from" .= timeFrom
@@ -64,7 +68,7 @@ eventGet baseUrl token timeFrom = do
                 , "sortorder" .= ("ASC" :: Text)
                 , "selectHosts" .= (["name"] :: [Text])
                 , "limit" .= (1000 :: Int)
-                ]
+                ] ++ [ "groupids" .= groupIds | not (null groupIds) ])
             ]
     resp <- Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body
     case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
@@ -72,6 +76,41 @@ eventGet baseUrl token timeFrom = do
         Right decoded ->
             case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
                 Just events -> pure (Right events)
+                Nothing -> pure (Left "zabbix rpc: response has no result field")
+
+-- | A zabbix host group (hostgroup.get).
+data ZabbixGroup = ZabbixGroup
+    { groupId :: Text
+    , groupName :: Text
+    } deriving (Eq, Show)
+
+instance Aeson.FromJSON ZabbixGroup where
+    parseJSON = Aeson.withObject "ZabbixGroup" $ \o -> do
+        groupId <- o .: "groupid"
+        groupName <- o .: "name"
+        pure ZabbixGroup { .. }
+
+-- | Fetch ALL host groups (hostgroup.get, no filter). Host groups are
+-- near-static; this backs the manual sync that populates the
+-- zabbix_host_groups cache table.
+hostGroupsGetAll :: Text -> Text -> IO (Either Text [ZabbixGroup])
+hostGroupsGetAll baseUrl token = do
+    let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
+        body = Aeson.object
+            [ "jsonrpc" .= ("2.0" :: Text)
+            , "method" .= ("hostgroup.get" :: Text)
+            , "id" .= (1 :: Int)
+            , "params" .= Aeson.object
+                [ "output" .= (["groupid", "name"] :: [Text])
+                , "sortfield" .= (["name"] :: [Text])
+                ]
+            ]
+    resp <- Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body
+    case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
+        Left err -> pure (Left (cs err))
+        Right decoded ->
+            case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
+                Just groups -> pure (Right groups)
                 Nothing -> pure (Left "zabbix rpc: response has no result field")
 
 -- Fingerprint is trigger-scoped (a zabbix trigger has at most one open

@@ -1,0 +1,1 @@
+ALTER TABLE teams ADD COLUMN host_groups JSONB NOT NULL DEFAULT '[]';

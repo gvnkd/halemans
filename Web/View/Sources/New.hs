@@ -52,6 +52,13 @@ instance View NewView where
                 <label class="form-label">Initial history (days, zabbix first sync; empty = 1)</label>
                 <input name="initialHistoryDays" type="number" class="form-control" data-testid="source-history-days" placeholder="1"/>
             </div>
+            <div class="mb-3">
+                <label class="form-label">Host group scope (zabbix)</label>
+                <select name="hostGroupScope" class="form-select" data-testid="source-host-group-scope">
+                    <option value="all">all — fetch every alert</option>
+                    <option value="teams">teams — only host groups configured on teams</option>
+                </select>
+            </div>
             <button type="submit" class="btn btn-primary" data-testid="source-submit">Create</button>
         </form>
     |]

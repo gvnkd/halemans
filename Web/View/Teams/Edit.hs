@@ -1,12 +1,14 @@
 module Web.View.Teams.Edit where
 import Web.View.Prelude
-import Web.View.Teams.New (memberPicker)
+import Web.View.Teams.New (memberPicker, hostGroupPicker)
 import qualified Data.Aeson as Aeson
 
 data EditView = EditView
     { team :: Team
     , users :: [User]
     , currentRoles :: [(Id User, Text)]
+    , hostGroups :: [Text]
+    , availableGroups :: [Text]
     }
 
 instance View EditView where
@@ -21,6 +23,7 @@ instance View EditView where
                 <label class="form-label">Description</label>
                 <input name="description" type="text" class="form-control" value={team.description} data-testid="team-description"/>
             </div>
+            {hostGroupPicker availableGroups hostGroups}
             {memberPicker users currentRoles}
             <div class="mb-3">
                 <label class="form-label">Default dashboard config (JSON)</label>

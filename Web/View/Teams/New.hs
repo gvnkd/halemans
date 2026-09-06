@@ -4,6 +4,7 @@ import Web.View.Prelude
 data NewView = NewView
     { users :: [User]
     , currentRoles :: [(Id User, Text)]
+    , availableGroups :: [Text]
     }
 
 instance View NewView where
@@ -18,10 +19,39 @@ instance View NewView where
                 <label class="form-label">Description</label>
                 <input name="description" type="text" class="form-control" data-testid="team-description"/>
             </div>
+            {hostGroupPicker availableGroups []}
             {memberPicker users currentRoles}
             <button type="submit" class="btn btn-primary" data-testid="team-submit">Create</button>
         </form>
     |]
+
+-- | Multi-select of zabbix host groups gathered into zabbix_host_groups by
+-- manual source sync. With an empty cache there is nothing to pick from, so
+-- the picker degrades to instructions. Shared with the edit form.
+hostGroupPicker :: [Text] -> [Text] -> Html
+hostGroupPicker availableGroups selected = case availableGroups of
+    [] -> [hsx|
+        <div class="mb-3" data-testid="team-host-groups-empty">
+            <label class="form-label">Zabbix host groups</label>
+            <div class="form-text">
+                No host groups fetched yet. Open the <a href={SourcesAction}>Sources</a> page
+                and use "Sync host groups" on a zabbix source, then reload this page.
+            </div>
+        </div>
+    |]
+    _ -> [hsx|
+        <div class="mb-3">
+            <label class="form-label">Zabbix host groups</label>
+            <select name="hostGroups" class="form-select" multiple="multiple" size={pickerSize} data-testid="team-host-groups">
+                {forEach availableGroups groupOption}
+            </select>
+            <div class="form-text">Used by zabbix sources with host group scope "teams" to restrict which alerts are fetched. Ctrl-click to select multiple.</div>
+        </div>
+    |]
+    where
+        pickerSize :: Text
+        pickerSize = tshow (min 8 (max 2 (length availableGroups)))
+        groupOption name = [hsx|<option value={name} selected={name `elem` selected}>{name}</option>|]
 
 -- | One select per user: "" (not a member) / member / lead. Shared with the
 -- edit form.

@@ -138,6 +138,7 @@ POST /sources                       CreateSourceAction
 GET  /sources/{sourceId}/edit       EditSourceAction
 POST /sources/{sourceId}/update     UpdateSourceAction
 POST /sources/{sourceId}/toggle     ToggleSourceAction
+POST /sources/{sourceId}/sync-host-groups  SyncHostGroupsAction
 |]
 
 [routes|AdminController

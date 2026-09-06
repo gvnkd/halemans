@@ -89,6 +89,19 @@ CREATE TABLE poll_zabbix_jobs (
     run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
+-- Cache of zabbix host groups per source (hostgroup.get). Host groups are
+-- near-static, so they are synced manually (SyncHostGroupsAction) instead of
+-- on every poll; PollZabbix resolves team group names against this table.
+CREATE TABLE zabbix_host_groups (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    source_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    synced_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    UNIQUE (source_id, name)
+);
+ALTER TABLE zabbix_host_groups ADD CONSTRAINT zabbix_host_groups_source_id_fkey FOREIGN KEY (source_id) REFERENCES sources (id);
+
 -- Milestone 1 (phase 1) schema delta, per design_docs/milestone_1.md §2.
 
 CREATE TABLE users (
@@ -244,6 +257,7 @@ CREATE TABLE teams (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    host_groups JSONB NOT NULL DEFAULT '[]',
     defaults JSONB NOT NULL DEFAULT '{}',
     default_dashboard_config JSONB DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL

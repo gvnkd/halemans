@@ -122,6 +122,7 @@ data SourcesController
     | EditSourceAction { sourceId :: !(Id Source) }
     | UpdateSourceAction { sourceId :: !(Id Source) }
     | ToggleSourceAction { sourceId :: !(Id Source) }
+    | SyncHostGroupsAction { sourceId :: !(Id Source) }
     deriving (Eq, Show)
 
 data TeamsController

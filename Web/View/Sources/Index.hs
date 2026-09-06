@@ -44,8 +44,7 @@ instance View IndexView where
 
 renderSourceRow :: Bool -> Source -> Html
 renderSourceRow canManage source =
-    let sourceType = get #type_ source :: Text
-        lastSync = maybe "never" (cs . show) source.lastSyncCursor :: Text
+    let lastSync = maybe "never" (cs . show) source.lastSyncCursor :: Text
         failures = show source.consecutiveFailures :: Text
         lastError = fromMaybe "" source.lastError
         nextPoll = maybe "on schedule" (cs . show) source.nextPollAt :: Text
@@ -66,6 +65,8 @@ renderSourceRow canManage source =
     </tr>
 |]
     where
+        sourceType :: Text
+        sourceType = get #type_ source
         enabledBadge = if source.enabled
             then [hsx|<span class="badge bg-success">enabled</span>|]
             else [hsx|<span class="badge bg-secondary">disabled</span>|]
@@ -80,7 +81,15 @@ renderSourceRow canManage source =
                     <form method="POST" action={ToggleSourceAction source.id} class="d-inline">
                         <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="toggle-source">{toggleLabel}</button>
                     </form>
+                    {syncButton}
                 </td>
             |]
+        syncButton = if sourceType == "zabbix"
+            then [hsx|
+                <form method="POST" action={SyncHostGroupsAction source.id} class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="sync-host-groups">Sync host groups</button>
+                </form>
+            |]
+            else mempty
         toggleLabel :: Text
         toggleLabel = if source.enabled then "Disable" else "Enable"

@@ -11,6 +11,7 @@ import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingestEvents)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
+import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import qualified Application.Connector.Zabbix as Zabbix
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -62,23 +63,53 @@ pollSource source = do
         Just token -> do
             now <- getCurrentTime
             let cursor = initialCursor now source
-            outcome <- try (Zabbix.eventGet source.baseUrl token cursor)
-            result <- pure case outcome of
+            scopeOutcome <- try (resolveGroupIds source token)
+            scope <- pure case scopeOutcome of
                 Left err -> Left (tshow (err :: SomeException))
                 Right result -> result
-            case result of
+            case scope of
                 Left err -> recordFailure source err
-                Right events -> do
-                    recordSuccess source
-                    ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl) events)
-                    reconcileAcks source token
-                    case maximumMaybe (map (.clock) events) of
-                        Just maxClock -> do
-                            _ <- source
-                                |> set #lastSyncCursor (Just (posixSecondsToUTCTime (fromIntegral maxClock)))
-                                |> updateRecord
-                            pure ()
-                        Nothing -> pure ()
+                Right Nothing -> pure () -- teams scope, no host groups configured yet
+                Right (Just groupIds) -> do
+                    outcome <- try (Zabbix.eventGet source.baseUrl token cursor groupIds)
+                    result <- pure case outcome of
+                        Left err -> Left (tshow (err :: SomeException))
+                        Right result -> result
+                    case result of
+                        Left err -> recordFailure source err
+                        Right events -> do
+                            recordSuccess source
+                            ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl) events)
+                            reconcileAcks source token
+                            case maximumMaybe (map (.clock) events) of
+                                Just maxClock -> do
+                                    _ <- source
+                                        |> set #lastSyncCursor (Just (posixSecondsToUTCTime (fromIntegral maxClock)))
+                                        |> updateRecord
+                                    pure ()
+                                Nothing -> pure ()
+
+-- | Host group ids for event.get: Right Nothing means skip this cycle
+-- (hostGroupScope=teams but no cached group matches the teams' names — never
+-- synced yet, or no team has groups configured — so fetch nothing rather than
+-- everything). ScopeAll yields Just [] (no restriction). Names are resolved
+-- against the zabbix_host_groups cache, populated by manual sync
+-- (SyncHostGroupsAction); host groups are near-static so no API call here.
+resolveGroupIds :: (?modelContext :: ModelContext) => Source -> Text -> IO (Either Text (Maybe [Text]))
+resolveGroupIds source _token = case hostGroupScope source of
+    ScopeAll -> pure (Right (Just []))
+    ScopeTeams -> do
+        teams <- query @Team |> fetch
+        case teamHostGroupNames teams of
+            [] -> pure (Right Nothing)
+            names -> do
+                rows <- query @ZabbixHostGroup
+                    |> filterWhere (#sourceId, get #id source)
+                    |> filterWhereIn (#name, names)
+                    |> fetch
+                pure case rows of
+                    [] -> Right Nothing
+                    _ -> Right (Just (map (.groupId) rows))
 
 maximumMaybe :: Ord a => [a] -> Maybe a
 maximumMaybe [] = Nothing
