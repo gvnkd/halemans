@@ -18,6 +18,48 @@
         "env": "prod",
         "enabled": true,
         "webhookTokens": [{"tokenEnv": "HALEMANS_GENERIC_HOOK_TOKEN"}]
+      },
+
+      {
+        "type": "zabbix",
+        "name": "zabbix-prod",
+        "baseUrl": "https://zabbix.example.com",
+        "env": "prod",
+        "pollIntervalSeconds": 30,
+        "enabled": false,
+        "config": {
+          "tokenEnv": "ZABBIX_TOKEN",
+          "hostGroupScope": "teams",
+          "initialHistoryDays": 1,
+          "expectedIntervalSeconds": 120,
+          "writeBack": true,
+          "cmdbSpace": "OPS",
+          "jiraProject": "OPS"
+        }
+      },
+
+      {
+        "type": "grafana",
+        "name": "grafana-prod",
+        "baseUrl": "https://grafana.example.com",
+        "env": "prod",
+        "pollIntervalSeconds": 30,
+        "enabled": false,
+        "config": {
+          "tokenEnv": "GRAFANA_TOKEN",
+          "writeBack": true,
+          "cmdbSpace": "OPS",
+          "jiraProject": "OPS"
+        }
+      },
+
+      {
+        "type": "alertmanager",
+        "name": "alertmanager-prod",
+        "baseUrl": "https://alertmanager.example.com",
+        "env": "prod",
+        "enabled": false,
+        "webhookTokens": [{"tokenEnv": "HALEMANS_AM_HOOK_TOKEN"}]
       }
     ]
   },
