@@ -7,6 +7,7 @@ data EditView = EditView
     , writeBack :: Bool
     , cmdbSpace :: Text
     , jiraProject :: Text
+    , initialHistoryDays :: Text
     }
 
 instance View EditView where
@@ -50,6 +51,10 @@ instance View EditView where
             <div class="mb-3">
                 <label class="form-label">Jira project key</label>
                 <input name="jiraProject" type="text" class="form-control" value={jiraProject} data-testid="source-jira-project"/>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Initial history (days, zabbix first sync; empty = 1)</label>
+                <input name="initialHistoryDays" type="number" class="form-control" value={initialHistoryDays} data-testid="source-history-days"/>
             </div>
             <button type="submit" class="btn btn-primary" data-testid="source-submit">Save</button>
         </form>

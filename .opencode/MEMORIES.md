@@ -85,6 +85,7 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - `history.push` 200s with `data[].error` until the server config cache learns new items (CacheUpdateFrequency=5 in our template); fire-test-alert-zabbix retries until `data | all(has("itemid"))`.
 - Fresh import creates default "Zabbix server" host with health/OS templates → real host alerts (disk space!) pollute ingestion; seed-zabbix disables it.
 - Zabbix trigger events: problem event and OK event have different eventids → Halemans fingerprint is trigger-scoped: `zabbix:trigger:<id>`.
+- First zabbix sync is bounded to `initialHistoryDays` back from now (source config key, default 1 day) via `initialCursor` in Application/Job/PollZabbix.hs; once `last_sync_cursor` exists the key is ignored. Sources UI has a numeric field (empty = default).
 
 ## Grafana
 - Alert rule `dev-cpu-sim`: API-provisioned by seed-grafana (upsert; restores canonical non-firing threshold +1e9). fire-test-alert-grafana flips to -1e9/+1e9 (random_walk is unbounded → deterministic).

@@ -20,6 +20,7 @@ import qualified Test.LlmSpec
 import qualified Test.SourceHealthSpec
 import qualified Test.AuditExportSpec
 import qualified Test.ApiSpec
+import qualified Test.PollZabbixSpec
 
 main :: IO ()
 main = hspec do
@@ -39,3 +40,4 @@ main = hspec do
     Test.SourceHealthSpec.spec
     Test.AuditExportSpec.spec
     Test.ApiSpec.spec
+    Test.PollZabbixSpec.spec

@@ -13,6 +13,7 @@ import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExt
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import qualified Application.Connector.Zabbix as Zabbix
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Data.Bits ((.&.))
@@ -59,7 +60,8 @@ pollSource source = do
     case token of
         Nothing -> pure () -- token not issued yet (seed not run); try next cycle
         Just token -> do
-            let cursor = fromMaybe 0 ((\t -> floor (utcTimeToPOSIXSeconds t) :: Integer) <$> source.lastSyncCursor)
+            now <- getCurrentTime
+            let cursor = initialCursor now source
             outcome <- try (Zabbix.eventGet source.baseUrl token cursor)
             result <- pure case outcome of
                 Left err -> Left (tshow (err :: SomeException))
@@ -81,6 +83,22 @@ pollSource source = do
 maximumMaybe :: Ord a => [a] -> Maybe a
 maximumMaybe [] = Nothing
 maximumMaybe xs = Just (maximum xs)
+
+-- | event.get time_from for a poll. With a stored cursor this is the cursor;
+-- the FIRST poll of a source is bounded to config.initialHistoryDays back
+-- from now (default 1 day) so attaching to a zabbix with years of history
+-- doesn't ingest all of it. Set the key higher to import older history.
+initialCursor :: UTCTime -> Source -> Integer
+initialCursor now source =
+    case source.lastSyncCursor of
+        Just cursor -> floor (utcTimeToPOSIXSeconds cursor)
+        Nothing -> floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral days * 86400)) now))
+  where
+    days = initialHistoryDays source
+
+initialHistoryDays :: Source -> Int
+initialHistoryDays source =
+    fromMaybe 1 (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText "initialHistoryDays")) source.config)
 
 -- Reverse reconciliation (milestone_3.md §6): re-fetch ack flags for the
 -- alerts we already track (cursor-based event.get only returns NEW events,
