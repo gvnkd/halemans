@@ -1,0 +1,33 @@
+{
+  "users": {
+    "items": [
+      {
+        "email": "admin@example.com",
+        "displayName": "Admin",
+        "passwordHash": "REPLACE_WITH_HALEMANS_GEN_PASSWORD_OUTPUT",
+        "roles": ["admin"],
+        "settings": {"theme": "dark"}
+      }
+    ]
+  },
+  "sources": {
+    "items": [
+      {
+        "type": "webhook",
+        "name": "generic-webhook",
+        "env": "prod",
+        "enabled": true,
+        "webhookTokens": [{"tokenEnv": "HALEMANS_GENERIC_HOOK_TOKEN"}]
+      }
+    ]
+  },
+  "teams": {
+    "items": [
+      {
+        "name": "sre",
+        "description": "Site reliability engineering",
+        "members": [{"email": "admin@example.com", "role": "lead"}]
+      }
+    ]
+  }
+}
