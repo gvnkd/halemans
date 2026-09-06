@@ -5,6 +5,7 @@ import IHP.Prelude
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import Application.Service.Provision
+import Application.Connector.Zabbix (ZabbixGroup (..))
 
 -- Unit coverage for the milestone 7 provision config parser (§9): round-trip
 -- of valid fixtures, unknown-field rejection, required-field errors naming
@@ -150,3 +151,31 @@ spec = describe "Application.Service.Provision" do
                     let [team] = maybe [] (.items) config.teams
                     map (.role) team.members `shouldBe` ["member"]
                 Left err -> expectationFailure (cs err)
+
+        it "parses hostGroupsFile on a zabbix source" do
+            let json = "{\"sources\": {\"items\": [{\"type\": \"zabbix\", \"name\": \"z\", \"hostGroupsFile\": \"groups.json\"}]}}"
+            case parseProvisionConfig json of
+                Right config -> do
+                    let [source] = maybe [] (.items) config.sources
+                    source.hostGroupsFile `shouldBe` Just "groups.json"
+                Left err -> expectationFailure (cs err)
+
+        it "rejects hostGroupsFile on non-zabbix sources" do
+            let json = "{\"sources\": {\"items\": [{\"type\": \"grafana\", \"name\": \"g\", \"hostGroupsFile\": \"groups.json\"}]}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("hostGroupsFile" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+    describe "parseHostGroupsFile" do
+        it "parses a bare array of groups" do
+            parseHostGroupsFile "[{\"groupid\": \"2\", \"name\": \"Linux servers\"}]"
+                `shouldBe` Right [ZabbixGroup "2" "Linux servers"]
+
+        it "parses a full hostgroup.get response" do
+            parseHostGroupsFile "{\"jsonrpc\": \"2.0\", \"result\": [{\"groupid\": \"4\", \"name\": \"Hypervisors\"}], \"id\": 1}"
+                `shouldBe` Right [ZabbixGroup "4" "Hypervisors"]
+
+        it "rejects invalid JSON" do
+            case parseHostGroupsFile "nope" of
+                Left err -> err `shouldSatisfy` ("invalid JSON:" `isPrefixOf`)
+                Right _ -> expectationFailure "expected parse failure"

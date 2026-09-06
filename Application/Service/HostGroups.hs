@@ -5,14 +5,20 @@ module Application.Service.HostGroups
 , teamHostGroupNames
 , parseHostGroupsInput
 , hostGroupsToJson
+, replaceHostGroupCache
 ) where
 
 import IHP.Prelude
+import IHP.ModelSupport (ModelContext, Id' (..), newRecord, createRecord)
+import IHP.HaskellSupport (set)
+import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
+import Application.Connector.Zabbix (ZabbixGroup (..))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Data.List (nub)
+import Control.Monad (void)
 
 -- | Per-source fetch scope (source.config.hostGroupScope): "all" (default)
 -- ingests every zabbix trigger event; "teams" restricts event.get to the
@@ -47,3 +53,18 @@ parseHostGroupsInput input =
 
 hostGroupsToJson :: [Text] -> Aeson.Value
 hostGroupsToJson = Aeson.toJSON
+
+-- | Replace one source's zabbix_host_groups cache rows with the given
+-- listing. Shared by the manual sync action (fresh hostgroup.get result) and
+-- provisioning (hostGroupsFile import). Returns the row count.
+replaceHostGroupCache :: (?modelContext :: ModelContext) => Id' "sources" -> [ZabbixGroup] -> IO Int
+replaceHostGroupCache sourceId groups = do
+    void $ sqlExecTyped [typedSql| DELETE FROM zabbix_host_groups WHERE source_id = ${sourceId} |]
+    forM_ groups \group -> do
+        _ <- newRecord @ZabbixHostGroup
+            |> set #sourceId sourceId
+            |> set #name group.groupName
+            |> set #groupId group.groupId
+            |> createRecord
+        pure ()
+    pure (length groups)

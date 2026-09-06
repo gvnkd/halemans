@@ -186,14 +186,22 @@ retention, dashboards.
 - Webhook tokens: `webhookTokens` entries carry `tokenEnv` references; the
   referenced variable must be set at provision time (else config error).
   Insert-if-missing on `webhook_tokens.token` (unique already).
+- Zabbix host groups: `hostGroupsFile` (zabbix sources only) points at a
+  local JSON file — a bare `[{"groupid": ..., "name": ...}]` array or a full
+  `hostgroup.get` response dump (`result` wrapper accepted verbatim). On
+  apply the source's `zabbix_host_groups` cache is REPLACED with the file
+  contents (same semantics as the manual sync button). This is the import
+  path for tokens without `hostgroup.get` permission; unreadable or
+  malformed files abort startup.
 - `strict: true`: sources whose name is not in `items` are deleted
   (webhook_tokens and zabbix_host_groups first). Sources referenced by
   alerts/raw_events are FK-blocked → startup abort; keep them with
   `"enabled": false` in `items` instead (this is exactly the M5 smoke
   cleanup pattern — alerts FK blocks DELETE).
-- Provisioning does not enqueue pollers or sync host-group caches — the
-  existing `EnqueuePollers` script and the manual sync button stay the
-  mechanism; prod deployments run `EnqueuePollers` once as today (documented).
+- Provisioning does not enqueue pollers — the existing `EnqueuePollers`
+  script stays the mechanism; prod deployments run it once as today
+  (documented). The host-group cache is synced by the manual button or
+  imported from a local file via `hostGroupsFile` (see above).
 
 ## 6. Teams provisioning
 

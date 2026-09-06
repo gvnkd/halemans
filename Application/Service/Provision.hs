@@ -10,6 +10,7 @@ module Application.Service.Provision
 , PromptTemplateItem (..)
 , ProvisionError (..)
 , parseProvisionConfig
+, parseHostGroupsFile
 , applyProvisionConfig
 ) where
 
@@ -21,6 +22,8 @@ import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Helper.Theme (isValidTheme)
+import Application.Connector.Zabbix (ZabbixGroup)
+import Application.Service.HostGroups (replaceHostGroupCache)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (Value, FromJSON, parseJSON, (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser, parseEither)
@@ -71,6 +74,7 @@ data SourceItem = SourceItem
     , enabled :: Bool
     , config :: Value
     , webhookTokens :: [WebhookTokenItem]
+    , hostGroupsFile :: Maybe Text
     } deriving (Eq, Show)
 
 newtype WebhookTokenItem = WebhookTokenItem
@@ -158,7 +162,7 @@ instance FromJSON WebhookTokenItem where
 
 instance FromJSON SourceItem where
     parseJSON = Aeson.withObject "sources item" \o -> do
-        rejectUnknownFields ["type", "name", "baseUrl", "env", "pollIntervalSeconds", "enabled", "config", "webhookTokens"] o
+        rejectUnknownFields ["type", "name", "baseUrl", "env", "pollIntervalSeconds", "enabled", "config", "webhookTokens", "hostGroupsFile"] o
         sourceType <- o .: "type"
         unless (sourceType `elem` ["zabbix", "grafana", "alertmanager", "webhook"]) do
             fail ("unknown source type \"" <> cs sourceType <> "\"")
@@ -169,6 +173,9 @@ instance FromJSON SourceItem where
         enabled <- o .:? "enabled" .!= True
         config <- o .:? "config" .!= Aeson.object []
         webhookTokens <- o .:? "webhookTokens" .!= []
+        hostGroupsFile <- o .:? "hostGroupsFile"
+        when (isJust hostGroupsFile && sourceType /= "zabbix") do
+            fail "hostGroupsFile is only valid for zabbix sources"
         pure SourceItem { .. }
 
 instance FromJSON MemberItem where
@@ -348,6 +355,39 @@ upsertSource item = do
                     SELECT id, ${token} FROM sources WHERE name = ${name}
                     ON CONFLICT (token) DO NOTHING
                 |]
+    forM_ item.hostGroupsFile (applyHostGroupsFile item.name)
+
+-- hostGroupsFile (zabbix sources only): replace the source's
+-- zabbix_host_groups cache from a local JSON file instead of hostgroup.get
+-- (for tokens without hostgroup.read permission). Accepts either a bare
+-- array of {"groupid", "name"} objects or a full hostgroup.get response with
+-- a "result" wrapper.
+applyHostGroupsFile :: (?modelContext :: ModelContext) => Text -> Text -> IO ()
+applyHostGroupsFile sourceName path = do
+    readResult <- try (LBS.readFile (cs path))
+    bytes <- case readResult of
+        Left err -> throwIO $ ProvisionError ("sources." <> sourceName <> ": cannot read hostGroupsFile \"" <> path <> "\": " <> tshow (err :: SomeException))
+        Right bytes -> pure bytes
+    groups <- case parseHostGroupsFile bytes of
+        Left err -> throwIO $ ProvisionError ("sources." <> sourceName <> ": hostGroupsFile \"" <> path <> "\": " <> err)
+        Right groups -> pure groups
+    maybeSource <- query @Source |> filterWhere (#name, sourceName) |> fetchOneOrNothing
+    sourceId <- case maybeSource of
+        Just source -> pure (get #id source)
+        Nothing -> throwIO $ ProvisionError ("sources." <> sourceName <> ": source row missing after upsert")
+    count <- replaceHostGroupCache sourceId groups
+    putStrLn ("provision: imported " <> tshow count <> " host groups for \"" <> sourceName <> "\" from " <> path)
+
+parseHostGroupsFile :: LByteString -> Either Text [ZabbixGroup]
+parseHostGroupsFile bytes = case Aeson.eitherDecode bytes of
+    Left err -> Left ("invalid JSON: " <> cs err)
+    Right value -> case parseEither parseHostGroupsValue value of
+        Left err -> Left (cs err)
+        Right groups -> Right groups
+
+parseHostGroupsValue :: Value -> Parser [ZabbixGroup]
+parseHostGroupsValue (Aeson.Object o) = o .: "result"
+parseHostGroupsValue value = parseJSON value
 
 -- Every *Env reference in the config jsonb must resolve at provision time
 -- (milestone_7.md §2: secrets are env references, never plaintext).

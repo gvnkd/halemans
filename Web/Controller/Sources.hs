@@ -9,8 +9,8 @@ import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Text.Read (readMaybe)
-import IHP.TypedSql (sqlExecTyped, typedSql)
 import qualified Application.Connector.Zabbix as Zabbix
+import Application.Service.HostGroups (replaceHostGroupCache)
 import Control.Exception (try, SomeException)
 import System.Environment (lookupEnv)
 
@@ -140,13 +140,5 @@ syncHostGroups source = do
                 Left err -> pure (Left (tshow (err :: SomeException)))
                 Right (Left err) -> pure (Left err)
                 Right (Right groups) -> do
-                    let sourceId = get #id source
-                    _ <- sqlExecTyped [typedSql| DELETE FROM zabbix_host_groups WHERE source_id = ${sourceId} |]
-                    forM_ groups \group -> do
-                        _ <- newRecord @ZabbixHostGroup
-                            |> set #sourceId sourceId
-                            |> set #name group.groupName
-                            |> set #groupId group.groupId
-                            |> createRecord
-                        pure ()
-                    pure (Right (length groups))
+                    count <- replaceHostGroupCache (get #id source) groups
+                    pure (Right count)

@@ -1372,6 +1372,37 @@ m7Spec = describe "provisioning (milestone 7)" do
             , "config" .= object ["tokenEnv" .= ("M7_MISSING_TOKEN" :: Text)] ]]]])
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "M7_MISSING_TOKEN" msg
 
+    it "imports zabbix host groups from a local file, replacing the cache" do
+        suffix <- tshow <$> nextRandom
+        let sourceName = "m7-zbx-" <> suffix
+            groupsPath :: Text
+            groupsPath = "/tmp/halemans-m7-groups-" <> cs suffix <> ".json"
+            config = object ["sources" .= object ["items" .= [object
+                [ "type" .= ("zabbix" :: Text), "name" .= sourceName
+                , "hostGroupsFile" .= groupsPath ]]]]
+        LBS.writeFile (cs groupsPath) (Aeson.encode
+            [ object ["groupid" .= ("2" :: Text), "name" .= ("Linux servers" :: Text)]
+            , object ["groupid" .= ("5" :: Text), "name" .= ("Databases" :: Text)] ])
+        m7Apply config
+        source <- query @Source |> filterWhere (#name, sourceName) |> fetchOneOrNothing >>= maybe (error "source missing") pure
+        rows <- query @ZabbixHostGroup |> filterWhere (#sourceId, get #id source) |> orderByAsc #name |> fetch
+        map (\g -> (g.groupId, g.name)) rows `shouldBe` [("5", "Databases"), ("2", "Linux servers")]
+        -- A hostgroup.get response dump works verbatim and re-apply replaces.
+        LBS.writeFile (cs groupsPath) (Aeson.encode $ object
+            [ "jsonrpc" .= ("2.0" :: Text)
+            , "result" .= [object ["groupid" .= ("7" :: Text), "name" .= ("Hypervisors" :: Text)]]
+            , "id" .= (1 :: Int) ])
+        m7Apply config
+        rows' <- query @ZabbixHostGroup |> filterWhere (#sourceId, get #id source) |> fetch
+        map (\g -> (g.groupId, g.name)) rows' `shouldBe` [("7", "Hypervisors")]
+
+    it "aborts when hostGroupsFile is unreadable" do
+        suffix <- tshow <$> nextRandom
+        m7Apply (object ["sources" .= object ["items" .= [object
+            [ "type" .= ("zabbix" :: Text), "name" .= ("m7-zbx-" <> suffix)
+            , "hostGroupsFile" .= ("/tmp/halemans-m7-no-such-" <> suffix) ]]]])
+            `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "cannot read hostGroupsFile" msg
+
     it "currentLlmConfig prefers the enabled DB row, env is the fallback" do
         oldEndpoint <- lookupEnv "LLM_ENDPOINT"
         oldModel <- lookupEnv "LLM_MODEL"
