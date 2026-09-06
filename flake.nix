@@ -87,7 +87,7 @@
                 };
 
                 ihp = {
-                    appName = "app"; # Change this to your project name
+                    appName = "halemans";
                     enable = true;
                     projectPath = ./.;
                     packages = with pkgs; [
@@ -154,6 +154,22 @@
                 # All custom nix code lives in ./nix/ (see design_docs/milestone_0.md).
                 devenv.shells.default = {
                     imports = [ ./nix/devenv.nix ];
+
+                    # The IHP flake module hardcodes the database name `app`;
+                    # rename it to match the app.
+                    env.DATABASE_URL = lib.mkForce "postgres:///halemans?host=${config.devenv.shells.default.env.PGHOST}";
+                    env.PGDATABASE = lib.mkForce "halemans";
+                    services.postgres.initialDatabases = lib.mkForce [{
+                        name = "halemans";
+                        schema = pkgs.runCommand "halemans-db-init-schema" {} (''
+                            cat ${inputs.ihp}/ihp-schema-compiler/data/IHPSchema.sql >> $out
+                            echo "" >> $out
+                            cat ${./Application/Schema.sql} >> $out
+                        '' + lib.optionalString (builtins.pathExists ./Application/Fixtures.sql) ''
+                            echo "" >> $out
+                            cat ${./Application/Fixtures.sql} >> $out
+                        '');
+                    }];
                 };
             };
 

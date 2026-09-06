@@ -1,5 +1,8 @@
 # Halemans project memories
 
+## Versioning
+- First release: v1.0.0. From now on, ANY code change bumps the version per semver (patch: fixes/internal, minor: features/compatible, major: breaking). Version lives in Halemans.cabal (`version:` field); releases are git tags `vX.Y.Z` pushed to both remotes (origin=gitea, github).
+
 ## IHP sources
 - Local IHP checkout: `/home/pion/work/dev/ihp` — read it directly for framework internals (IHP.ModelSupport, IHP.Job.*, IHP.HSX, LoginSupport, etc). Do NOT grep /nix/store for IHP sources.
 
@@ -44,7 +47,7 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - Turbolinks (turbolinksMorphdom) replaces body WITHOUT pushState after form POSTs → Playwright `wait_for_url` never fires; wait on element testids instead. Real `page.goto` navigations DO fire URL changes (server 302s land).
 - Playwright: `context.new_page()` shares the context cookie jar — logging in a throwaway user overwrites the main page's session; re-login main page (or delete the throwaway user AND re-login) afterwards.
 - IHP dev server serves its LAST compile's error page forever; `touch` a source file to force recompile. Stale typedSql introspection postmasters linger in /tmp/ihp-typed-sql--* — kill + rm when schema errors look wrong.
-- Dev DB rebuild (when the dev DB is stale/partially migrated): terminate backends, DROP+CREATE DATABASE app, apply ihp-schema + Schema.sql + Fixtures, then `INSERT INTO schema_migrations` all revision numbers (table shape: `revision BIGINT NOT NULL UNIQUE`), rm seed.done, `process-compose process restart seed` (one process at a time; the multi-arg form prints usage).
+- Dev DB rebuild (when the dev DB is stale/partially migrated): terminate backends, DROP+CREATE DATABASE halemans, apply ihp-schema + Schema.sql + Fixtures, then `INSERT INTO schema_migrations` all revision numbers (table shape: `revision BIGINT NOT NULL UNIQUE`), rm seed.done, `process-compose process restart seed` (one process at a time; the multi-arg form prints usage).
 
 
 ## Milestone 6 notes (public API + metrics)
@@ -145,3 +148,4 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - checks.tests (hspec unit, Test/Main.hs) and checks.integration-tests (Test/Integration.hs, overridden in nix/checks.nix) are auto-wired by the IHP flake module. Integration.hs applies the schema itself when missing (to_regclass guard) so `runghc Test/Integration.hs` also works against a dev DB.
 - New files must be `git add -N`'d or the flake source won't see them.
 - postgres under devenv dies on full disk (PANIC checkpoint) and crash-loops even after space frees: kill leftover postmaster, rm postmaster.pid + core.*, `process-compose process start postgres`.
+- DB is named `halemans` (was IHP default `app`): the IHP flake module hardcodes `app` in env.DATABASE_URL/PGDATABASE/initialDatabases — flake.nix mkForce-overrides all three (replicating the IHPSchema+Schema+Fixtures schema bundle). ihp.appName only renames derivations.

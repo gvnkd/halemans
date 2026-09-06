@@ -16,7 +16,7 @@ cleanup() {
     pg_ctl -D "$T/pgdata" stop -m immediate > /dev/null 2>&1 || true
     if [ "$rc" != 0 ]; then
         echo "=== poll_zabbix_jobs ===" >&2
-        psql -h "$PGHOST" -d app -c "SELECT status, attempts_count, left(coalesce(last_error,''), 200) AS err FROM poll_zabbix_jobs ORDER BY created_at DESC LIMIT 5" >&2 || true
+        psql -h "$PGHOST" -d halemans -c "SELECT status, attempts_count, left(coalesce(last_error,''), 200) AS err FROM poll_zabbix_jobs ORDER BY created_at DESC LIMIT 5" >&2 || true
         echo "=== zabbix problem.get ===" >&2
         curl -s -H 'Content-Type: application/json' \
             -H "Authorization: Bearer $(cat "$DEVENV_STATE/zabbix/token")" \
@@ -39,17 +39,17 @@ initdb -D "$PGDATA" --no-locale --encoding=UTF8 > /dev/null
 echo "unix_socket_directories = '$PGHOST'" >> "$PGDATA/postgresql.conf"
 echo "listen_addresses = ''" >> "$PGDATA/postgresql.conf"
 pg_ctl -D "$PGDATA" -l "$T/pg.log" -w start
-createdb -h "$PGHOST" app
-export PGDATABASE=app
-export DATABASE_URL="postgres:///app?host=$PGHOST"
-psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+createdb -h "$PGHOST" halemans
+export PGDATABASE=halemans
+export DATABASE_URL="postgres:///halemans?host=$PGHOST"
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q \
     -f "$IHP_SCHEMA" -f "$APP_SCHEMA" -f "$APP_FIXTURES"
 
 # --- halemans tokens + webhook token rows + poller job ------------------------
 halemans-ensure-tokens
 # shellcheck disable=SC1091
 source "$DEVENV_STATE/halemans/env.sh"
-psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q \
     -v am_token="$HALEMANS_AM_HOOK_TOKEN" \
     -v generic_token="$HALEMANS_GENERIC_HOOK_TOKEN" <<'SQL'
 INSERT INTO webhook_tokens (source_id, token)
@@ -67,7 +67,7 @@ SQL
 
 # Enrichment/write-back source config + seeded CMDB cache row (milestone 3 D9):
 # same SQL as seed-halemans (keep both in sync per project convention).
-psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
 UPDATE sources
 SET config = config || '{"writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
 WHERE type IN ('zabbix', 'grafana', 'alertmanager');
@@ -152,7 +152,7 @@ curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null \
     }
 
 # Dev users + roles (milestone 1 D2): same SQL-only path as seed-halemans.
-psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO roles (name, privileges) VALUES
     ('admin',  '{view,ack,close,escalate,manage_blackouts,manage_rules,manage_users,manage_sources,admin}'),
     ('sre',    '{view,ack,close,escalate}'),
@@ -165,7 +165,7 @@ printf '%s\n' \
     "viewer@dev:$HALEMANS_VIEWER_PASSWORD:viewer" \
 | while IFS=: read -r email pass role; do
     hash="$(halemans-hash-password "$pass")"
-    psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+    psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q \
         -v email="$email" -v hash="$hash" -v role="$role" <<'SQL'
 INSERT INTO users (email, password_hash, display_name)
 VALUES (:'email', :'hash', :'email');
@@ -180,7 +180,7 @@ done
 # scopes, for sre@dev. Keep in sync with seed-halemans.
 export HALEMANS_API_TOKEN="halemans-smoke-api-token-v1"
 api_token_hash="$(printf %s "$HALEMANS_API_TOKEN" | sha256sum | cut -d' ' -f1)"
-psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q \
     -v hash="$api_token_hash" -v prefix="${HALEMANS_API_TOKEN:0:8}" <<'SQL'
 INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes)
 SELECT u.id, 'smoke-cli', :'hash', :'prefix', '{alerts:read,metrics}'
@@ -190,7 +190,7 @@ SQL
 # Teams + default routing rules (milestone 2 D4/D5): same SQL as
 # seed-halemans. The default notification rule reproduces milestone-1
 # dispatch: severity >= high pages the sre team, throttled to 5m.
-psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q <<'SQL'
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO teams (name, description) VALUES
     ('sre', 'Site reliability engineering');
 

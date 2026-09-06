@@ -41,7 +41,7 @@ defaultLayout inner = [hsx|
 
 navigation :: Html
 navigation = [hsx|
-<nav class={"navbar navbar-expand-lg navbar-" <> navBsTheme} data-testid="nav">
+<nav class="navbar navbar-expand-lg" data-testid="nav">
     <div class="container-fluid">
         <a class="navbar-brand" href={DashboardAction}>Halemans</a>
         <ul class="navbar-nav me-auto">
@@ -70,11 +70,6 @@ navigation = [hsx|
     </div>
 </nav>
 |]
-    where
-        navBsTheme :: Text
-        navBsTheme = case currentUserOrNothing of
-            Just user -> bsTheme (themeFromSettings user.settings)
-            Nothing -> "dark"
 
 userMenu :: Html
 userMenu = case currentUserOrNothing of

@@ -144,9 +144,16 @@ a:hover { color: var(--accent-hover); }
 
 .text-muted { color: var(--text-muted) !important; }
 
-/* Navbar: themed surface instead of Bootstrap's hardcoded bg-dark; the
-   navbar-light/navbar-dark class is chosen per theme in Layout. */
+/* Navbar: themed surface instead of Bootstrap's hardcoded bg-dark. Colors
+   come from our tokens, NOT navbar-light/navbar-dark (5.3 dropped
+   navbar-light, and navbar-dark would pin white text on light themes). */
 .navbar {
+    --bs-navbar-color: var(--text-muted);
+    --bs-navbar-hover-color: var(--text);
+    --bs-navbar-active-color: var(--text);
+    --bs-navbar-brand-color: var(--text);
+    --bs-navbar-brand-hover-color: var(--accent);
+    --bs-navbar-disabled-color: var(--text-muted);
     background: var(--surface);
     border-bottom: 1px solid var(--border);
 }

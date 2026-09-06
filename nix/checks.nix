@@ -34,10 +34,10 @@ in
             echo "listen_addresses = '''" >> "$PGDATA/postgresql.conf"
             pg_ctl -D "$PGDATA" -l "$TMPDIR/pg.log" start
 
-            createdb -h "$PGHOST" app
-            export DATABASE_URL="postgresql:///app?host=$PGHOST"
+            createdb -h "$PGHOST" halemans
+            export DATABASE_URL="postgresql:///halemans?host=$PGHOST"
 
-            psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+            psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q \
                 -f ${config.packages.ihp-schema}/IHPSchema.sql \
                 -f Application/Schema.sql \
                 -f Application/Fixtures.sql
@@ -108,10 +108,10 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
                 exit 1
             fi
 
-            createdb -h "$PGHOST" app
-            export DATABASE_URL="postgresql:///app?host=$PGHOST"
+            createdb -h "$PGHOST" halemans
+            export DATABASE_URL="postgresql:///halemans?host=$PGHOST"
 
-            psql -h "$PGHOST" -d app -v ON_ERROR_STOP=1 -q \
+            psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q \
                 -f ${config.packages.ihp-schema}/IHPSchema.sql \
                 -f Application/Schema.sql \
                 -f Application/Fixtures.sql

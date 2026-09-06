@@ -7,8 +7,8 @@
 -- This cabal file is inside your project as some haskell tools only work when there's a cabal file. It's not actually used for anything besides providing support for haskell tools.
 --
 
-name:                App
-version:             0.1.0.0
+name:                Halemans
+version:             1.0.0
 -- synopsis:
 -- description:
 license:             AllRightsReserved
@@ -20,7 +20,7 @@ maintainer:          developers@example.com
 build-type:          Simple
 cabal-version:       >=1.10
 
-executable App
+executable Halemans
   main-is:             Main.hs
   -- other-modules:
   -- other-extensions:
