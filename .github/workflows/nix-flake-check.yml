@@ -14,7 +14,6 @@ jobs:
         hatchet-protocol: 'rampage'
     - uses: DeterminateSystems/nix-installer-action@main
       with:
-        determinate: true
         extra-conf: "lazy-trees = true"
     - uses: cachix/cachix-action@v16
       with:
