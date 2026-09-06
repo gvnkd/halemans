@@ -1,11 +1,18 @@
 /* Halemans theme tokens (milestone_3.md §7). Theme packs switched via
-   [data-theme] on <html>. */
+   [data-theme] on <html>. Every used color lives in a token below; the
+   shared bridge maps them onto Bootstrap's CSS variables so stock
+   components (placeholders, muted text, borders, links, tables) follow
+   the active pack. */
 
 :root, [data-theme="dark"] {
+    color-scheme: dark;
     --bg: #1e1e2e;
     --surface: #2a2a3c;
+    --border: #45475a;
     --text: #cdd6f4;
     --text-muted: #9399b2;
+    --accent: #89b4fa;
+    --accent-hover: #b4befe;
     --severity-critical: #f38ba8;
     --severity-high: #fab387;
     --severity-warning: #f9e2af;
@@ -17,27 +24,15 @@
     --status-suppressed: #6c7086;
 }
 
-[data-theme="light"] {
+[data-theme="light"], [data-theme="latte"] {
+    color-scheme: light;
     --bg: #eff1f5;
     --surface: #ffffff;
+    --border: #ccd0da;
     --text: #4c4f69;
     --text-muted: #6c6f85;
-    --severity-critical: #d20f39;
-    --severity-high: #fe640b;
-    --severity-warning: #df8e1d;
-    --severity-info: #1e66f5;
-    --status-firing: #d20f39;
-    --status-ack: #df8e1d;
-    --status-resolved: #40a02b;
-    --status-closed: #6c6f85;
-    --status-suppressed: #9ca0b0;
-}
-
-[data-theme="latte"] {
-    --bg: #eff1f5;
-    --surface: #ffffff;
-    --text: #4c4f69;
-    --text-muted: #6c6f85;
+    --accent: #1e66f5;
+    --accent-hover: #7287fd;
     --severity-critical: #d20f39;
     --severity-high: #fe640b;
     --severity-warning: #df8e1d;
@@ -50,10 +45,14 @@
 }
 
 [data-theme="frappe"] {
+    color-scheme: dark;
     --bg: #303446;
     --surface: #414559;
+    --border: #51576d;
     --text: #c6d0f5;
     --text-muted: #a5adce;
+    --accent: #8caaee;
+    --accent-hover: #babbf1;
     --severity-critical: #e78284;
     --severity-high: #ef9f76;
     --severity-warning: #e5c890;
@@ -66,10 +65,14 @@
 }
 
 [data-theme="macchiato"] {
+    color-scheme: dark;
     --bg: #24273a;
     --surface: #363a4f;
+    --border: #494d64;
     --text: #cad3f5;
     --text-muted: #a5adcb;
+    --accent: #8aadf4;
+    --accent-hover: #b7bdf8;
     --severity-critical: #ed8796;
     --severity-high: #f5a97f;
     --severity-warning: #eed49f;
@@ -82,10 +85,14 @@
 }
 
 [data-theme="dracula"] {
+    color-scheme: dark;
     --bg: #282a36;
     --surface: #44475a;
+    --border: #6272a4;
     --text: #f8f8f2;
-    --text-muted: #6272a4;
+    --text-muted: #8c96b8;
+    --accent: #8be9fd;
+    --accent-hover: #bd93f9;
     --severity-critical: #ff5555;
     --severity-high: #ffb86c;
     --severity-warning: #f1fa8c;
@@ -93,8 +100,22 @@
     --status-firing: #ff5555;
     --status-ack: #f1fa8c;
     --status-resolved: #50fa7b;
-    --status-closed: #6272a4;
+    --status-closed: #8c96b8;
     --status-suppressed: #bd93f9;
+}
+
+/* Bridge: feed our tokens into Bootstrap's variables. app.css loads after
+   bootstrap.min.css, so equal-specificity rules here win. */
+:root {
+    --bs-body-bg: var(--bg);
+    --bs-body-color: var(--text);
+    --bs-emphasis-color: var(--text);
+    --bs-secondary-color: var(--text-muted);
+    --bs-secondary-bg: var(--surface);
+    --bs-tertiary-bg: var(--surface);
+    --bs-border-color: var(--border);
+    --bs-link-color: var(--accent);
+    --bs-link-hover-color: var(--accent-hover);
 }
 
 body {
@@ -102,22 +123,87 @@ body {
     color: var(--text);
 }
 
+a { color: var(--accent); }
+a:hover { color: var(--accent-hover); }
+
 .card, .table, .form-control, .form-select {
     background: var(--surface);
     color: var(--text);
+    border-color: var(--border);
 }
-.table { --bs-table-bg: var(--surface); --bs-table-color: var(--text); }
+.table { --bs-table-bg: var(--surface); --bs-table-color: var(--text); --bs-table-border-color: var(--border); }
 
-.severity-badge.severity-critical { background: var(--severity-critical); color: var(--bg); }
-.severity-badge.severity-high { background: var(--severity-high); color: var(--bg); }
-.severity-badge.severity-warning { background: var(--severity-warning); color: var(--bg); }
-.severity-badge.severity-info { background: var(--severity-info); color: var(--bg); }
+.form-control, .form-select { border: 1px solid var(--border); }
+.form-control::placeholder { color: var(--text-muted); opacity: 1; }
+.form-control:focus, .form-select:focus {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--accent) 25%, transparent);
+}
 
-.status-badge.status-firing { background: var(--status-firing); color: var(--bg); }
-.status-badge.status-ack { background: var(--status-ack); color: var(--bg); }
-.status-badge.status-resolved { background: var(--status-resolved); color: var(--bg); }
-.status-badge.status-closed { background: var(--status-closed); color: var(--bg); }
+.text-muted { color: var(--text-muted) !important; }
+
+/* Navbar: themed surface instead of Bootstrap's hardcoded bg-dark; the
+   navbar-light/navbar-dark class is chosen per theme in Layout. */
+.navbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+/* Neutral chip for every bare .badge (jira origin/status, group badges,
+   LLM confidence). More specific rules below override bg/text/border. */
+.badge {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+/* Map Bootstrap utility badges onto theme tokens. */
+.badge.bg-success { background: var(--status-resolved); color: var(--bg); border: none; }
+.badge.bg-danger { background: var(--status-firing); color: var(--bg); border: none; }
+.badge.bg-secondary { background: var(--status-closed); color: var(--bg); border: none; }
+
+/* flatpickr ships a light-only skin; retheme its popup with our tokens. */
+.flatpickr-calendar {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.3);
+}
+.flatpickr-months .flatpickr-month,
+.flatpickr-current-month,
+.flatpickr-current-month input.cur-year { color: var(--text); }
+.flatpickr-months .flatpickr-prev-month svg,
+.flatpickr-months .flatpickr-next-month svg { fill: var(--text); }
+.flatpickr-weekday { color: var(--text-muted); }
+.flatpickr-day { color: var(--text); }
+.flatpickr-day.prevMonthDay, .flatpickr-day.nextMonthDay { color: var(--text-muted); }
+.flatpickr-day:hover { background: var(--border); border-color: var(--border); }
+.flatpickr-day.selected, .flatpickr-day.selected:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg);
+}
+.flatpickr-day.today { border-color: var(--accent); }
+.flatpickr-time input, .flatpickr-time .numInputWrapper {
+    background: var(--surface);
+    color: var(--text);
+}
+.flatpickr-time input:hover, .flatpickr-time .numInputWrapper:hover { background: var(--surface); }
+.numInputWrapper span { border-color: var(--border); }
+
+.severity-badge.severity-critical { background: var(--severity-critical); color: var(--bg); border: none; }
+.severity-badge.severity-high { background: var(--severity-high); color: var(--bg); border: none; }
+.severity-badge.severity-warning { background: var(--severity-warning); color: var(--bg); border: none; }
+.severity-badge.severity-info { background: var(--severity-info); color: var(--bg); border: none; }
+
+.status-badge.status-firing, .badge.status-firing { background: var(--status-firing); color: var(--bg); border: none; }
+.status-badge.status-ack, .badge.status-ack { background: var(--status-ack); color: var(--bg); border: none; }
+.status-badge.status-resolved, .badge.status-resolved { background: var(--status-resolved); color: var(--bg); border: none; }
+.status-badge.status-closed, .badge.status-closed { background: var(--status-closed); color: var(--bg); border: none; }
 .status-suppressed { background: var(--status-suppressed); color: var(--text); }
+.badge.status-suppressed { color: var(--bg); border: none; }
 
 .alert-row.suppressed { opacity: 0.5; }
 
@@ -137,11 +223,11 @@ body {
 .hourly-bucket { margin-right: 0.5rem; }
 
 .timeline { list-style: none; padding-left: 0; }
-.timeline-event { padding: 0.25rem 0; border-bottom: 1px solid var(--surface); }
+.timeline-event { padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
 .timeline-kind { display: inline-block; min-width: 7rem; font-weight: 600; }
 .timeline-time { color: var(--text-muted); margin-right: 0.5rem; }
 .timeline-payload { color: var(--text-muted); font-size: 0.85rem; }
 
-.json-viewer { background: var(--surface); padding: 0.75rem; overflow-x: auto; }
+.json-viewer { background: var(--surface); padding: 0.75rem; overflow-x: auto; border: 1px solid var(--border); }
 
 #push-banner { cursor: pointer; }

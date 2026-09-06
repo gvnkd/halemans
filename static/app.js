@@ -71,10 +71,54 @@
     });
 })();
 
+// Localized timestamps: views render <time data-utc datetime="…Z"> with a
+// UTC fallback text; here we rewrite to browser-local time with an offset
+// label like (UTC+4). MutationObserver catches WS/turbolinks DOM inserts.
+(function () {
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+    function offsetLabel(d) {
+        var mins = -d.getTimezoneOffset();
+        var sign = mins >= 0 ? '+' : '-';
+        var abs = Math.abs(mins);
+        var hours = Math.floor(abs / 60);
+        var rest = abs % 60;
+        return 'UTC' + sign + hours + (rest ? ':' + pad(rest) : '');
+    }
+
+    function localize(el) {
+        var d = new Date(el.getAttribute('datetime'));
+        if (isNaN(d.getTime())) return;
+        el.textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+            + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
+            + ' (' + offsetLabel(d) + ')';
+    }
+
+    function localizeAll(root) {
+        if (root.nodeType !== 1) return;
+        if (root.matches && root.matches('time.utc-time')) localize(root);
+        var els = root.querySelectorAll ? root.querySelectorAll('time.utc-time') : [];
+        for (var i = 0; i < els.length; ++i) localize(els[i]);
+    }
+
+    window.halemansLocalizeTimes = localizeAll;
+
+    document.addEventListener('DOMContentLoaded', function () {
+        localizeAll(document.body);
+        new MutationObserver(function (mutations) {
+            for (var i = 0; i < mutations.length; ++i) {
+                var added = mutations[i].addedNodes;
+                for (var j = 0; j < added.length; ++j) localizeAll(added[j]);
+            }
+        }).observe(document.body, { childList: true, subtree: true });
+    });
+})();
+
 // Theme packs (milestone_3.md §7): swap [data-theme] on <html>, persist to
 // localStorage, POST to /profile/theme (fire-and-forget).
 (function () {
     var THEMES = ['latte', 'frappe', 'macchiato', 'dracula', 'light', 'dark'];
+    var LIGHT_THEMES = ['latte', 'light'];
     var STORAGE_KEY = 'halemans-theme';
 
     function isValidTheme(theme) {
@@ -83,6 +127,7 @@
 
     function applyLocal(theme) {
         document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.bsTheme = LIGHT_THEMES.indexOf(theme) !== -1 ? 'light' : 'dark';
         try { window.localStorage.setItem(STORAGE_KEY, theme); } catch (e) {}
         var choices = document.querySelectorAll('[data-theme-choice]');
         for (var i = 0; i < choices.length; ++i) {

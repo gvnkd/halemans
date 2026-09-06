@@ -35,9 +35,9 @@ instance View ShowView where
                 <dt>Service</dt><dd>{fromMaybe "-" alert.service}</dd>
                 <dt>Check</dt><dd>{fromMaybe "-" alert.checkName}</dd>
                 <dt>Occurrences</dt><dd>{alert.occurrences}</dd>
-                <dt>Started at</dt><dd>{show alert.startedAt}</dd>
-                <dt>Last seen</dt><dd>{show alert.lastSeenAt}</dd>
-                <dt>Resolved at</dt><dd>{show alert.resolvedAt}</dd>
+                <dt>Started at</dt><dd>{maybeUtcTimeHtml alert.startedAt}</dd>
+                <dt>Last seen</dt><dd>{utcTimeHtml alert.lastSeenAt}</dd>
+                <dt>Resolved at</dt><dd>{maybeUtcTimeHtml alert.resolvedAt}</dd>
             </dl>
             {sourceLink}
             <h2>Description</h2>
@@ -167,7 +167,7 @@ renderComment :: (Comment, User) -> Html
 renderComment (comment, author) = [hsx|
     <li class="comment">
         <strong>{author.displayName}</strong>
-        <span class="comment-time">{show comment.createdAt}</span>
+        <span class="comment-time">{utcTimeHtml comment.createdAt}</span>
         <p>{comment.body}</p>
     </li>
 |]

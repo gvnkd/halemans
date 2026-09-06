@@ -27,23 +27,23 @@ instance View ShowView where
             {activeBlackoutNotice}
             <form method="GET" action={ShowEnvironmentAction environment.name} class="row g-2 mb-3" data-testid="env-filters">
                 <div class="col-auto">
-                    <select name="severity" class="form-select form-select-sm">
+                    <select name="severity" class="form-select form-select-sm" onchange="this.form.submit()">
                         <option value="">severity: any</option>
                         {forEach ["critical", "high", "warning", "info"] severityOption}
                     </select>
                 </div>
                 <div class="col-auto">
-                    <select name="status" class="form-select form-select-sm">
+                    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
                         <option value="">status: any</option>
                         {forEach ["firing", "ack", "resolved", "closed"] statusOption}
                     </select>
                 </div>
-                <div class="col-auto"><input name="host" class="form-control form-control-sm" placeholder="host" value={fromMaybe "" filters.filterHost}/></div>
-                <div class="col-auto"><input name="service" class="form-control form-control-sm" placeholder="service" value={fromMaybe "" filters.filterService}/></div>
-                <div class="col-auto"><input name="q" class="form-control form-control-sm" placeholder="title contains" value={fromMaybe "" filters.filterText}/></div>
-                <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.filterGroup} data-testid="env-filter-group"/></div>
+                <div class="col-auto"><input name="host" class="form-control form-control-sm" placeholder="host" value={fromMaybe "" filters.filterHost} onchange="this.form.submit()"/></div>
+                <div class="col-auto"><input name="service" class="form-control form-control-sm" placeholder="service" value={fromMaybe "" filters.filterService} onchange="this.form.submit()"/></div>
+                <div class="col-auto"><input name="q" class="form-control form-control-sm" placeholder="title contains" value={fromMaybe "" filters.filterText} onchange="this.form.submit()"/></div>
+                <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.filterGroup} data-testid="env-filter-group" onchange="this.form.submit()"/></div>
                 <input type="hidden" name="view" value={viewMode}/>
-                <div class="col-auto"><button type="submit" class="btn btn-sm btn-primary">Filter</button></div>
+                <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="env-filters-reset">Reset</a></div>
             </form>
             <div class="mb-2" data-testid="view-toggle">
                 <a href={toggleUrl "flat"} class={toggleClass "flat"} data-testid="view-flat">Flat</a>
@@ -63,6 +63,8 @@ instance View ShowView where
             severityOption value = [hsx|<option value={value} selected={filters.filterSeverity == Just value}>{value}</option>|]
             statusOption value = [hsx|<option value={value} selected={filters.filterStatus == Just value}>{value}</option>|]
             toggleUrl mode = pathTo (ShowEnvironmentAction environment.name) <> "?view=" <> mode
+            resetUrl :: Text
+            resetUrl = toggleUrl viewMode
             toggleClass :: Text -> Text
             toggleClass mode = if viewMode == mode then "btn btn-sm btn-secondary" else "btn btn-sm btn-outline-secondary"
             content = if viewMode == "grouped"

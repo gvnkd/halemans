@@ -23,6 +23,7 @@ module Web.View.Fragments
 import Web.View.Prelude
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 
@@ -44,7 +45,7 @@ alertRowHtml alert = [hsx|
         <td>{fromMaybe "" alert.env}</td>
         <td>{fromMaybe "" alert.host}</td>
         <td>{alert.occurrences}</td>
-        <td>{show alert.lastSeenAt}</td>
+        <td>{utcTimeHtml alert.lastSeenAt}</td>
     </tr>
 |]
     where
@@ -72,9 +73,9 @@ timelineEventHtml :: AlertEvent -> Html
 timelineEventHtml event = [hsx|
     <li class="timeline-event" data-kind={event.kind}>
         <span class="timeline-kind">{event.kind}</span>
-        <span class="timeline-time">{show event.createdAt}</span>
+        <span class="timeline-time">{utcTimeHtml event.createdAt}</span>
         <span class="timeline-summary">{eventSummary event}</span>
-        <span class="timeline-payload">{cs (show event.payload) :: Text}</span>
+        {payloadDetails event}
     </li>
 |]
 
@@ -85,6 +86,11 @@ eventSummary :: AlertEvent -> Text
 eventSummary event = case event.kind of
     "external" -> case (payloadText "action", payloadText "source", payloadText "actor") of
         (Just action, Just source, actor) -> actionLabel action <> " in " <> source <> " by " <> fromMaybe "?" actor
+        _ -> ""
+    "created" -> maybe "" ("from " <>) (payloadText "source")
+    "notified" -> maybe "" ("via " <>) (payloadText "rule")
+    "resolved" -> case (payloadText "from", payloadText "to") of
+        (Just from, Just to) -> from <> " → " <> to
         _ -> ""
     "writeback_failed" -> "write-back failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
     "enrichment_failed" -> "enrichment failed" <> maybe "" (\s -> " (" <> s <> ")") (payloadText "subsystem")
@@ -98,6 +104,19 @@ eventSummary event = case event.kind of
             "ack" -> "acked"
             "unack" -> "unacked"
             other -> other
+
+payloadDetails :: AlertEvent -> Html
+payloadDetails event = case event.payload of
+    Aeson.Object o | KeyMap.null o -> mempty
+    _ -> [hsx|
+        <details class="timeline-payload">
+            <summary>payload</summary>
+            <pre class="json-viewer">{payloadText}</pre>
+        </details>
+    |]
+    where
+        payloadText :: Text
+        payloadText = cs (Aeson.encode event.payload)
 
 -- Group fragments (milestone_2.md §9): the env page grouped view and the
 -- group card share these with the websocket broadcaster.
@@ -179,7 +198,7 @@ cmdbPanelHtml alert entry = [hsx|
                         <p data-testid="cmdb-excerpt">{cached.excerpt}</p>
                         <p>
                             <a href={cached.url} target="_blank" data-testid="cmdb-link">Open in Confluence</a>
-                            <span class="text-muted"> · cached {show cached.fetchedAt}</span>
+                            <span class="text-muted"> · cached {utcTimeHtml cached.fetchedAt}</span>
                         </p>
                     </div>
                 |]
@@ -273,7 +292,7 @@ llmAnalysisHtml alert analysis feedback = case analysis.status of
             <pre class="llm-markdown" data-testid="llm-markdown">{fromMaybe "" analysis.resultMd}</pre>
             {structuredBlock}
             <p class="text-muted llm-footer" data-testid="llm-footer">
-                provider {analysis.provider} · model {analysis.model} · template v{versionText} · {show analysis.updatedAt}
+                provider {analysis.provider} · model {analysis.model} · template v{versionText} · {utcTimeHtml analysis.updatedAt}
             </p>
             {llmFeedbackHtml alert analysis feedback}
         </div>

@@ -122,7 +122,9 @@ with sync_playwright() as pw:
         page.goto(f"{APP}/env/dev")
         page.get_by_test_id("env-alerts-table").wait_for()
         page.select_option("select[name=severity]", "critical")
-        page.get_by_role("button", name="Filter").click()
+        page.wait_for_load_state("networkidle")
+        page.get_by_test_id("env-alerts-table").wait_for()
+        page.get_by_test_id("env-filters-reset").click()
         page.get_by_test_id("env-alerts-table").wait_for()
 
     @check("alert card: ack with timeout, comment, timeline updates")

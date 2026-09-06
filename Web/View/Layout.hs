@@ -7,12 +7,12 @@ import Web.Types
 import Web.Routes
 import Application.Helper.View
 import Application.Helper.Controller () -- CurrentUserRecord instance for currentUserOrNothing
-import Application.Helper.Theme (themeFromSettings)
+import Application.Helper.Theme (themeFromSettings, bsTheme)
 
 defaultLayout :: Html -> Html
 defaultLayout inner = [hsx|
 <!DOCTYPE html>
-<html lang="en" data-theme={activeTheme}>
+<html lang="en" data-theme={activeTheme} data-bs-theme={activeBsTheme}>
     <head>
         {metaTags}
 
@@ -36,10 +36,12 @@ defaultLayout inner = [hsx|
         activeTheme = case currentUserOrNothing of
             Just user -> themeFromSettings user.settings
             Nothing -> "dark"
+        activeBsTheme :: Text
+        activeBsTheme = bsTheme activeTheme
 
 navigation :: Html
 navigation = [hsx|
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark" data-testid="nav">
+<nav class={"navbar navbar-expand-lg navbar-" <> navBsTheme} data-testid="nav">
     <div class="container-fluid">
         <a class="navbar-brand" href={DashboardAction}>Halemans</a>
         <ul class="navbar-nav me-auto">
@@ -68,6 +70,11 @@ navigation = [hsx|
     </div>
 </nav>
 |]
+    where
+        navBsTheme :: Text
+        navBsTheme = case currentUserOrNothing of
+            Just user -> bsTheme (themeFromSettings user.settings)
+            Nothing -> "dark"
 
 userMenu :: Html
 userMenu = case currentUserOrNothing of

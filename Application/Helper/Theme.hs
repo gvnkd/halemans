@@ -2,6 +2,7 @@ module Application.Helper.Theme
 ( themes
 , isValidTheme
 , themeFromSettings
+, bsTheme
 ) where
 
 import IHP.Prelude
@@ -23,3 +24,8 @@ themeFromSettings settings =
     case parseMaybe (Aeson.withObject "settings" (\o -> o Aeson..: "theme")) settings of
         Just theme | isValidTheme theme -> theme
         _ -> "dark"
+
+-- Bootstrap 5.3 color mode mapped from each pack: without data-bs-theme
+-- Bootstrap renders light placeholders/muted text on our dark surfaces.
+bsTheme :: Text -> Text
+bsTheme theme = if theme `elem` ["latte", "light"] then "light" else "dark"

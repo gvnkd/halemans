@@ -11,14 +11,14 @@ instance Controller EnvironmentsController where
             |> filterWhere (#name, environmentName)
             |> fetchOne
         let filters = EnvFilters
-                { filterSeverity = paramOrNothing @Text "severity"
-                , filterStatus = paramOrNothing @Text "status"
-                , filterHost = paramOrNothing @Text "host"
-                , filterService = paramOrNothing @Text "service"
-                , filterText = paramOrNothing @Text "q"
-                , filterGroup = paramOrNothing @Text "group"
+                { filterSeverity = nonEmptyParam "severity"
+                , filterStatus = nonEmptyParam "status"
+                , filterHost = nonEmptyParam "host"
+                , filterService = nonEmptyParam "service"
+                , filterText = nonEmptyParam "q"
+                , filterGroup = nonEmptyParam "group"
                 }
-        let viewMode = fromMaybe "flat" (paramOrNothing @Text "view")
+        let viewMode = fromMaybe "flat" (nonEmptyParam "view")
         groupFilterIds <- case filters.filterGroup of
             Nothing -> pure Nothing
             Just pattern -> do
@@ -60,3 +60,7 @@ instance Controller EnvironmentsController where
 applyMaybe :: Maybe value -> (value -> query -> query) -> query -> query
 applyMaybe Nothing _ query' = query'
 applyMaybe (Just value) f query' = f value query'
+
+nonEmptyParam :: (?request :: Request) => ByteString -> Maybe Text
+nonEmptyParam name = paramOrNothing @Text name >>= \value ->
+    if value == "" then Nothing else Just value

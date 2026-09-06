@@ -52,15 +52,14 @@ instance View IndexView where
 
 renderExportRow :: [User] -> AuditExport -> Html
 renderExportRow users export =
-    let createdAt = show export.createdAt :: Text
-        who = case export.userId >>= (\userId -> find (\user -> get #id user == userId) users) of
+    let who = case export.userId >>= (\userId -> find (\user -> get #id user == userId) users) of
             Just user -> user.email
             Nothing -> "system"
         scope = cs (Aeson.encode export.scope) :: Text
         rowCount = show export.rowCount :: Text
     in [hsx|
     <tr data-testid="audit-export-row">
-        <td>{createdAt}</td>
+        <td>{utcTimeHtml export.createdAt}</td>
         <td>{who}</td>
         <td><code>{scope}</code></td>
         <td>{export.format}</td>

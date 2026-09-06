@@ -29,8 +29,8 @@ renderBlackout :: (Blackout, Text) -> Html
 renderBlackout (blackout, scopeName) = [hsx|
     <tr data-testid="blackout-row">
         <td>{scopeName}</td>
-        <td>{show blackout.startsAt}</td>
-        <td>{show blackout.endsAt}</td>
+        <td>{utcTimeHtml blackout.startsAt}</td>
+        <td>{utcTimeHtml blackout.endsAt}</td>
         <td>{blackout.reason}</td>
         <td>
             <a href={EditBlackoutAction blackout.id} class="btn btn-sm btn-outline-secondary" data-testid="edit-blackout">Edit</a>
