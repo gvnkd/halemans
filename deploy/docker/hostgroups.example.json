@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "result": [
+    {"groupid": "2", "name": "Linux servers"},
+    {"groupid": "4", "name": "Hypervisors"},
+    {"groupid": "5", "name": "Databases"}
+  ],
+  "id": 1
+}

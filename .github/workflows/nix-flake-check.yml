@@ -2,8 +2,18 @@ name: Test
 on:
   push:
     branches: [master, main]
+    paths-ignore:
+      - "**.md"
+      - "design_docs/**"
+      - ".opencode/**"
+      - "deploy/docker/*.example.json"
   pull_request:
     branches: [master, main]
+    paths-ignore:
+      - "**.md"
+      - "design_docs/**"
+      - ".opencode/**"
+      - "deploy/docker/*.example.json"
 jobs:
   test:
     runs-on: ubuntu-latest

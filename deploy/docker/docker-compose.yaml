@@ -14,6 +14,15 @@
 # The app listens on HALEMANS_PORT (default 8000). The provision config is
 # applied on every app/worker boot (idempotent upserts); edit provision.json
 # and `docker compose up -d --force-recreate app worker` to re-apply.
+#
+# Zabbix host groups without hostgroup.get API permission: export the groups
+# once from a privileged session (hostgroup.get, output groupid+name), save
+# the response as hostgroups.json next to provision.json (see
+# hostgroups.example.json — a bare [{"groupid","name"}] array also works),
+# keep "hostGroupsFile": "/provision/hostgroups.json" on the zabbix source
+# and uncomment the hostgroups volume mounts below. The file REPLACES the
+# source's group cache on every boot; drop the key if unused (a missing
+# mounted file aborts startup).
 
 name: halemans
 
@@ -65,6 +74,7 @@ services:
       <<: *halemans-env
     volumes:
       - ./provision.json:/provision/provision.json:ro
+      # - ./hostgroups.json:/provision/hostgroups.json:ro
 
   app:
     <<: *halemans-image
@@ -81,6 +91,7 @@ services:
       PORT: "8000"
     volumes:
       - ./provision.json:/provision/provision.json:ro
+      # - ./hostgroups.json:/provision/hostgroups.json:ro
     ports:
       - "${HALEMANS_PORT:-8000}:8000"
 
@@ -99,6 +110,7 @@ services:
       <<: *halemans-env
     volumes:
       - ./provision.json:/provision/provision.json:ro
+      # - ./hostgroups.json:/provision/hostgroups.json:ro
 
 volumes:
   db-data:

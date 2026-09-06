@@ -27,6 +27,7 @@
         "env": "prod",
         "pollIntervalSeconds": 30,
         "enabled": false,
+        "hostGroupsFile": "/provision/hostgroups.json",
         "config": {
           "tokenEnv": "ZABBIX_TOKEN",
           "hostGroupScope": "teams",
