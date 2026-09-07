@@ -1,8 +1,9 @@
 module Web.View.Alerts.Index where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml)
+import Web.View.Fragments (alertRowHtml, filterMultiSelect, filterTextInput)
 import Application.Service.AlertList (AlertListFilters (..))
 import Network.HTTP.Types.URI (renderQuery)
+import qualified Data.List as List
 
 data IndexView = IndexView
     { alerts :: [Alert]
@@ -16,12 +17,12 @@ instance View IndexView where
         <h1>Alerts</h1>
         {severityCounts}
         <form method="GET" action={AlertsAction} class="row g-2 mb-3" data-testid="alerts-filters">
-            {multiSelect "severity" "severity" severities filters.alfSeverities}
-            {multiSelect "status" "status" statuses filters.alfStatuses}
-            {multiSelect "env" "env" envNames filters.alfEnvs}
-            <div class="col-auto"><input name="host" class="form-control form-control-sm" placeholder="host" value={fromMaybe "" filters.alfHost} onchange="this.form.submit()"/></div>
-            <div class="col-auto"><input name="service" class="form-control form-control-sm" placeholder="service" value={fromMaybe "" filters.alfService} onchange="this.form.submit()"/></div>
-            <div class="col-auto"><input name="q" class="form-control form-control-sm" placeholder="title contains" value={fromMaybe "" filters.alfTitle} onchange="this.form.submit()"/></div>
+            {filterMultiSelect "severity" "severity" severities filters.alfSeverities}
+            {filterMultiSelect "status" "status" statuses filters.alfStatuses}
+            {filterMultiSelect "env" "env" envNames filters.alfEnvs}
+            {filterTextInput "host" "host" filters.alfHost hostSuggestions}
+            {filterTextInput "service" "service" filters.alfService serviceSuggestions}
+            {filterTextInput "q" "title contains" filters.alfTitle titleSuggestions}
             <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.alfGroup} data-testid="alerts-filter-group" onchange="this.form.submit()"/></div>
             <input type="hidden" name="sort" value={filters.alfSort}/>
             <input type="hidden" name="dir" value={filters.alfDir}/>
@@ -48,6 +49,9 @@ instance View IndexView where
             severities = ["critical", "high", "warning", "info"]
             statuses = ["firing", "ack", "resolved", "closed"]
             envNames = map (\environment -> environment.name) environments
+            hostSuggestions = List.sort (nub (mapMaybe (\alert -> alert.host) alerts))
+            serviceSuggestions = List.sort (nub (mapMaybe (\alert -> alert.service) alerts))
+            titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
 
             severityCounts = [hsx|
                 <div class="mb-2" data-testid="severity-counts">
@@ -58,27 +62,6 @@ instance View IndexView where
                 <span class={"badge severity-badge severity-" <> severity <> " me-1"} data-testid={"count-" <> severity}>{severity} {countFor severity}</span>
             |]
             countFor severity = fromMaybe 0 (lookup severity counts)
-
-            -- Checkbox dropdown multi-select; the button summarizes the
-            -- selection, onchange resubmits the GET form (repeated params).
-            multiSelect :: Text -> Text -> [Text] -> [Text] -> Html
-            multiSelect name label options selected = [hsx|
-                <div class="col-auto dropdown" data-testid={"filter-" <> name}>
-                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{buttonLabel}</button>
-                    <div class="dropdown-menu p-2">
-                        {forEach options optionItem}
-                    </div>
-                </div>
-            |]
-                where
-                    buttonLabel :: Text
-                    buttonLabel = label <> ": " <> if null selected then "any" else tshow (length selected)
-                    optionItem value = [hsx|
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name={name} value={value} id={name <> "-" <> value} checked={value `elem` selected} onchange="this.form.submit()"/>
-                            <label class="form-check-label" for={name <> "-" <> value}>{value}</label>
-                        </div>
-                    |]
 
             sortableTh :: Text -> Text -> Html
             sortableTh column label = [hsx|

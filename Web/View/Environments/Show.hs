@@ -1,10 +1,11 @@
 module Web.View.Environments.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml, groupRowHtml)
+import Web.View.Fragments (alertRowHtml, groupRowHtml, filterMultiSelect, filterTextInput)
+import qualified Data.List as List
 
 data EnvFilters = EnvFilters
-    { filterSeverity :: Maybe Text
-    , filterStatus :: Maybe Text
+    { filterSeverities :: [Text]
+    , filterStatuses :: [Text]
     , filterHost :: Maybe Text
     , filterService :: Maybe Text
     , filterText :: Maybe Text
@@ -26,21 +27,11 @@ instance View ShowView where
             <h1>{environment.name}</h1>
             {activeBlackoutNotice}
             <form method="GET" action={ShowEnvironmentAction environment.name} class="row g-2 mb-3" data-testid="env-filters">
-                <div class="col-auto">
-                    <select name="severity" class="form-select form-select-sm" onchange="this.form.submit()">
-                        <option value="">severity: any</option>
-                        {forEach ["critical", "high", "warning", "info"] severityOption}
-                    </select>
-                </div>
-                <div class="col-auto">
-                    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
-                        <option value="">status: any</option>
-                        {forEach ["firing", "ack", "resolved", "closed"] statusOption}
-                    </select>
-                </div>
-                <div class="col-auto"><input name="host" class="form-control form-control-sm" placeholder="host" value={fromMaybe "" filters.filterHost} onchange="this.form.submit()"/></div>
-                <div class="col-auto"><input name="service" class="form-control form-control-sm" placeholder="service" value={fromMaybe "" filters.filterService} onchange="this.form.submit()"/></div>
-                <div class="col-auto"><input name="q" class="form-control form-control-sm" placeholder="title contains" value={fromMaybe "" filters.filterText} onchange="this.form.submit()"/></div>
+                {filterMultiSelect "severity" "severity" severities filters.filterSeverities}
+                {filterMultiSelect "status" "status" statuses filters.filterStatuses}
+                {filterTextInput "host" "host" filters.filterHost hostSuggestions}
+                {filterTextInput "service" "service" filters.filterService serviceSuggestions}
+                {filterTextInput "q" "title contains" filters.filterText titleSuggestions}
                 <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.filterGroup} data-testid="env-filter-group" onchange="this.form.submit()"/></div>
                 <input type="hidden" name="view" value={viewMode}/>
                 <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="env-filters-reset">Reset</a></div>
@@ -53,6 +44,11 @@ instance View ShowView where
         </div>
     |]
         where
+            severities = ["critical", "high", "warning", "info"]
+            statuses = ["firing", "ack", "resolved", "closed"]
+            hostSuggestions = List.sort (nub (mapMaybe (\alert -> alert.host) alerts))
+            serviceSuggestions = List.sort (nub (mapMaybe (\alert -> alert.service) alerts))
+            titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
             activeBlackoutNotice = if null blackouts
                 then mempty
                 else [hsx|
@@ -60,8 +56,6 @@ instance View ShowView where
                         Blackout active — new alerts are suppressed.
                     </div>
                 |]
-            severityOption value = [hsx|<option value={value} selected={filters.filterSeverity == Just value}>{value}</option>|]
-            statusOption value = [hsx|<option value={value} selected={filters.filterStatus == Just value}>{value}</option>|]
             toggleUrl mode = pathTo (ShowEnvironmentAction environment.name) <> "?view=" <> mode
             resetUrl :: Text
             resetUrl = toggleUrl viewMode

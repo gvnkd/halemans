@@ -18,6 +18,8 @@ module Web.View.Fragments
 , llmPanelHtml
 , llmPanelDomId
 , eventSummary
+, filterMultiSelect
+, filterTextInput
 ) where
 
 import Web.View.Prelude
@@ -386,3 +388,42 @@ llmFeedbackHtml alert analysis feedback = [hsx|
         upClass = if vote == Just 1 then "btn btn-sm btn-success" else "btn btn-sm btn-outline-secondary"
         downClass :: Text
         downClass = if vote == Just (-1) then "btn btn-sm btn-danger" else "btn btn-sm btn-outline-secondary"
+
+-- Checkbox dropdown multi-select shared by the /alerts and /env/:name
+-- filter panels. The menu stays open while options are toggled
+-- (data-bs-auto-close="outside", no per-checkbox submit); app.js submits
+-- the enclosing form once when the dropdown closes after a change.
+filterMultiSelect :: Text -> Text -> [Text] -> [Text] -> Html
+filterMultiSelect name label options selected = [hsx|
+    <div class="col-auto dropdown" data-testid={"filter-" <> name} data-filter-dropdown="true">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{buttonLabel}</button>
+        <div class="dropdown-menu p-2">
+            {forEach options optionItem}
+        </div>
+    </div>
+|]
+    where
+        buttonLabel :: Text
+        buttonLabel = label <> ": " <> if null selected then "any" else tshow (length selected)
+        optionItem value = [hsx|
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name={name} value={value} id={name <> "-" <> value} checked={value `elem` selected}/>
+                <label class="form-check-label" for={name <> "-" <> value}>{value}</label>
+            </div>
+        |]
+
+-- Text filter input with a datalist auto-suggest fed from the alerts
+-- currently rendered in the table below the filter panel.
+filterTextInput :: Text -> Text -> Maybe Text -> [Text] -> Html
+filterTextInput name placeholder value suggestions = [hsx|
+    <div class="col-auto">
+        <input name={name} class="form-control form-control-sm" placeholder={placeholder} value={fromMaybe "" value} list={listId} autocomplete="off" onchange="this.form.submit()"/>
+        <datalist id={listId}>
+            {forEach suggestions suggestionOption}
+        </datalist>
+    </div>
+|]
+    where
+        listId :: Text
+        listId = "filter-suggestions-" <> name
+        suggestionOption suggestion = [hsx|<option value={suggestion}></option>|]

@@ -79,6 +79,7 @@ data LlmAdminController
 data AdminController
     = AdminAction
     | AdminRevokeApiTokenAction { apiTokenId :: !(Id ApiToken) }
+    | AdminPurgeAlertsAction
     deriving (Eq, Show, Data)
 
 data AuditController

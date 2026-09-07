@@ -144,6 +144,7 @@ POST /sources/{sourceId}/sync-host-groups  SyncHostGroupsAction
 [routes|AdminController
 GET  /admin    AdminAction
 POST /admin/api-tokens/{apiTokenId}/revoke    AdminRevokeApiTokenAction
+POST /admin/purge-alerts    AdminPurgeAlertsAction
 |]
 
 [routes|AuditController

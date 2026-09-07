@@ -121,7 +121,11 @@ with sync_playwright() as pw:
     def _():
         page.goto(f"{APP}/env/dev")
         page.get_by_test_id("env-alerts-table").wait_for()
-        page.select_option("select[name=severity]", "critical")
+        severity_filter = page.get_by_test_id("filter-severity")
+        severity_filter.get_by_role("button").click()
+        severity_filter.get_by_label("critical").check()
+        # dropdown stays open on selection; clicking outside closes it and submits
+        page.get_by_role("heading", name="dev").click()
         page.wait_for_load_state("networkidle")
         page.get_by_test_id("env-alerts-table").wait_for()
         page.get_by_test_id("env-filters-reset").click()

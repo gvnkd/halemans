@@ -11,8 +11,8 @@ instance Controller EnvironmentsController where
             |> filterWhere (#name, environmentName)
             |> fetchOne
         let filters = EnvFilters
-                { filterSeverity = nonEmptyParam "severity"
-                , filterStatus = nonEmptyParam "status"
+                { filterSeverities = paramList @Text "severity"
+                , filterStatuses = paramList @Text "status"
                 , filterHost = nonEmptyParam "host"
                 , filterService = nonEmptyParam "service"
                 , filterText = nonEmptyParam "q"
@@ -28,8 +28,8 @@ instance Controller EnvironmentsController where
                 pure (Just (map (Just . get #id) matchingGroups))
         alerts <- query @Alert
             |> filterWhere (#environmentId, Just (get #id environment))
-            |> applyMaybe filters.filterSeverity (\value -> filterWhere (#severity, value))
-            |> applyMaybe filters.filterStatus (\value -> filterWhere (#status, value))
+            |> applyList filters.filterSeverities (\values -> filterWhereIn (#severity, values))
+            |> applyList filters.filterStatuses (\values -> filterWhereIn (#status, values))
             |> applyMaybe filters.filterHost (\value -> filterWhere (#host, Just value))
             |> applyMaybe filters.filterService (\value -> filterWhere (#service, Just value))
             |> applyMaybe filters.filterText (\value -> filterWhereILike (#title, "%" <> value <> "%"))
@@ -60,3 +60,7 @@ instance Controller EnvironmentsController where
 applyMaybe :: Maybe value -> (value -> query -> query) -> query -> query
 applyMaybe Nothing _ query' = query'
 applyMaybe (Just value) f query' = f value query'
+
+applyList :: [value] -> ([value] -> query -> query) -> query -> query
+applyList [] _ query' = query'
+applyList values f query' = f values query'

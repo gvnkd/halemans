@@ -114,6 +114,24 @@
     });
 })();
 
+// Filter multi-select dropdowns (data-filter-dropdown, /alerts and
+// /env/:name): the menu stays open while checkboxes are toggled
+// (data-bs-auto-close="outside"); the enclosing GET form is submitted once
+// when the dropdown closes after the selection changed.
+(function () {
+    document.addEventListener('change', function (event) {
+        var wrapper = event.target.closest && event.target.closest('[data-filter-dropdown]');
+        if (wrapper) wrapper.setAttribute('data-dirty', '1');
+    });
+    document.addEventListener('hidden.bs.dropdown', function (event) {
+        var wrapper = event.target.closest && event.target.closest('[data-filter-dropdown]');
+        if (!wrapper || !wrapper.getAttribute('data-dirty')) return;
+        wrapper.removeAttribute('data-dirty');
+        var form = wrapper.closest('form');
+        if (form) form.submit();
+    });
+})();
+
 // Theme packs (milestone_3.md §7): swap [data-theme] on <html>, persist to
 // localStorage, POST to /profile/theme (fire-and-forget).
 (function () {

@@ -5,6 +5,8 @@ import Web.View.Admin.Index
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
 import Data.Time.Clock (getCurrentTime)
 import Control.Monad (void)
+import IHP.ModelSupport (withTransaction)
+import IHP.TypedSql (sqlExecTyped, typedSql)
 
 instance Controller AdminController where
     beforeAction = ensureIsUser
@@ -28,4 +30,25 @@ instance Controller AdminController where
         now <- getCurrentTime
         when (isNothing token.revokedAt) do
             void (token |> set #revokedAt (Just now) |> updateRecord)
+        redirectTo AdminAction
+
+    -- Danger zone: wipes every alert with all dependent rows (events,
+    -- comments, analyses, jobs) plus now-empty groups. FK order matters.
+    action AdminPurgeAlertsAction = do
+        requirePrivilege "admin"
+        withTransaction do
+            void $ sqlExecTyped [typedSql| DELETE FROM llm_feedback |]
+            void $ sqlExecTyped [typedSql| DELETE FROM llm_analysis_jobs |]
+            void $ sqlExecTyped [typedSql| DELETE FROM llm_analyses |]
+            void $ sqlExecTyped [typedSql| DELETE FROM alert_events |]
+            void $ sqlExecTyped [typedSql| DELETE FROM comments |]
+            void $ sqlExecTyped [typedSql| DELETE FROM push_notification_jobs |]
+            void $ sqlExecTyped [typedSql| DELETE FROM escalation_trackers |]
+            void $ sqlExecTyped [typedSql| DELETE FROM jira_links |]
+            void $ sqlExecTyped [typedSql| DELETE FROM write_back_jobs |]
+            void $ sqlExecTyped [typedSql| DELETE FROM write_back_attempts |]
+            void $ sqlExecTyped [typedSql| DELETE FROM enrich_alert_jobs |]
+            void $ sqlExecTyped [typedSql| DELETE FROM alerts |]
+            void $ sqlExecTyped [typedSql| DELETE FROM alert_groups |]
+        setSuccessMessage "All alerts purged"
         redirectTo AdminAction
