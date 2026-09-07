@@ -29,5 +29,8 @@ jobs:
       with:
         name: digitallyinduced
         skipPush: true
-    - uses: DeterminateSystems/magic-nix-cache-action@main
+    - uses: cachix/cachix-action@v16
+      with:
+        name: halemans
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
     - run: nix flake check --impure -L
