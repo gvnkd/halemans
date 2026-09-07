@@ -158,6 +158,14 @@ a:hover { color: var(--accent-hover); }
     border-bottom: 1px solid var(--border);
 }
 
+.app-version-badge {
+    align-self: flex-start;
+    font-size: 0.65rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    padding: 0.1em 0.5em;
+}
+
 /* Neutral chip for every bare .badge (jira origin/status, group badges,
    LLM confidence). More specific rules below override bg/text/border. */
 .badge {

@@ -8,6 +8,8 @@ import Web.Routes
 import Application.Helper.View
 import Application.Helper.Controller () -- CurrentUserRecord instance for currentUserOrNothing
 import Application.Helper.Theme (themeFromSettings, bsTheme)
+import Language.Haskell.TH (Exp (..), Lit (..), runIO)
+import qualified Prelude
 
 defaultLayout :: Html -> Html
 defaultLayout inner = [hsx|
@@ -43,7 +45,10 @@ navigation :: Html
 navigation = [hsx|
 <nav class="navbar navbar-expand-lg" data-testid="nav">
     <div class="container-fluid">
-        <a class="navbar-brand" href={DashboardAction}>Halemans</a>
+        <div class="d-flex flex-column">
+            <a class="navbar-brand" href={DashboardAction}>Halemans</a>
+            <span class="badge app-version-badge" data-testid="app-version">v{appVersion}</span>
+        </div>
         <ul class="navbar-nav me-auto">
             <li class="nav-item"><a class="nav-link" href={DashboardAction}>Dashboard</a></li>
             <li class="nav-item"><a class="nav-link" href={DashboardsAction}>Dashboards</a></li>
@@ -70,6 +75,13 @@ navigation = [hsx|
     </div>
 </nav>
 |]
+
+appVersion :: Text
+appVersion = $(do
+    cabalFile <- runIO (Prelude.readFile "Halemans.cabal")
+    case [Prelude.dropWhile (== ' ') (Prelude.drop 8 l) | l <- Prelude.lines cabalFile, Prelude.take 8 l == "version:"] of
+        (v:_) -> pure (LitE (StringL v))
+        [] -> fail "version field not found in Halemans.cabal")
 
 userMenu :: Html
 userMenu = case currentUserOrNothing of
