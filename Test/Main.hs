@@ -25,6 +25,7 @@ import qualified Test.HostGroupsSpec
 import qualified Test.ProvisionSpec
 import qualified Test.LogSpec
 import qualified Test.HttpSpec
+import qualified Test.VersionSpec
 
 main :: IO ()
 main = hspec do
@@ -49,3 +50,4 @@ main = hspec do
     Test.ProvisionSpec.spec
     Test.LogSpec.spec
     Test.HttpSpec.spec
+    Test.VersionSpec.spec
