@@ -31,6 +31,11 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@v8
 
+      - uses: cachix/cachix-action@v15
+        with:
+          name: halemans
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
       - name: Build image
         run: |
           mkdir -p .devenv && printf %s "$PWD" > .devenv/root

@@ -18,6 +18,9 @@
             systems = import systems;
             imports = [ ihp.flakeModules.default ];
 
+            # Name of the cachix cache CI pushes to; read by local tooling.
+            flake.cachix.push = "halemans";
+
             perSystem = { pkgs, config, lib, ... }: {
                 # Smoke check (milestone 0 §6) lives in ./nix/checks.nix.
                 checks = import ./nix/checks.nix { inherit pkgs lib config self; ihpLib = inputs.ihp.packages.${pkgs.system}.ihp-env-var-backwards-compat; };
@@ -183,22 +186,22 @@
             flake.nixosConfigurations."production" = import ./Config/nix/hosts/production/host.nix { inherit inputs; };
         };
 
-    # The following configuration speeds up build times by using the devenv, cachix and digitallyinduced binary caches
-    # You can add your own cachix cache here to speed up builds. For that uncomment the following lines and replace `CHANGE-ME` with your cachix cache name
+    # Binary caches: devenv/cachix/digitallyinduced upstreams + our own halemans cache
+    # (CI pushes build results there; local builds substitute from it).
     nixConfig = {
         extra-substituters = [
             "https://devenv.cachix.org"
             "https://cachix.cachix.org"
             "https://digitallyinduced.cachix.org"
             "https://cache.digitallyinduced.com/public"
-            # "https://CHANGE-ME.cachix.org"
+            "https://halemans.cachix.org"
         ];
         extra-trusted-public-keys = [
             "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
             "cachix.cachix.org-1:eWNHQldwUO7G2VkjpnjDbWwy4KQ/HNxht7H4SSoMckM="
             "digitallyinduced.cachix.org-1:y+wQvrnxQ+PdEsCt91rmvv39qRCYzEgGQaldK26hCKE="
             "public:kR6JCoqAIMaO4s+EdDGh+jsHEHnoLq4ZLJPMCo0hcIQ="
-            # "CHANGE-ME.cachix.org-1:CHANGE-ME-PUBLIC-KEY"
+            "halemans.cachix.org-1:L5KmodrEz7eZDdjHKoqMhAcR3nxB9KEREbwHKNLpQKQ="
         ];
     };
 }
