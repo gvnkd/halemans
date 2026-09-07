@@ -12,12 +12,14 @@ module Application.Service.Llm
 , LlmProvider (..)
 , OpenAiCompat (..)
 , connectionOk
+, apiUrl
 ) where
 
 import IHP.Prelude
 import Data.Aeson (Value, object, (.=), (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.Aeson as Aeson
+import qualified Data.Text as Text
 import qualified Network.Wreq as Wreq
 import qualified Application.Service.Http as Http
 import Network.Wreq.Lens (checkResponse)
@@ -110,13 +112,18 @@ data OpenAiCompat = OpenAiCompat { config :: LlmProviderConfig }
 instance LlmProvider OpenAiCompat where
     complete provider prompt = chatCompletion provider.config prompt
 
+apiUrl :: LlmProviderConfig -> Text -> Text
+apiUrl config path = Text.dropWhileEnd (== '/') config.endpoint <> path
+
 -- Admin "connection test": GET /v1/models (milestone_4.md §7).
-connectionOk :: LlmProviderConfig -> IO Bool
+connectionOk :: LlmProviderConfig -> IO (Either Text ())
 connectionOk config = do
-    result <- try (Http.getFollowing (opts config) (cs (config.endpoint <> "/v1/models")))
+    result <- try (Http.getFollowing (opts config) (cs (apiUrl config "/v1/models")))
     pure case result of
-        Left (err :: SomeException) -> False
-        Right response -> statusCode (response ^. Wreq.responseStatus) == 200
+        Left (err :: SomeException) -> Left (tshow err)
+        Right response ->
+            let code = statusCode (response ^. Wreq.responseStatus)
+            in if code == 200 then Right () else Left ("status " <> tshow code)
 
 chatCompletion :: LlmProviderConfig -> Prompt -> IO (Either LlmError Completion)
 chatCompletion config prompt = do
@@ -125,7 +132,7 @@ chatCompletion config prompt = do
             , "messages" .= map messageJson prompt.messages
             , "tools" .= (if null prompt.tools then Nothing else Just prompt.tools)
             ]
-    result <- try (Http.postFollowing (opts config) (cs (config.endpoint <> "/v1/chat/completions")) payload)
+    result <- try (Http.postFollowing (opts config) (cs (apiUrl config "/v1/chat/completions")) payload)
     pure case result of
         Left err -> Left (Retriable (tshow (err :: SomeException)))
         Right response ->

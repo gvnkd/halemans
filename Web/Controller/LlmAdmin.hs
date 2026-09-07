@@ -3,9 +3,10 @@ module Web.Controller.LlmAdmin where
 import Web.Controller.Prelude
 import Web.View.LlmAdmin.Index
 import Web.View.LlmAdmin.Edit
-import Application.Service.Llm (LlmProviderConfig (..), connectionOk)
+import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import qualified Application.Service.Llm.Budget as Budget
+import qualified Application.Service.Log as Log
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Data.Functor ((<&>))
 import Control.Monad (void)
@@ -105,8 +106,12 @@ instance Controller LlmAdminController where
         case maybeConfig of
             Nothing -> setErrorMessage "LLM not configured (no enabled llm_configs row, LLM_ENDPOINT/LLM_MODEL missing)"
             Just config -> do
-                ok <- connectionOk config
-                if ok
-                    then setSuccessMessage ("LLM reachable at " <> config.endpoint <> " (model " <> config.model <> ")")
-                    else setErrorMessage ("LLM endpoint " <> config.endpoint <> " did not answer /v1/models")
+                let url = apiUrl config "/v1/models"
+                result <- connectionOk config
+                case result of
+                    Right () -> setSuccessMessage ("LLM reachable at " <> url <> " (model " <> config.model <> ")")
+                    Left err -> do
+                        let ?context = ?context.frameworkConfig
+                        Log.logWarn ("llm connection test failed: " <> err)
+                        setErrorMessage ("LLM endpoint " <> url <> " did not answer: " <> err)
         redirectTo LlmAdminAction

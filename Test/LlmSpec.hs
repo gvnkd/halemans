@@ -8,6 +8,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson ((.:))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson.Key as Key
+import Application.Service.Llm
 import Application.Service.Llm.Output
 import Application.Service.Llm.Prompt
 import Application.Service.Llm.Budget
@@ -17,6 +18,14 @@ atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
 
 spec :: Spec
 spec = describe "Milestone 4 LLM services" do
+    describe "Llm.apiUrl" do
+        it "strips a trailing slash from the endpoint" do
+            apiUrl (LlmProviderConfig "default" "https://llm.example.com/" "m" Nothing False) "/v1/models"
+                `shouldBe` "https://llm.example.com/v1/models"
+        it "works when the endpoint has no trailing slash" do
+            apiUrl (LlmProviderConfig "default" "https://llm.example.com" "m" Nothing False) "/v1/chat/completions"
+                `shouldBe` "https://llm.example.com/v1/chat/completions"
+
     describe "Output.parseCompletionOutput" do
         let fenced = Text.intercalate "\n"
                 [ "The disk is nearly full."
