@@ -115,16 +115,17 @@ hostGroupsGetAll baseUrl token = do
 
 -- Fingerprint is trigger-scoped (a zabbix trigger has at most one open
 -- problem at a time), so the OK event resolves the alert created by the
--- corresponding problem event.
-toNormalizedEvent :: Text -> ZabbixEvent -> NormalizedEvent
-toNormalizedEvent baseUrl event = NormalizedEvent
+-- corresponding problem event. Zabbix events carry no environment concept,
+-- so the env comes from the source row (sources.env).
+toNormalizedEvent :: Text -> Text -> ZabbixEvent -> NormalizedEvent
+toNormalizedEvent baseUrl envName event = NormalizedEvent
     { fingerprint = "zabbix:trigger:" <> event.triggerId
     , externalId = Just event.eventId
     , status = if event.value == "1" then Firing else Resolved
     , severity = severityFromZabbix event.severity
     , title = event.name
     , description = ""
-    , env = Just "dev"
+    , env = Just envName
     , host = event.host
     , service = Nothing
     , checkName = Just event.name

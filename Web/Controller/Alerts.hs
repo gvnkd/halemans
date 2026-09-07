@@ -4,6 +4,8 @@ import Web.Controller.Prelude
 import Web.View.Alerts.Index
 import Web.View.Alerts.Show
 import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert, addComment)
+import qualified Application.Service.AlertList as AlertList
+import Application.Service.AlertList (AlertListFilters (..), validSortColumns)
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
 import IHP.TypedSql (sqlQueryTyped, typedSql)
@@ -13,10 +15,22 @@ instance Controller AlertsController where
     beforeAction = ensureIsUser
 
     action AlertsAction = do
-        alerts <- query @Alert
-            |> filterWhereNot (#status, "closed" :: Text)
-            |> orderByDesc #lastSeenAt
-            |> limit 200
+        let requestedSort = fromMaybe "last_seen_at" (nonEmptyParam "sort")
+            filters = AlertListFilters
+                { alfSeverities = paramList @Text "severity"
+                , alfStatuses = paramList @Text "status"
+                , alfEnvs = paramList @Text "env"
+                , alfHost = nonEmptyParam "host"
+                , alfService = nonEmptyParam "service"
+                , alfTitle = nonEmptyParam "q"
+                , alfGroup = nonEmptyParam "group"
+                , alfSort = if requestedSort `elem` validSortColumns then requestedSort else "last_seen_at"
+                , alfDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
+                }
+        alerts <- AlertList.listAlerts filters 200
+        counts <- AlertList.countBySeverity filters
+        environments <- query @Environment
+            |> orderByAsc #name
             |> fetch
         render IndexView { .. }
 

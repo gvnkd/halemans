@@ -41,6 +41,11 @@ currentUserPrivileges = case currentUserIdOrNothing of
 currentUserHasPrivilege :: (CurrentUserRecord ~ User, ?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> IO Bool
 currentUserHasPrivilege privilege = elem privilege <$> currentUserPrivileges
 
+-- | Text query parameter; empty string means "not set".
+nonEmptyParam :: (?request :: Request) => ByteString -> Maybe Text
+nonEmptyParam name = paramOrNothing @Text name >>= \value ->
+    if value == "" then Nothing else Just value
+
 -- | Guard for mutating endpoints: renders a 403 page and aborts the action
 -- when the current user lacks the privilege.
 requirePrivilege :: (CurrentUserRecord ~ User, ?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> IO ()

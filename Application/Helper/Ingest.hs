@@ -120,7 +120,7 @@ ingest source event = do
                     Firing -> Refire
                     Resolved -> SourceResolved
             let transition = SM.step currentState trigger
-            updated <- applyTransition now environmentRef hostRef serviceRef suppressedNow alert transition
+            updated <- applyTransition now event.env environmentRef hostRef serviceRef suppressedNow alert transition
             when (transition.applied && transition.to == SM.Resolved) do
                 cancelTrackersFor (get #id alert)
                 unless suppressedNow do
@@ -133,6 +133,7 @@ ingest source event = do
 applyTransition
     :: (?modelContext :: ModelContext)
     => UTCTime
+    -> Maybe Text
     -> Maybe (Id Environment)
     -> Maybe (Id Host)
     -> Maybe (Id Service)
@@ -140,9 +141,10 @@ applyTransition
     -> Alert
     -> Transition
     -> IO Alert
-applyTransition now environmentRef hostRef serviceRef suppressedNow alert transition = do
+applyTransition now eventEnv environmentRef hostRef serviceRef suppressedNow alert transition = do
     let base = alert
             |> set #lastSeenAt now
+            |> set #env (eventEnv <|> alert.env)
             |> set #environmentId (environmentRef <|> alert.environmentId)
             |> set #hostId (hostRef <|> alert.hostId)
             |> set #serviceId (serviceRef <|> alert.serviceId)

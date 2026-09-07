@@ -94,7 +94,7 @@ pollSource source = do
                         Right events -> do
                             logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (length events) <> " events")
                             recordSuccess source
-                            ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl) events)
+                            ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl source.env) events)
                             reconcileAcks source token
                             case maximumMaybe (map (.clock) events) of
                                 Just maxClock -> do

@@ -14,7 +14,9 @@
         return el.getAttribute('data-live-scope').split(',').map(function (scope) {
             scope = scope.trim();
             if (scope === 'dashboard') return { type: 'dashboard' };
-            if (scope === 'alerts') return { type: 'alerts' };
+            // The alerts scope carries the current filter query string so the
+            // broadcaster only sends rows that match the rendered view.
+            if (scope === 'alerts') return { type: 'alerts', filters: alertsFiltersFromUrl() };
             if (scope.indexOf('env:') === 0) return { type: 'env', name: scope.slice(4) };
             if (scope.indexOf('alert:') === 0) return { type: 'alert', id: scope.slice(6) };
             if (scope.indexOf('group:') === 0) return { type: 'group', id: scope.slice(6) };
@@ -22,7 +24,25 @@
         });
     }
 
+    function alertsFiltersFromUrl() {
+        var params = new URLSearchParams(window.location.search);
+        return {
+            severity: params.getAll('severity'),
+            status: params.getAll('status'),
+            env: params.getAll('env'),
+            host: params.get('host') || '',
+            service: params.get('service') || '',
+            q: params.get('q') || '',
+            group: params.get('group') || ''
+        };
+    }
+
     function applyUpdate(update) {
+        if (update.mode === 'remove') {
+            var stale = document.getElementById(update.id);
+            if (stale) stale.remove();
+            return;
+        }
         var target = document.getElementById(update.id);
         if (target && window.morphdom) {
             window.morphdom(target, update.html);

@@ -60,7 +60,3 @@ instance Controller EnvironmentsController where
 applyMaybe :: Maybe value -> (value -> query -> query) -> query -> query
 applyMaybe Nothing _ query' = query'
 applyMaybe (Just value) f query' = f value query'
-
-nonEmptyParam :: (?request :: Request) => ByteString -> Maybe Text
-nonEmptyParam name = paramOrNothing @Text name >>= \value ->
-    if value == "" then Nothing else Just value

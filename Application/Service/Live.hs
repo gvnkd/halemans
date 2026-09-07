@@ -30,6 +30,7 @@ import qualified Data.ByteString.Lazy as BL
 import Network.Wai (Request)
 import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
+import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
 
 -- Websocket fan-out (milestone_1.md §7): one PG LISTEN subscription per
 -- process; each browser connection registers its scope in the registry and
@@ -37,7 +38,7 @@ import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, card
 
 data Scope
     = ScopeDashboard
-    | ScopeAlerts
+    | ScopeAlerts AlertListFilters
     | ScopeEnv Text
     | ScopeAlert UUID
     | ScopeGroup UUID
@@ -83,7 +84,10 @@ parseScope message = do
         scopeType <- o Aeson..: "type" :: Parser Text
         case scopeType of
             "dashboard" -> pure ScopeDashboard
-            "alerts" -> pure ScopeAlerts
+            "alerts" -> do
+                filterValue <- o Aeson..:? "filters"
+                filters <- maybe (pure defaultAlertListFilters) parseAlertFilters filterValue
+                pure (ScopeAlerts filters)
             "env" -> ScopeEnv <$> o Aeson..: "name"
             "alert" -> ScopeAlert <$> o Aeson..: "id"
             "group" -> ScopeGroup <$> o Aeson..: "id"
@@ -152,7 +156,13 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
         let allCards = cards ++ maybeToList unassigned
         relevant <- pure $ filter (cardMatches event) allCards
         pure [fragment (cardDomId card) (renderCard card) "replace" "" | card <- relevant]
-    (ScopeAlerts, Just alertId, _) -> rowUpdate "alerts-tbody" alertId
+    (ScopeAlerts scopeFilters, Just alertId, _) -> do
+        alert <- fetch (Id alertId)
+        matches <- matchesFilters scopeFilters alert
+        pure [ if matches
+            then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "alerts-tbody"
+            else object [ "id" .= alertRowDomId alert, "mode" .= ("remove" :: Text) ]
+            ]
     (ScopeEnv name, Just alertId, _)
         | event.leEnv == Just name -> rowUpdate "env-alerts-tbody" alertId
         | otherwise -> pure []
