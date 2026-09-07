@@ -84,9 +84,9 @@ newtype WebhookTokenItem = WebhookTokenItem
 
 data TeamItem = TeamItem
     { name :: Text
-    , description :: Text
-    , hostGroups :: [Text]
-    , defaults :: Value
+    , description :: Maybe Text
+    , hostGroups :: Maybe [Text]
+    , defaults :: Maybe Value
     , members :: [MemberItem]
     , defaultDashboardConfig :: Maybe Value
     } deriving (Eq, Show)
@@ -191,9 +191,11 @@ instance FromJSON TeamItem where
     parseJSON = Aeson.withObject "teams item" \o -> do
         rejectUnknownFields ["name", "description", "hostGroups", "defaults", "members", "defaultDashboardConfig"] o
         name <- o .: "name"
-        description <- o .:? "description" .!= ""
-        hostGroups <- o .:? "hostGroups" .!= []
-        defaults <- o .:? "defaults" .!= Aeson.object []
+        -- Absent keys stay Nothing so re-provisioning does not clobber
+        -- UI-edited values; an explicit key (even [] or "") overwrites.
+        description <- o .:? "description"
+        hostGroups <- o .:? "hostGroups"
+        defaults <- o .:? "defaults"
         members <- o .:? "members" .!= []
         defaultDashboardConfig <- o .:? "defaultDashboardConfig"
         pure TeamItem { .. }
@@ -434,19 +436,24 @@ upsertTeam strict item = do
     team <- case maybeTeam of
         Nothing -> newRecord @Team
             |> set #name item.name
-            |> set #description item.description
-            |> set #hostGroups (Aeson.toJSON item.hostGroups)
-            |> set #defaults item.defaults
+            |> set #description (fromMaybe "" item.description)
+            |> set #hostGroups (Aeson.toJSON (fromMaybe [] item.hostGroups))
+            |> set #defaults (fromMaybe (Aeson.object []) item.defaults)
             |> set #defaultDashboardConfig item.defaultDashboardConfig
             |> createRecord
         Just team -> do
-            let updated = team
-                    |> set #description item.description
-                    |> set #hostGroups (Aeson.toJSON item.hostGroups)
-                    |> set #defaults item.defaults
+            let withDescription = case item.description of
+                    Just value -> team |> set #description value
+                    Nothing -> team
+                withHostGroups = case item.hostGroups of
+                    Just groups -> withDescription |> set #hostGroups (Aeson.toJSON groups)
+                    Nothing -> withDescription
+                withDefaults = case item.defaults of
+                    Just value -> withHostGroups |> set #defaults value
+                    Nothing -> withHostGroups
             case item.defaultDashboardConfig of
-                Just dashboardConfig -> updated |> set #defaultDashboardConfig (Just dashboardConfig) |> updateRecord
-                Nothing -> updateRecord updated
+                Just dashboardConfig -> withDefaults |> set #defaultDashboardConfig (Just dashboardConfig) |> updateRecord
+                Nothing -> updateRecord withDefaults
     applyMembers team item
     when strict (pruneMembers team item)
 

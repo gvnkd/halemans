@@ -73,6 +73,7 @@ spec = describe "Application.Service.Provision" do
                     map (.tokenEnv) source.webhookTokens `shouldBe` ["HALEMANS_AM_HOOK_TOKEN"]
                     let [team] = maybe [] (.items) config.teams
                     map (.role) team.members `shouldBe` ["lead"]
+                    team.hostGroups `shouldBe` Just ["Linux servers"]
                     let [llm] = maybe [] (.items) config.llm
                     llm.enabled `shouldBe` True
                     map (.version) llm.promptTemplates `shouldBe` [1]
@@ -150,6 +151,16 @@ spec = describe "Application.Service.Provision" do
                 Right config -> do
                     let [team] = maybe [] (.items) config.teams
                     map (.role) team.members `shouldBe` ["member"]
+                Left err -> expectationFailure (cs err)
+
+        it "leaves absent team fields as Nothing so re-provision preserves DB values" do
+            let json = "{\"teams\": {\"items\": [{\"name\": \"t\"}]}}"
+            case parseProvisionConfig json of
+                Right config -> do
+                    let [team] = maybe [] (.items) config.teams
+                    team.description `shouldBe` Nothing
+                    team.hostGroups `shouldBe` Nothing
+                    team.defaults `shouldBe` Nothing
                 Left err -> expectationFailure (cs err)
 
         it "parses hostGroupsFile on a zabbix source" do

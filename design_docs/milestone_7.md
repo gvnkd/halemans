@@ -210,6 +210,10 @@ retention, dashboards.
   cache is a runtime concern of PollZabbix, not of provisioning),
   `defaults` (jsonb), `defaultDashboardConfig` (jsonb, same shape the Teams
   UI writes), `members` (`email` + `role`).
+- Omitted `description`/`hostGroups`/`defaults`/`defaultDashboardConfig` keys
+  leave the DB value untouched on update, so re-provisioning (e.g. container
+  restarts) does not clobber UI edits; an explicit key — even `[]` or `""` —
+  overwrites. Creation falls back to `""`/`[]`/`{}` when the keys are absent.
 - Member emails must resolve — against users provisioned earlier in the same
   file (users are applied first; section order is fixed, not file order) or
   already in the DB. Unresolvable email = startup abort.

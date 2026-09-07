@@ -1399,6 +1399,33 @@ m7Spec = describe "provisioning (milestone 7)" do
         payloadText "theme" user.settings `shouldBe` Just "frappe"
         payloadText "ui_note" user.settings `shouldBe` Just "kept"
 
+    it "re-provision without team keys preserves UI-set host_groups, description and defaults" do
+        suffix <- tshow <$> nextRandom
+        let teamName = "m7-team-" <> suffix
+            uiGroups = Aeson.toJSON (["UI group"] :: [Text])
+            uiDescription = "ui-edited " <> suffix :: Text
+        m7Apply (object ["teams" .= object ["items" .= [object
+            [ "name" .= teamName
+            , "description" .= ("original" :: Text)
+            , "hostGroups" .= (["Linux servers"] :: [Text])
+            , "defaults" .= object ["k" .= ("v" :: Text)]
+            ]]]])
+        -- Simulate UI edits on top of the provisioned values.
+        void $ sqlExecTyped [typedSql|
+            UPDATE teams SET host_groups = ${uiGroups}, description = ${uiDescription}
+            WHERE name = ${teamName}
+        |]
+        m7Apply (object ["teams" .= object ["items" .= [object ["name" .= teamName]]]])
+        team <- query @Team |> filterWhere (#name, teamName) |> fetchOneOrNothing >>= maybe (error "team missing") pure
+        get #description team `shouldBe` uiDescription
+        get #hostGroups team `shouldBe` uiGroups
+        payloadText "k" (get #defaults team) `shouldBe` Just "v"
+        -- An explicit empty list still clears the groups.
+        m7Apply (object ["teams" .= object ["items" .= [object
+            [ "name" .= teamName, "hostGroups" .= ([] :: [Text]) ]]]])
+        cleared <- query @Team |> filterWhere (#name, teamName) |> fetchOneOrNothing >>= maybe (error "team missing") pure
+        get #hostGroups cleared `shouldBe` Aeson.toJSON ([] :: [Text])
+
     it "aborts on an unresolvable team member email" do
         suffix <- tshow <$> nextRandom
         m7Apply (object ["teams" .= object ["items" .= [object
