@@ -23,6 +23,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Text as Text
 import qualified Network.Wreq as Wreq
+import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 import Control.Exception (try, SomeException)
 import Data.Functor ((<&>))
@@ -93,7 +94,7 @@ searchIssues config jql maxResults = do
     let opts = authOpts config
             & Wreq.param "jql" .~ [jql]
             & Wreq.param "maxResults" .~ [tshow maxResults]
-    result <- try (Wreq.getWith opts (cs (config.baseUrl <> "/rest/api/3/search")))
+    result <- try (Http.getFollowing opts (cs (config.baseUrl <> "/rest/api/3/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
@@ -104,7 +105,7 @@ searchIssues config jql maxResults = do
 
 getIssue :: JiraConfig -> Text -> IO (Either Text JiraIssue)
 getIssue config key = do
-    result <- try (Wreq.getWith (authOpts config) (cs (config.baseUrl <> "/rest/api/3/issue/" <> key)))
+    result <- try (Http.getFollowing (authOpts config) (cs (config.baseUrl <> "/rest/api/3/issue/" <> key)))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
@@ -121,7 +122,7 @@ createIssue config issueType summary description = do
                 , "issuetype" .= object ["name" .= issueType]
                 ]
             ]
-    result <- try (Wreq.postWith (authOpts config) (cs (config.baseUrl <> "/rest/api/3/issue")) body)
+    result <- try (Http.postFollowing (authOpts config) (cs (config.baseUrl <> "/rest/api/3/issue")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of

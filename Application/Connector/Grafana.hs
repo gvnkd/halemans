@@ -9,6 +9,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Vector as Vector
 import qualified Network.Wreq as Wreq
+import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 
 -- Grafana unified alerting webhook payload:
@@ -93,7 +94,7 @@ instance FromJSON GrafanaAmAlert where
 alertsGet :: Text -> Text -> IO (Either Text [GrafanaAmAlert])
 alertsGet baseUrl token = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-    response <- Wreq.getWith opts (cs (baseUrl <> "/api/alertmanager/grafana/api/v2/alerts"))
+    response <- Http.getFollowing opts (cs (baseUrl <> "/api/alertmanager/grafana/api/v2/alerts"))
     case eitherDecode (response ^. Wreq.responseBody) of
         Left err -> pure (Left (cs err))
         Right alerts -> pure (Right alerts)

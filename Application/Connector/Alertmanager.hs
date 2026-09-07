@@ -17,6 +17,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Vector as Vector
 import Data.Time.Calendar (fromGregorian)
 import qualified Network.Wreq as Wreq
+import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 import Control.Exception (try, SomeException)
 
@@ -128,7 +129,7 @@ amOpts token = Wreq.defaults
 
 silencesGet :: Text -> Maybe Text -> Text -> IO (Either Text [AmSilence])
 silencesGet baseUrl token apiPrefix = do
-    result <- try (Wreq.getWith (amOpts token) (cs (baseUrl <> apiPrefix <> "/silences")))
+    result <- try (Http.getFollowing (amOpts token) (cs (baseUrl <> apiPrefix <> "/silences")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case eitherDecode (response ^. Wreq.responseBody) of
@@ -138,7 +139,7 @@ silencesGet baseUrl token apiPrefix = do
 -- | POST a silence; returns the new silence id.
 silenceCreate :: Text -> Maybe Text -> Text -> Value -> IO (Either Text Text)
 silenceCreate baseUrl token apiPrefix body = do
-    result <- try (Wreq.postWith (amOpts token) (cs (baseUrl <> apiPrefix <> "/silences")) body)
+    result <- try (Http.postFollowing (amOpts token) (cs (baseUrl <> apiPrefix <> "/silences")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case eitherDecode (response ^. Wreq.responseBody) of
@@ -149,7 +150,7 @@ silenceCreate baseUrl token apiPrefix body = do
 
 silenceDelete :: Text -> Maybe Text -> Text -> Text -> IO (Either Text ())
 silenceDelete baseUrl token apiPrefix silenceId = do
-    result <- try (Wreq.deleteWith (amOpts token) (cs (baseUrl <> apiPrefix <> "/silence/" <> silenceId)))
+    result <- try (Http.deleteFollowing (amOpts token) (cs (baseUrl <> apiPrefix <> "/silence/" <> silenceId)))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right _ -> pure (Right ())

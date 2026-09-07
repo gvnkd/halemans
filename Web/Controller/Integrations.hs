@@ -14,8 +14,8 @@ instance Controller IntegrationsController where
 
     action IntegrationsAction = do
         requirePrivilege "manage_sources"
-        confluenceConfigured <- isJust <$> lookupEnv "CONFLUENCE_TOKEN"
-        jiraConfigured <- isJust <$> lookupEnv "JIRA_TOKEN"
+        confluenceConfigured <- bothSet "HALEMANS_CONFLUENCE_URL" "CONFLUENCE_TOKEN"
+        jiraConfigured <- bothSet "HALEMANS_JIRA_URL" "JIRA_TOKEN"
         cacheTotal <- countCmdbEntries
         render IndexView { .. }
 
@@ -55,3 +55,11 @@ countCmdbEntries :: (?modelContext :: ModelContext) => IO Int64
 countCmdbEntries = do
     rows <- sqlQueryTyped [typedSql| SELECT count(*) FROM cmdb_entries |]
     pure (fromMaybe 0 (head rows))
+
+-- An integration counts as configured only when BOTH the URL and the token
+-- are set — the connection test fails otherwise.
+bothSet :: Text -> Text -> IO Bool
+bothSet urlVar tokenVar = do
+    url <- lookupEnv (cs urlVar)
+    token <- lookupEnv (cs tokenVar)
+    pure (isJust url && isJust token)

@@ -19,6 +19,7 @@ import Data.Aeson (Value, object, (.=), (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Network.Wreq as Wreq
+import qualified Application.Service.Http as Http
 import Network.Wreq.Lens (checkResponse)
 import Control.Lens ((&), (^.), (.~))
 import qualified Network.HTTP.Client as HTTP
@@ -112,7 +113,7 @@ instance LlmProvider OpenAiCompat where
 -- Admin "connection test": GET /v1/models (milestone_4.md §7).
 connectionOk :: LlmProviderConfig -> IO Bool
 connectionOk config = do
-    result <- try (Wreq.getWith (opts config) (cs (config.endpoint <> "/v1/models")))
+    result <- try (Http.getFollowing (opts config) (cs (config.endpoint <> "/v1/models")))
     pure case result of
         Left (err :: SomeException) -> False
         Right response -> statusCode (response ^. Wreq.responseStatus) == 200
@@ -124,7 +125,7 @@ chatCompletion config prompt = do
             , "messages" .= map messageJson prompt.messages
             , "tools" .= (if null prompt.tools then Nothing else Just prompt.tools)
             ]
-    result <- try (Wreq.postWith (opts config) (cs (config.endpoint <> "/v1/chat/completions")) payload)
+    result <- try (Http.postFollowing (opts config) (cs (config.endpoint <> "/v1/chat/completions")) payload)
     pure case result of
         Left err -> Left (Retriable (tshow (err :: SomeException)))
         Right response ->

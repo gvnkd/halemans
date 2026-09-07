@@ -24,6 +24,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Text as Text
 import qualified Network.Wreq as Wreq
+import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 import Control.Exception (try, SomeException)
 import Data.Functor ((<&>))
@@ -86,7 +87,7 @@ confluenceSearch config cql = do
     let opts = Wreq.defaults
             & Wreq.header "Authorization" .~ ["Bearer " <> cs config.token]
             & Wreq.param "cql" .~ [cql]
-    result <- try (Wreq.getWith opts (cs (config.baseUrl <> "/rest/api/content/search")))
+    result <- try (Http.getFollowing opts (cs (config.baseUrl <> "/rest/api/content/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of

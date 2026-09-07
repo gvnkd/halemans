@@ -17,6 +17,7 @@ import Data.Aeson ((.:), (.:?), (.=), (.!=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Network.Wreq as Wreq
+import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 import Control.Exception (try, SomeException)
 import qualified Data.Text
@@ -70,7 +71,7 @@ eventGet baseUrl token timeFrom groupIds = do
                 , "limit" .= (1000 :: Int)
                 ] ++ [ "groupids" .= groupIds | not (null groupIds) ])
             ]
-    resp <- Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body
+    resp <- Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body
     case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
         Left err -> pure (Left (cs err))
         Right decoded ->
@@ -105,7 +106,7 @@ hostGroupsGetAll baseUrl token = do
                 , "sortfield" .= (["name"] :: [Text])
                 ]
             ]
-    resp <- Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body
+    resp <- Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body
     case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
         Left err -> pure (Left (cs err))
         Right decoded ->
@@ -160,7 +161,7 @@ eventAcknowledge baseUrl token eventIds actionBits message = do
                 , "message" .= message
                 ]
             ]
-    result <- try (Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+    result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
@@ -225,7 +226,7 @@ ackStateGet baseUrl token eventIds = do
                 , "selectAcknowledges" .= ("extend" :: Text)
                 ]
             ]
-    result <- try (Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+    result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
@@ -248,7 +249,7 @@ usersGet baseUrl token userIds = do
                 , "output" .= (["userid", "username", "name", "surname"] :: [Text])
                 ]
             ]
-    result <- try (Wreq.postWith opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+    result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of

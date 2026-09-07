@@ -112,6 +112,9 @@
                         http-client
                         http-client-tls
                         http-types
+                        network-uri
+                        warp
+                        network
                         base64-bytestring
                         # ihp-mail           # Email support: https://ihp.digitallyinduced.com/Guide/mail.html
                         # ihp-datasync       # Real-time DataSync
