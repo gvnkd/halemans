@@ -4,7 +4,7 @@ name: docker-images
 # from deploy/docker/ with docker compose only (no nix).
 on:
   push:
-    branches: [master]
+#    branches: [master]
     tags: ["v*"]
     paths-ignore:
       # Docs/examples never reach the image; deploy/docker/db-init.sh and
