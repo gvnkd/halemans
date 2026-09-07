@@ -2,6 +2,8 @@ module Application.Service.Cmdb
 ( ConfPage (..)
 , CmdbConfig (..)
 , cmdbConfigFromEnv
+, cmdbEnvConfig
+, apiUrl
 , cqlForSubject
 , pickBestPage
 , excerptFromHtml
@@ -48,13 +50,19 @@ data CmdbConfig = CmdbConfig
     } deriving (Eq, Show)
 
 cmdbConfigFromEnv :: Source -> IO (Maybe CmdbConfig)
-cmdbConfigFromEnv source = do
+cmdbConfigFromEnv source =
+    cmdbEnvConfig (configText "cmdbSpace" source.config |> fromMaybe "DEV")
+
+cmdbEnvConfig :: Text -> IO (Maybe CmdbConfig)
+cmdbEnvConfig space = do
     url <- lookupEnv "HALEMANS_CONFLUENCE_URL"
     token <- lookupEnv "CONFLUENCE_TOKEN"
-    let space = configText "cmdbSpace" source.config |> fromMaybe "DEV"
     pure case (url, token) of
         (Just url, Just token) -> Just CmdbConfig { baseUrl = cs url, token = cs token, space }
         _ -> Nothing
+
+apiUrl :: CmdbConfig -> Text -> Text
+apiUrl config path = Text.dropWhileEnd (== '/') config.baseUrl <> path
 
 configText :: Text -> Value -> Maybe Text
 configText key value = parseMaybe (Aeson.withObject "config" (\o -> o .: Key.fromText key)) value
@@ -87,7 +95,7 @@ confluenceSearch config cql = do
     let opts = Wreq.defaults
             & Wreq.header "Authorization" .~ ["Bearer " <> cs config.token]
             & Wreq.param "cql" .~ [cql]
-    result <- try (Http.getFollowing opts (cs (config.baseUrl <> "/rest/api/content/search")))
+    result <- try (Http.getFollowing opts (cs (apiUrl config "/rest/api/content/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
@@ -96,10 +104,8 @@ confluenceSearch config cql = do
                 let pages = parseMaybe (Aeson.withObject "search" (.: "results")) decoded
                 pure (maybe (Left "confluence search: no results field") Right pages)
 
-connectionOk :: CmdbConfig -> IO Bool
-connectionOk config = do
-    result <- confluenceSearch config "type = page"
-    pure (either (const False) (const True) result)
+connectionOk :: CmdbConfig -> IO (Either Text ())
+connectionOk config = either Left (const (Right ())) <$> confluenceSearch config "type = page"
 
 cqlForSubject :: Text -> Text -> Text
 cqlForSubject space term =
@@ -161,7 +167,7 @@ upsertEntry subject page config = do
             |> set #pageId (page <&> (.pageId))
             |> set #title (maybe "" (.pageTitle) page)
             |> set #excerpt (maybe "" (excerptFromHtml excerptBudget . (.pageBodyHtml)) page)
-            |> set #url (maybe "" (\p -> config.baseUrl <> p.pageWebui) page)
+            |> set #url (maybe "" (\p -> apiUrl config p.pageWebui) page)
             |> set #fetchedAt now
     entry <- case existing of
         Just entry -> updateRecord (applyFields entry)

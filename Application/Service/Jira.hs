@@ -2,6 +2,8 @@ module Application.Service.Jira
 ( JiraIssue (..)
 , JiraConfig (..)
 , jiraConfigFromEnv
+, jiraEnvConfig
+, apiUrl
 , jqlForAlert
 , searchIssues
 , getIssue
@@ -36,16 +38,30 @@ data JiraConfig = JiraConfig
     { baseUrl :: Text
     , token :: Text
     , project :: Text
+    , apiVersion :: Text
     } deriving (Eq, Show)
 
 jiraConfigFromEnv :: Source -> IO (Maybe JiraConfig)
-jiraConfigFromEnv source = do
+jiraConfigFromEnv source =
+    jiraEnvConfig (configText "jiraProject" source.config |> fromMaybe "DEV")
+
+jiraEnvConfig :: Text -> IO (Maybe JiraConfig)
+jiraEnvConfig project = do
     url <- lookupEnv "HALEMANS_JIRA_URL"
     token <- lookupEnv "JIRA_TOKEN"
-    let project = configText "jiraProject" source.config |> fromMaybe "DEV"
+    version <- lookupEnv "HALEMANS_JIRA_API_VERSION"
     pure case (url, token) of
-        (Just url, Just token) -> Just JiraConfig { baseUrl = cs url, token = cs token, project }
+        (Just url, Just token) -> Just JiraConfig { baseUrl = cs url, token = cs token, project, apiVersion = maybe defaultApiVersion cs version }
         _ -> Nothing
+
+-- Jira Cloud serves REST v3; Server/Data Center only has v2
+-- (HALEMANS_JIRA_API_VERSION=2 there).
+defaultApiVersion :: Text
+defaultApiVersion = "3"
+
+apiUrl :: JiraConfig -> Text -> Text
+apiUrl config path =
+    Text.dropWhileEnd (== '/') config.baseUrl <> "/rest/api/" <> config.apiVersion <> path
 
 configText :: Text -> Value -> Maybe Text
 configText key value = parseMaybe (Aeson.withObject "config" (\o -> o .: Key.fromText key)) value
@@ -94,7 +110,7 @@ searchIssues config jql maxResults = do
     let opts = authOpts config
             & Wreq.param "jql" .~ [jql]
             & Wreq.param "maxResults" .~ [tshow maxResults]
-    result <- try (Http.getFollowing opts (cs (config.baseUrl <> "/rest/api/3/search")))
+    result <- try (Http.getFollowing opts (cs (apiUrl config "/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
@@ -105,7 +121,7 @@ searchIssues config jql maxResults = do
 
 getIssue :: JiraConfig -> Text -> IO (Either Text JiraIssue)
 getIssue config key = do
-    result <- try (Http.getFollowing (authOpts config) (cs (config.baseUrl <> "/rest/api/3/issue/" <> key)))
+    result <- try (Http.getFollowing (authOpts config) (cs (apiUrl config ("/issue/" <> key))))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
@@ -122,7 +138,7 @@ createIssue config issueType summary description = do
                 , "issuetype" .= object ["name" .= issueType]
                 ]
             ]
-    result <- try (Http.postFollowing (authOpts config) (cs (config.baseUrl <> "/rest/api/3/issue")) body)
+    result <- try (Http.postFollowing (authOpts config) (cs (apiUrl config "/issue")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
@@ -131,13 +147,15 @@ createIssue config issueType summary description = do
                 let key = parseMaybe (Aeson.withObject "issue" (.: "key")) decoded
                 pure (maybe (Left "jira create: no key in response") Right key)
 
-connectionOk :: JiraConfig -> IO Bool
+connectionOk :: JiraConfig -> IO (Either Text ())
 connectionOk config = do
-    result <- searchIssues config "project = " 1
-    pure (either (const False) (const True) result)
+    result <- try (Http.getFollowing (authOpts config) (cs (apiUrl config "/myself")))
+    pure case result of
+        Left err -> Left (tshow (err :: SomeException))
+        Right _ -> Right ()
 
 issueUrl :: JiraConfig -> Text -> Text
-issueUrl config key = config.baseUrl <> "/browse/" <> key
+issueUrl config key = Text.dropWhileEnd (== '/') config.baseUrl <> "/browse/" <> key
 
 upsertLink :: (?modelContext :: ModelContext) => JiraConfig -> Id Alert -> Text -> JiraIssue -> IO JiraLink
 upsertLink config alertId origin issue = do

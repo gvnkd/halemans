@@ -11,6 +11,11 @@ atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
 
 spec :: Spec
 spec = describe "Application.Service.Cmdb" do
+    describe "apiUrl" do
+        it "strips a trailing slash from the base url" do
+            apiUrl (CmdbConfig "https://confluence.example.com/confluence/" "t" "DEV") "/rest/api/content/search"
+                `shouldBe` "https://confluence.example.com/confluence/rest/api/content/search"
+
     describe "cqlForSubject" do
         it "scopes to space and page type with a text match" do
             cqlForSubject "DEV" "dev-host-01" `shouldBe` "space = \"DEV\" AND text ~ \"dev-host-01\" AND type = page"

@@ -8,6 +8,14 @@ import Application.Service.Jira
 
 spec :: Spec
 spec = describe "Application.Service.Jira" do
+    describe "apiUrl" do
+        it "joins the rest path on the configured api version" do
+            apiUrl (JiraConfig "https://jira.example.com" "t" "DEV" "3") "/search"
+                `shouldBe` "https://jira.example.com/rest/api/3/search"
+        it "strips a trailing slash from the base url" do
+            apiUrl (JiraConfig "https://jira.example.com/" "t" "DEV" "2") "/myself"
+                `shouldBe` "https://jira.example.com/rest/api/2/myself"
+
     describe "jqlForAlert" do
         it "matches host labels and check text, open tickets only" do
             let alert = newRecord @Alert

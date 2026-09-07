@@ -4,6 +4,7 @@ import Web.Controller.Prelude
 import Web.View.Integrations.Index
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Log as Log
 import System.Environment (lookupEnv)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 
@@ -21,35 +22,27 @@ instance Controller IntegrationsController where
 
     action TestConfluenceAction = do
         requirePrivilege "manage_sources"
-        result <- testConfluence
+        result <- Cmdb.cmdbEnvConfig "DEV"
+            >>= maybe (pure (Left "HALEMANS_CONFLUENCE_URL / CONFLUENCE_TOKEN not set")) Cmdb.connectionOk
         case result of
-            True -> setSuccessMessage "Confluence reachable"
-            False -> setErrorMessage "Confluence unreachable (check HALEMANS_CONFLUENCE_URL / CONFLUENCE_TOKEN)"
+            Right () -> setSuccessMessage "Confluence reachable"
+            Left err -> do
+                let ?context = ?context.frameworkConfig
+                Log.logWarn ("confluence connection test failed: " <> err)
+                setErrorMessage ("Confluence unreachable: " <> err)
         redirectTo IntegrationsAction
 
     action TestJiraAction = do
         requirePrivilege "manage_sources"
-        result <- testJira
+        result <- Jira.jiraEnvConfig "DEV"
+            >>= maybe (pure (Left "HALEMANS_JIRA_URL / JIRA_TOKEN not set")) Jira.connectionOk
         case result of
-            True -> setSuccessMessage "Jira reachable"
-            False -> setErrorMessage "Jira unreachable (check HALEMANS_JIRA_URL / JIRA_TOKEN)"
+            Right () -> setSuccessMessage "Jira reachable"
+            Left err -> do
+                let ?context = ?context.frameworkConfig
+                Log.logWarn ("jira connection test failed: " <> err)
+                setErrorMessage ("Jira unreachable: " <> err)
         redirectTo IntegrationsAction
-
-testConfluence :: (?modelContext :: ModelContext) => IO Bool
-testConfluence = do
-    url <- lookupEnv "HALEMANS_CONFLUENCE_URL"
-    token <- lookupEnv "CONFLUENCE_TOKEN"
-    case (url, token) of
-        (Just url, Just token) -> Cmdb.connectionOk (Cmdb.CmdbConfig (cs url) (cs token) "DEV")
-        _ -> pure False
-
-testJira :: (?modelContext :: ModelContext) => IO Bool
-testJira = do
-    url <- lookupEnv "HALEMANS_JIRA_URL"
-    token <- lookupEnv "JIRA_TOKEN"
-    case (url, token) of
-        (Just url, Just token) -> Jira.connectionOk (Jira.JiraConfig (cs url) (cs token) "DEV")
-        _ -> pure False
 
 countCmdbEntries :: (?modelContext :: ModelContext) => IO Int64
 countCmdbEntries = do

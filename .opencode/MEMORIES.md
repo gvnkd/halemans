@@ -13,6 +13,7 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - Mocks: mock-confluence :18082, mock-jira :18083 (python stdlib, nix/mocks/). Tokens CONFLUENCE_TOKEN/JIRA_TOKEN + HALEMANS_CONFLUENCE_URL/HALEMANS_JIRA_URL in env.sh (ensureTokens). Mock jira has unauthenticated test backdoor POST /debug/issue/{key}/status.
 - Write-back retry timing overridable: HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0" + HALEMANS_WRITEBACK_MAX_ATTEMPTS (smoke sets them fast).
 - EnrichAlertJob/WriteBackJob are one-shot event jobs; JiraSyncJob self-reschedules (5min) — in tests INSERT a fresh jira_sync_jobs row to trigger promptly. EnqueuePollers seeds JiraSyncJob.
+- Real Atlassian servers vs mocks: Jira Server/DC has only REST v2 (`/rest/api/3` 302s to login.jsp) → `HALEMANS_JIRA_API_VERSION` (default "3", mock speaks v3) feeds `JiraConfig.apiVersion` via `Jira.apiUrl`. Trailing slashes in HALEMANS_*_URL must be stripped (`Text.dropWhileEnd (== '/')` in `Jira.apiUrl`/`Cmdb.apiUrl`) or the path join yields `//rest/...` → Confluence 404. Connection tests (`connectionOk`) return `Either Text ()` and the Integrations controller logs the reason via Log.logWarn (Request has NO `logger` field — shadow `?context = ?context.frameworkConfig` first).
 - Alert card panels (cmdb/jira/writeback chip) live-update via WS kinds "enriched"/"writeback" (fragments in Web/View/Fragments.hs, contextPanelUpdates in Live.hs). WS supports multi-scope: data-live-scope="env:a,env:b".
 
 ## Milestone 4 notes
