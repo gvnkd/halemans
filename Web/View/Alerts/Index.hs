@@ -26,7 +26,7 @@ instance View IndexView where
             <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.alfGroup} data-testid="alerts-filter-group" onchange="this.form.submit()"/></div>
             <input type="hidden" name="sort" value={filters.alfSort}/>
             <input type="hidden" name="dir" value={filters.alfDir}/>
-            <div class="col-auto"><a href={AlertsAction} class="btn btn-sm btn-outline-secondary" data-testid="alerts-filters-reset">Reset</a></div>
+            <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="alerts-filters-reset">Reset</a></div>
         </form>
         <table class="table" data-testid="alerts-table" data-live-scope="alerts">
             <thead>
@@ -48,6 +48,8 @@ instance View IndexView where
         where
             severities = ["critical", "high", "warning", "info"]
             statuses = ["firing", "ack", "resolved", "closed"]
+            resetUrl :: Text
+            resetUrl = pathTo AlertsAction <> "?reset=1"
             envNames = map (\environment -> environment.name) environments
             hostSuggestions = List.sort (nub (mapMaybe (\alert -> alert.host) alerts))
             serviceSuggestions = List.sort (nub (mapMaybe (\alert -> alert.service) alerts))

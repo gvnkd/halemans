@@ -6,6 +6,8 @@ module Application.Service.AlertList
 , countBySeverity
 , matchesFilters
 , parseAlertFilters
+, alertFiltersToValue
+, alertFiltersFromValue
 ) where
 
 import IHP.Prelude
@@ -15,8 +17,8 @@ import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Generated.Types
 import qualified Data.Aeson as Aeson
-import Data.Aeson ((.!=))
-import Data.Aeson.Types (Parser)
+import Data.Aeson ((.!=), (.=))
+import Data.Aeson.Types (Parser, parseMaybe)
 import Data.UUID (UUID)
 import qualified Data.Text as Text
 
@@ -176,6 +178,50 @@ parseAlertFilters = Aeson.withObject "filters" \o -> do
         , alfGroup = group
         }
     where
+        nonEmptyField o key = do
+            raw <- o Aeson..:? key .!= ""
+            pure (if raw == "" then Nothing else Just raw)
+
+-- Persisted shape for users.settings.filters.alerts: same keys as the query
+-- string plus sort/dir, so a bare /alerts visit can be redirected to the
+-- stored URL verbatim.
+alertFiltersToValue :: AlertListFilters -> Aeson.Value
+alertFiltersToValue filters = Aeson.object
+    [ "severity" .= filters.alfSeverities
+    , "status" .= filters.alfStatuses
+    , "env" .= filters.alfEnvs
+    , "host" .= filters.alfHost
+    , "service" .= filters.alfService
+    , "q" .= filters.alfTitle
+    , "group" .= filters.alfGroup
+    , "sort" .= filters.alfSort
+    , "dir" .= filters.alfDir
+    ]
+
+alertFiltersFromValue :: Aeson.Value -> Maybe AlertListFilters
+alertFiltersFromValue = parseMaybe parser
+    where
+        parser = Aeson.withObject "alertFilters" \o -> do
+            severities <- o Aeson..:? "severity" .!= []
+            statuses <- o Aeson..:? "status" .!= []
+            envs <- o Aeson..:? "env" .!= []
+            host <- nonEmptyField o "host"
+            service <- nonEmptyField o "service"
+            title <- nonEmptyField o "q"
+            group <- nonEmptyField o "group"
+            sort :: Text <- o Aeson..:? "sort" .!= "last_seen_at"
+            dir :: Text <- o Aeson..:? "dir" .!= "desc"
+            pure defaultAlertListFilters
+                { alfSeverities = severities
+                , alfStatuses = statuses
+                , alfEnvs = envs
+                , alfHost = host
+                , alfService = service
+                , alfTitle = title
+                , alfGroup = group
+                , alfSort = if sort `elem` validSortColumns then sort else "last_seen_at"
+                , alfDir = if dir == "asc" then "asc" else "desc"
+                }
         nonEmptyField o key = do
             raw <- o Aeson..:? key .!= ""
             pure (if raw == "" then Nothing else Just raw)

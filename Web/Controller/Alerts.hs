@@ -6,35 +6,54 @@ import Web.View.Alerts.Show
 import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert, addComment)
 import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.AlertList as AlertList
-import Application.Service.AlertList (AlertListFilters (..), validSortColumns)
+import Application.Service.AlertList (AlertListFilters (..), validSortColumns, defaultAlertListFilters)
+import qualified Application.Helper.FilterPrefs as FilterPrefs
+import Network.HTTP.Types.URI (renderQuery)
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Assets.Cache as AssetsCache
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Control.Monad (void)
 
+alertFilterQueryKeys :: [ByteString]
+alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "group", "sort", "dir"]
+
 instance Controller AlertsController where
     beforeAction = ensureIsUser
 
-    action AlertsAction = do
-        let requestedSort = fromMaybe "last_seen_at" (nonEmptyParam "sort")
-            filters = AlertListFilters
-                { alfSeverities = paramList @Text "severity"
-                , alfStatuses = paramList @Text "status"
-                , alfEnvs = paramList @Text "env"
-                , alfHost = nonEmptyParam "host"
-                , alfService = nonEmptyParam "service"
-                , alfTitle = nonEmptyParam "q"
-                , alfGroup = nonEmptyParam "group"
-                , alfSort = if requestedSort `elem` validSortColumns then requestedSort else "last_seen_at"
-                , alfDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
-                }
-        alerts <- AlertList.listAlerts filters 200
-        counts <- AlertList.countBySeverity filters
-        environments <- query @Environment
-            |> orderByAsc #name
-            |> fetch
-        render IndexView { .. }
+    action AlertsAction
+        | isJust (paramOrNothing @Text "reset") = do
+            FilterPrefs.clearFilterPrefs currentUser "alerts"
+            redirectTo AlertsAction
+        | FilterPrefs.hasQueryKeys alertFilterQueryKeys ?request = do
+            let filters = filtersFromParams
+            FilterPrefs.saveFilterPrefs currentUser "alerts" (AlertList.alertFiltersToValue filters)
+            renderAlertList filters
+        | otherwise = case FilterPrefs.filterPrefsFor currentUser.settings "alerts" >>= AlertList.alertFiltersFromValue of
+            Just stored | stored /= defaultAlertListFilters ->
+                redirectToUrl (pathTo AlertsAction <> cs (renderQuery True (baseItems stored)))
+            _ -> renderAlertList defaultAlertListFilters
+        where
+            filtersFromParams =
+                let requestedSort = fromMaybe "last_seen_at" (nonEmptyParam "sort")
+                in AlertListFilters
+                    { alfSeverities = paramList @Text "severity"
+                    , alfStatuses = paramList @Text "status"
+                    , alfEnvs = paramList @Text "env"
+                    , alfHost = nonEmptyParam "host"
+                    , alfService = nonEmptyParam "service"
+                    , alfTitle = nonEmptyParam "q"
+                    , alfGroup = nonEmptyParam "group"
+                    , alfSort = if requestedSort `elem` validSortColumns then requestedSort else "last_seen_at"
+                    , alfDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
+                    }
+            renderAlertList filters = do
+                alerts <- AlertList.listAlerts filters 200
+                counts <- AlertList.countBySeverity filters
+                environments <- query @Environment
+                    |> orderByAsc #name
+                    |> fetch
+                render IndexView { .. }
 
     action ShowAlertAction { alertId } = do
         alert <- fetch alertId
