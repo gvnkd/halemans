@@ -38,6 +38,13 @@ POST /admin/llm/templates/{templateId}/update  UpdateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/activate  ActivateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/delete  DeleteLlmTemplateAction
 POST /admin/llm/test                           TestLlmConnectionAction
+GET  /admin/llm/providers/new                  NewLlmProviderAction
+POST /admin/llm/providers                      CreateLlmProviderAction
+GET  /admin/llm/providers/{providerId}/edit    EditLlmProviderAction
+POST /admin/llm/providers/{providerId}/update  UpdateLlmProviderAction
+POST /admin/llm/providers/{providerId}/enable  EnableLlmProviderAction
+POST /admin/llm/providers/{providerId}/disable DisableLlmProviderAction
+POST /admin/llm/providers/{providerId}/delete  DeleteLlmProviderAction
 |]
 
 [routes|BlackoutsController

@@ -5,6 +5,8 @@ import Web.View.LlmAdmin.Index
 import Web.View.LlmAdmin.Queue
 import Web.View.LlmAdmin.New
 import Web.View.LlmAdmin.Edit
+import Web.View.LlmAdmin.NewProvider
+import Web.View.LlmAdmin.EditProvider
 import Application.Job.LlmAnalysis (failAnalysis)
 import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
@@ -14,6 +16,7 @@ import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Data.Functor ((<&>))
 import Control.Monad (void)
 import qualified Data.Text as Text
+import Data.Time.Clock (getCurrentTime)
 
 -- Admin → LLM page (design_docs/milestone_4.md §7): prompt template
 -- list/edit/new-version with transactional active-flip, aggregate feedback
@@ -58,6 +61,9 @@ instance Controller LlmAdminController where
         maybeConfig <- currentLlmConfig
         dailyBudget <- Budget.dailyTokenBudget
         rateLimit <- Budget.rateLimitPerMinute
+        providers <- query @LlmConfig
+            |> orderByAsc #providerName
+            |> fetch
         render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
                          , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
 
@@ -241,4 +247,114 @@ instance Controller LlmAdminController where
                         let ?context = ?context.frameworkConfig
                         Log.logWarn ("llm connection test failed: " <> err)
                         setErrorMessage ("LLM endpoint " <> url <> " did not answer: " <> err)
+        redirectTo LlmAdminAction
+
+    action NewLlmProviderAction = do
+        requirePrivilege "manage_rules"
+        render NewProviderView
+
+    action CreateLlmProviderAction = do
+        requirePrivilege "manage_rules"
+        let name = param @Text "providerName"
+            endpoint = param @Text "endpoint"
+            model = param @Text "model"
+            apiKeyEnv = nonEmptyParam "apiKeyEnv"
+            toolsEnabled = paramOrNothing @Text "toolsEnabled" == Just "on"
+        if Text.null name || Text.null endpoint || Text.null model
+            then do
+                setErrorMessage "Provider name, endpoint and model are required"
+                redirectTo NewLlmProviderAction
+            else do
+                existing <- query @LlmConfig
+                    |> filterWhere (#providerName, name)
+                    |> fetchOneOrNothing
+                case existing of
+                    Just _ -> do
+                        setErrorMessage ("Provider " <> name <> " already exists")
+                        redirectTo NewLlmProviderAction
+                    Nothing -> do
+                        _ <- newRecord @LlmConfig
+                            |> set #providerName name
+                            |> set #endpoint endpoint
+                            |> set #model model
+                            |> set #apiKeyEnv apiKeyEnv
+                            |> set #toolsEnabled toolsEnabled
+                            |> set #enabled False
+                            |> createRecord
+                        setSuccessMessage ("Created provider " <> name <> " (disabled — enable it from the list)")
+                        redirectTo LlmAdminAction
+
+    action EditLlmProviderAction { providerId } = do
+        requirePrivilege "manage_rules"
+        provider <- fetch providerId
+        render EditProviderView { .. }
+
+    action UpdateLlmProviderAction { providerId } = do
+        requirePrivilege "manage_rules"
+        provider <- fetch providerId
+        let name = param @Text "providerName"
+            endpoint = param @Text "endpoint"
+            model = param @Text "model"
+            apiKeyEnv = nonEmptyParam "apiKeyEnv"
+            toolsEnabled = paramOrNothing @Text "toolsEnabled" == Just "on"
+        if Text.null name || Text.null endpoint || Text.null model
+            then do
+                setErrorMessage "Provider name, endpoint and model are required"
+                redirectTo (EditLlmProviderAction providerId)
+            else do
+                clash <- query @LlmConfig
+                    |> filterWhere (#providerName, name)
+                    |> fetchOneOrNothing
+                case clash of
+                    Just other | get #id other /= providerId -> do
+                        setErrorMessage ("Provider " <> name <> " already exists")
+                        redirectTo (EditLlmProviderAction providerId)
+                    _ -> do
+                        now <- getCurrentTime
+                        _ <- provider
+                            |> set #providerName name
+                            |> set #endpoint endpoint
+                            |> set #model model
+                            |> set #apiKeyEnv apiKeyEnv
+                            |> set #toolsEnabled toolsEnabled
+                            |> set #updatedAt now
+                            |> updateRecord
+                        setSuccessMessage ("Updated provider " <> name)
+                        redirectTo LlmAdminAction
+
+    -- Enabled row is unique (llm_configs_enabled_idx): flip others off in the
+    -- same transaction, mirroring template activation above.
+    action EnableLlmProviderAction { providerId } = do
+        requirePrivilege "manage_rules"
+        provider <- fetch providerId
+        withTransaction do
+            void do
+                sqlExecTyped [typedSql|
+                    UPDATE llm_configs SET enabled = false, updated_at = NOW()
+                |]
+            void do
+                sqlExecTyped [typedSql|
+                    UPDATE llm_configs SET enabled = true, updated_at = NOW()
+                    WHERE id = ${providerId}
+                |]
+        setSuccessMessage ("Enabled provider " <> get #providerName provider)
+        redirectTo LlmAdminAction
+
+    action DisableLlmProviderAction { providerId } = do
+        requirePrivilege "manage_rules"
+        provider <- fetch providerId
+        void do
+            sqlExecTyped [typedSql|
+                UPDATE llm_configs SET enabled = false, updated_at = NOW()
+                WHERE id = ${providerId}
+            |]
+        setSuccessMessage ("Disabled provider " <> get #providerName provider <> " (env config applies when no provider is enabled)")
+        redirectTo LlmAdminAction
+
+    -- Nothing references llm_configs (milestone_7.md §7): deletes are safe.
+    action DeleteLlmProviderAction { providerId } = do
+        requirePrivilege "manage_rules"
+        provider <- fetch providerId
+        deleteRecord provider
+        setSuccessMessage ("Deleted provider " <> get #providerName provider)
         redirectTo LlmAdminAction

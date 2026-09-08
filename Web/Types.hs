@@ -79,6 +79,13 @@ data LlmAdminController
     | ActivateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
     | DeleteLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
     | TestLlmConnectionAction
+    | NewLlmProviderAction
+    | CreateLlmProviderAction
+    | EditLlmProviderAction { providerId :: !(Id LlmConfig) }
+    | UpdateLlmProviderAction { providerId :: !(Id LlmConfig) }
+    | EnableLlmProviderAction { providerId :: !(Id LlmConfig) }
+    | DisableLlmProviderAction { providerId :: !(Id LlmConfig) }
+    | DeleteLlmProviderAction { providerId :: !(Id LlmConfig) }
     deriving (Eq, Show)
 
 data AdminController
