@@ -257,8 +257,8 @@ writeBackChipHtml latest = [hsx|<span id={writeBackChipDomId}>{chip}</span>|]
 llmPanelDomId :: Text
 llmPanelDomId = "llm-panel"
 
-llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> Html
-llmPanelHtml alert analyses feedback = [hsx|
+llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> [(Id LlmAnalysis, Text)] -> Html
+llmPanelHtml alert analyses feedback jobErrors = [hsx|
     <section class="card mb-3" id={llmPanelDomId} data-testid="llm-panel">
         <div class="card-body">
             <h5 class="card-title">LLM analysis {reanalyzeButton}</h5>
@@ -275,7 +275,7 @@ llmPanelHtml alert analyses feedback = [hsx|
         |]
         body = case analyses of
             [] -> [hsx|<p class="text-muted" data-testid="llm-empty">No analysis yet.</p>|]
-            (latest:_) -> llmAnalysisHtml alert latest feedback
+            (latest:_) -> llmAnalysisHtml alert latest feedback (lookup (get #id latest) jobErrors)
         historyBlock = case analyses of
             (_:older@(_:_)) -> [hsx|
                 <details data-testid="llm-history">
@@ -284,10 +284,10 @@ llmPanelHtml alert analyses feedback = [hsx|
                 </details>
             |]
             _ -> mempty
-        olderAnalysis analysis = llmAnalysisHtml alert analysis feedback
+        olderAnalysis analysis = llmAnalysisHtml alert analysis feedback (lookup (get #id analysis) jobErrors)
 
-llmAnalysisHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Html
-llmAnalysisHtml alert analysis feedback = case analysis.status of
+llmAnalysisHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Maybe Text -> Html
+llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
     "done" -> [hsx|
         <div class="llm-analysis" data-testid="llm-analysis">
             {dedupedBadge}
@@ -315,13 +315,19 @@ llmAnalysisHtml alert analysis feedback = case analysis.status of
                         {referencesList result}
                     </div>
                 |]
-    "failed" -> [hsx|
-        <div data-testid="llm-unavailable">
-            <span class="badge status-firing" title={fromMaybe "" analysis.errorMessage}>analysis unavailable</span>
-            <span class="text-muted"> {fromMaybe "" analysis.errorMessage}</span>
-        </div>
-    |]
-    _ -> [hsx|<p class="text-muted" data-testid="llm-pending">analysis pending…</p>|]
+    "failed" -> llmUnavailableHtml (fromMaybe "" analysis.errorMessage)
+    "running" -> [hsx|<p class="text-muted" data-testid="llm-running">analysis running…</p>|]
+    _ -> case jobError of
+        Just err -> llmUnavailableHtml err
+        Nothing -> [hsx|<p class="text-muted" data-testid="llm-pending">analysis pending…</p>|]
+
+llmUnavailableHtml :: Text -> Html
+llmUnavailableHtml message = [hsx|
+    <div data-testid="llm-unavailable">
+        <span class="badge status-firing" title={message}>analysis unavailable</span>
+        <span class="text-muted"> {message}</span>
+    </div>
+|]
 
 fieldText :: Text -> Aeson.Value -> Text
 fieldText key value = fromMaybe "" (parseMaybe (Aeson.withObject "result" (\o -> o Aeson..: Key.fromText key)) value)

@@ -697,6 +697,39 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
+    @check("llm: queue page shows internal errors and drops a queued analysis")
+    def _():
+        alert_id = sql("SELECT id FROM alerts ORDER BY created_at DESC LIMIT 1")
+        analysis_id = inserted_id(sql(f"""INSERT INTO llm_analyses (alert_id, created_at, updated_at)
+            VALUES ('{alert_id}', '2999-01-01T00:00:00Z', '2999-01-01T00:00:00Z') RETURNING id"""))
+        sql(f"""INSERT INTO llm_analysis_jobs (analysis_id, status, last_error, created_at, updated_at, run_at)
+            VALUES ('{analysis_id}', 'job_status_failed', 'pw internal boom',
+                '2999-01-01T00:00:00Z', '2999-01-01T00:00:00Z', '2999-01-01T00:00:00Z')""")
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/llm/queue")
+        row = admin.get_by_test_id("llm-queue-row").filter(has_text=analysis_id)
+        row.wait_for()
+        assert "pw internal boom" in row.get_by_test_id("llm-queue-error").inner_text()
+        admin.goto(f"{APP}/alerts/{alert_id}")
+        assert "pw internal boom" in admin.get_by_test_id("llm-unavailable").inner_text()
+        admin.goto(f"{APP}/admin/llm/queue")
+        admin.get_by_test_id("llm-queue-row").filter(has_text=analysis_id).get_by_test_id("llm-queue-drop").click()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            status = sql(f"SELECT status FROM llm_analyses WHERE id = '{analysis_id}'")
+            if status == "failed":
+                break
+            time.sleep(1)
+        assert sql(f"SELECT status FROM llm_analyses WHERE id = '{analysis_id}'") == "failed"
+        assert sql(f"SELECT error_message FROM llm_analyses WHERE id = '{analysis_id}'") == "dropped by admin"
+        admin.goto(f"{APP}/alerts/{alert_id}")
+        assert "dropped by admin" in admin.get_by_test_id("llm-unavailable").inner_text()
+        sql(f"DELETE FROM llm_analysis_jobs WHERE analysis_id = '{analysis_id}'")
+        sql(f"DELETE FROM llm_analyses WHERE id = '{analysis_id}'")
+        admin.close()
+        login(page, "sre")
+
     @check("llm: forced provider failure shows analysis unavailable")
     def _():
         urllib.request.urlopen(urllib.request.Request(

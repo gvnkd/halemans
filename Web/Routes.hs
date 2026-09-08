@@ -29,6 +29,8 @@ POST /alerts/{alertId}/analyses/{analysisId}/feedback  LlmFeedbackAction
 
 [routes|LlmAdminController
 GET  /admin/llm                                LlmAdminAction
+GET  /admin/llm/queue                          LlmQueueAction
+POST /admin/llm/queue/{analysisId}/drop        DropLlmAnalysisAction
 GET  /admin/llm/templates/new                  NewLlmTemplateAction
 POST /admin/llm/templates                      CreateLlmTemplateAction
 GET  /admin/llm/templates/{templateId}/edit    EditLlmTemplateAction

@@ -4,6 +4,7 @@ import Web.Controller.Prelude
 import Web.View.Alerts.Index
 import Web.View.Alerts.Show
 import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert, addComment)
+import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.AlertList as AlertList
 import Application.Service.AlertList (AlertListFilters (..), validSortColumns)
 import qualified Application.Service.Cmdb as Cmdb
@@ -68,6 +69,7 @@ instance Controller AlertsController where
             |> orderByDesc #createdAt
             |> limit 10
             |> fetch
+        llmJobErrors <- latestJobErrors (map (get #id) analyses)
         feedback <- case analyses of
             [] -> pure []
             _ -> query @LlmFeedback

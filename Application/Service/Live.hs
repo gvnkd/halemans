@@ -31,6 +31,7 @@ import Network.Wai (Request)
 import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
 import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
+import Application.Service.Llm.Queue (latestJobErrors)
 
 -- Websocket fan-out (milestone_1.md §7): one PG LISTEN subscription per
 -- process; each browser connection registers its scope in the registry and
@@ -242,11 +243,12 @@ contextPanelUpdates alert = do
         |> orderByDesc #createdAt
         |> limit 10
         |> fetch
+    llmJobErrors <- latestJobErrors (map (get #id) analyses)
     pure
         [ fragment cmdbPanelDomId (cmdbPanelHtml alert cmdbEntry) "replace" ""
         , fragment jiraLinksDomId (jiraLinksHtml alert jiraLinks) "replace" ""
         , fragment writeBackChipDomId (writeBackChipHtml latestAttempt) "replace" ""
-        , fragment llmPanelDomId (llmPanelHtml alert analyses []) "replace" ""
+        , fragment llmPanelDomId (llmPanelHtml alert analyses [] llmJobErrors) "replace" ""
         ]
 
 fragment :: Text -> Markup -> Text -> Text -> Aeson.Value

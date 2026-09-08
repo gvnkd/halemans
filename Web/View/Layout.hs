@@ -63,6 +63,7 @@ navigation = [hsx|
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>Escalation policies</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>Integrations</a></li>
                     <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>
+                    <li><a class="dropdown-item" href={LlmQueueAction}>LLM queue</a></li>
                     <li><a class="dropdown-item" href={AdminAction}>Jobs</a></li>
                     <li><a class="dropdown-item" href={AuditExportsAction}>Audit exports</a></li>
                 </ul>

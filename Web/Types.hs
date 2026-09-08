@@ -70,6 +70,8 @@ data IntegrationsController
 
 data LlmAdminController
     = LlmAdminAction
+    | LlmQueueAction
+    | DropLlmAnalysisAction { analysisId :: !(Id LlmAnalysis) }
     | NewLlmTemplateAction
     | CreateLlmTemplateAction
     | EditLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }

@@ -49,7 +49,10 @@ instance View IndexView where
 
         <div class="d-flex justify-content-between align-items-center mt-4">
             <h2>Prompt templates</h2>
-            <a href={NewLlmTemplateAction} class="btn btn-sm btn-primary" data-testid="new-llm-template">New template</a>
+            <div>
+                <a href={LlmQueueAction} class="btn btn-sm btn-outline-secondary" data-testid="llm-queue-link">Queue</a>
+                <a href={NewLlmTemplateAction} class="btn btn-sm btn-primary" data-testid="new-llm-template">New template</a>
+            </div>
         </div>
         <table class="table" data-testid="llm-templates">
             <thead>

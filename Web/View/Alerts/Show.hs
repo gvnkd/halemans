@@ -14,6 +14,7 @@ data ShowView = ShowView
     , writeBackAttempts :: [WriteBackAttempt]
     , analyses :: [LlmAnalysis]
     , feedback :: [LlmFeedback]
+    , llmJobErrors :: [(Id LlmAnalysis, Text)]
     , canAck :: Bool
     , canClose :: Bool
     }
@@ -47,7 +48,7 @@ instance View ShowView where
 
             {cmdbPanelHtml alert cmdbEntry}
 
-            {llmPanelHtml alert analyses feedback}
+            {llmPanelHtml alert analyses feedback llmJobErrors}
 
             <section class="card mb-3" data-testid="jira-panel">
                 <div class="card-body">

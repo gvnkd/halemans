@@ -10,6 +10,7 @@ import Generated.Types
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
 import Control.Monad (void)
+import Control.Exception (SomeException, try)
 import Application.Service.Llm
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Prompt (buildPromptForAlert, BuiltPrompt (..))
@@ -34,7 +35,13 @@ instance Job LlmAnalysisJob where
             maybeConfig <- currentLlmConfig
             case maybeConfig of
                 Nothing -> failAnalysis analysis alert "llm_not_configured" "llm_skipped"
-                Just config -> runAnalysis job analysis alert config
+                Just config -> do
+                    result <- try @SomeException (runAnalysis job analysis alert config)
+                    case result of
+                        Right () -> pure ()
+                        Left err -> do
+                            void (try @SomeException (failAnalysis analysis alert ("internal error: " <> tshow err) "llm_failed"))
+                            throwIO err
 
     maxAttempts = 3
 

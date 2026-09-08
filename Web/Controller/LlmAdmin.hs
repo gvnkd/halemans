@@ -2,8 +2,10 @@ module Web.Controller.LlmAdmin where
 
 import Web.Controller.Prelude
 import Web.View.LlmAdmin.Index
+import Web.View.LlmAdmin.Queue
 import Web.View.LlmAdmin.New
 import Web.View.LlmAdmin.Edit
+import Application.Job.LlmAnalysis (failAnalysis)
 import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import qualified Application.Service.Llm.Budget as Budget
@@ -58,6 +60,64 @@ instance Controller LlmAdminController where
         rateLimit <- Budget.rateLimitPerMinute
         render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
                          , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
+
+    action LlmQueueAction = do
+        requirePrivilege "manage_rules"
+        analyses <- query @LlmAnalysis
+            |> filterWhereIn (#status, ["queued", "running"] :: [Text])
+            |> orderByAsc #createdAt
+            |> fetch
+        queue <- forM analyses \analysis -> do
+            alert <- fetch analysis.alertId
+            let analysisRef = get #id analysis
+            jobRows <- sqlQueryTyped [typedSql|
+                SELECT id, status::text AS status, last_error, attempts_count,
+                    created_at, updated_at, run_at, locked_at
+                FROM llm_analysis_jobs
+                WHERE analysis_id = ${analysisRef}
+                ORDER BY created_at DESC
+                LIMIT 1
+            |]
+            let maybeJob = case jobRows of
+                    (row:_) -> Just row
+                    [] -> Nothing
+            pure QueueRow
+                { analysisId = get #id analysis
+                , alertId = get #id alert
+                , alertTitle = alert.title
+                , alertFingerprint = alert.fingerprint
+                , analysisStatus = analysis.status
+                , analysisError = analysis.errorMessage
+                , analysisCreatedAt = analysis.createdAt
+                , analysisUpdatedAt = analysis.updatedAt
+                , jobId = fmap (get #id) maybeJob
+                , jobStatus = maybe Nothing (get #status) maybeJob
+                , jobLastError = maybe Nothing (get #last_error) maybeJob
+                , jobAttempts = fmap (get #attempts_count) maybeJob
+                , jobCreatedAt = fmap (get #created_at) maybeJob
+                , jobUpdatedAt = fmap (get #updated_at) maybeJob
+                , jobRunAt = fmap (get #run_at) maybeJob
+                , jobLockedAt = maybe Nothing (get #locked_at) maybeJob
+                }
+        render QueueView { queue }
+
+    action DropLlmAnalysisAction { analysisId } = do
+        requirePrivilege "manage_rules"
+        analysis <- fetch analysisId
+        if analysis.status /= "queued"
+            then setErrorMessage "Only queued LLM analyses can be dropped"
+            else do
+                alert <- fetch analysis.alertId
+                withTransaction do
+                    void do
+                        sqlExecTyped [typedSql|
+                            DELETE FROM llm_analysis_jobs
+                            WHERE analysis_id = ${analysisId}
+                                AND status IN ('job_status_not_started', 'job_status_retry')
+                        |]
+                    failAnalysis analysis alert "dropped by admin" "llm_failed"
+                setSuccessMessage "LLM analysis dropped"
+        redirectTo LlmQueueAction
 
     action NewLlmTemplateAction = do
         requirePrivilege "manage_rules"
