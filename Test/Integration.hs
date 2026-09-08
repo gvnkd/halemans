@@ -44,8 +44,10 @@ import Application.Service.WriteBack (executeAttempt)
 import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
 import Application.Service.Jira (syncOpenLinks)
 import Application.Service.Provision (applyProvisionConfig, ProvisionError (..))
-import Application.Service.Llm (LlmProviderConfig (..))
+import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.Tools (executeToolCall)
+import Application.Service.Assets.Attrs (objectAttributes)
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
@@ -74,7 +76,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec)
+        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec >> m8Spec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -1674,3 +1676,201 @@ m7LlmKeepItems = do
 
 restoreEnv :: String -> Maybe String -> IO ()
 restoreEnv name = maybe (unsetEnv name) (setEnv name)
+
+-- Milestone 8: assets enrichment + agent roles against the mock Assets
+-- server on 18085 (launched by the check; seeded Capacity CMDB dataset with
+-- dev-host-01, /debug/reset + /debug/fail/500 backdoors).
+m8Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+m8Spec = describe "enrichment phase 0 (milestone 8)" do
+    it "enrich caches and links assets for a mock-known host" do
+        config <- ensureAssetsConfig
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+            { host = Just "dev-host-01", checkName = Just "halemans test trigger" }
+        job <- enrichJobFor alertId
+        perform job
+        objects <- query @AssetsObject
+            |> filterWhere (#configId, get #id config)
+            |> fetch
+        case objects of
+            [object] -> do
+                object.objectId `shouldBe` 10001
+                object.label_ `shouldBe` "dev-host-01"
+                object.objectTypeName `shouldBe` "Host"
+                assetAttr "Owner" object `shouldBe` Just "team-sre"
+                assetAttr "Status" object `shouldBe` Just "Active"
+                assetAttr "Datacenter" object `shouldBe` Just "dc-eu-1"
+            _ -> expectationFailure "expected exactly one cached asset"
+        links <- query @AssetAlertLink
+            |> filterWhere (#alertId, alertId)
+            |> fetch
+        case links of
+            [link] -> link.matchedBy `shouldBe` "dev-host-01"
+            _ -> expectationFailure "expected exactly one asset link"
+        -- second run: upserts are idempotent
+        perform job
+        objectsAfter <- query @AssetsObject
+            |> filterWhere (#configId, get #id config)
+            |> fetch
+        length objectsAfter `shouldBe` 1
+        linksAfter <- query @AssetAlertLink
+            |> filterWhere (#alertId, alertId)
+            |> fetch
+        length linksAfter `shouldBe` 1
+
+    it "unknown hosts are negative-cached (no re-query within the TTL)" do
+        _ <- ensureAssetsConfig
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+            { host = Just "itest-m8-unknown-host" }
+        job <- enrichJobFor alertId
+        perform job
+        linked <- query @AssetAlertLink
+            |> filterWhere (#alertId, alertId)
+            |> filterWhereSql (#assetsObjectId, "IS NOT NULL")
+            |> fetch
+        length linked `shouldBe` 0
+        misses <- query @AssetAlertLink
+            |> filterWhere (#alertId, alertId)
+            |> fetch
+        case misses of
+            [miss] -> do
+                miss.assetsObjectId `shouldBe` Nothing
+                miss.matchedBy `shouldSatisfy` ("itest-m8-unknown-host" `Text.isInfixOf`)
+            _ -> expectationFailure "expected exactly one negative-cache marker"
+        -- Within the TTL the lookup short-circuits on the marker: even with
+        -- the mock armed to fail, the second run records no failure.
+        assetsMockFail 10
+        perform job
+        assetsMockReset
+        failures <- query @AlertEvent
+            |> filterWhere (#alertId, alertId)
+            |> filterWhere (#kind, "enrichment_failed" :: Text)
+            |> fetch
+        mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` []
+
+    it "assets outage soft-fails with an enrichment_failed event" do
+        _ <- ensureAssetsConfig
+        assetsMockFail 10
+        flip finally assetsMockReset do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+                { host = Just "itest-m8-softfail-host" }
+            job <- enrichJobFor alertId
+            perform job
+            failures <- query @AlertEvent
+                |> filterWhere (#alertId, alertId)
+                |> filterWhere (#kind, "enrichment_failed" :: Text)
+                |> fetch
+            mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` ["assets"]
+
+    it "a role on the analysis drives the prompt template and is recorded" do
+        _ <- ensureTemplate
+        -- m7 provisioning tests leave an enabled llm_configs row behind;
+        -- disable DB providers so the env mock config applies (DB-first
+        -- resolution, milestone_7.md §7).
+        void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
+        suffix <- tshow <$> nextRandom
+        let templateName = "itest_role_marker_" <> suffix
+            roleName = "itest-role-" <> suffix
+        template <- newRecord @LlmPromptTemplate
+            |> set #name templateName
+            |> set #version 1
+            |> set #body "ROLE MARKER {{alert.title}}\nAssets:\n{{assets_excerpt}}"
+            |> set #active True
+            |> createRecord
+        role <- newRecord @LlmAgentRole
+            |> set #name roleName
+            |> set #promptTemplateName templateName
+            |> set #tools (Aeson.toJSON ["assets_lookup" :: Text])
+            |> set #enabled True
+            |> set #isDefault False
+            |> createRecord
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- newRecord @LlmAnalysis
+            |> set #alertId alertId
+            |> set #agentRoleId (Just (get #id role))
+            |> createRecord
+        void do
+            newRecord @LlmAnalysisJob
+                |> set #analysisId (get #id analysis)
+                |> createRecord
+        performLatestJob (get #id analysis)
+        done <- fetch (get #id analysis)
+        done.status `shouldBe` "done"
+        done.agentRoleId `shouldBe` Just (get #id role)
+        done.promptTemplateId `shouldBe` Just (get #id template)
+
+    it "assets_lookup returns an in-band summary from the mock" do
+        _ <- ensureAssetsConfig
+        result <- executeToolCall Nothing ToolCall
+            { callId = "call-1"
+            , callName = "assets_lookup"
+            , callArguments = "{\"term\": \"dev-host-01\"}"
+            }
+        result `shouldSatisfy` ("dev-host-01" `Text.isInfixOf`)
+        result `shouldSatisfy` ("CHCMDB-10001" `Text.isInfixOf`)
+        failing <- executeToolCall Nothing ToolCall
+            { callId = "call-2"
+            , callName = "assets_lookup"
+            , callArguments = "{\"term\": \"itest-no-such-asset\"}"
+            }
+        failing `shouldBe` "no assets found"
+
+    it "the default role applies to automatic analyses" do
+        _ <- ensureTemplate
+        void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
+        void $ sqlExecTyped [typedSql| UPDATE llm_agent_roles SET is_default = false |]
+        suffix <- tshow <$> nextRandom
+        role <- newRecord @LlmAgentRole
+            |> set #name ("itest-default-role-" <> suffix)
+            |> set #promptTemplateName "alert_enrichment"
+            |> set #tools (Aeson.toJSON ([] :: [Text]))
+            |> set #enabled True
+            |> set #isDefault True
+            |> createRecord
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        performLatestJob (get #id analysis)
+        done <- fetch (get #id analysis)
+        done.status `shouldBe` "done"
+        done.agentRoleId `shouldBe` Just (get #id role)
+
+ensureAssetsConfig :: (?modelContext :: ModelContext) => IO AssetsConfig
+ensureAssetsConfig = do
+    existing <- query @AssetsConfig
+        |> filterWhere (#name, "itest-assets" :: Text)
+        |> fetchOneOrNothing
+    case existing of
+        Just config -> pure config
+        Nothing -> newRecord @AssetsConfig
+            |> set #name "itest-assets"
+            |> set #baseUrl "http://127.0.0.1:18085/rest/assets/latest"
+            |> set #tokenEnv "ASSETS_TOKEN"
+            |> set #authMode "bearer"
+            |> set #defaultSchemaName "Capacity CMDB"
+            |> set #hostQueryTemplate "objectSchema = \"Capacity CMDB\" AND Name like \"{host}\""
+            |> set #enabled True
+            |> createRecord
+
+enrichJobFor :: (?modelContext :: ModelContext) => Id Alert -> IO EnrichAlertJob
+enrichJobFor alertId = query @EnrichAlertJob
+    |> filterWhere (#alertId, alertId)
+    |> fetchOneOrNothing
+    >>= maybe (error "enrich job missing") pure
+
+assetAttr :: Text -> AssetsObject -> Maybe Text
+assetAttr name object = lookup name (objectAttributes object)
+
+assetsMockReset :: IO ()
+assetsMockReset = void (Wreq.post "http://127.0.0.1:18085/debug/reset" (object ["reset" .= True]))
+
+assetsMockFail :: Int -> IO ()
+assetsMockFail times = void (Wreq.post "http://127.0.0.1:18085/debug/fail/500" (object ["times" .= times]))

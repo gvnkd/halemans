@@ -79,6 +79,62 @@ $tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1);
 SQL
 
+# Milestone 8 D5: template v2 gains the {{assets_excerpt}} slot. Deactivating
+# only versions < 2 keeps admin-created newer versions untouched.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+WHERE name = 'alert_enrichment' AND version < 2;
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'alert_enrichment', 2, $tpl$You are an SRE assistant enriching an ops alert for the on-call engineer. Be concise; do not invent facts.
+
+## Alert
+- Title: {{alert.title}}
+- Severity: {{alert.severity}}
+- Environment: {{alert.env}}
+- Host: {{alert.host}}
+- Service: {{alert.service}}
+- Check: {{alert.check_name}}
+- Labels: {{alert.labels}}
+- Annotations: {{alert.annotations}}
+
+{{alert.description}}
+
+## Recent events
+{{events}}
+
+## CMDB context
+{{cmdb_excerpt}}
+
+## Linked assets
+{{assets_excerpt}}
+
+## Similar past alerts
+{{similar_alerts}}
+
+## Linked Jira tickets
+{{jira_links}}
+
+Analyze the probable cause of this alert using the context above and suggest concrete next steps for the on-call engineer.
+$tpl$, true, 'milestone 8: assets excerpt slot'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2);
+SQL
+
+# Assets info source pointing at the mock (milestone 8 D9) + default agent
+# role (milestone 8 D8, mirrors legacy behaviour: same template, full tool
+# set). Keep in sync with the inline seeding in nix/scripts/smoke-check.sh.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, enabled)
+SELECT 'assets-dev', 'http://127.0.0.1:18085/rest/assets/latest', 'ASSETS_TOKEN', 'bearer', 'Capacity CMDB',
+       'objectSchema = "Capacity CMDB" AND Name like "{host}"', true
+WHERE NOT EXISTS (SELECT 1 FROM assets_configs WHERE name = 'assets-dev');
+
+INSERT INTO llm_agent_roles (name, description, prompt_template_name, tools, enabled, is_default)
+SELECT 'default-enricher', 'Default enrichment role', 'alert_enrichment',
+       '["cmdb_lookup", "jira_search", "assets_lookup"]'::jsonb, true, true
+WHERE NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE name = 'default-enricher');
+SQL
+
 # Default retention config (milestone 5 D10): 30 days raw_events, enabled.
 # Keep in sync with the inline seeding in nix/scripts/smoke-check.sh.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'

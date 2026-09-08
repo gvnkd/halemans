@@ -91,6 +91,21 @@ def last_user_content(body):
     return ""
 
 
+def linked_assets_line(content):
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().lower() == "## linked assets":
+            for following in lines[index + 1:]:
+                stripped = following.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("## "):
+                    return None
+                return stripped
+            return None
+    return None
+
+
 # Strict request contract (OpenAI chat completions). Real servers 400 on
 # explicit nulls and unknown fields; the old lenient mock let our own client
 # bugs ("tools": null, "tool_call_id": null) pass silently. Validation runs on
@@ -294,6 +309,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         content = last_user_content(body)
         analysis = DISK_ANALYSIS if "disk" in content.lower() else GENERIC_ANALYSIS
+        # Deterministic context echo (milestone 8 D10): when the prompt's
+        # "## Linked assets" section is non-empty, the first asset line is
+        # echoed back BEFORE the fenced json (the app parser drops prose
+        # after the fence) so tests can assert the excerpt reached the
+        # provider.
+        assets_line = linked_assets_line(content)
+        if assets_line:
+            analysis = analysis.replace(
+                "```json",
+                "Linked asset observed in context: " + assets_line + "\n\n```json",
+                1,
+            )
         self._respond(analysis, body)
 
     def _respond(self, analysis, body):

@@ -7,12 +7,17 @@ import Web.View.LlmAdmin.New
 import Web.View.LlmAdmin.Edit
 import Web.View.LlmAdmin.NewProvider
 import Web.View.LlmAdmin.EditProvider
+import Web.View.LlmAdmin.NewRole
+import Web.View.LlmAdmin.EditRole
 import Application.Job.LlmAnalysis (failAnalysis)
 import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.Roles (roleToolNames)
 import qualified Application.Service.Llm.Budget as Budget
 import qualified Application.Service.Log as Log
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
+import Data.Aeson (Value)
+import qualified Data.Aeson as Aeson
 import Data.Functor ((<&>))
 import Control.Monad (void)
 import qualified Data.Text as Text
@@ -63,6 +68,9 @@ instance Controller LlmAdminController where
         rateLimit <- Budget.rateLimitPerMinute
         providers <- query @LlmConfig
             |> orderByAsc #providerName
+            |> fetch
+        roles <- query @LlmAgentRole
+            |> orderByAsc #name
             |> fetch
         render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
                          , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
@@ -358,3 +366,136 @@ instance Controller LlmAdminController where
         deleteRecord provider
         setSuccessMessage ("Deleted provider " <> get #providerName provider)
         redirectTo LlmAdminAction
+
+    -- Agent roles (milestone_8.md §7): name + prompt template + tool
+    -- whitelist; set-default flips is_default transactionally (same
+    -- unique-WHERE index trick as llm_configs_enabled_idx).
+    action NewLlmRoleAction = do
+        requirePrivilege "manage_rules"
+        render NewRoleView
+
+    action CreateLlmRoleAction = do
+        requirePrivilege "manage_rules"
+        let name = param @Text "name"
+            description = param @Text "description"
+            templateName = param @Text "promptTemplateName"
+            tools = parseTools (param @Text "tools")
+        if Text.null name || Text.null templateName
+            then do
+                setErrorMessage "Role name and prompt template name are required"
+                redirectTo NewLlmRoleAction
+            else do
+                existing <- query @LlmAgentRole
+                    |> filterWhere (#name, name)
+                    |> fetchOneOrNothing
+                case existing of
+                    Just _ -> do
+                        setErrorMessage ("Role " <> name <> " already exists")
+                        redirectTo NewLlmRoleAction
+                    Nothing -> do
+                        _ <- newRecord @LlmAgentRole
+                            |> set #name name
+                            |> set #description description
+                            |> set #promptTemplateName templateName
+                            |> set #tools tools
+                            |> set #enabled True
+                            |> set #isDefault False
+                            |> createRecord
+                        setSuccessMessage ("Created role " <> name)
+                        redirectTo LlmAdminAction
+
+    action EditLlmRoleAction { roleId } = do
+        requirePrivilege "manage_rules"
+        role <- fetch roleId
+        render EditRoleView { role, toolNames = roleToolNames role }
+
+    action UpdateLlmRoleAction { roleId } = do
+        requirePrivilege "manage_rules"
+        role <- fetch roleId
+        let name = param @Text "name"
+            description = param @Text "description"
+            templateName = param @Text "promptTemplateName"
+            tools = parseTools (param @Text "tools")
+        if Text.null name || Text.null templateName
+            then do
+                setErrorMessage "Role name and prompt template name are required"
+                redirectTo (EditLlmRoleAction roleId)
+            else do
+                clash <- query @LlmAgentRole
+                    |> filterWhere (#name, name)
+                    |> fetchOneOrNothing
+                case clash of
+                    Just other | get #id other /= roleId -> do
+                        setErrorMessage ("Role " <> name <> " already exists")
+                        redirectTo (EditLlmRoleAction roleId)
+                    _ -> do
+                        now <- getCurrentTime
+                        _ <- role
+                            |> set #name name
+                            |> set #description description
+                            |> set #promptTemplateName templateName
+                            |> set #tools tools
+                            |> set #updatedAt now
+                            |> updateRecord
+                        setSuccessMessage ("Updated role " <> name)
+                        redirectTo LlmAdminAction
+
+    action ToggleLlmRoleAction { roleId } = do
+        requirePrivilege "manage_rules"
+        role <- fetch roleId
+        now <- getCurrentTime
+        -- Disabling the default role also drops the default flag, so
+        -- resolution never lands on a disabled role.
+        _ <- role
+            |> set #enabled (not role.enabled)
+            |> set #isDefault (role.isDefault && not role.enabled)
+            |> set #updatedAt now
+            |> updateRecord
+        setSuccessMessage ((if role.enabled then "Disabled " else "Enabled ") <> "role " <> role.name)
+        redirectTo LlmAdminAction
+
+    action SetDefaultLlmRoleAction { roleId } = do
+        requirePrivilege "manage_rules"
+        role <- fetch roleId
+        if not role.enabled
+            then setErrorMessage "Enable the role before making it the default"
+            else do
+                withTransaction do
+                    void do
+                        sqlExecTyped [typedSql|
+                            UPDATE llm_agent_roles SET is_default = false, updated_at = NOW()
+                        |]
+                    void do
+                        sqlExecTyped [typedSql|
+                            UPDATE llm_agent_roles SET is_default = true, updated_at = NOW()
+                            WHERE id = ${roleId}
+                        |]
+                setSuccessMessage ("Default role: " <> role.name)
+        redirectTo LlmAdminAction
+
+    action DeleteLlmRoleAction { roleId } = do
+        requirePrivilege "manage_rules"
+        role <- fetch roleId
+        references <- query @LlmAnalysis
+            |> filterWhere (#agentRoleId, Just roleId)
+            |> fetchCount
+        if role.isDefault
+            then setErrorMessage "Cannot delete the default role (set another default first)"
+            else if references > 0
+                then setErrorMessage ("Cannot delete role " <> role.name <> ": analyses reference it")
+                else do
+                    deleteRecord role
+                    setSuccessMessage ("Deleted role " <> role.name)
+        redirectTo LlmAdminAction
+
+-- Tools field: comma-separated whitelist of known tool names; empty = no
+-- tools for the role (milestone_8.md §2).
+parseTools :: Text -> Value
+parseTools raw = Aeson.toJSON
+    [ name
+    | name <- map Text.strip (Text.splitOn "," raw)
+    , name `elem` knownToolNames
+    ]
+
+knownToolNames :: [Text]
+knownToolNames = ["cmdb_lookup", "jira_search", "assets_lookup"]

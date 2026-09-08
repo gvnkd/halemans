@@ -21,6 +21,7 @@ POST /alerts/{alertId}/unack            UnackAlertAction
 POST /alerts/{alertId}/close            CloseAlertAction
 POST /alerts/{alertId}/comments         CreateCommentAction
 POST /alerts/{alertId}/cmdb/refresh     RefreshCmdbAction
+POST /alerts/{alertId}/assets/refresh   RefreshAssetsAction
 POST /alerts/{alertId}/jira             CreateJiraTicketAction
 POST /alerts/{alertId}/jira/{jiraLinkId}/delete  DeleteJiraLinkAction
 POST /alerts/{alertId}/reanalyze           ReanalyzeAlertAction
@@ -45,6 +46,24 @@ POST /admin/llm/providers/{providerId}/update  UpdateLlmProviderAction
 POST /admin/llm/providers/{providerId}/enable  EnableLlmProviderAction
 POST /admin/llm/providers/{providerId}/disable DisableLlmProviderAction
 POST /admin/llm/providers/{providerId}/delete  DeleteLlmProviderAction
+GET  /admin/llm/roles/new                    NewLlmRoleAction
+POST /admin/llm/roles                        CreateLlmRoleAction
+GET  /admin/llm/roles/{roleId}/edit          EditLlmRoleAction
+POST /admin/llm/roles/{roleId}/update        UpdateLlmRoleAction
+POST /admin/llm/roles/{roleId}/toggle        ToggleLlmRoleAction
+POST /admin/llm/roles/{roleId}/default       SetDefaultLlmRoleAction
+POST /admin/llm/roles/{roleId}/delete        DeleteLlmRoleAction
+|]
+
+[routes|AssetsAdminController
+GET  /admin/assets                            AssetsAdminAction
+GET  /admin/assets/new                        NewAssetsConfigAction
+POST /admin/assets                            CreateAssetsConfigAction
+GET  /admin/assets/{configId}/edit            EditAssetsConfigAction
+POST /admin/assets/{configId}/update          UpdateAssetsConfigAction
+POST /admin/assets/{configId}/toggle          ToggleAssetsConfigAction
+POST /admin/assets/{configId}/delete          DeleteAssetsConfigAction
+POST /admin/assets/{configId}/test            TestAssetsConnectionAction
 |]
 
 [routes|BlackoutsController

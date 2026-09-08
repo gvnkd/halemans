@@ -1,5 +1,7 @@
 module Web.View.LlmAdmin.Index where
 import Web.View.Prelude
+import qualified Data.Aeson as Aeson
+import qualified Data.Text as Text
 
 data TemplateRow = TemplateRow
     { templateId :: Id LlmPromptTemplate
@@ -23,6 +25,7 @@ data IndexView = IndexView
     { templates :: [TemplateRow]
     , counters :: [CounterRow]
     , providers :: [LlmConfig]
+    , roles :: [LlmAgentRole]
     , endpoint :: Maybe Text
     , model :: Maybe Text
     , toolsEnabled :: Bool
@@ -58,6 +61,19 @@ instance View IndexView where
             </thead>
             <tbody>
                 {forEach providers providerRowHtml}
+            </tbody>
+        </table>
+
+        <div class="d-flex justify-content-between align-items-center mt-4">
+            <h2>Agent roles</h2>
+            <a href={NewLlmRoleAction} class="btn btn-sm btn-primary" data-testid="new-llm-role">New role</a>
+        </div>
+        <table class="table" data-testid="llm-roles">
+            <thead>
+                <tr><th>Name</th><th>Template</th><th>Tools</th><th>Enabled</th><th>Default</th><th></th></tr>
+            </thead>
+            <tbody>
+                {forEach roles roleRowHtml}
             </tbody>
         </table>
 
@@ -125,6 +141,59 @@ providerRowHtml provider = [hsx|
                 <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-provider-delete">Delete</button>
             </form>
         |]
+
+roleRowHtml :: LlmAgentRole -> Html
+roleRowHtml role = [hsx|
+    <tr data-testid="llm-role">
+        <td>{role.name}</td>
+        <td>{role.promptTemplateName}</td>
+        <td data-testid="llm-role-tools">{toolsText}</td>
+        <td>{enabledBadge}</td>
+        <td>{defaultBadge}</td>
+        <td>
+            <a href={EditLlmRoleAction roleId} class="btn btn-sm btn-outline-secondary" data-testid="llm-role-edit">Edit</a>
+            {toggleForm}
+            {defaultForm}
+            {deleteForm}
+        </td>
+    </tr>
+|]
+    where
+        roleId = get #id role
+        toolsText :: Text
+        toolsText = case decodeTools role.tools of
+            [] -> "(none)"
+            names -> Text.intercalate ", " names
+        enabledBadge = if role.enabled
+            then [hsx|<span class="badge status-resolved" data-testid="llm-role-enabled">enabled</span>|]
+            else [hsx|<span class="badge" data-testid="llm-role-disabled">disabled</span>|]
+        defaultBadge = if role.isDefault
+            then [hsx|<span class="badge status-ack" data-testid="llm-role-default">default</span>|]
+            else mempty
+        toggleForm = [hsx|
+            <form method="POST" action={ToggleLlmRoleAction roleId} class="d-inline">
+                <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="llm-role-toggle">{toggleLabel}</button>
+            </form>
+        |]
+        toggleLabel :: Text
+        toggleLabel = if role.enabled then "Disable" else "Enable"
+        defaultForm = if role.isDefault || not role.enabled
+            then mempty
+            else [hsx|
+                <form method="POST" action={SetDefaultLlmRoleAction roleId} class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="llm-role-set-default">Set default</button>
+                </form>
+            |]
+        deleteForm = if role.isDefault
+            then mempty
+            else [hsx|
+                <form method="POST" action={DeleteLlmRoleAction roleId} class="d-inline js-delete">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-role-delete">Delete</button>
+                </form>
+            |]
+
+decodeTools :: Aeson.Value -> [Text]
+decodeTools value = fromMaybe [] (Aeson.decode (Aeson.encode value))
 
 templateRowHtml :: TemplateRow -> Html
 templateRowHtml row = [hsx|

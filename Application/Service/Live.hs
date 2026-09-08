@@ -32,6 +32,7 @@ import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
 import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
 import Application.Service.Llm.Queue (latestJobErrors)
+import qualified Application.Service.Assets.Cache as AssetsCache
 
 -- Websocket fan-out (milestone_1.md §7): one PG LISTEN subscription per
 -- process; each browser connection registers its scope in the registry and
@@ -175,13 +176,18 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                 |> orderByDesc #createdAt
                 |> limit 1
                 |> fetchOne
-            panelUpdates <- if event.leKind `elem` ["enriched", "writeback", "writeback_failed"]
+            -- Panel-only kinds (milestone_8.md §4: "assets" refreshes the
+            -- context panels without touching status badge or timeline).
+            if event.leKind == "assets"
                 then contextPanelUpdates alert
-                else pure []
-            pure
-                ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
-                  , fragment timelineDomId (timelineEventHtml latestEvent) "prepend" ""
-                  ] ++ panelUpdates )
+                else do
+                    panelUpdates <- if event.leKind `elem` ["enriched", "writeback", "writeback_failed"]
+                        then contextPanelUpdates alert
+                        else pure []
+                    pure
+                        ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
+                          , fragment timelineDomId (timelineEventHtml latestEvent) "prepend" ""
+                          ] ++ panelUpdates )
         | otherwise -> pure []
     -- Group events (kind "group", milestone_2.md §9): the group card header
     -- for group-scoped connections, the env page group row for env scopes
@@ -233,6 +239,13 @@ contextPanelUpdates alert = do
         |> filterWhere (#alertId, get #id alert)
         |> orderByAsc #createdAt
         |> fetch
+    linkedAssets <- AssetsCache.linkedAssetsForAlert alert
+    assetConfigs <- forM linkedAssets \(_, object) -> fetch object.configId
+    let linkedAssetEntries = zipWith (\(link, object) config -> (link, object, config)) linkedAssets assetConfigs
+    agentRoles <- query @LlmAgentRole
+        |> filterWhere (#enabled, True)
+        |> orderByAsc #name
+        |> fetch
     latestAttempt <- query @WriteBackAttempt
         |> filterWhere (#alertId, get #id alert)
         |> orderByDesc #createdAt
@@ -246,9 +259,10 @@ contextPanelUpdates alert = do
     llmJobErrors <- latestJobErrors (map (get #id) analyses)
     pure
         [ fragment cmdbPanelDomId (cmdbPanelHtml alert cmdbEntry) "replace" ""
+        , fragment assetsPanelDomId (assetsPanelHtml alert linkedAssetEntries) "replace" ""
         , fragment jiraLinksDomId (jiraLinksHtml alert jiraLinks) "replace" ""
         , fragment writeBackChipDomId (writeBackChipHtml latestAttempt) "replace" ""
-        , fragment llmPanelDomId (llmPanelHtml alert analyses [] llmJobErrors) "replace" ""
+        , fragment llmPanelDomId (llmPanelHtml alert analyses [] llmJobErrors agentRoles) "replace" ""
         ]
 
 fragment :: Text -> Markup -> Text -> Text -> Aeson.Value

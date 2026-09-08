@@ -16,6 +16,7 @@ import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Prompt (buildPromptForAlert, BuiltPrompt (..))
 import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
 import Application.Service.Llm.Tools (toolDefinitions, executeToolCall)
+import Application.Service.Llm.Roles (resolveAgentRole, templateNameForRole, toolsForRole)
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Helper.Ingest (publishAlertUpdate)
 
@@ -51,8 +52,11 @@ instance Job LlmAnalysisJob where
 
 runAnalysis :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmProviderConfig -> IO ()
 runAnalysis job analysis alert config = do
+    -- Agent role (milestone_8.md §7): explicit on the analysis row, else the
+    -- is_default role, else legacy behaviour (no role).
+    role <- resolveAgentRole analysis.agentRoleId
     tokenBudget <- Budget.promptTokenBudget
-    promptResult <- buildPromptForAlert tokenBudget alert
+    promptResult <- buildPromptForAlert tokenBudget (templateNameForRole role) alert
     case promptResult of
         Nothing -> failAnalysis analysis alert "no active prompt template" "llm_failed"
         Just built -> do
@@ -64,6 +68,7 @@ runAnalysis job analysis alert config = do
                 |> set #promptTemplateId (Just built.templateId)
                 |> set #promptVersion (Just built.templateVersion)
                 |> set #promptHash built.hash
+                |> set #agentRoleId (fmap (get #id) role)
                 |> set #updatedAt now
                 |> updateRecord
             dedupeWindow <- Budget.dedupeWindowSeconds
@@ -78,7 +83,7 @@ runAnalysis job analysis alert config = do
                             delayed <- checkRateLimit config.providerName now
                             case delayed of
                                 Just delaySeconds -> requeue analysis job delaySeconds
-                                Nothing -> callProvider job analysis alert config built
+                                Nothing -> callProvider job analysis alert config role built
 
 findDedupeSource :: (?modelContext :: ModelContext) => Id LlmAnalysis -> Text -> UTCTime -> IO (Maybe LlmAnalysis)
 findDedupeSource selfId hash cutoff = query @LlmAnalysis
@@ -149,11 +154,11 @@ requeue analysis job delaySeconds = do
             |> set #runAt (addUTCTime (fromIntegral delaySeconds) now)
             |> createRecord
 
-callProvider :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmProviderConfig -> BuiltPrompt -> IO ()
-callProvider job analysis alert config built = do
+callProvider :: (?modelContext :: ModelContext) => LlmAnalysisJob -> LlmAnalysis -> Alert -> LlmProviderConfig -> Maybe LlmAgentRole -> BuiltPrompt -> IO ()
+callProvider job analysis alert config role built = do
     source <- mapM fetch alert.sourceId
     let messages = [userMessage built.rendered]
-        tools = if config.toolsEnabled then toolDefinitions else []
+        tools = if config.toolsEnabled then toolsForRole role else []
     outcome <- runWithToolLoop config source 3 messages tools []
     case outcome of
         Left (Retriable err) -> do

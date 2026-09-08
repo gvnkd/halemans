@@ -287,8 +287,7 @@ if [ -n "$llm_id" ]; then
     # suite; here the grafana-absence reconcile can add events mid-scenario)
     curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$llm_id/reanalyze" || fail "llm analysis: re-analyze post"
     wait_sql "re-analyze appended" 90 "SELECT 1 FROM (SELECT 1, COUNT(*) OVER () AS n FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done') t WHERE n >= 2 LIMIT 1" \
-        && pass "llm analysis: re-analyze appended" || fail "llm analysis: re-analyze appended"
-    # feedback round-trip: up-vote then re-vote down
+        && pass "llm analysis: re-analyze appended" || fail "llm analysis: re-analyze appended"    # feedback round-trip: up-vote then re-vote down
     analysis_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done' ORDER BY created_at DESC LIMIT 1" 2>/dev/null | grep -oE '[0-9a-f-]{36}' | head -1)
     if [ -n "$analysis_id" ]; then
         curl -sf -b "$COOKIES" -o /dev/null -X POST -d "score=1" "$APP_URL/alerts/$llm_id/analyses/$analysis_id/feedback" || fail "llm feedback: up-vote post"
@@ -299,6 +298,18 @@ if [ -n "$llm_id" ]; then
     else
         fail "llm feedback (no analysis id)"
     fi
+    # ------------------------------------------------- milestone 8: assets
+    # dev-host-01 is seeded in the mock Assets Capacity CMDB; the enrich job
+    # caches + links it, the card panel renders from the cache, and the
+    # assets excerpt reaches the provider (the mock echoes it back).
+    wait_sql "assets: object cached and linked" 90 "SELECT 1 FROM asset_alert_links l JOIN assets_objects o ON o.id = l.assets_object_id WHERE l.alert_id = '$llm_id' AND o.label = 'dev-host-01' LIMIT 1" \
+        && pass "assets: dev-host-01 cached and linked" || fail "assets: dev-host-01 cached and linked"
+    curl -sf -b "$COOKIES" -o /dev/null -X POST "$APP_URL/alerts/$llm_id/reanalyze" || fail "assets: re-analyze post"
+    wait_sql "assets: analysis reflects owner/cluster" 120 "SELECT 1 FROM llm_analyses WHERE alert_id = '$llm_id' AND status = 'done' AND result_md LIKE '%team-sre%' AND result_md LIKE '%prod-eu-1%' LIMIT 1" \
+        && pass "assets: llm analysis text reflects owner/cluster" || fail "assets: llm analysis text reflects owner/cluster"
+    card_html=$(curl -sf -b "$COOKIES" "$APP_URL/alerts/$llm_id" || true)
+    echo "$card_html" | grep -q 'assets-panel' && echo "$card_html" | grep -q 'CHCMDB-10001' && echo "$card_html" | grep -q 'team-sre' \
+        && pass "assets: card panel renders asset fields" || fail "assets: card panel renders asset fields"
 else
     fail "llm analysis (no alert)"
 fi
@@ -486,6 +497,28 @@ curl -sf -b "$COOKIES" "$APP_URL/admin" | grep -q 'job-metrics-table' \
 login_as "viewer@dev" "$(cat "$STATE/halemans/viewer-password")" > /dev/null 2>&1
 [ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$APP_URL/admin/audit/export?format=csv")" = "403" ] \
     && pass "audit export: viewer denied (403)" || fail "audit export: viewer denied (403)"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+
+# ------------------------------------------------- milestone 8: assets + roles admin
+scenario "assets + agent roles admin"
+login_as "admin@dev" "$(cat "$STATE/halemans/admin-password")" > /dev/null 2>&1 \
+    || fail "assets admin: login as admin@dev"
+assets_page=$(curl -sf -b "$COOKIES" "$APP_URL/admin/assets" || true)
+echo "$assets_page" | grep -q 'assets-configs' && echo "$assets_page" | grep -q 'assets-dev' \
+    && pass "assets admin: info source listed" || fail "assets admin: info source listed"
+assets_config_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM assets_configs WHERE name = 'assets-dev' LIMIT 1" 2>/dev/null)
+if [ -n "$assets_config_id" ]; then
+    [ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' -X POST "$APP_URL/admin/assets/$assets_config_id/test")" = "302" ] \
+        && pass "assets admin: connection test accepted" || fail "assets admin: connection test accepted"
+else
+    fail "assets admin: no assets-dev config id"
+fi
+llm_page=$(curl -sf -b "$COOKIES" "$APP_URL/admin/llm" || true)
+echo "$llm_page" | grep -q 'llm-roles' && echo "$llm_page" | grep -q 'default-enricher' \
+    && pass "agent roles admin: default role listed" || fail "agent roles admin: default role listed"
+login_as "viewer@dev" "$(cat "$STATE/halemans/viewer-password")" > /dev/null 2>&1
+[ "$(curl -s -b "$COOKIES" -o /dev/null -w '%{http_code}' "$APP_URL/admin/assets")" = "403" ] \
+    && pass "assets admin: viewer denied (403)" || fail "assets admin: viewer denied (403)"
 login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
 
 # ------------------------------------------------- milestone 6: public API + metrics

@@ -23,6 +23,7 @@ import Web.Controller.EscalationPolicies
 import Web.Controller.Dashboards
 import Web.Controller.Integrations
 import Web.Controller.LlmAdmin
+import Web.Controller.AssetsAdmin
 import Web.Controller.Admin
 import Web.Controller.Audit
 import Web.Controller.Api
@@ -50,6 +51,7 @@ instance FrontController WebApplication where
         , parseRoute @DashboardsController
         , parseRoute @IntegrationsController
         , parseRoute @LlmAdminController
+        , parseRoute @AssetsAdminController
         , parseRoute @AdminController
         , parseRoute @AuditController
         , parseRoute @ApiController

@@ -22,7 +22,7 @@ cleanup() {
             -H "Authorization: Bearer $(cat "$DEVENV_STATE/zabbix/token")" \
             -d '{"jsonrpc":"2.0","method":"problem.get","params":{"output":"extend"},"id":1}' \
             "http://127.0.0.1:10080/api_jsonrpc.php" >&2 || true
-        for f in zabbix-server zabbix-web app worker mock-confluence mock-jira mock-llm; do
+        for f in zabbix-server zabbix-web app worker mock-confluence mock-jira mock-llm mock-assets; do
             if [ -f "$T/$f.log" ]; then
                 echo "=== tail $f.log ===" >&2
                 tail -20 "$T/$f.log" >&2
@@ -112,6 +112,56 @@ Analyze the probable cause of this alert using the context above and suggest con
 $tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1);
 
+-- Milestone 8 D5: template v2 gains the {{assets_excerpt}} slot.
+UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+WHERE name = 'alert_enrichment' AND version < 2;
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'alert_enrichment', 2, $tpl$You are an SRE assistant enriching an ops alert for the on-call engineer. Be concise; do not invent facts.
+
+## Alert
+- Title: {{alert.title}}
+- Severity: {{alert.severity}}
+- Environment: {{alert.env}}
+- Host: {{alert.host}}
+- Service: {{alert.service}}
+- Check: {{alert.check_name}}
+- Labels: {{alert.labels}}
+- Annotations: {{alert.annotations}}
+
+{{alert.description}}
+
+## Recent events
+{{events}}
+
+## CMDB context
+{{cmdb_excerpt}}
+
+## Linked assets
+{{assets_excerpt}}
+
+## Similar past alerts
+{{similar_alerts}}
+
+## Linked Jira tickets
+{{jira_links}}
+
+Analyze the probable cause of this alert using the context above and suggest concrete next steps for the on-call engineer.
+$tpl$, true, 'milestone 8: assets excerpt slot'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2);
+
+-- Assets info source pointing at the mock (milestone 8 D9) + default agent
+-- role (milestone 8 D8): same as seed-halemans.
+INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, enabled)
+SELECT 'assets-dev', 'http://127.0.0.1:18085/rest/assets/latest', 'ASSETS_TOKEN', 'bearer', 'Capacity CMDB',
+       'objectSchema = "Capacity CMDB" AND Name like "{host}"', true
+WHERE NOT EXISTS (SELECT 1 FROM assets_configs WHERE name = 'assets-dev');
+
+INSERT INTO llm_agent_roles (name, description, prompt_template_name, tools, enabled, is_default)
+SELECT 'default-enricher', 'Default enrichment role', 'alert_enrichment',
+       '["cmdb_lookup", "jira_search", "assets_lookup"]'::jsonb, true, true
+WHERE NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE name = 'default-enricher');
+
 -- Default retention config (milestone 5 D10): same as seed-halemans.
 INSERT INTO retention_configs (raw_events_days, enabled)
 SELECT 30, true
@@ -127,6 +177,9 @@ export HALEMANS_JIRA_URL="http://127.0.0.1:18083"
 # Mock LLM (milestone 4 D9): local endpoint, no token; inherited by web/worker.
 export LLM_ENDPOINT="http://127.0.0.1:18084"
 export LLM_MODEL="mock-llm-1"
+# Mock Assets (milestone 8 D9): fixed test token, inherited by web/worker.
+export ASSETS_TOKEN="test-assets-token"
+export HALEMANS_ASSETS_URL="http://127.0.0.1:18085/rest/assets/latest"
 # Flatten write-back retry backoff (1m/5m/15m) so the failure-chip smoke
 # scenario reaches terminal 'failed' fast; inherited by the worker.
 export HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0"
@@ -137,17 +190,21 @@ python3 "$MOCK_JIRA_PY" > "$T/mock-jira.log" 2>&1 &
 pids="$pids $!"
 python3 "$MOCK_LLM_PY" > "$T/mock-llm.log" 2>&1 &
 pids="$pids $!"
+python3 "$MOCK_ASSETS_PY" > "$T/mock-assets.log" 2>&1 &
+pids="$pids $!"
 for i in $(seq 1 30); do
     curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null 2>&1 \
         && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null 2>&1 \
-        && curl -sf "$LLM_ENDPOINT/health" > /dev/null 2>&1 && break
+        && curl -sf "$LLM_ENDPOINT/health" > /dev/null 2>&1 \
+        && curl -sf "http://127.0.0.1:18085/health" > /dev/null 2>&1 && break
     sleep 1
 done
 curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null \
     && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null \
-    && curl -sf "$LLM_ENDPOINT/health" > /dev/null || {
+    && curl -sf "$LLM_ENDPOINT/health" > /dev/null \
+    && curl -sf "http://127.0.0.1:18085/health" > /dev/null || {
         echo "mocks never came up" >&2
-        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" "$T/mock-llm.log" >&2
+        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" "$T/mock-llm.log" "$T/mock-assets.log" >&2
         exit 1
     }
 

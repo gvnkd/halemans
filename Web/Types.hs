@@ -28,6 +28,7 @@ data AlertsController
     | CloseAlertAction { alertId :: !(Id Alert) }
     | CreateCommentAction { alertId :: !(Id Alert) }
     | RefreshCmdbAction { alertId :: !(Id Alert) }
+    | RefreshAssetsAction { alertId :: !(Id Alert) }
     | CreateJiraTicketAction { alertId :: !(Id Alert) }
     | DeleteJiraLinkAction { alertId :: !(Id Alert), jiraLinkId :: !(Id JiraLink) }
     | ReanalyzeAlertAction { alertId :: !(Id Alert) }
@@ -86,6 +87,24 @@ data LlmAdminController
     | EnableLlmProviderAction { providerId :: !(Id LlmConfig) }
     | DisableLlmProviderAction { providerId :: !(Id LlmConfig) }
     | DeleteLlmProviderAction { providerId :: !(Id LlmConfig) }
+    | NewLlmRoleAction
+    | CreateLlmRoleAction
+    | EditLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    | UpdateLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    | ToggleLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    | SetDefaultLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    | DeleteLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    deriving (Eq, Show)
+
+data AssetsAdminController
+    = AssetsAdminAction
+    | NewAssetsConfigAction
+    | CreateAssetsConfigAction
+    | EditAssetsConfigAction { configId :: !(Id AssetsConfig) }
+    | UpdateAssetsConfigAction { configId :: !(Id AssetsConfig) }
+    | ToggleAssetsConfigAction { configId :: !(Id AssetsConfig) }
+    | DeleteAssetsConfigAction { configId :: !(Id AssetsConfig) }
+    | TestAssetsConnectionAction { configId :: !(Id AssetsConfig) }
     deriving (Eq, Show)
 
 data AdminController

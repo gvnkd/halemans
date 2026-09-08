@@ -8,6 +8,7 @@ import IHP.Fetch (fetch)
 import Generated.Types
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Helper.Ingest (publishAlertUpdate)
 import Data.Aeson (object, (.=))
 import Control.Exception (try, SomeException)
@@ -40,14 +41,22 @@ instance Job EnrichAlertJob where
                     failures :: [(Text, Text)]
                     failures = catMaybes [cmdbFailure, jiraFailure]
                 pure failures
-        forM_ failures \(subsystem, err) -> void do
+        -- Assets (milestone_8.md §4): third independent soft-fail subsystem,
+        -- not gated on a source row (configs are global).
+        assetsOutcome <- try (AssetsCache.lookupAssetsForAlert alert)
+        let assetsFailure = case assetsOutcome of
+                Left err -> Just ("assets", tshow (err :: SomeException))
+                Right (Left err) -> Just ("assets", err)
+                Right (Right _) -> Nothing
+            allFailures = failures ++ maybeToList assetsFailure
+        forM_ allFailures \(subsystem, err) -> void do
             newRecord @AlertEvent
                 |> set #alertId (get #id alert)
                 |> set #userId Nothing
                 |> set #kind "enrichment_failed"
                 |> set #payload (object ["subsystem" .= subsystem, "error" .= err])
                 |> createRecord
-        when (not (null failures) && job.attemptsCount < 2) do
+        when (not (null allFailures) && job.attemptsCount < 2) do
             now <- getCurrentTime
             void do
                 newRecord @EnrichAlertJob
@@ -55,6 +64,10 @@ instance Job EnrichAlertJob where
                     |> set #runAt (addUTCTime 60 now)
                     |> createRecord
         publishAlertUpdate alert "enriched"
+        -- Panel-only refresh for the assets card (milestone_8.md §4): the
+        -- websocket broadcaster re-renders context panels without touching
+        -- the timeline on this kind.
+        publishAlertUpdate alert "assets"
         maybeRetriggerAnalysis alert startedAt
 
     maxAttempts = 3

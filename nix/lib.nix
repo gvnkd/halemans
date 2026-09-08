@@ -16,6 +16,9 @@ let
             [ -f "$state/confluence-token" ]   || gen > "$state/confluence-token"
             [ -f "$state/jira-token" ]         || gen > "$state/jira-token"
 
+            # Mock Assets bearer token (milestone 8 D9).
+            [ -f "$state/assets-token" ]       || gen > "$state/assets-token"
+
             # Dev user passwords (milestone 1 D2): fixed-per-environment,
             # gitignored like the other tokens.
             [ -f "$state/admin-password" ]  || gen > "$state/admin-password"
@@ -47,8 +50,10 @@ let
                 printf 'export HALEMANS_GENERIC_HOOK_TOKEN="%s"\n' "$(cat "$state/generic-hook-token")"
                 printf 'export CONFLUENCE_TOKEN="%s"\n'            "$(cat "$state/confluence-token")"
                 printf 'export JIRA_TOKEN="%s"\n'                  "$(cat "$state/jira-token")"
+                printf 'export ASSETS_TOKEN="%s"\n'                "$(cat "$state/assets-token")"
                 printf 'export HALEMANS_CONFLUENCE_URL="%s"\n'     "http://127.0.0.1:18082"
                 printf 'export HALEMANS_JIRA_URL="%s"\n'           "http://127.0.0.1:18083"
+                printf 'export HALEMANS_ASSETS_URL="%s"\n'         "http://127.0.0.1:18085/rest/assets/latest"
                 # Mock LLM (milestone 4 D9): local endpoint, no token needed.
                 printf 'export LLM_ENDPOINT="%s"\n'                 "http://127.0.0.1:18084"
                 printf 'export LLM_MODEL="%s"\n'                    "mock-llm-1"

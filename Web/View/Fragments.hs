@@ -11,6 +11,8 @@ module Web.View.Fragments
 , groupHeaderDomId
 , cmdbPanelHtml
 , cmdbPanelDomId
+, assetsPanelHtml
+, assetsPanelDomId
 , jiraLinksHtml
 , jiraLinksDomId
 , writeBackChipHtml
@@ -28,6 +30,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
+import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -208,6 +211,88 @@ cmdbPanelHtml alert entry = [hsx|
 jiraLinksDomId :: Text
 jiraLinksDomId = "jira-links"
 
+-- Assets panel (milestone_8.md §5): one card per linked cached asset.
+-- Renders from assets_objects only — never calls Assets at render time.
+-- attribute_names on the config picks which flattened attributes show.
+
+assetsPanelDomId :: Text
+assetsPanelDomId = "assets-panel"
+
+assetsPanelHtml :: Alert -> [(AssetAlertLink, AssetsObject, AssetsConfig)] -> Html
+assetsPanelHtml alert linked = [hsx|
+    <section class="card mb-3" id={assetsPanelDomId} data-testid="assets-panel">
+        <div class="card-body">
+            <h5 class="card-title">Assets {refreshButton}</h5>
+            {body}
+        </div>
+    </section>
+|]
+    where
+        refreshButton = [hsx|
+            <form method="POST" action={RefreshAssetsAction (get #id alert)} class="d-inline">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="assets-refresh">Refresh</button>
+            </form>
+        |]
+        body = case linked of
+            [] -> [hsx|<p class="text-muted" data-testid="assets-empty">No linked assets (no info source configured, or lookup pending).</p>|]
+            entries -> [hsx|<div>{forEach entries assetEntryHtml}</div>|]
+
+assetEntryHtml :: (AssetAlertLink, AssetsObject, AssetsConfig) -> Html
+assetEntryHtml (_, object, config) = [hsx|
+    <div class="asset-entry mb-2" data-testid="asset-entry">
+        <p>
+            {iconImg}
+            <strong data-testid="asset-label">{object.label_}</strong>
+            <span class="badge status-badge" data-testid="asset-key">{object.objectKey}</span>
+            <span class="badge" data-testid="asset-type">{object.objectTypeName}</span>
+            {statusBadge}
+        </p>
+        <dl class="asset-attrs mb-1">
+            {forEach displayAttrs attrRow}
+        </dl>
+        <p>
+            <a href={object.sourceUrl} target="_blank" data-testid="asset-link">Open in Jira Assets</a>
+            <span class="text-muted"> · fetched {utcTimeHtml object.fetchedAt}</span>
+        </p>
+    </div>
+|]
+    where
+        attrs = objectAttributes object
+        iconUrl = absoluteIconUrl config object.iconUrl
+        iconImg = if Text.null iconUrl
+            then mempty
+            else [hsx|<img src={iconUrl} alt="" class="asset-icon" width="16" height="16"/>|]
+        statusBadge = case lookup "Status" attrs of
+            Nothing -> mempty
+            Just status -> [hsx|<span class={"badge " <> statusClass} data-testid="asset-status">{status}</span>|]
+        statusClass :: Text
+        statusClass = case lookup "StatusCategory" attrs of
+            Just "0" -> "status-firing"
+            Just "2" -> "status-ack"
+            _ -> "status-resolved"
+        displayAttrs =
+            [ (name, value)
+            | name <- configuredAttrNames config
+            , Just value <- [lookup name attrs]
+            , not (Text.null value)
+            ]
+        attrRow (name, value) = [hsx|
+            <div data-testid={"asset-attr-" <> name}><dt class="d-inline text-muted">{name}: </dt><dd class="d-inline">{value}</dd></div>
+        |]
+
+-- Icon/avatar URLs are stored verbatim (assets-api.md §8.4): relative paths
+-- are anchored at the config's Jira host for rendering.
+absoluteIconUrl :: AssetsConfig -> Text -> Text
+absoluteIconUrl config iconUrl
+    | Text.null iconUrl = ""
+    | "http" `Text.isPrefixOf` iconUrl = iconUrl
+    | otherwise = jiraOrigin config <> iconUrl
+
+jiraOrigin :: AssetsConfig -> Text
+jiraOrigin config = fromMaybe base (Text.stripSuffix "/rest/assets/latest" base)
+    where
+        base = Text.dropWhileEnd (== '/') config.baseUrl
+
 jiraLinksHtml :: Alert -> [JiraLink] -> Html
 jiraLinksHtml alert links = [hsx|
     <ul id={jiraLinksDomId} data-testid="jira-links">
@@ -257,8 +342,8 @@ writeBackChipHtml latest = [hsx|<span id={writeBackChipDomId}>{chip}</span>|]
 llmPanelDomId :: Text
 llmPanelDomId = "llm-panel"
 
-llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> [(Id LlmAnalysis, Text)] -> Html
-llmPanelHtml alert analyses feedback jobErrors = [hsx|
+llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> [(Id LlmAnalysis, Text)] -> [LlmAgentRole] -> Html
+llmPanelHtml alert analyses feedback jobErrors roles = [hsx|
     <section class="card mb-3" id={llmPanelDomId} data-testid="llm-panel">
         <div class="card-body">
             <h5 class="card-title">LLM analysis {reanalyzeButton}</h5>
@@ -270,21 +355,54 @@ llmPanelHtml alert analyses feedback jobErrors = [hsx|
     where
         reanalyzeButton = [hsx|
             <form method="POST" action={ReanalyzeAlertAction (get #id alert)} class="d-inline">
+                {roleSelect}
                 <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="llm-reanalyze">Re-analyze</button>
             </form>
         |]
+        -- Agent-role choice (milestone_8.md §7): empty = default role (or
+        -- legacy behaviour when no roles exist).
+        roleSelect = case roles of
+            [] -> mempty
+            _ -> [hsx|
+                <select name="roleId" class="form-select form-select-sm d-inline-block w-auto" data-testid="llm-role-select">
+                    <option value="">role: default</option>
+                    {forEach roles roleOption}
+                </select>
+            |]
+        roleOption role = [hsx|<option value={tshow (get #id role)}>{role.name}</option>|]
         body = case analyses of
             [] -> [hsx|<p class="text-muted" data-testid="llm-empty">No analysis yet.</p>|]
-            (latest:_) -> llmAnalysisHtml alert latest feedback (lookup (get #id latest) jobErrors)
-        historyBlock = case analyses of
-            (_:older@(_:_)) -> [hsx|
+            _ -> [hsx|{pendingNote}{llmAnalysisHtml alert shownAnalysis feedback (lookup (get #id shownAnalysis) jobErrors)}|]
+        -- A queued/running re-analysis (milestone_5.md §7 retrigger,
+        -- milestone_8.md §7 role re-run) must not hide the last terminal
+        -- analysis: show the newest done/failed row and mark the pending
+        -- one. Exception: a pending row whose JOB failed (internal error)
+        -- surfaces its error instead of the stale result.
+        shownAnalysis = case analyses of
+            [] -> headEx []
+            allRows@(newest:_)
+                | newest.status `elem` ["done", "failed"] -> newest
+                | isJust (lookup (get #id newest) jobErrors) -> newest
+                | otherwise -> case [a | a <- allRows, a.status `elem` ["done", "failed"]] of
+                    (terminal:_) -> terminal
+                    [] -> newest
+        pendingNote = case analyses of
+            (newest:_) | get #id newest /= get #id shownAnalysis ->
+                [hsx|<p class="text-muted" data-testid="llm-pending-note">re-analysis pending…</p>|]
+            _ -> mempty
+        historyBlock = case [a | a <- analyses, get #id a /= get #id shownAnalysis] of
+            [] -> mempty
+            older -> [hsx|
                 <details data-testid="llm-history">
                     <summary>History ({length older})</summary>
                     {forEach older olderAnalysis}
                 </details>
             |]
-            _ -> mempty
         olderAnalysis analysis = llmAnalysisHtml alert analysis feedback (lookup (get #id analysis) jobErrors)
+
+headEx :: [a] -> a
+headEx (x:_) = x
+headEx [] = error "headEx: empty list"
 
 llmAnalysisHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Maybe Text -> Html
 llmAnalysisHtml alert analysis feedback jobError = case analysis.status of

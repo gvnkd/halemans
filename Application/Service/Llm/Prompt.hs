@@ -22,6 +22,8 @@ import "cryptonite" Crypto.Hash (hashWith, SHA256 (..))
 import Data.ByteArray.Encoding (convertToBase, Base (Base16))
 import Data.List (nubBy)
 import Application.Service.Llm.Output (outputContract)
+import qualified Application.Service.Assets.Cache as AssetsCache
+import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
 
 -- Prompt construction (design_docs/milestone_4.md §5): the active
 -- llm_prompt_templates row for name "alert_enrichment" is filled with alert
@@ -29,8 +31,9 @@ import Application.Service.Llm.Output (outputContract)
 --
 -- Token budget: hard cap in prompt tokens, counted with the chars/4 heuristic
 -- (no tokenizer dependency — milestone_4.md §12). Truncation order when over
--- budget: similar_alerts -> events -> cmdb_excerpt -> jira_links ->
--- description. Title, severity, labels and annotations are never truncated.
+-- budget (milestone_8.md §6): similar_alerts -> events -> assets ->
+-- cmdb_excerpt -> jira_links -> description. Title, severity, labels and
+-- annotations are never truncated.
 -- Truncation points are marked with truncationMarker in the rendered prompt.
 
 truncationMarker :: Text
@@ -48,12 +51,13 @@ data PromptInputs = PromptInputs
     , piAnnotations :: Text
     , piEvents :: Text
     , piCmdbExcerpt :: Text
+    , piAssetsExcerpt :: Text
     , piSimilarAlerts :: Text
     , piJiraLinks :: Text
     } deriving (Eq, Show)
 
 emptyInputs :: PromptInputs
-emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" ""
+emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" "" ""
 
 renderTemplate :: Text -> [(Text, Text)] -> Text
 renderTemplate body bindings = foldl' step body bindings
@@ -73,6 +77,7 @@ bindingsFor inputs =
     , ("alert.annotations", inputs.piAnnotations)
     , ("events", inputs.piEvents)
     , ("cmdb_excerpt", inputs.piCmdbExcerpt)
+    , ("assets_excerpt", inputs.piAssetsExcerpt)
     , ("similar_alerts", inputs.piSimilarAlerts)
     , ("jira_links", inputs.piJiraLinks)
     ]
@@ -97,6 +102,7 @@ fitPrompt tokenBudget template inputs = go inputs truncatable
         truncatable =
             [ \excess i -> i { piSimilarAlerts = shrink excess i.piSimilarAlerts }
             , \excess i -> i { piEvents = shrink excess i.piEvents }
+            , \excess i -> i { piAssetsExcerpt = shrink excess i.piAssetsExcerpt }
             , \excess i -> i { piCmdbExcerpt = shrink excess i.piCmdbExcerpt }
             , \excess i -> i { piJiraLinks = shrink excess i.piJiraLinks }
             , \excess i -> i { piDescription = shrink excess i.piDescription }
@@ -120,11 +126,12 @@ data BuiltPrompt = BuiltPrompt
 
 -- Reads whatever context is present at build time (milestone_4.md §4: no
 -- ordering dependency on EnrichAlertJob; absent context renders as empty
--- sections).
-buildPromptForAlert :: (?modelContext :: ModelContext) => Int -> Alert -> IO (Maybe BuiltPrompt)
-buildPromptForAlert tokenBudget alert = do
+-- sections). The template name comes from the resolved agent role
+-- (milestone_8.md §7; "alert_enrichment" when no role applies).
+buildPromptForAlert :: (?modelContext :: ModelContext) => Int -> Text -> Alert -> IO (Maybe BuiltPrompt)
+buildPromptForAlert tokenBudget templateName alert = do
     template <- query @LlmPromptTemplate
-        |> filterWhere (#name, "alert_enrichment" :: Text)
+        |> filterWhere (#name, templateName)
         |> filterWhere (#active, True)
         |> fetchOneOrNothing
     forM template \template -> do
@@ -172,6 +179,8 @@ gatherInputs alert = do
         |> orderByDesc #createdAt
         |> limit 5
         |> fetch
+    linkedAssets <- AssetsCache.linkedAssetsForAlert alert
+    assetConfigs <- forM linkedAssets \(_, object) -> fetch object.configId
     pure emptyInputs
         { piTitle = alert.title
         , piSeverity = alert.severity
@@ -184,9 +193,25 @@ gatherInputs alert = do
         , piAnnotations = cs (Aeson.encode alert.annotations)
         , piEvents = Text.intercalate "\n" (map eventLine events)
         , piCmdbExcerpt = maybe "" (.excerpt) cmdbEntry
+        , piAssetsExcerpt = Text.intercalate "\n" (zipWith assetLine linkedAssets assetConfigs)
         , piSimilarAlerts = Text.intercalate "\n" (map similarLine similar)
         , piJiraLinks = Text.intercalate "\n" (map jiraLine jiraLinks)
         }
+
+-- Assets excerpt line (milestone_8.md §6): label, object type, status and the
+-- config's display attributes (owner/cluster/IPs/datacenter by default).
+assetLine :: (AssetAlertLink, AssetsObject) -> AssetsConfig -> Text
+assetLine (_, object) config = mconcat
+    [ "- ", object.label_, " [", object.objectTypeName, "]"
+    , maybe "" (" status=" <>) (lookupAttr "Status")
+    , Text.concat (map field (configuredAttrNames config))
+    ]
+    where
+        attrs = objectAttributes object
+        lookupAttr name = lookup name attrs
+        field name = case lookupAttr name of
+            Just value | not (Text.null value) -> " | " <> name <> ": " <> value
+            _ -> ""
 
 eventLine :: AlertEvent -> Text
 eventLine event = "- " <> tshow event.createdAt <> " " <> event.kind

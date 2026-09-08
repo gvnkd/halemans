@@ -5,6 +5,8 @@ module Application.Service.Llm.Tools
 
 import IHP.Prelude
 import IHP.ModelSupport
+import IHP.QueryBuilder
+import IHP.Fetch (fetchOneOrNothing)
 import Generated.Types
 import Data.Aeson (Value, object, (.=), (.:))
 import Data.Aeson.Types (parseMaybe)
@@ -13,6 +15,10 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Text as Text
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Assets as Assets
+import qualified Application.Service.Assets.Aql as Aql
+import qualified Application.Service.Assets.Cache as AssetsCache
+import Application.Service.Assets.Types (ObjectListResult (..), AssetObject (..), ObjectAttribute (..), ObjectAttributeValue (..))
 import Application.Service.Llm (ToolCall (..))
 
 -- Optional read-only tool access for the model (design_docs/milestone_4.md
@@ -50,6 +56,20 @@ toolDefinitions =
                 ]
             ]
         ]
+    , object
+        [ "type" .= ("function" :: Text)
+        , "function" .= object
+            [ "name" .= ("assets_lookup" :: Text)
+            , "description" .= ("Look up assets (hosts, databases, clusters) in Jira Assets by search term" :: Text)
+            , "parameters" .= object
+                [ "type" .= ("object" :: Text)
+                , "properties" .= object
+                    [ "term" .= object ["type" .= ("string" :: Text), "description" .= ("host or asset name to search for" :: Text)]
+                    ]
+                , "required" .= (["term"] :: [Text])
+                ]
+            ]
+        ]
     ]
 
 -- Executes one model-requested tool call; result is returned as the text
@@ -59,6 +79,7 @@ executeToolCall :: (?modelContext :: ModelContext) => Maybe Source -> ToolCall -
 executeToolCall source call = case call.callName of
     "cmdb_lookup" -> withTextArg "term" (cmdbLookup source)
     "jira_search" -> withTextArg "query" (jiraSearch source)
+    "assets_lookup" -> withTextArg "term" assetsLookup
     other -> pure ("unknown tool: " <> other)
     where
         withTextArg key run = case textArg key call.callArguments of
@@ -103,3 +124,37 @@ jiraSearch (Just source) queryText = do
         renderIssues [] = "no jira tickets found"
         renderIssues issues = Text.intercalate "\n"
             (map (\issue -> "- " <> issue.issueKey <> " " <> issue.issueSummary <> " [" <> issue.issueStatus <> "]") issues)
+
+-- assets_lookup (milestone_8.md §6): AQL-backed read-only search against the
+-- default (first enabled) assets_configs row; failures come back in-band as
+-- text, exactly like cmdb_lookup/jira_search.
+assetsLookup :: (?modelContext :: ModelContext) => Text -> IO Text
+assetsLookup term = do
+    maybeConfig <- query @AssetsConfig
+        |> filterWhere (#enabled, True)
+        |> orderByAsc #name
+        |> limit 1
+        |> fetchOneOrNothing
+    case maybeConfig of
+        Nothing -> pure "assets not configured"
+        Just config -> do
+            clientResult <- Assets.clientFromConfig config
+            case clientResult of
+                Left err -> pure ("assets lookup failed: " <> err)
+                Right client -> do
+                    let aql = Aql.fillHostTemplate (AssetsCache.queryTemplate config) term
+                    result <- Assets.searchObjects client aql 1 5
+                    pure case result of
+                        Left err -> "assets lookup failed: " <> Assets.describeError err
+                        Right page -> renderObjects page.listEntries
+    where
+        renderObjects [] = "no assets found"
+        renderObjects objects = Text.take 1500 (Text.intercalate "\n" (map renderObject objects))
+        renderObject object = mconcat
+            [ "- ", object.objectLabel, " (", object.objectKey, ") [", object.objectTypeName, "]"
+            , Text.concat (map attrSummary (take 6 object.objectAttributes))
+            ]
+        attrSummary attribute = case attribute.attrValues of
+            [] -> ""
+            values -> " | " <> attribute.attrName <> ": "
+                <> Text.intercalate ", " (map (.valueDisplay) values)

@@ -9,6 +9,7 @@ import qualified Application.Service.AlertList as AlertList
 import Application.Service.AlertList (AlertListFilters (..), validSortColumns)
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Assets.Cache as AssetsCache
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Control.Monad (void)
 
@@ -58,6 +59,13 @@ instance Controller AlertsController where
         jiraLinks <- query @JiraLink
             |> filterWhere (#alertId, alertId)
             |> orderByAsc #createdAt
+            |> fetch
+        linkedAssets <- AssetsCache.linkedAssetsForAlert alert
+        assetConfigs <- forM linkedAssets \(_, object) -> fetch object.configId
+        let linkedAssetEntries = zipWith (\(link, object) config -> (link, object, config)) linkedAssets assetConfigs
+        agentRoles <- query @LlmAgentRole
+            |> filterWhere (#enabled, True)
+            |> orderByAsc #name
             |> fetch
         writeBackAttempts <- query @WriteBackAttempt
             |> filterWhere (#alertId, alertId)
@@ -121,6 +129,17 @@ instance Controller AlertsController where
                 Right _ -> setSuccessMessage "CMDB cache refreshed"
         redirectTo ShowAlertAction { alertId }
 
+    -- Manual assets refresh (milestone_8.md §5): any view user, same shape
+    -- as the CMDB refresh; bypasses the negative-cache TTL.
+    action RefreshAssetsAction { alertId } = do
+        requirePrivilege "view"
+        alert <- fetch alertId
+        result <- AssetsCache.refreshAssetsForAlert alert
+        case result of
+            Left err -> setErrorMessage ("Assets refresh failed: " <> err)
+            Right _ -> setSuccessMessage "Assets cache refreshed"
+        redirectTo ShowAlertAction { alertId }
+
     action CreateJiraTicketAction { alertId } = do
         requirePrivilege "ack"
         alert <- fetch alertId
@@ -155,8 +174,10 @@ instance Controller AlertsController where
     action ReanalyzeAlertAction { alertId } = do
         requirePrivilege "view"
         _ <- fetch alertId :: IO Alert
+        let roleId = paramOrNothing @(Id LlmAgentRole) "roleId"
         analysis <- newRecord @LlmAnalysis
             |> set #alertId alertId
+            |> set #agentRoleId roleId
             |> createRecord
         _ <- newRecord @LlmAnalysisJob
             |> set #analysisId (get #id analysis)

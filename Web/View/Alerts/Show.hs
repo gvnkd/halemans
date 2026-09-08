@@ -1,6 +1,6 @@
 module Web.View.Alerts.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml)
+import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml)
 import qualified Data.Aeson as Aeson
 
 data ShowView = ShowView
@@ -11,6 +11,8 @@ data ShowView = ShowView
     , eventActors :: [User]
     , cmdbEntry :: Maybe CmdbEntry
     , jiraLinks :: [JiraLink]
+    , linkedAssetEntries :: [(AssetAlertLink, AssetsObject, AssetsConfig)]
+    , agentRoles :: [LlmAgentRole]
     , writeBackAttempts :: [WriteBackAttempt]
     , analyses :: [LlmAnalysis]
     , feedback :: [LlmFeedback]
@@ -48,7 +50,9 @@ instance View ShowView where
 
             {cmdbPanelHtml alert cmdbEntry}
 
-            {llmPanelHtml alert analyses feedback llmJobErrors}
+            {assetsPanelHtml alert linkedAssetEntries}
+
+            {llmPanelHtml alert analyses feedback llmJobErrors agentRoles}
 
             <section class="card mb-3" data-testid="jira-panel">
                 <div class="card-body">

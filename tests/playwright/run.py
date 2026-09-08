@@ -581,7 +581,9 @@ with sync_playwright() as pw:
         page.get_by_test_id("llm-actions").wait_for()
         page.get_by_test_id("llm-references").wait_for()
         footer = page.get_by_test_id("llm-footer").inner_text()
-        assert "mock-llm-1" in footer and "v1" in footer, footer
+        # milestone 8: the seeded active alert_enrichment template is v2
+        # (assets excerpt slot)
+        assert "mock-llm-1" in footer and "v2" in footer, footer
 
     @check("llm: re-analyze appends, latest wins, older in history")
     def _():
@@ -589,7 +591,9 @@ with sync_playwright() as pw:
         assert alert_id, "no completed analysis"
         page.goto(f"{APP}/alerts/{alert_id}")
         page.get_by_test_id("llm-reanalyze").click()
-        page.get_by_test_id("llm-markdown").wait_for()
+        # .first: alerts with a history block render one llm-markdown per
+        # older analysis too
+        page.get_by_test_id("llm-markdown").first.wait_for()
         # NB: no dedupe assertion here — the grafana-absence reconcile can add
         # an event between the two runs, changing the prompt hash; identical-
         # context dedupe is covered deterministically in the integration suite
@@ -660,40 +664,42 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
-    @check("llm: admin template edit bumps version; next analysis records v2")
+    @check("llm: admin template edit bumps version; next analysis records v3")
     def _():
+        # milestone 8: the seeded active alert_enrichment template is v2, so
+        # editing it creates v3
         admin = context.new_page()
         login(admin, "admin")
         admin.goto(f"{APP}/admin/llm")
         admin.get_by_test_id("llm-templates").wait_for()
-        admin.get_by_test_id("llm-template-edit").first.click()
+        admin.get_by_test_id("llm-template").filter(has_text="alert_enrichment").filter(has_text="v2").get_by_test_id("llm-template-edit").click()
         admin.get_by_test_id("llm-template-form").wait_for()
         body = admin.get_by_test_id("llm-template-body").input_value()
         admin.get_by_test_id("llm-template-body").fill(body + "\nKeep answers short.")
         admin.get_by_test_id("llm-template-save").click()
         admin.get_by_test_id("llm-templates").wait_for()
-        v2 = wait_sql_value("SELECT id FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2", 15)
-        assert v2, "v2 template row missing"
-        # activate v2 (flip), fire, assert the analysis records version 2
-        admin.get_by_test_id("llm-template-activate").first.click()
+        v3 = wait_sql_value("SELECT id FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 3", 15)
+        assert v3, "v3 template row missing"
+        # activate v3 (flip), fire, assert the analysis records version 3
+        admin.get_by_test_id("llm-template").filter(has_text="alert_enrichment").filter(has_text="v3").get_by_test_id("llm-template-activate").click()
         admin.get_by_test_id("llm-templates").wait_for()
-        assert sql("SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2 AND active"), "v2 not active"
-        fp = f"pw-llmv2-{int(time.time())}"
-        fire_generic_alert(fp, title="pw v2 template alert")
+        assert sql("SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 3 AND active"), "v3 not active"
+        fp = f"pw-llmv3-{int(time.time())}"
+        fire_generic_alert(fp, title="pw v3 template alert")
         deadline = time.time() + 90
         version = None
         while time.time() < deadline:
-            version = sql(f"""SELECT a.prompt_version::text FROM llm_analyses a
+            version = sql(f"""SELECT DISTINCT a.prompt_version::text FROM llm_analyses a
                               JOIN alerts al ON al.id = a.alert_id
                               WHERE al.fingerprint = 'grafana:{fp}' AND a.status = 'done'""")
             if version:
                 break
             time.sleep(1)
-        assert version == "2", f"expected prompt_version 2, got {version!r}"
-        # restore v1 active for the rest of the suite
-        v1 = sql("SELECT id FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 1")
+        assert version == "3", f"expected prompt_version 3, got {version!r}"
+        # restore v2 active for the rest of the suite
+        v2 = sql("SELECT id FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2")
         sql(f"UPDATE llm_prompt_templates SET active = false WHERE name = 'alert_enrichment'")
-        sql(f"UPDATE llm_prompt_templates SET active = true WHERE id = '{v1}'")
+        sql(f"UPDATE llm_prompt_templates SET active = true WHERE id = '{v2}'")
         admin.close()
         login(page, "sre")
 
@@ -915,6 +921,65 @@ with sync_playwright() as pw:
         except urllib.error.HTTPError as e:
             assert e.code == 401, e.code
         login(page, "sre")
+
+    # milestone 8: assets info sources CRUD (design_docs/milestone_8.md §8/§10)
+    @check("assets admin: create, edit, toggle, connection test, delete")
+    def _():
+        sql("DELETE FROM assets_configs WHERE name = 'pw-assets'")
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/assets")
+        admin.get_by_test_id("assets-configs").wait_for()
+        admin.get_by_test_id("new-assets-config").click()
+        admin.get_by_test_id("assets-config-new-form").wait_for()
+        admin.get_by_test_id("assets-config-name").fill("pw-assets")
+        admin.get_by_test_id("assets-config-base-url").fill("http://127.0.0.1:18085/rest/assets/latest/")
+        admin.get_by_test_id("assets-config-token-env").fill("ASSETS_TOKEN")
+        admin.get_by_test_id("assets-config-schema").fill("Capacity CMDB")
+        admin.get_by_test_id("assets-config-template").fill('objectSchema = "Capacity CMDB" AND Name like "{host}"')
+        admin.get_by_test_id("assets-config-save").click()
+        row = admin.get_by_test_id("assets-config").filter(has_text="pw-assets")
+        row.wait_for()
+        # trailing slash stripped on save
+        assert "18085/rest/assets/latest/" not in row.get_by_test_id("assets-config-base-url-cell").inner_text()
+        # edit: change the schema name back and forth via the form
+        row.get_by_test_id("assets-config-edit").click()
+        admin.get_by_test_id("assets-config-form").wait_for()
+        admin.get_by_test_id("assets-config-schema").fill("Capacity CMDB")
+        admin.get_by_test_id("assets-config-save").click()
+        admin.get_by_test_id("assets-config").filter(has_text="pw-assets").wait_for()
+        # connection test: mock answers listSchemas
+        row = admin.get_by_test_id("assets-config").filter(has_text="pw-assets")
+        row.get_by_test_id("assets-config-test").click()
+        admin.get_by_text("Assets reachable").wait_for()
+        # toggle off and back on
+        row.get_by_test_id("assets-config-toggle").click()
+        row.get_by_test_id("assets-config-disabled").wait_for()
+        row.get_by_test_id("assets-config-toggle").click()
+        row.get_by_test_id("assets-config-enabled").wait_for()
+        # delete (no cached objects reference it)
+        row.get_by_test_id("assets-config-delete").click()
+        admin.get_by_text("Deleted info source pw-assets").wait_for()
+        assert admin.get_by_test_id("assets-config").filter(has_text="pw-assets").count() == 0
+        admin.close()
+        login(page, "sre")
+
+    # milestone 8: role dropdown on the alert card drives the re-run
+    @check("agent roles: re-analyze with a chosen role records agent_role_id")
+    def _():
+        role_id = sql("SELECT id FROM llm_agent_roles WHERE name = 'default-enricher' LIMIT 1")
+        fp = f"pw-role-{int(time.time())}"
+        fire_generic_alert(fp)
+        alert_id = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}' LIMIT 1", 30)
+        assert alert_id, "probe alert never arrived"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("llm-panel").wait_for()
+        marker = sql("SELECT now()::text")
+        page.get_by_test_id("llm-role-select").select_option(value=role_id)
+        page.get_by_test_id("llm-reanalyze").click()
+        done = wait_sql_value(
+            f"SELECT 1 FROM llm_analyses WHERE alert_id = '{alert_id}' AND agent_role_id = '{role_id}' AND created_at > '{marker}' LIMIT 1", 60)
+        assert done, "no analysis with the chosen role recorded"
 
     browser.close()
 

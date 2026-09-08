@@ -32,9 +32,22 @@ let
             exec python3 ${./mocks/mock_llm.py}
         '';
     };
+
+    # Mock Jira Assets (Insight) server (milestone 8 D9). Pure-stdlib python;
+    # ASSETS_TOKEN comes from .devenv/state/halemans/env.sh.
+    mockAssets = pkgs.writeShellApplication {
+        name = "mock-assets";
+        runtimeInputs = [ pkgs.python3 halemansLib.ensureTokens ];
+        text = ''
+            halemans-ensure-tokens
+            # shellcheck disable=SC1091
+            source "''${DEVENV_STATE:?}/halemans/env.sh"
+            exec python3 ${./mocks/mock_assets.py}
+        '';
+    };
 in
 {
-    packages = [ mockConfluence mockJira mockLlm ];
+    packages = [ mockConfluence mockJira mockLlm mockAssets ];
 
     processes.mock-confluence = {
         exec = "${mockConfluence}/bin/mock-confluence";
@@ -64,6 +77,17 @@ in
             readiness_probe.http_get = {
                 host = "127.0.0.1";
                 port = 18084;
+                path = "/health";
+            };
+        };
+    };
+
+    processes.mock-assets = {
+        exec = "${mockAssets}/bin/mock-assets";
+        process-compose = {
+            readiness_probe.http_get = {
+                host = "127.0.0.1";
+                port = 18085;
                 path = "/health";
             };
         };
