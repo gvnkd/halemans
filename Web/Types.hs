@@ -166,6 +166,16 @@ data TeamsController
     | DeleteTeamAction { teamId :: !(Id Team) }
     deriving (Eq, Show)
 
+data FieldMappingsController
+    = FieldMappingsAction
+    | NewFieldMappingAction
+    | CreateFieldMappingAction
+    | EditFieldMappingAction { fieldMappingId :: !(Id FieldMapping) }
+    | UpdateFieldMappingAction { fieldMappingId :: !(Id FieldMapping) }
+    | DeleteFieldMappingAction { fieldMappingId :: !(Id FieldMapping) }
+    | RecomputeFacetsAction
+    deriving (Eq, Show)
+
 data GroupingRulesController
     = GroupingRulesAction
     | NewGroupingRuleAction

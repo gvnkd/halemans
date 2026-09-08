@@ -566,6 +566,33 @@ with sync_playwright() as pw:
         # now-deleted user; restore the sre session for later checks
         login(page, "sre")
 
+    @check("facet dashboard: seeded v2 card renders per-cluster sections and live-updates")
+    def _():
+        # milestone 9: the seeded "DBA clusters" dashboard matches
+        # attr:Service=PostgreSQL and groups by attr:"DB Cluster"; mock-assets
+        # carries those attributes for dev-host-01 / dev-db-01.
+        dash_id = sql("SELECT id FROM dashboards WHERE name = 'DBA clusters'")
+        assert dash_id, "seeded 'DBA clusters' dashboard missing"
+        fp1 = f"pw-facet-a-{int(time.time())}"
+        fire_generic_alert(fp1, title="pw facet host", host="dev-host-01")
+        alert1 = wait_sql_value(
+            f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp1}' AND facets ->> 'DB Cluster' = 'ibstaffcopdb01'", 90)
+        assert alert1, "dev-host-01 alert never gained facets via enrichment"
+        page.goto(f"{APP}/dashboards/{dash_id}")
+        page.get_by_test_id("dashboard-title").wait_for()
+        page.get_by_test_id("dashboard-card-0-group-ibstaffcopdb01").wait_for()
+        # firing a second matching alert while the page is open must add its
+        # cluster section via the WS push (no reload): enrichment lands the
+        # facets, the "enriched" event re-renders the card server-side.
+        fp2 = f"pw-facet-b-{int(time.time())}"
+        fire_generic_alert(fp2, title="pw facet db", host="dev-db-01")
+        page.get_by_test_id("dashboard-card-0-group-ibstaffcopdb02").wait_for(timeout=90000)
+        alert2 = wait_sql_value(
+            f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp2}' LIMIT 1", 30)
+        # resolve both probes so later runs stay deterministic
+        for fp in (fp1, fp2):
+            fire_generic_alert(fp, status="resolved", host="dev-host-01" if fp == fp1 else "dev-db-01")
+
     @check("theme switch swaps data-theme without reload and persists")
     def _():
         page.goto(f"{APP}/profile")

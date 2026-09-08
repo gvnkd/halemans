@@ -6,6 +6,7 @@ import Web.View.Dashboards.New
 import Web.View.Dashboards.Edit
 import Web.View.Dashboards.Show
 import Application.Helper.DashboardConfig
+import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups)
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Control.Monad (void)
@@ -49,10 +50,12 @@ instance Controller DashboardsController where
     action ShowDashboardAction { dashboardId } = do
         dashboard <- fetchOwn dashboardId
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
-        cardAlerts <- forM cards \card -> do
-            alerts <- cardQuery card |> fetch
-            pure (card, alerts)
-        render ShowView { dashboard, cardAlerts }
+        cardSections <- forM (zip [0 ..] cards) \(index, card) -> do
+            result <- case card.cardGroupBy of
+                Nothing -> FlatCard <$> runCardQuery card
+                Just groupBy -> GroupedCard <$> runCardQueryGroups card groupBy
+            pure (index, card, result)
+        render ShowView { dashboard, cardSections }
 
     action EditDashboardAction { dashboardId } = do
         dashboard <- fetchOwn dashboardId
@@ -149,14 +152,3 @@ renormalizePositions = do
                     |> set #position position
                     |> updateRecord
 
-cardQuery card = query @Alert
-    |> filterWhere (#env, Just card.cardEnv)
-    |> filterWhereNot (#status, "closed" :: Text)
-    |> applyTextFilter #status card.cardStatuses
-    |> applyTextFilter #severity card.cardSeverities
-    |> orderByDesc #lastSeenAt
-    |> limit 100
-
-applyTextFilter field values builder = case values of
-    [] -> builder
-    _ -> builder |> filterWhereIn (field, values)

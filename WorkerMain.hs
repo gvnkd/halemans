@@ -16,6 +16,7 @@ import Application.Job.JiraSync ()
 import Application.Job.LlmAnalysis ()
 import Application.Job.Retention ()
 import Application.Job.SourceHealth ()
+import Application.Job.FacetBackfill ()
 
 instance Worker RootApplication where
     workers _ =
@@ -30,5 +31,6 @@ instance Worker RootApplication where
         , worker @LlmAnalysisJob
         , worker @RetentionJob
         , worker @SourceHealthJob
+        , worker @FacetBackfillJob
         -- Generator Marker
         ]

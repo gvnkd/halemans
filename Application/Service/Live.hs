@@ -30,6 +30,9 @@ import qualified Data.ByteString.Lazy as BL
 import Network.Wai (Request)
 import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
+import Web.View.Dashboards.Show (renderCardSection, cardSectionDomId, CardData (..))
+import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, DashboardCard (..))
+import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups)
 import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
 import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.Assets.Cache as AssetsCache
@@ -44,6 +47,7 @@ data Scope
     | ScopeEnv Text
     | ScopeAlert UUID
     | ScopeGroup UUID
+    | ScopeUserDashboard UUID
     | ScopeNone
     deriving (Eq, Show)
 
@@ -93,6 +97,7 @@ parseScope message = do
             "env" -> ScopeEnv <$> o Aeson..: "name"
             "alert" -> ScopeAlert <$> o Aeson..: "id"
             "group" -> ScopeGroup <$> o Aeson..: "id"
+            "dash" -> ScopeUserDashboard <$> o Aeson..: "id"
             _ -> fail "unknown scope"
 
 -- | Idempotent process-wide LISTEN subscription. Called from the first
@@ -158,6 +163,28 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
         let allCards = cards ++ maybeToList unassigned
         relevant <- pure $ filter (cardMatches event) allCards
         pure [fragment (cardDomId card) (renderCard card) "replace" "" | card <- relevant]
+    -- User dashboard pages (milestone_9.md §6): server-side card evaluation;
+    -- any alert event (incl. "enriched", so facet changes re-evaluate) whose
+    -- alert matches a card re-renders that card's whole section.
+    (ScopeUserDashboard dashUuid, Just alertId, _) -> do
+        dashboard <- fetchOneOrNothing (Id dashUuid :: Id Dashboard)
+        case dashboard of
+            Nothing -> pure []
+            Just dash -> case decodeDashboardConfig dash.config of
+                Left _ -> pure []
+                Right cards -> do
+                    alert <- fetch (Id alertId)
+                    matching <- pure
+                        [ (index, card)
+                        | (index, card) <- zip [0 ..] cards
+                        , alert.status /= "closed"
+                        , matchCardAlert card alert
+                        ]
+                    forM matching \(index, card) -> do
+                        result <- case card.cardGroupBy of
+                            Nothing -> FlatCard <$> runCardQuery card
+                            Just groupBy -> GroupedCard <$> runCardQueryGroups card groupBy
+                        pure (fragment (cardSectionDomId index card) (renderCardSection (index, card, result)) "replace" "")
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         matches <- matchesFilters scopeFilters alert

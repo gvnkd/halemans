@@ -7,6 +7,9 @@ module Application.Pipeline.Grouping
 , alertFieldText
 , alertFieldName
 , parseAlertField
+, labelValue
+, facetValue
+, ruleReferencesFacets
 , renderTemplate
 , groupKeyForRule
 , severityAtLeast
@@ -30,19 +33,23 @@ data AlertField = FieldEnv | FieldHost | FieldService | FieldCheck | FieldSeveri
 data MatchExpr = MatchExpr
     { meFieldEquals :: [(AlertField, Text)]
     , meLabelGlobs :: [(Text, Text)]
+    , meFacetGlobs :: [(Text, Text)]
     }
     deriving (Eq, Show)
 
 emptyMatch :: MatchExpr
-emptyMatch = MatchExpr [] []
+emptyMatch = MatchExpr [] [] []
 
 -- | Rule `match` jsonb shape: {"fields": {"env": "dev", ...},
--- "labels": {"component": "db-*", ...}}. Unknown fields/keys are ignored so
--- old rows keep parsing after new match kinds land.
+-- "labels": {"component": "db-*", ...}, "facets": {"DB Cluster": "ib*",
+-- ...}}. Unknown fields/keys are ignored so old rows keep parsing after new
+-- match kinds land. Facet globs read the materialized alerts.facets map
+-- (milestone_9.md §7).
 matchExprFromJSON :: Value -> MatchExpr
 matchExprFromJSON value = MatchExpr
     { meFieldEquals = fields
     , meLabelGlobs = labels
+    , meFacetGlobs = facets
     }
     where
         fields = case lookupKey "fields" value of
@@ -57,6 +64,9 @@ matchExprFromJSON value = MatchExpr
             _ -> []
         collectLabel (key, String v) acc = (Key.toText key, v) : acc
         collectLabel _ acc = acc
+        facets = case lookupKey "facets" value of
+            Just (Object o) -> foldr collectLabel [] (KeyMap.toList o)
+            _ -> []
 
 lookupKey :: Text -> Value -> Maybe Value
 lookupKey k (Object o) = KeyMap.lookup (Key.fromText k) o
@@ -90,13 +100,14 @@ alertFieldText = \case
     FieldSeverity -> Just . (.severity)
     FieldStatus -> Just . (.status)
 
--- | Conjunction only (§13 decision): every field-equals and every label
--- glob must hold. An empty MatchExpr matches everything.
+-- | Conjunction only (§13 decision): every field-equals, every label glob
+-- and every facet glob must hold. An empty MatchExpr matches everything.
 matchAlert :: MatchExpr -> Alert -> Bool
-matchAlert expr alert = fieldsHold && labelsHold
+matchAlert expr alert = fieldsHold && labelsHold && facetsHold
     where
         fieldsHold = all (\(field, expected) -> alertFieldText field alert == Just expected) expr.meFieldEquals
         labelsHold = all (labelHolds alert) expr.meLabelGlobs
+        facetsHold = all (\(name, glob) -> maybe False (globMatch glob) (facetValue alert name)) expr.meFacetGlobs
 
 labelHolds :: Alert -> (Text, Text) -> Bool
 labelHolds alert (name, glob) = case labelValue alert name of
@@ -110,6 +121,23 @@ labelValue alert name = case alert.labels of
         _ -> Nothing
     _ -> Nothing
 
+-- | Read one resolved facet from the materialized alerts.facets map
+-- (milestone_9.md §3).
+facetValue :: Alert -> Text -> Maybe Text
+facetValue alert name = case alert.facets of
+    Object o -> case KeyMap.lookup (Key.fromText name) o of
+        Just (String value) -> Just value
+        _ -> Nothing
+    _ -> Nothing
+
+-- | Rules referencing facets (facet globs in match or {facet:name} in the
+-- group-key template) are re-evaluated after enrichment materializes attr
+-- facets (milestone_9.md §7).
+ruleReferencesFacets :: GroupingRule -> Bool
+ruleReferencesFacets rule =
+    not (null (meFacetGlobs (matchExprFromJSON rule.match)))
+        || Text.isInfixOf "{facet:" rule.groupKeyTemplate
+
 -- | Shell-style glob: `*` any run, `?` single char, everything else literal.
 globMatch :: Text -> Text -> Bool
 globMatch pattern value = go (Text.unpack pattern) (Text.unpack value)
@@ -122,7 +150,8 @@ globMatch pattern value = go (Text.unpack pattern) (Text.unpack value)
         dropNTails chars = [drop n chars | n <- [0 .. length chars]]
 
 -- | Group-key template (§4): placeholders {env} {host} {service} {check}
--- {severity} and {label:name}; a missing subject renders as "-".
+-- {severity}, {label:name} and {facet:name} (milestone_9.md §7); a missing
+-- subject renders as "-".
 renderTemplate :: Text -> Alert -> Text
 renderTemplate template alert = mconcat (map renderSegment (parseTemplate template))
     where
@@ -132,6 +161,7 @@ renderTemplate template alert = mconcat (map renderSegment (parseTemplate templa
         placeholderValue name alert
             | Just field <- parseAlertField name = alertFieldText field alert
             | Just labelName <- Text.stripPrefix "label:" name = labelValue alert labelName
+            | Just facetName <- Text.stripPrefix "facet:" name = facetValue alert facetName
             | otherwise = Nothing
 
 data TemplateSegment = Literal Text | Placeholder Text

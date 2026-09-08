@@ -1,5 +1,6 @@
 module Application.Service.Groups
 ( assignGroup
+, regroupAlert
 , recomputeGroupRollup
 , publishGroupUpdate
 ) where
@@ -13,7 +14,7 @@ import Generated.Types
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import Control.Monad (void)
-import Application.Pipeline.Grouping (matchExprFromJSON, matchAlert, renderTemplate, severityRank)
+import Application.Pipeline.Grouping (matchExprFromJSON, matchAlert, renderTemplate, severityRank, ruleReferencesFacets)
 
 -- AlertGroup membership + rollup maintenance (design_docs/milestone_2.md
 -- §3 step 5, §4). Rules are evaluated in position order, first match wins;
@@ -53,6 +54,50 @@ assignGroup alert = do
                 |> updateRecord
             void (recomputeGroupRollup groupRef)
             pure updated
+
+-- | Regroup replay after enrichment (milestone_9.md §7): assignGroup runs at
+-- ingest when attr facets are still absent. Once EnrichAlertJob materializes
+-- facets, alerts matched by facet-referencing rules move into (or between)
+-- groups. Conservative: an alert that no longer matches any rule keeps its
+-- group (same "rule edits don't ungroup" semantics as version bumps).
+regroupAlert :: (?modelContext :: ModelContext) => Alert -> IO Alert
+regroupAlert alert = do
+    rules <- query @GroupingRule
+        |> filterWhere (#enabled, True)
+        |> orderByAsc #position
+        |> fetch
+    if not (any ruleReferencesFacets rules)
+        then pure alert
+        else case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
+            Nothing -> pure alert
+            Just rule -> do
+                let key = renderTemplate rule.groupKeyTemplate alert
+                currentGroup <- mapM fetch alert.groupId
+                let unchanged = case currentGroup of
+                        Just group -> group.groupKey == key && alert.groupedByVersion == Just rule.version
+                        Nothing -> False
+                if unchanged
+                    then pure alert
+                    else do
+                        group <- query @AlertGroup
+                            |> filterWhere (#groupKey, key)
+                            |> fetchOneOrNothing
+                        groupRef <- case group of
+                            Just group -> pure (get #id group)
+                            Nothing -> do
+                                created <- newRecord @AlertGroup
+                                    |> set #groupKey key
+                                    |> set #title key
+                                    |> set #environmentId alert.environmentId
+                                    |> createRecord
+                                pure (get #id created)
+                        updated <- alert
+                            |> set #groupId (Just groupRef)
+                            |> set #groupedByVersion (Just rule.version)
+                            |> updateRecord
+                        forM_ alert.groupId \oldGroupId -> void (recomputeGroupRollup oldGroupId)
+                        void (recomputeGroupRollup groupRef)
+                        pure updated
 
 -- | Recompute worst severity / member count / rollup status from the current
 -- members. Group resolves when every member is resolved or closed (§3).

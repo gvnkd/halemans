@@ -18,6 +18,7 @@ import Web.Controller.Live
 import Web.Controller.Groups
 import Web.Controller.Teams
 import Web.Controller.GroupingRules
+import Web.Controller.FieldMappings
 import Web.Controller.NotificationRules
 import Web.Controller.EscalationPolicies
 import Web.Controller.Dashboards
@@ -46,6 +47,7 @@ instance FrontController WebApplication where
         , parseRoute @GroupsController
         , parseRoute @TeamsController
         , parseRoute @GroupingRulesController
+        , parseRoute @FieldMappingsController
         , parseRoute @NotificationRulesController
         , parseRoute @EscalationPoliciesController
         , parseRoute @DashboardsController

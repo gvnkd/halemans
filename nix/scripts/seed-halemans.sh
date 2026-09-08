@@ -124,11 +124,32 @@ SQL
 # role (milestone 8 D8, mirrors legacy behaviour: same template, full tool
 # set). Keep in sync with the inline seeding in nix/scripts/smoke-check.sh.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
-INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, enabled)
+INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, attribute_names, enabled)
 SELECT 'assets-dev', 'http://127.0.0.1:18085/rest/assets/latest', 'ASSETS_TOKEN', 'bearer', 'Capacity CMDB',
-       'objectSchema = "Capacity CMDB" AND Name like "{host}"', true
+       'objectSchema = "Capacity CMDB" AND Name like "{host}"',
+       'Owner,Cluster,Database,IP,Datacenter,Service,DB Cluster,Environments,Team,Location', true
 WHERE NOT EXISTS (SELECT 1 FROM assets_configs WHERE name = 'assets-dev');
 
+-- Milestone 9: the verbatim-facet whitelist must cover the facet source
+-- attributes even for pre-existing config rows.
+UPDATE assets_configs
+SET attribute_names = 'Owner,Cluster,Database,IP,Datacenter,Service,DB Cluster,Environments,Team,Location'
+WHERE name = 'assets-dev';
+
+-- Milestone 9 §2: passthrough facet mappings (rank 100); attr overrides go
+-- in at lower ranks via the field-mappings UI.
+INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+SELECT 'env', 100, 'field', 'env', true
+WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'env' AND rank = 100);
+INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+SELECT 'service', 100, 'field', 'service', true
+WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'service' AND rank = 100);
+INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+SELECT 'host', 100, 'field', 'host', true
+WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'host' AND rank = 100);
+
+-- Milestone 9 §9: a v2-JSON dashboard exercising match + groupBy over
+-- materialized facets (one section per DB Cluster value).
 INSERT INTO llm_agent_roles (name, description, prompt_template_name, tools, enabled, is_default)
 SELECT 'default-enricher', 'Default enrichment role', 'alert_enrichment',
        '["cmdb_lookup", "jira_search", "assets_lookup"]'::jsonb, true, true
@@ -172,6 +193,18 @@ SQL
 seed_user "admin@dev"  "${HALEMANS_ADMIN_PASSWORD:?}"  "admin"
 seed_user "sre@dev"    "${HALEMANS_SRE_PASSWORD:?}"    "sre"
 seed_user "viewer@dev" "${HALEMANS_VIEWER_PASSWORD:?}" "viewer"
+
+# Milestone 9 §9: a v2-JSON dashboard exercising match + groupBy over
+# materialized facets (one section per DB Cluster value). Keep in sync with
+# the inline seeding in nix/scripts/smoke-check.sh.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO dashboards (user_id, name, config, position, is_default)
+SELECT id, 'DBA clusters',
+       '[{"title":"PostgreSQL clusters","match":[{"facet":"attr:Service","op":"=","value":"PostgreSQL"}],"groupBy":"attr:DB Cluster","limit":50}]'::jsonb,
+       50, false
+FROM users WHERE email = 'sre@dev'
+AND NOT EXISTS (SELECT 1 FROM dashboards WHERE name = 'DBA clusters');
+SQL
 
 # Demo API token for the sre@dev user (milestone 6 D8): both scopes, plaintext
 # stored next to the other dev tokens; the DB only holds the sha256 hash.

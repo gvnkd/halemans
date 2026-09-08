@@ -51,6 +51,7 @@ CREATE TABLE alerts (
     check_name TEXT DEFAULT NULL,
     labels JSONB NOT NULL DEFAULT '{}',
     annotations JSONB NOT NULL DEFAULT '{}',
+    facets JSONB NOT NULL DEFAULT '{}',
     source_url TEXT DEFAULT NULL,
     occurrences INT NOT NULL DEFAULT 1,
     started_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
@@ -76,6 +77,7 @@ CREATE TABLE alerts (
 ALTER TABLE alerts ADD CONSTRAINT alerts_source_id_fkey FOREIGN KEY (source_id) REFERENCES sources (id);
 CREATE INDEX alerts_fingerprint_idx ON alerts(fingerprint);
 CREATE INDEX alerts_status_idx ON alerts(status);
+CREATE INDEX alerts_facets_idx ON alerts USING GIN (facets jsonb_path_ops);
 
 CREATE TABLE poll_zabbix_jobs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
@@ -431,6 +433,31 @@ CREATE TABLE dashboards (
 );
 ALTER TABLE dashboards ADD CONSTRAINT dashboards_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id);
 CREATE UNIQUE INDEX dashboards_default_idx ON dashboards(user_id) WHERE is_default;
+
+CREATE TABLE field_mappings (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    facet TEXT NOT NULL,
+    rank INT NOT NULL,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    UNIQUE (facet, rank)
+);
+
+CREATE TABLE facet_backfill_jobs (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    cursor UUID DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    status JOB_STATUS DEFAULT 'job_status_not_started' NOT NULL,
+    last_error TEXT DEFAULT NULL,
+    attempts_count INT DEFAULT 0 NOT NULL,
+    locked_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    locked_by UUID DEFAULT NULL,
+    run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
 
 CREATE TABLE write_back_attempts (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,

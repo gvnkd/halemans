@@ -59,6 +59,7 @@ navigation = [hsx|
                 <ul class="dropdown-menu">
                     <li><a class="dropdown-item" href={TeamsAction}>Teams</a></li>
                     <li><a class="dropdown-item" href={GroupingRulesAction}>Grouping rules</a></li>
+                    <li><a class="dropdown-item" href={FieldMappingsAction}>Field mappings</a></li>
                     <li><a class="dropdown-item" href={NotificationRulesAction}>Notification rules</a></li>
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>Escalation policies</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>Integrations</a></li>

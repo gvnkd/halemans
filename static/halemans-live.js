@@ -20,6 +20,8 @@
             if (scope.indexOf('env:') === 0) return { type: 'env', name: scope.slice(4) };
             if (scope.indexOf('alert:') === 0) return { type: 'alert', id: scope.slice(6) };
             if (scope.indexOf('group:') === 0) return { type: 'group', id: scope.slice(6) };
+            // User dashboard pages: server-side card evaluation (milestone 9).
+            if (scope.indexOf('dash:') === 0) return { type: 'dash', id: scope.slice(5) };
             return { type: 'none' };
         });
     }

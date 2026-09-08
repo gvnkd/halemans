@@ -41,7 +41,7 @@ spec = describe "Application.Pipeline.Grouping" do
                     [ "fields" .= object ["env" .= ("dev" :: Text), "bogus" .= ("x" :: Text)]
                     , "labels" .= object ["component" .= ("db-*" :: Text)]
                     ])
-            expr `shouldBe` MatchExpr [(FieldEnv, "dev")] [("component", "db-*")]
+            expr `shouldBe` MatchExpr [(FieldEnv, "dev")] [("component", "db-*")] []
         it "parses empty object as empty match" do
             matchExprFromJSON (object []) `shouldBe` emptyMatch
 
@@ -49,18 +49,18 @@ spec = describe "Application.Pipeline.Grouping" do
         it "empty match matches everything" do
             matchAlert emptyMatch alert `shouldBe` True
         it "field equals on present subject" do
-            matchAlert (MatchExpr [(FieldEnv, "dev"), (FieldHost, "dev-host-01")] []) alert `shouldBe` True
-            matchAlert (MatchExpr [(FieldEnv, "prod")] []) alert `shouldBe` False
+            matchAlert (MatchExpr [(FieldEnv, "dev"), (FieldHost, "dev-host-01")] [] []) alert `shouldBe` True
+            matchAlert (MatchExpr [(FieldEnv, "prod")] [] []) alert `shouldBe` False
         it "missing subject never equals" do
-            matchAlert (MatchExpr [(FieldService, "api")] []) alert `shouldBe` False
+            matchAlert (MatchExpr [(FieldService, "api")] [] []) alert `shouldBe` False
         it "severity/status are fields too" do
-            matchAlert (MatchExpr [(FieldSeverity, "critical"), (FieldStatus, "firing")] []) alert `shouldBe` True
+            matchAlert (MatchExpr [(FieldSeverity, "critical"), (FieldStatus, "firing")] [] []) alert `shouldBe` True
         it "label globs" do
-            matchAlert (MatchExpr [] [("component", "db-*")] ) alert `shouldBe` True
-            matchAlert (MatchExpr [] [("component", "web-*")] ) alert `shouldBe` False
-            matchAlert (MatchExpr [] [("absent", "*")] ) alert `shouldBe` False
+            matchAlert (MatchExpr [] [("component", "db-*")] [] ) alert `shouldBe` True
+            matchAlert (MatchExpr [] [("component", "web-*")] [] ) alert `shouldBe` False
+            matchAlert (MatchExpr [] [("absent", "*")] [] ) alert `shouldBe` False
         it "conjunction: one failing clause fails all" do
-            matchAlert (MatchExpr [(FieldEnv, "dev")] [("component", "web-*")]) alert `shouldBe` False
+            matchAlert (MatchExpr [(FieldEnv, "dev")] [("component", "web-*")] []) alert `shouldBe` False
 
     describe "renderTemplate" do
         it "renders subject placeholders" do
@@ -85,3 +85,29 @@ spec = describe "Application.Pipeline.Grouping" do
             severityAtLeast "high" "high" `shouldBe` True
             severityAtLeast "high" "warning" `shouldBe` False
             severityAtLeast "info" "info" `shouldBe` True
+
+    describe "facets (milestone 9)" do
+        let faceted = alert |> set #facets (object ["DB Cluster" .= ("ibstaffcopdb01" :: Text), "env" .= ("PROD" :: Text)])
+        it "facet globs read the materialized facets map" do
+            matchAlert (MatchExpr [] [] [("DB Cluster", "ib*")]) faceted `shouldBe` True
+            matchAlert (MatchExpr [] [] [("DB Cluster", "pg*")]) faceted `shouldBe` False
+            matchAlert (MatchExpr [] [] [("absent", "*")]) faceted `shouldBe` False
+        it "matchExprFromJSON parses the facets key, ignoring unknowns" do
+            let expr = matchExprFromJSON (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
+            expr `shouldBe` MatchExpr [] [] [("DB Cluster", "ib*")]
+        it "{facet:name} placeholder renders from the facets map" do
+            renderTemplate "{facet:DB Cluster}/{env}" faceted `shouldBe` "ibstaffcopdb01/dev"
+            renderTemplate "{facet:absent}" faceted `shouldBe` "-"
+        it "ruleReferencesFacets detects facet globs and facet placeholders" do
+            let ruleWithGlob = newRecord @GroupingRule
+                    |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
+                    |> set #groupKeyTemplate "{env}/{host}"
+                ruleWithTemplate = newRecord @GroupingRule
+                    |> set #match (object [])
+                    |> set #groupKeyTemplate "db-{facet:DB Cluster}"
+                plain = newRecord @GroupingRule
+                    |> set #match (object ["fields" .= object ["env" .= ("dev" :: Text)]])
+                    |> set #groupKeyTemplate "{env}/{host}"
+            ruleReferencesFacets ruleWithGlob `shouldBe` True
+            ruleReferencesFacets ruleWithTemplate `shouldBe` True
+            ruleReferencesFacets plain `shouldBe` False

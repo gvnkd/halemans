@@ -134,6 +134,16 @@ POST /admin/teams/{teamId}/update     UpdateTeamAction
 POST /admin/teams/{teamId}/delete     DeleteTeamAction
 |]
 
+[routes|FieldMappingsController
+GET  /admin/field-mappings                                FieldMappingsAction
+GET  /admin/field-mappings/new                            NewFieldMappingAction
+POST /admin/field-mappings                                CreateFieldMappingAction
+GET  /admin/field-mappings/{fieldMappingId}/edit          EditFieldMappingAction
+POST /admin/field-mappings/{fieldMappingId}/update        UpdateFieldMappingAction
+POST /admin/field-mappings/{fieldMappingId}/delete        DeleteFieldMappingAction
+POST /admin/field-mappings/recompute                      RecomputeFacetsAction
+|]
+
 [routes|GroupingRulesController
 GET  /admin/grouping-rules                            GroupingRulesAction
 GET  /admin/grouping-rules/new                        NewGroupingRuleAction

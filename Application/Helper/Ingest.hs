@@ -21,6 +21,7 @@ import Application.Pipeline.Blackouts (blackoutApplies)
 import Application.Service.Notify (dispatchNotification)
 import Application.Service.Groups (assignGroup, recomputeGroupRollup)
 import Application.Service.Escalation (cancelTrackersFor)
+import qualified Application.Service.Facets as Facets
 
 data SourceStatus = Firing | Resolved deriving (Eq, Show)
 
@@ -66,26 +67,31 @@ ingest source event = do
     case (existing, event.status) of
         (Nothing, Resolved) -> pure Nothing
         (Nothing, Firing) -> do
-            alert <- newRecord @Alert
-                |> set #fingerprint event.fingerprint
-                |> set #sourceId (Just (get #id source))
-                |> set #externalId event.externalId
-                |> set #title event.title
-                |> set #description event.description
-                |> set #severity event.severity
-                |> set #status "firing"
-                |> set #env event.env
-                |> set #host event.host
-                |> set #service event.service
-                |> set #checkName event.checkName
-                |> set #labels event.labels
-                |> set #annotations event.annotations
-                |> set #sourceUrl event.sourceUrl
-                |> set #startedAt event.startedAt
-                |> set #environmentId environmentRef
-                |> set #hostId hostRef
-                |> set #serviceId serviceRef
-                |> set #suppressed suppressedNow
+            let built = newRecord @Alert
+                    |> set #fingerprint event.fingerprint
+                    |> set #sourceId (Just (get #id source))
+                    |> set #externalId event.externalId
+                    |> set #title event.title
+                    |> set #description event.description
+                    |> set #severity event.severity
+                    |> set #status "firing"
+                    |> set #env event.env
+                    |> set #host event.host
+                    |> set #service event.service
+                    |> set #checkName event.checkName
+                    |> set #labels event.labels
+                    |> set #annotations event.annotations
+                    |> set #sourceUrl event.sourceUrl
+                    |> set #startedAt event.startedAt
+                    |> set #environmentId environmentRef
+                    |> set #hostId hostRef
+                    |> set #serviceId serviceRef
+                    |> set #suppressed suppressedNow
+            -- Facet materialization at ingest (milestone_9.md §3): field/label
+            -- mappings resolve immediately; attr facets land via EnrichAlertJob.
+            facets <- Facets.computeFacetsValue [] built
+            alert <- built
+                |> set #facets facets
                 |> createRecord
             recordEvent (get #id alert) "created" (object ["source" .= get #name source])
             when suppressedNow do

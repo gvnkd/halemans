@@ -12,6 +12,7 @@ import Network.HTTP.Types.URI (renderQuery)
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Assets.Cache as AssetsCache
+import qualified Application.Service.Facets as Facets
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Control.Monad (void)
 
@@ -156,7 +157,10 @@ instance Controller AlertsController where
         result <- AssetsCache.refreshAssetsForAlert alert
         case result of
             Left err -> setErrorMessage ("Assets refresh failed: " <> err)
-            Right _ -> setSuccessMessage "Assets cache refreshed"
+            Right _ -> do
+                -- Facet recompute on manual refresh (milestone_9.md §3).
+                void (Facets.materializeFacets alert)
+                setSuccessMessage "Assets cache refreshed"
         redirectTo ShowAlertAction { alertId }
 
     action CreateJiraTicketAction { alertId } = do

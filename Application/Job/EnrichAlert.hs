@@ -9,6 +9,8 @@ import Generated.Types
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Assets.Cache as AssetsCache
+import qualified Application.Service.Facets as Facets
+import qualified Application.Service.Groups as Groups
 import Application.Helper.Ingest (publishAlertUpdate)
 import Data.Aeson (object, (.=))
 import Control.Exception (try, SomeException)
@@ -63,6 +65,12 @@ instance Job EnrichAlertJob where
                     |> set #alertId job.alertId
                     |> set #runAt (addUTCTime 60 now)
                     |> createRecord
+        -- Facet materialization (milestone_9.md §3): re-resolve with the
+        -- freshly linked assets objects; publishes below carry the new row.
+        alert <- Facets.materializeFacets alert
+        -- Regroup replay (milestone_9.md §7): facet-referencing rules only
+        -- see attr facets now that they are materialized.
+        alert <- Groups.regroupAlert alert
         publishAlertUpdate alert "enriched"
         -- Panel-only refresh for the assets card (milestone_8.md §4): the
         -- websocket broadcaster re-renders context panels without touching

@@ -7,7 +7,7 @@
 - Local IHP checkout: `/home/pion/work/dev/ihp` — read it directly for framework internals (IHP.ModelSupport, IHP.Job.*, IHP.HSX, LoginSupport, etc). Do NOT grep /nix/store for IHP sources.
 
 ## What this is
-IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: design_docs/01_highlevel.md; milestone 0 (dev/test env) done — see design_docs/milestone_0.md §10 for implementation notes. Milestone 2 (correlation & teams) done — see design_docs/milestone_2.md §14. Milestone 3 (context: CMDB/Jira/write-back/dashboards/themes) done — see design_docs/milestone_3.md.
+IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: design_docs/01_highlevel.md; milestone 0 (dev/test env) done — see design_docs/milestone_0.md §10 for implementation notes. Milestone 2 (correlation & teams) done — see design_docs/milestone_2.md §14. Milestone 3 (context: CMDB/Jira/write-back/dashboards/themes) done — see design_docs/milestone_3.md. Milestone 9 (resolved facets + facet dashboards) done — see design_docs/milestone_9.md §11.
 
 ## Milestone 3 notes
 - Mocks: mock-confluence :18082, mock-jira :18083 (python stdlib, nix/mocks/). Tokens CONFLUENCE_TOKEN/JIRA_TOKEN + HALEMANS_CONFLUENCE_URL/HALEMANS_JIRA_URL in env.sh (ensureTokens). Mock jira has unauthenticated test backdoor POST /debug/issue/{key}/status.
@@ -82,6 +82,14 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - GenPassword = Application/Script/GenPassword.hs → `script-GenPassword` package (IHP flake module auto-packages Application/Script/*.hs, EXCLUDING Prelude.hs). Runs without a DB (hasql-pool acquires lazily; Config.hs provision hook skips when env unset). Script getArgs returns [Text] (CorePrelude), not [String].
 - CI: .github/workflows/docker-images.yaml builds .#docker-image via nix (needs the devenv-root override dance: mkdir .devenv + printf $PWD > .devenv/root, --impure --override-input) and pushes ghcr.io/<repo>:{latest,sha,v*}.
 - compose: deploy/docker/docker-compose.yaml, env via .env.example→.env (env_file passthrough for optional LLM_*/ZABBIX_TOKEN/GRAFANA_TOKEN; required POSTGRES_PASSWORD/IHP_SESSION_SECRET/HALEMANS_GENERIC_HOOK_TOKEN). Host port HALEMANS_PORT (8000 clashes with local Taiga). Tested live on this machine: docker daemon IS reachable interactively as pion (rootless restriction is nix-sandbox-only). Local image test loop: nix build .#docker-image (override dance) + docker load + scratch postgres:16-alpine container.
+
+## Milestone 9 notes (resolved facets + facet dashboards, v1.14.0)
+- Full notes in design_docs/milestone_9.md §11. Schema: alerts.facets jsonb + GIN (jsonb_path_ops), field_mappings (UNIQUE facet+rank), facet_backfill_jobs (cursor-chained, chunk 500). Migration 1788888987.
+- Facet refs: `field:` = raw column, `label:` = alerts.labels, `attr:` = materialized alerts.facets (override chain). Card match ops =/!=/~/in; `~` → LIKE via globToLike (equivalent to globMatch). `!=` never matches absent values.
+- facetValue lives in Application.Pipeline.Grouping (pure); Service.Facets re-exports it. DashboardCard v2 AST + legacy {env,filters} round-trip via cardLegacy flag + cardExtras (unknown keys preserved).
+- Dashboard Show page WS scope is `dash:<uuid>` (ScopeUserDashboard): broadcaster re-fetches the alert, evaluates matchCardAlert per card, re-renders whole sections on ANY alert event kind. Legacy card DOM ids dashboard-card-<env> kept (Playwright depends), v2 = dashboard-card-<index>, groups ...-group-<value>.
+- regroupAlert (Service/Groups) was built fresh — no replay machinery existed. Only runs when a facet-referencing rule exists; never ungroups.
+- Dev-DB test tolerance: ensureMapping helper reuses seeded mapping rows; regroup test disables the seeded catch-all env+host rule temporarily.
 
 ## Milestone 8 notes (enrichment phase 0: Jira Assets + agent roles)
 - Mock Assets: mock-assets :18085 (nix/mocks/mock_assets.py), ASSETS_TOKEN + HALEMANS_ASSETS_URL in env.sh (ensureTokens). Backdoors: POST /debug/reset, POST /debug/fail/500 {"times":N}. Icons + /login.jsp return 200 (browser <img> tags hit them — a 302 there redirect-loops). AQL evaluator: objectSchema=/attr like|=/AND only.

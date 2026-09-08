@@ -88,6 +88,13 @@ SEEDED_OBJECTS = [
             attr(4, "IP", "10.0.0.11"),
             attr(5, "Datacenter", "dc-eu-1"),
             status_attr(6, 1),
+            # Milestone 9: facet-source attributes (the "Sergey case" —
+            # zabbix env is the zabbix service's env, the real one is here).
+            attr(7, "Service", "PostgreSQL"),
+            attr(8, "DB Cluster", "ibstaffcopdb01"),
+            attr(9, "Environments", "PROD"),
+            attr(10, "Team", "IT:RnD:DBA"),
+            attr(11, "Location", "LV"),
         ],
     },
     {
@@ -102,6 +109,11 @@ SEEDED_OBJECTS = [
             attr(4, "IP", "10.0.0.21"),
             attr(5, "Datacenter", "dc-eu-1"),
             status_attr(6, 2),
+            attr(7, "Service", "PostgreSQL"),
+            attr(8, "DB Cluster", "ibstaffcopdb02"),
+            attr(9, "Environments", "PROD"),
+            attr(10, "Team", "IT:RnD:DBA"),
+            attr(11, "Location", "LV"),
         ],
     },
     {

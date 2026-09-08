@@ -48,6 +48,10 @@ import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Assets.Attrs (objectAttributes)
+import Application.Pipeline.Grouping (facetValue)
+import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..))
+import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..))
+import Application.Job.FacetBackfill ()
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
@@ -76,7 +80,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec >> m8Spec)
+        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec >> m8Spec >> m9Spec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -1843,13 +1847,21 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         done.status `shouldBe` "done"
         done.agentRoleId `shouldBe` Just (get #id role)
 
+itestAttrNames :: Text
+itestAttrNames = "Owner,Cluster,Database,IP,Datacenter,Service,DB Cluster,Environments,Team,Location"
+
 ensureAssetsConfig :: (?modelContext :: ModelContext) => IO AssetsConfig
 ensureAssetsConfig = do
     existing <- query @AssetsConfig
         |> filterWhere (#name, "itest-assets" :: Text)
         |> fetchOneOrNothing
     case existing of
-        Just config -> pure config
+        -- Milestone 9 widened the verbatim-facet whitelist; refresh stale rows.
+        Just config
+            | config.attributeNames == itestAttrNames -> pure config
+            | otherwise -> config
+                |> set #attributeNames itestAttrNames
+                |> updateRecord
         Nothing -> newRecord @AssetsConfig
             |> set #name "itest-assets"
             |> set #baseUrl "http://127.0.0.1:18085/rest/assets/latest"
@@ -1857,6 +1869,7 @@ ensureAssetsConfig = do
             |> set #authMode "bearer"
             |> set #defaultSchemaName "Capacity CMDB"
             |> set #hostQueryTemplate "objectSchema = \"Capacity CMDB\" AND Name like \"{host}\""
+            |> set #attributeNames itestAttrNames
             |> set #enabled True
             |> createRecord
 
@@ -1874,3 +1887,142 @@ assetsMockReset = void (Wreq.post "http://127.0.0.1:18085/debug/reset" (object [
 
 assetsMockFail :: Int -> IO ()
 assetsMockFail times = void (Wreq.post "http://127.0.0.1:18085/debug/fail/500" (object ["times" .= times]))
+
+-- Milestone 9: resolved facets, facet dashboards, grouping over facets
+-- (design_docs/milestone_9.md §9). Field mappings are global state, so each
+-- test cleans up its own rows.
+m9Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+m9Spec = describe "resolved facets (milestone 9)" do
+    it "materializes field/label facets at ingest" do
+        (envMapping, envCreated) <- ensureMapping "env" 100 "field" "env"
+        teamMapping <- createRecord (newRecord @FieldMapping |> set #facet "team" |> set #rank 100 |> set #kind "label" |> set #key "team" |> set #enabled True)
+        flip finally (cleanupMappings [(envMapping, envCreated), (teamMapping, True)]) do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+                { labels = object ["team" .= ("itest-facet-team" :: Text)] }
+            alert <- fetch alertId
+            facetValue alert "env" `shouldBe` Just "itest-env"
+            facetValue alert "team" `shouldBe` Just "itest-facet-team"
+
+    it "enrichment materializes attr facets and the env override beats the source env" do
+        _ <- ensureAssetsConfig
+        overrideMapping <- createRecord (newRecord @FieldMapping |> set #facet "env" |> set #rank 50 |> set #kind "attr" |> set #key "Environments" |> set #enabled True)
+        (fallbackMapping, fallbackCreated) <- ensureMapping "env" 100 "field" "env"
+        flip finally (cleanupMappings [(overrideMapping, True), (fallbackMapping, fallbackCreated)]) do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+                { host = Just "dev-host-01", checkName = Just "halemans test trigger", env = Just "zabbix-prod" }
+            alertIngest <- fetch alertId
+            -- ingest-time: attr source absent, field fallback wins
+            facetValue alertIngest "env" `shouldBe` Just "zabbix-prod"
+            job <- enrichJobFor alertId
+            perform job
+            alert <- fetch alertId
+            facetValue alert "env" `shouldBe` Just "PROD"
+            facetValue alert "Service" `shouldBe` Just "PostgreSQL"
+            facetValue alert "DB Cluster" `shouldBe` Just "ibstaffcopdb01"
+            facetValue alert "Location" `shouldBe` Just "LV"
+
+    it "grouped card query returns one section per DB Cluster value" do
+        _ <- ensureAssetsConfig
+        source <- testSource
+        alertIds <- forM [("dev-host-01", "ibstaffcopdb01"), ("dev-db-01", "ibstaffcopdb02")] \(host, _) -> do
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+                { host = Just host, checkName = Just "halemans test trigger", title = "m9 grouped " <> host }
+            job <- enrichJobFor alertId
+            perform job
+            pure alertId
+        let card = DashboardCard
+                { cardTitle = Just "pg clusters"
+                , cardMatch = [MatchClause (FacetAttr "Service") OpEq "PostgreSQL" []]
+                , cardGroupBy = Just (FacetAttr "DB Cluster")
+                , cardLimit = 50
+                , cardLegacy = False
+                , cardExtras = mempty
+                }
+        groups <- runCardQueryGroups card (FacetAttr "DB Cluster")
+        -- dev-DB tolerant: other runs' enriched alerts may share the sections
+        let alertsIn value = concatMap cgAlerts [group | group <- groups, group.cgValue == value]
+        map (get #id) (alertsIn "ibstaffcopdb01") `shouldContain` [alertIds !! 0]
+        map (get #id) (alertsIn "ibstaffcopdb02") `shouldContain` [alertIds !! 1]
+
+    it "regroup after enrichment groups an alert a facet rule missed at ingest" do
+        _ <- ensureAssetsConfig
+        -- unique env/check: no other (dev-DB) rule may match this alert
+        tag <- tshow <$> nextRandom
+        let envName = "m9-regroup-" <> tag
+            checkName' = "m9-regroup-check-" <> tag
+        -- dev DBs carry seeded catch-all rules that would win first-match;
+        -- sideline all other rules for the duration of this test.
+        otherRules <- query @GroupingRule |> filterWhere (#enabled, True) |> fetch
+        forM_ otherRules \other -> void (other |> set #enabled False |> updateRecord)
+        rule <- newRecord @GroupingRule
+            |> set #name ("itest-facet-group-" <> tag)
+            |> set #position 9000
+            |> set #enabled True
+            |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
+            |> set #groupKeyTemplate "db-{facet:DB Cluster}"
+            |> set #createdBy Nothing
+            |> createRecord
+        let restore = do
+                deleteRecord rule
+                forM_ otherRules \other -> void (other |> set #enabled True |> updateRecord)
+        flip finally restore do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEventIn envName fp Firing)
+                { host = Just "dev-host-01", checkName = Just checkName' }
+            alertIngest <- fetch alertId
+            -- facet absent at ingest: the rule does not match yet
+            alertIngest.groupId `shouldBe` Nothing
+            job <- enrichJobFor alertId
+            perform job
+            alert <- fetch alertId
+            case alert.groupId of
+                Nothing -> expectationFailure "alert not regrouped after enrichment"
+                Just groupId -> do
+                    group <- fetch groupId
+                    group.groupKey `shouldBe` "db-ibstaffcopdb01"
+                    alert.groupedByVersion `shouldBe` Just rule.version
+
+    it "facet backfill job recomputes facets for non-closed alerts" do
+        (mapping, created) <- ensureMapping "env" 100 "field" "env"
+        flip finally (cleanupMappings [(mapping, created)]) do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            void (sqlExecTyped [typedSql| UPDATE alerts SET facets = '{}'::jsonb WHERE id = ${alertId} |])
+            before <- fetch alertId
+            facetValue before "env" `shouldBe` Nothing
+            backfillJob <- createRecord (newRecord @FacetBackfillJob)
+            perform backfillJob
+            after <- fetch alertId
+            facetValue after "env" `shouldBe` Just "itest-env"
+
+-- | Reuse an existing mapping row (dev DBs carry the seeded passthrough
+-- mappings); the Bool marks rows this run created and must delete.
+ensureMapping :: (?modelContext :: ModelContext) => Text -> Int -> Text -> Text -> IO (FieldMapping, Bool)
+ensureMapping facet rank kind key = do
+    existing <- query @FieldMapping
+        |> filterWhere (#facet, facet)
+        |> filterWhere (#rank, rank)
+        |> fetchOneOrNothing
+    case existing of
+        Just row -> pure (row, False)
+        Nothing -> do
+            row <- newRecord @FieldMapping
+                |> set #facet facet
+                |> set #rank rank
+                |> set #kind kind
+                |> set #key key
+                |> set #enabled True
+                |> createRecord
+            pure (row, True)
+
+cleanupMappings :: (?modelContext :: ModelContext) => [(FieldMapping, Bool)] -> IO ()
+cleanupMappings = mapM_ \(row, created) -> when created (deleteRecord row)
+
+
