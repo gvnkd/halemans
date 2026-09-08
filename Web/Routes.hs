@@ -29,9 +29,12 @@ POST /alerts/{alertId}/analyses/{analysisId}/feedback  LlmFeedbackAction
 
 [routes|LlmAdminController
 GET  /admin/llm                                LlmAdminAction
+GET  /admin/llm/templates/new                  NewLlmTemplateAction
+POST /admin/llm/templates                      CreateLlmTemplateAction
 GET  /admin/llm/templates/{templateId}/edit    EditLlmTemplateAction
 POST /admin/llm/templates/{templateId}/update  UpdateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/activate  ActivateLlmTemplateAction
+POST /admin/llm/templates/{templateId}/delete  DeleteLlmTemplateAction
 POST /admin/llm/test                           TestLlmConnectionAction
 |]
 

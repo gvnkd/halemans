@@ -47,7 +47,10 @@ instance View IndexView where
             <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="test-llm">Test connection</button>
         </form>
 
-        <h2 class="mt-4">Prompt templates</h2>
+        <div class="d-flex justify-content-between align-items-center mt-4">
+            <h2>Prompt templates</h2>
+            <a href={NewLlmTemplateAction} class="btn btn-sm btn-primary" data-testid="new-llm-template">New template</a>
+        </div>
         <table class="table" data-testid="llm-templates">
             <thead>
                 <tr><th>Name</th><th>Version</th><th>Active</th><th>Feedback</th><th>Notes</th><th></th></tr>
@@ -79,6 +82,7 @@ templateRowHtml row = [hsx|
         <td>
             <a href={EditLlmTemplateAction row.templateId} class="btn btn-sm btn-outline-secondary" data-testid="llm-template-edit">Edit (new version)</a>
             {activateForm}
+            {deleteForm}
         </td>
     </tr>
 |]
@@ -91,6 +95,13 @@ templateRowHtml row = [hsx|
             else [hsx|
                 <form method="POST" action={ActivateLlmTemplateAction row.templateId} class="d-inline">
                     <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="llm-template-activate">Activate</button>
+                </form>
+            |]
+        deleteForm = if row.active
+            then mempty
+            else [hsx|
+                <form method="POST" action={DeleteLlmTemplateAction row.templateId} class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-template-delete">Delete</button>
                 </form>
             |]
 

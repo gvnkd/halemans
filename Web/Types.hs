@@ -70,9 +70,12 @@ data IntegrationsController
 
 data LlmAdminController
     = LlmAdminAction
+    | NewLlmTemplateAction
+    | CreateLlmTemplateAction
     | EditLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
     | UpdateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
     | ActivateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
+    | DeleteLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
     | TestLlmConnectionAction
     deriving (Eq, Show)
 

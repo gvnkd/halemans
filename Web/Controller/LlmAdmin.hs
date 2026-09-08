@@ -2,6 +2,7 @@ module Web.Controller.LlmAdmin where
 
 import Web.Controller.Prelude
 import Web.View.LlmAdmin.Index
+import Web.View.LlmAdmin.New
 import Web.View.LlmAdmin.Edit
 import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
@@ -10,6 +11,7 @@ import qualified Application.Service.Log as Log
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Data.Functor ((<&>))
 import Control.Monad (void)
+import qualified Data.Text as Text
 
 -- Admin → LLM page (design_docs/milestone_4.md §7): prompt template
 -- list/edit/new-version with transactional active-flip, aggregate feedback
@@ -57,6 +59,56 @@ instance Controller LlmAdminController where
         render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
                          , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
 
+    action NewLlmTemplateAction = do
+        requirePrivilege "manage_rules"
+        render NewView
+
+    action CreateLlmTemplateAction = do
+        requirePrivilege "manage_rules"
+        let name = param @Text "name"
+            version = param @Int "version"
+            body = param @Text "body"
+            notes = paramOrNothing @Text "notes"
+            activate = paramOrNothing @Text "active" == Just "on"
+        if Text.null name || version < 1 || Text.null body
+            then do
+                setErrorMessage "Name, positive version and body are required"
+                redirectTo NewLlmTemplateAction
+            else do
+                existing <- query @LlmPromptTemplate
+                    |> filterWhere (#name, name)
+                    |> filterWhere (#version, version)
+                    |> fetchOneOrNothing
+                case existing of
+                    Just _ -> do
+                        setErrorMessage ("Prompt template " <> name <> " v" <> tshow version <> " already exists")
+                        redirectTo NewLlmTemplateAction
+                    Nothing -> do
+                        _ <- if activate
+                            then withTransaction do
+                                void do
+                                    sqlExecTyped [typedSql|
+                                        UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+                                        WHERE name = ${name}
+                                    |]
+                                newRecord @LlmPromptTemplate
+                                    |> set #name name
+                                    |> set #version version
+                                    |> set #body body
+                                    |> set #active True
+                                    |> set #notes notes
+                                    |> createRecord
+                            else (newRecord @LlmPromptTemplate
+                                |> set #name name
+                                |> set #version version
+                                |> set #body body
+                                |> set #active False
+                                |> set #notes notes
+                                |> createRecord)
+                        let state = if activate then " (active)" else " (inactive)"
+                        setSuccessMessage ("Created " <> name <> " v" <> tshow version <> state)
+                        redirectTo LlmAdminAction
+
     action EditLlmTemplateAction { templateId } = do
         requirePrivilege "manage_rules"
         template <- fetch templateId
@@ -98,6 +150,21 @@ instance Controller LlmAdminController where
                     WHERE id = ${templateRef}
                 |]
         setSuccessMessage ("Activated " <> get #name template <> " v" <> tshow template.version)
+        redirectTo LlmAdminAction
+
+    action DeleteLlmTemplateAction { templateId } = do
+        requirePrivilege "manage_rules"
+        template <- fetch templateId
+        references <- query @LlmAnalysis
+            |> filterWhere (#promptTemplateId, Just templateId)
+            |> fetchCount
+        if get #active template
+            then setErrorMessage "Cannot delete the active prompt template version"
+            else if references > 0
+                then setErrorMessage "Cannot delete prompt template: analyses reference this version"
+                else do
+                    deleteRecord template
+                    setSuccessMessage ("Deleted " <> get #name template <> " v" <> tshow template.version)
         redirectTo LlmAdminAction
 
     action TestLlmConnectionAction = do

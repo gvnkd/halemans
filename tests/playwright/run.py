@@ -622,6 +622,44 @@ with sync_playwright() as pw:
             time.sleep(1)
         assert score == "-1", score
 
+    @check("llm: admin creates, edits and deletes a prompt template")
+    def _():
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/llm")
+        admin.get_by_test_id("llm-templates").wait_for()
+        admin.get_by_test_id("new-llm-template").click()
+        admin.get_by_test_id("llm-template-new-form").wait_for()
+        admin.get_by_test_id("llm-template-name").fill("pw-template")
+        admin.get_by_test_id("llm-template-version-input").fill("1")
+        admin.get_by_test_id("llm-template-body").fill("pw template body")
+        admin.get_by_test_id("llm-template-notes").fill("pw note")
+        admin.get_by_test_id("llm-template-create").click()
+        admin.get_by_test_id("llm-templates").wait_for()
+        assert wait_sql_value("SELECT id FROM llm_prompt_templates WHERE name = 'pw-template' AND version = 1 AND active = false", 15), "v1 template row missing"
+        admin.get_by_test_id("llm-template").filter(has_text="pw-template").filter(has_text="v1").get_by_test_id("llm-template-edit").click()
+        admin.get_by_test_id("llm-template-form").wait_for()
+        admin.get_by_test_id("llm-template-body").fill("pw template body v2")
+        admin.get_by_test_id("llm-template-save").click()
+        admin.get_by_test_id("llm-templates").wait_for()
+        assert wait_sql_value("SELECT id FROM llm_prompt_templates WHERE name = 'pw-template' AND version = 2 AND active = false", 15), "v2 template row missing"
+        admin.get_by_test_id("llm-template").filter(has_text="pw-template").filter(has_text="v2").get_by_test_id("llm-template-delete").click()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if sql("SELECT COUNT(*) FROM llm_prompt_templates WHERE name = 'pw-template'") == "1":
+                break
+            time.sleep(1)
+        assert sql("SELECT COUNT(*) FROM llm_prompt_templates WHERE name = 'pw-template'") == "1", "v2 template row still present"
+        admin.get_by_test_id("llm-template").filter(has_text="pw-template").filter(has_text="v1").get_by_test_id("llm-template-delete").click()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if sql("SELECT COUNT(*) FROM llm_prompt_templates WHERE name = 'pw-template'") == "0":
+                break
+            time.sleep(1)
+        assert sql("SELECT COUNT(*) FROM llm_prompt_templates WHERE name = 'pw-template'") == "0", "template rows still present"
+        admin.close()
+        login(page, "sre")
+
     @check("llm: admin template edit bumps version; next analysis records v2")
     def _():
         admin = context.new_page()
