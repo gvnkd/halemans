@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.Edit where
 import Web.View.Prelude
+import Application.Service.Llm.Prompt (templateSlotNames)
 
 data EditView = EditView
     { template :: LlmPromptTemplate
@@ -10,7 +11,7 @@ instance View EditView where
         <h1>Edit prompt template</h1>
         <p class="text-muted">
             {template.name} v{template.version} — saving creates v{template.version + 1} (inactive until activated).
-            Placeholders: <code>{"{{alert.title}}" :: Text}</code> <code>{"{{alert.severity}}" :: Text}</code> <code>{"{{alert.env}}" :: Text}</code> <code>{"{{alert.host}}" :: Text}</code> <code>{"{{alert.service}}" :: Text}</code> <code>{"{{alert.check_name}}" :: Text}</code> <code>{"{{alert.description}}" :: Text}</code> <code>{"{{alert.labels}}" :: Text}</code> <code>{"{{alert.annotations}}" :: Text}</code> <code>{"{{events}}" :: Text}</code> <code>{"{{cmdb_excerpt}}" :: Text}</code> <code>{"{{similar_alerts}}" :: Text}</code> <code>{"{{jira_links}}" :: Text}</code>
+            Placeholders: {forEach templateSlotNames placeholderChip}
         </p>
         <form method="POST" action={UpdateLlmTemplateAction (get #id template)} data-testid="llm-template-form">
             <div class="mb-3">
@@ -25,3 +26,5 @@ instance View EditView where
             <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
+        where
+            placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]

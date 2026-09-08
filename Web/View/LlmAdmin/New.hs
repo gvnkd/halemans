@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.New where
 import Web.View.Prelude
+import Application.Service.Llm.Prompt (templateSlotNames)
 
 data NewView = NewView
 
@@ -7,7 +8,7 @@ instance View NewView where
     html NewView = [hsx|
         <h1>New prompt template</h1>
         <p class="text-muted">
-            Placeholders: <code>{"{{alert.title}}" :: Text}</code> <code>{"{{alert.severity}}" :: Text}</code> <code>{"{{alert.env}}" :: Text}</code> <code>{"{{alert.host}}" :: Text}</code> <code>{"{{alert.service}}" :: Text}</code> <code>{"{{alert.check_name}}" :: Text}</code> <code>{"{{alert.description}}" :: Text}</code> <code>{"{{alert.labels}}" :: Text}</code> <code>{"{{alert.annotations}}" :: Text}</code> <code>{"{{events}}" :: Text}</code> <code>{"{{cmdb_excerpt}}" :: Text}</code> <code>{"{{similar_alerts}}" :: Text}</code> <code>{"{{jira_links}}" :: Text}</code>
+            Placeholders: {forEach templateSlotNames placeholderChip}
         </p>
         <form method="POST" action={CreateLlmTemplateAction} data-testid="llm-template-new-form">
             <div class="mb-3">
@@ -34,3 +35,5 @@ instance View NewView where
             <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
+        where
+            placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]

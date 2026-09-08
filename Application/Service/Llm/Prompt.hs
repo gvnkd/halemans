@@ -3,6 +3,8 @@ module Application.Service.Llm.Prompt
 , emptyInputs
 , renderTemplate
 , bindingsFor
+, templateSlotNames
+, collectAssetAttrs
 , charBudgetForTokens
 , fitPrompt
 , truncationMarker
@@ -31,8 +33,8 @@ import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
 --
 -- Token budget: hard cap in prompt tokens, counted with the chars/4 heuristic
 -- (no tokenizer dependency — milestone_4.md §12). Truncation order when over
--- budget (milestone_8.md §6): similar_alerts -> events -> assets ->
--- cmdb_excerpt -> jira_links -> description. Title, severity, labels and
+-- budget (milestone_8.md §6): similar_alerts -> events -> assets (excerpt,
+-- then the granular slots) -> cmdb_excerpt -> jira_links -> description. Title, severity, labels and
 -- annotations are never truncated.
 -- Truncation points are marked with truncationMarker in the rendered prompt.
 
@@ -52,12 +54,16 @@ data PromptInputs = PromptInputs
     , piEvents :: Text
     , piCmdbExcerpt :: Text
     , piAssetsExcerpt :: Text
+    , piAssetsCount :: Text
+    , piAssetsLabels :: Text
+    , piAssetsTypes :: Text
+    , piAssetsAttrs :: [(Text, Text)]
     , piSimilarAlerts :: Text
     , piJiraLinks :: Text
     } deriving (Eq, Show)
 
 emptyInputs :: PromptInputs
-emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" "" ""
+emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" [] "" ""
 
 renderTemplate :: Text -> [(Text, Text)] -> Text
 renderTemplate body bindings = foldl' step body bindings
@@ -78,9 +84,19 @@ bindingsFor inputs =
     , ("events", inputs.piEvents)
     , ("cmdb_excerpt", inputs.piCmdbExcerpt)
     , ("assets_excerpt", inputs.piAssetsExcerpt)
+    , ("assets.count", inputs.piAssetsCount)
+    , ("assets.labels", inputs.piAssetsLabels)
+    , ("assets.types", inputs.piAssetsTypes)
     , ("similar_alerts", inputs.piSimilarAlerts)
     , ("jira_links", inputs.piJiraLinks)
     ]
+    ++ map (\(name, value) -> ("assets.attr." <> name, value)) inputs.piAssetsAttrs
+
+-- Slot names for the admin template editor help text. Static slots come from
+-- bindingsFor so the docs cannot drift from the renderer; the dynamic
+-- per-attribute family is appended as a pattern.
+templateSlotNames :: [Text]
+templateSlotNames = map fst (bindingsFor emptyInputs) ++ ["assets.attr.<AttributeName>"]
 
 charBudgetForTokens :: Int -> Int
 charBudgetForTokens tokens = tokens * 4
@@ -103,6 +119,9 @@ fitPrompt tokenBudget template inputs = go inputs truncatable
             [ \excess i -> i { piSimilarAlerts = shrink excess i.piSimilarAlerts }
             , \excess i -> i { piEvents = shrink excess i.piEvents }
             , \excess i -> i { piAssetsExcerpt = shrink excess i.piAssetsExcerpt }
+            , \excess i -> i { piAssetsLabels = shrink excess i.piAssetsLabels }
+            , \excess i -> i { piAssetsTypes = shrink excess i.piAssetsTypes }
+            , \excess i -> i { piAssetsAttrs = map (\(name, value) -> (name, shrink excess value)) i.piAssetsAttrs }
             , \excess i -> i { piCmdbExcerpt = shrink excess i.piCmdbExcerpt }
             , \excess i -> i { piJiraLinks = shrink excess i.piJiraLinks }
             , \excess i -> i { piDescription = shrink excess i.piDescription }
@@ -194,6 +213,10 @@ gatherInputs alert = do
         , piEvents = Text.intercalate "\n" (map eventLine events)
         , piCmdbExcerpt = maybe "" (.excerpt) cmdbEntry
         , piAssetsExcerpt = Text.intercalate "\n" (zipWith assetLine linkedAssets assetConfigs)
+        , piAssetsCount = tshow (length linkedAssets)
+        , piAssetsLabels = Text.intercalate ", " (map (\(_, object) -> object.label_) linkedAssets)
+        , piAssetsTypes = Text.intercalate ", " (nub (map (\(_, object) -> object.objectTypeName) linkedAssets))
+        , piAssetsAttrs = collectAssetAttrs (map snd linkedAssets)
         , piSimilarAlerts = Text.intercalate "\n" (map similarLine similar)
         , piJiraLinks = Text.intercalate "\n" (map jiraLine jiraLinks)
         }
@@ -212,6 +235,19 @@ assetLine (_, object) config = mconcat
         field name = case lookupAttr name of
             Just value | not (Text.null value) -> " | " <> name <> ": " <> value
             _ -> ""
+
+-- Granular asset slots ({{assets.count}}/{{assets.labels}}/{{assets.types}}/
+-- {{assets.attr.<Name>}}): attribute values aggregated across linked objects,
+-- first-seen name order, distinct non-empty values comma-joined. Names
+-- containing braces are skipped so they can never break the {{...}} syntax.
+collectAssetAttrs :: [AssetsObject] -> [(Text, Text)]
+collectAssetAttrs objects = map joinValues attrNames
+    where
+        pairs = concatMap objectAttributes objects
+        attrNames = filter (Text.all (\c -> c /= '{' && c /= '}')) (nub (map fst pairs))
+        joinValues name =
+            let values = nub [value | (key, value) <- pairs, key == name, not (Text.null value)]
+            in (name, Text.intercalate ", " values)
 
 eventLine :: AlertEvent -> Text
 eventLine event = "- " <> tshow event.createdAt <> " " <> event.kind

@@ -138,3 +138,43 @@ spec = describe "Milestone 8 assets subsystem" do
             -- events survive, assets and cmdb are shrunk away first
             "ee" `Text.isInfixOf` rendered `shouldBe` True
             Text.length rendered `shouldSatisfy` (<= charBudgetForTokens 90)
+
+    describe "Prompt granular asset slots" do
+        it "renders assets.count/labels/types bindings" do
+            let inputs = emptyInputs
+                    { piAssetsCount = "2"
+                    , piAssetsLabels = "host-1, host-2"
+                    , piAssetsTypes = "Host"
+                    }
+            renderTemplate "n={{assets.count}} l={{assets.labels}} t={{assets.types}}" (bindingsFor inputs)
+                `shouldBe` "n=2 l=host-1, host-2 t=Host"
+        it "renders per-attribute slots" do
+            let inputs = emptyInputs { piAssetsAttrs = [("Owner", "team-sre"), ("Cluster", "eu-1")] }
+            renderTemplate "owner={{assets.attr.Owner}} on {{assets.attr.Cluster}}" (bindingsFor inputs)
+                `shouldBe` "owner=team-sre on eu-1"
+        it "templateSlotNames lists the static slots and the attr pattern" do
+            let expected = ["alert.title", "assets_excerpt", "assets.count", "assets.labels", "assets.types", "assets.attr.<AttributeName>"]
+            templateSlotNames `shouldSatisfy` \names -> all (`elem` names) expected
+        it "granular asset fields shrink under budget pressure" do
+            let inputs = emptyInputs
+                    { piTitle = "t"
+                    , piAssetsExcerpt = Text.replicate 50 "a"
+                    , piAssetsLabels = Text.replicate 50 "l"
+                    , piAssetsTypes = Text.replicate 50 "y"
+                    , piCmdbExcerpt = Text.replicate 50 "c"
+                    }
+                rendered = fitPrompt 30 "T: {{alert.title}} A: {{assets_excerpt}} L: {{assets.labels}} Y: {{assets.types}} C: {{cmdb_excerpt}}" inputs
+            Text.length rendered `shouldSatisfy` (<= charBudgetForTokens 30)
+
+    describe "Prompt.collectAssetAttrs" do
+        let objectWith attrs = newRecord @AssetsObject |> set #attributes (Aeson.object attrs)
+        it "aggregates distinct values per attribute across objects" do
+            let objects =
+                    [ objectWith ["Owner" Aeson..= ("team-sre" :: Text), "Cluster" Aeson..= ("eu-1" :: Text)]
+                    , objectWith ["Owner" Aeson..= ("team-ops" :: Text), "Cluster" Aeson..= ("eu-1" :: Text)]
+                    ]
+            -- attributes arrive in Aeson KeyMap order, not insertion order
+            sortOn fst (collectAssetAttrs objects) `shouldBe` [("Cluster", "eu-1"), ("Owner", "team-sre, team-ops")]
+        it "drops empty values and brace-containing names" do
+            let objects = [objectWith ["Owner" Aeson..= ("" :: Text), "bad}name" Aeson..= ("x" :: Text)]]
+            collectAssetAttrs objects `shouldBe` [("Owner", "")]
