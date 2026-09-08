@@ -19,7 +19,7 @@ instance Controller EnvironmentsController where
             renderEnv environmentName filters viewMode
         | otherwise = case FilterPrefs.filterPrefsFor currentUser.settings "env" >>= envFiltersFromValue of
             Just stored | not (envPrefsAreDefault stored) ->
-                redirectToUrl (pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (uncurry envBaseItems stored)))
+                redirectToPath (pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (uncurry envBaseItems stored)))
             _ -> renderEnv environmentName emptyEnvFilters "flat"
         where
             filtersFromParams = EnvFilters

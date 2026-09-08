@@ -31,7 +31,7 @@ instance Controller AlertsController where
             renderAlertList filters
         | otherwise = case FilterPrefs.filterPrefsFor currentUser.settings "alerts" >>= AlertList.alertFiltersFromValue of
             Just stored | stored /= defaultAlertListFilters ->
-                redirectToUrl (pathTo AlertsAction <> cs (renderQuery True (baseItems stored)))
+                redirectToPath (pathTo AlertsAction <> cs (renderQuery True (baseItems stored)))
             _ -> renderAlertList defaultAlertListFilters
         where
             filtersFromParams =

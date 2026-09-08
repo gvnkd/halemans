@@ -128,8 +128,40 @@ with sync_playwright() as pw:
         page.get_by_role("heading", name="dev").click()
         page.wait_for_load_state("networkidle")
         page.get_by_test_id("env-alerts-table").wait_for()
+        # stored prefs are replayed via a server redirect on the next bare visit;
+        # regression: a relative-path redirectToUrl crashed this revisit with
+        # "Unable to parse url"
+        page.goto(APP + "/")
+        page.get_by_test_id("env-cards").wait_for()
+        page.goto(f"{APP}/env/dev")
+        page.get_by_test_id("env-alerts-table").wait_for()
+        assert "severity=critical" in page.url, f"stored env filters not replayed: {page.url}"
         page.get_by_test_id("env-filters-reset").click()
         page.get_by_test_id("env-alerts-table").wait_for()
+        page.goto(f"{APP}/env/dev")
+        assert "severity" not in page.url, f"env filters not cleared: {page.url}"
+
+    @check("alerts page restores stored filters after navigating away")
+    def _():
+        page.goto(f"{APP}/alerts")
+        page.get_by_test_id("alerts-table").wait_for()
+        severity_filter = page.get_by_test_id("filter-severity")
+        severity_filter.get_by_role("button").click()
+        severity_filter.get_by_label("critical").check()
+        # dropdown stays open on selection; clicking outside closes it and submits
+        page.get_by_role("heading", name="Alerts").click()
+        page.wait_for_load_state("networkidle")
+        page.get_by_test_id("alerts-table").wait_for()
+        # navigate away and back: stored prefs must replay without a 500
+        page.goto(APP + "/")
+        page.get_by_test_id("env-cards").wait_for()
+        page.goto(f"{APP}/alerts")
+        page.get_by_test_id("alerts-table").wait_for()
+        assert "severity=critical" in page.url, f"stored alerts filters not replayed: {page.url}"
+        page.get_by_test_id("alerts-filters-reset").click()
+        page.get_by_test_id("alerts-table").wait_for()
+        page.goto(f"{APP}/alerts")
+        assert "severity" not in page.url, f"alerts filters not cleared: {page.url}"
 
     @check("alert card: ack with timeout, comment, timeline updates")
     def _():
