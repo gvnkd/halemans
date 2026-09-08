@@ -4,7 +4,17 @@ import Test.Hspec
 import IHP.Prelude
 import qualified Data.Text as Text
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as BL
 import Data.Aeson.Types (parseMaybe)
+import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.Maybe (fromJust)
+import Network.HTTP.Types (hContentType, hLocation, status200, status302, status404)
+import qualified Network.Socket as Socket
+import qualified Network.Wai as Wai
+import qualified Network.Wai.Handler.Warp as Warp
+import Application.Service.Assets (AssetsClient (..), AssetsAuth (..), fetchBinary)
+import Application.Service.Assets.Icons (absoluteIconUrl)
 import Application.Service.Assets.Types
 import Application.Service.Assets.Aql
 import Application.Service.Assets.Errors
@@ -178,3 +188,58 @@ spec = describe "Milestone 8 assets subsystem" do
         it "drops empty values and brace-containing names" do
             let objects = [objectWith ["Owner" Aeson..= ("" :: Text), "bad}name" Aeson..= ("x" :: Text)]]
             collectAssetAttrs objects `shouldBe` [("Owner", "")]
+
+    describe "Icons.absoluteIconUrl (assets-api.md §8.4)" do
+        let config = newRecord @AssetsConfig |> set #baseUrl "http://jira.example/rest/assets/latest/"
+        it "anchors relative paths at the jira origin" do
+            absoluteIconUrl config "/rest/insight/1.0/icon/25/icon.png"
+                `shouldBe` "http://jira.example/rest/insight/1.0/icon/25/icon.png"
+        it "keeps absolute URLs verbatim" do
+            absoluteIconUrl config "https://cdn.example/i.png" `shouldBe` "https://cdn.example/i.png"
+        it "returns empty for empty" do
+            absoluteIconUrl config "" `shouldBe` ""
+
+    describe "Assets.fetchBinary" do
+        around withIconServer do
+            it "fetches bytes with the configured auth header" \(baseUrl, seen) -> do
+                let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
+                result <- fetchBinary client (cs baseUrl <> "/icon.png")
+                fmap fst result `shouldBe` Right "image/png"
+                fmap (BL.toStrict . snd) result `shouldBe` Right "PNG-BYTES"
+                requests <- readIORef seen
+                lookup "Authorization" (Wai.requestHeaders (fromJust (head requests))) `shouldBe` Just "Bearer sekret"
+            it "does not follow redirects to the login page" \(baseUrl, _) -> do
+                let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
+                result <- fetchBinary client (cs baseUrl <> "/redirect")
+                result `shouldSatisfy` \case
+                    Left _ -> True
+                    Right _ -> False
+
+iconPng :: ByteString
+iconPng = "PNG-BYTES"
+
+withIconServer :: ((String, IORef [Wai.Request]) -> IO ()) -> IO ()
+withIconServer action = do
+    port <- freePort
+    seen <- newIORef []
+    ready <- newEmptyMVar
+    let settings = Warp.setPort port (Warp.setBeforeMainLoop (putMVar ready ()) Warp.defaultSettings)
+    _ <- forkIO (Warp.runSettings settings (iconApp seen))
+    takeMVar ready
+    action ("http://127.0.0.1:" ++ cs (show port), seen)
+
+iconApp :: IORef [Wai.Request] -> Wai.Application
+iconApp seen request respond = do
+    modifyIORef' seen (request :)
+    case Wai.pathInfo request of
+        ["icon.png"] -> respond (Wai.responseLBS status200 [(hContentType, "image/png")] (BL.fromStrict iconPng))
+        ["redirect"] -> respond (Wai.responseLBS status302 [(hLocation, "/login.jsp")] "")
+        _ -> respond (Wai.responseLBS status404 [] "")
+
+freePort :: IO Int
+freePort = do
+    sock <- Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol
+    Socket.bind sock (Socket.SockAddrInet 0 (Socket.tupleToHostAddress (127, 0, 0, 1)))
+    port <- Socket.socketPort sock
+    Socket.close sock
+    pure (fromIntegral port)

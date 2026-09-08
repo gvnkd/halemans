@@ -66,6 +66,10 @@ POST /admin/assets/{configId}/delete          DeleteAssetsConfigAction
 POST /admin/assets/{configId}/test            TestAssetsConnectionAction
 |]
 
+[routes|AssetsIconsController
+GET  /assets/objects/{objectId}/icon        ShowAssetIconAction
+|]
+
 [routes|BlackoutsController
 GET  /blackouts                      BlackoutsAction
 GET  /blackouts/new                  NewBlackoutAction

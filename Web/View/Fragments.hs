@@ -258,10 +258,9 @@ assetEntryHtml (_, object, config) = [hsx|
 |]
     where
         attrs = objectAttributes object
-        iconUrl = absoluteIconUrl config object.iconUrl
-        iconImg = if Text.null iconUrl
+        iconImg = if Text.null object.iconUrl
             then mempty
-            else [hsx|<img src={iconUrl} alt="" class="asset-icon" width="16" height="16"/>|]
+            else [hsx|<img src={ShowAssetIconAction (get #id object)} alt="" class="asset-icon" width="16" height="16"/>|]
         statusBadge = case lookup "Status" attrs of
             Nothing -> mempty
             Just status -> [hsx|<span class={"badge " <> statusClass} data-testid="asset-status">{status}</span>|]
@@ -280,18 +279,9 @@ assetEntryHtml (_, object, config) = [hsx|
             <div data-testid={"asset-attr-" <> name}><dt class="d-inline text-muted">{name}: </dt><dd class="d-inline">{value}</dd></div>
         |]
 
--- Icon/avatar URLs are stored verbatim (assets-api.md §8.4): relative paths
--- are anchored at the config's Jira host for rendering.
-absoluteIconUrl :: AssetsConfig -> Text -> Text
-absoluteIconUrl config iconUrl
-    | Text.null iconUrl = ""
-    | "http" `Text.isPrefixOf` iconUrl = iconUrl
-    | otherwise = jiraOrigin config <> iconUrl
-
-jiraOrigin :: AssetsConfig -> Text
-jiraOrigin config = fromMaybe base (Text.stripSuffix "/rest/assets/latest" base)
-    where
-        base = Text.dropWhileEnd (== '/') config.baseUrl
+-- Icon/avatar URLs are stored verbatim (assets-api.md §8.4) and rendered
+-- through the app-side cache route (ShowAssetIconAction), never against the
+-- Jira origin.
 
 jiraLinksHtml :: Alert -> [JiraLink] -> Html
 jiraLinksHtml alert links = [hsx|

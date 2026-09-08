@@ -310,6 +310,20 @@ if [ -n "$llm_id" ]; then
     card_html=$(curl -sf -b "$COOKIES" "$APP_URL/alerts/$llm_id" || true)
     echo "$card_html" | grep -q 'assets-panel' && echo "$card_html" | grep -q 'CHCMDB-10001' && echo "$card_html" | grep -q 'team-sre' \
         && pass "assets: card panel renders asset fields" || fail "assets: card panel renders asset fields"
+    # icons are served from the app (cached in assets_icon_cache), never the
+    # jira origin — browsers have no Assets session.
+    icon_src=$(echo "$card_html" | grep -oE '/assets/objects/[0-9a-f-]+/icon' | head -1)
+    if [ -n "$icon_src" ]; then
+        icon_ct=$(curl -sf -b "$COOKIES" -o /dev/null -w '%{content_type}' "$APP_URL$icon_src" || true)
+        if [ "$icon_ct" = "image/png" ] \
+            && psql "$DATABASE_URL" -tA -c "SELECT 1 FROM assets_icon_cache LIMIT 1" 2>/dev/null | grep -q 1; then
+            pass "assets: icon served from app cache"
+        else
+            fail "assets: icon served from app cache (content-type '$icon_ct')"
+        fi
+    else
+        fail "assets: card icon img points at the app"
+    fi
 else
     fail "llm analysis (no alert)"
 fi

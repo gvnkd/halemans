@@ -25,6 +25,7 @@ import Web.Controller.Dashboards
 import Web.Controller.Integrations
 import Web.Controller.LlmAdmin
 import Web.Controller.AssetsAdmin
+import Web.Controller.AssetsIcons
 import Web.Controller.Admin
 import Web.Controller.Audit
 import Web.Controller.Api
@@ -54,6 +55,7 @@ instance FrontController WebApplication where
         , parseRoute @IntegrationsController
         , parseRoute @LlmAdminController
         , parseRoute @AssetsAdminController
+        , parseRoute @AssetsIconsController
         , parseRoute @AdminController
         , parseRoute @AuditController
         , parseRoute @ApiController

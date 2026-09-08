@@ -12,6 +12,7 @@ module Application.Service.Assets
 , connectedTickets
 , statusType
 , icon
+, fetchBinary
 , connectionOk
 , AssetsError (..)
 , describeError
@@ -183,6 +184,21 @@ statusType client statusId = decodeOne
 icon :: AssetsClient -> Int64 -> IO (Either AssetsError Icon)
 icon client iconId = decodeOne
     <$> getJson client (Just iconId) ("/icon/" <> tshow iconId) []
+
+-- Raw GET of an absolute URL (icon/avatar images live on the Jira origin,
+-- outside the /rest/assets/latest API base). Same auth + no-redirect policy
+-- as the JSON endpoints; returns the upstream content type and the body.
+fetchBinary :: AssetsClient -> Text -> IO (Either AssetsError (Text, BL.ByteString))
+fetchBinary client url = do
+    result <- try @SomeException (Wreq.getWith (opts client) (cs url))
+    pure case result of
+        Left err -> Left (Upstream 0 (tshow err))
+        Right response ->
+            let code = statusCode (response ^. Wreq.responseStatus)
+                body = response ^. Wreq.responseBody
+            in if code >= 200 && code < 300
+                then Right (cs (response ^. Wreq.responseHeader "Content-Type"), body)
+                else Left (classifyResponse Nothing code body)
 
 -- Admin "connection test" (milestone_8.md §8): listSchemas reachability.
 connectionOk :: AssetsClient -> IO (Either Text ())

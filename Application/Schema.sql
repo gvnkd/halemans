@@ -736,6 +736,21 @@ ALTER TABLE asset_alert_links ADD CONSTRAINT asset_alert_links_assets_object_id_
 CREATE UNIQUE INDEX asset_alert_links_pair_idx ON asset_alert_links(alert_id, assets_object_id) WHERE assets_object_id IS NOT NULL;
 CREATE INDEX asset_alert_links_alert_idx ON asset_alert_links(alert_id);
 
+-- Server-side icon/avatar image cache: the card renders <img> against the
+-- app (AssetsIconsController) which fills rows lazily from the Jira origin.
+CREATE TABLE assets_icon_cache (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    config_id UUID NOT NULL,
+    url TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'image/png',
+    body BYTEA NOT NULL,
+    fetched_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+ALTER TABLE assets_icon_cache ADD CONSTRAINT assets_icon_cache_config_id_fkey FOREIGN KEY (config_id) REFERENCES assets_configs (id);
+CREATE UNIQUE INDEX assets_icon_cache_config_url_idx ON assets_icon_cache(config_id, url);
+
 -- Agent roles for LLM enrichment (milestone_8.md §7): name + prompt template
 -- + tool whitelist; at most one default.
 CREATE TABLE llm_agent_roles (

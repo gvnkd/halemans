@@ -107,6 +107,10 @@ data AssetsAdminController
     | TestAssetsConnectionAction { configId :: !(Id AssetsConfig) }
     deriving (Eq, Show)
 
+data AssetsIconsController
+    = ShowAssetIconAction { objectId :: !(Id AssetsObject) }
+    deriving (Eq, Show)
+
 data AdminController
     = AdminAction
     | AdminRevokeApiTokenAction { apiTokenId :: !(Id ApiToken) }
