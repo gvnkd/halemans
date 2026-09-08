@@ -91,6 +91,130 @@ def last_user_content(body):
     return ""
 
 
+# Strict request contract (OpenAI chat completions). Real servers 400 on
+# explicit nulls and unknown fields; the old lenient mock let our own client
+# bugs ("tools": null, "tool_call_id": null) pass silently. Validation runs on
+# every completion call so payload drift fails the suite.
+KNOWN_TOP_LEVEL = {
+    "messages", "model", "temperature", "top_p", "max_tokens",
+    "max_completion_tokens", "stream", "stream_options", "stop", "n", "seed",
+    "presence_penalty", "frequency_penalty", "logit_bias", "logprobs",
+    "top_logprobs", "response_format", "tools", "tool_choice",
+    "parallel_tool_calls", "user", "store", "metadata", "modalities",
+    "reasoning_effort", "service_tier",
+}
+KNOWN_MESSAGE_FIELDS = {
+    "role", "content", "name", "tool_call_id", "tool_calls", "refusal", "audio",
+}
+ROLES = {"system", "developer", "user", "assistant", "tool"}
+
+
+def _err(message, param=None):
+    return {"error": {
+        "message": message,
+        "type": "invalid_request_error",
+        "param": param,
+        "code": None,
+    }}
+
+
+def _is_content_parts(content):
+    return isinstance(content, list) and all(
+        isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+        for part in content
+    )
+
+
+def _validate_tools(tools):
+    if tools is None:  # absent; explicit null was rejected by the caller
+        return None
+    if not isinstance(tools, list):
+        return _err("'tools' must be an array", param="tools")
+    for index, tool in enumerate(tools):
+        param = f"tools[{index}]"
+        if (not isinstance(tool, dict) or tool.get("type") != "function"
+                or not isinstance(tool.get("function"), dict)):
+            return _err(f"{param} must be an object of type 'function'", param=param)
+        function = tool["function"]
+        if not isinstance(function.get("name"), str):
+            return _err(f"{param}.function.name is required and must be a string", param=param)
+        if "parameters" in function and not isinstance(function["parameters"], dict):
+            return _err(f"{param}.function.parameters must be an object", param=param)
+    return None
+
+
+def _validate_tool_calls(param, tool_calls):
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return _err(f"{param}.tool_calls must be a non-empty array", param=param)
+    for index, call in enumerate(tool_calls):
+        call_param = f"{param}.tool_calls[{index}]"
+        if (not isinstance(call, dict) or not isinstance(call.get("id"), str)
+                or call.get("type") != "function"
+                or not isinstance(call.get("function"), dict)):
+            return _err(f"{call_param} must be an object of type 'function'", param=call_param)
+        function = call["function"]
+        if (not isinstance(function.get("name"), str)
+                or not isinstance(function.get("arguments"), str)):
+            return _err(f"{call_param}.function needs string name and arguments", param=call_param)
+    return None
+
+
+def _validate_message(index, message):
+    param = f"messages[{index}]"
+    if not isinstance(message, dict):
+        return _err(f"{param} must be an object", param=param)
+    unknown = sorted(set(message) - KNOWN_MESSAGE_FIELDS)
+    if unknown:
+        return _err(f"{param}: unrecognized field(s): {', '.join(unknown)}", param=param)
+    role = message.get("role")
+    tool_calls = message.get("tool_calls")
+    for key, value in message.items():
+        # assistant content may be null when the message only carries tool_calls
+        if value is None and not (key == "content" and role == "assistant" and tool_calls):
+            return _err(f"{param}.{key} must not be null", param=param)
+    if role not in ROLES:
+        return _err(f"{param}.role must be one of {sorted(ROLES)}", param=param)
+    content = message.get("content")
+    if content is not None and not isinstance(content, str) and not _is_content_parts(content):
+        return _err(f"{param}.content must be a string or a text content-parts array", param=param)
+    if "tool_call_id" in message and role != "tool":
+        return _err(f"{param}.tool_call_id is only valid for role 'tool'", param=param)
+    if role == "tool" and not isinstance(message.get("tool_call_id"), str):
+        return _err(f"{param}.tool_call_id is required for role 'tool'", param=param)
+    if tool_calls is not None:
+        if role != "assistant":
+            return _err(f"{param}.tool_calls is only valid for role 'assistant'", param=param)
+        return _validate_tool_calls(param, tool_calls)
+    return None
+
+
+def validate_chat_request(body):
+    """OpenAI-style error dict, or None when the request is well-formed."""
+    if not isinstance(body, dict):
+        return _err("request body must be a JSON object")
+    unknown = sorted(set(body) - KNOWN_TOP_LEVEL)
+    if unknown:
+        return _err(f"unrecognized request argument(s): {', '.join(unknown)}")
+    for key, value in body.items():
+        if value is None:
+            return _err(f"field '{key}' must not be null", param=key)
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return _err("'messages' is required and must be a non-empty array", param="messages")
+    if "model" in body and not isinstance(body["model"], str):
+        return _err("'model' must be a string", param="model")
+    tools_error = _validate_tools(body.get("tools"))
+    if tools_error:
+        return tools_error
+    for index, message in enumerate(messages):
+        message_error = _validate_message(index, message)
+        if message_error:
+            return message_error
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "MockLlm/1.0"
 
@@ -163,6 +287,10 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
             self._respond(MALFORMED_ANALYSIS, body)
+            return
+        validation_error = validate_chat_request(body)
+        if validation_error:
+            self._send(400, validation_error)
             return
         content = last_user_content(body)
         analysis = DISK_ANALYSIS if "disk" in content.lower() else GENERIC_ANALYSIS
