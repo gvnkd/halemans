@@ -1,7 +1,7 @@
 #!/bin/sh
 # Applies the baked schema bundle (/share/db-init) to $DATABASE_URL unless the
-# schema is already present. Fresh-deploy bootstrap; upgrades apply new
-# Application/Migration SQL by hand.
+# schema is already present. Fresh-deploy bootstrap; upgrades are applied by
+# db-migrate at app/worker container start.
 set -eu
 
 if [ "$(psql "$DATABASE_URL" -tAc "SELECT to_regclass('public.alerts') IS NOT NULL")" = "t" ]; then

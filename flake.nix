@@ -31,8 +31,8 @@
                     # /share/db-init: IHP framework schema, app schema,
                     # standard roles, and the schema_migrations ledger for
                     # every migration already folded into Schema.sql
-                    # (fresh-deploy bootstrap; upgrades apply new migrations
-                    # by hand).
+                    # (fresh-deploy bootstrap; upgrades are applied by
+                    # /bin/db-migrate at container start).
                     dbInit = let
                         revisions = lib.mapAttrsToList (name: _: builtins.head (lib.splitString "-" name))
                             (lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".sql" name)
@@ -49,6 +49,12 @@
                         cp ${config.packages.schema}/Schema.sql $out/01-app-schema.sql
                         cp ${./deploy/docker/roles.sql} $out/02-roles.sql
                         cp ${migrationsSql} $out/99-schema-migrations.sql
+                    '';
+                    # Pending-migration bundle for /bin/db-migrate
+                    # (deploy/docker/db-migrate.sh), baked verbatim.
+                    dbMigrate = pkgs.runCommand "halemans-db-migrate" {} ''
+                        mkdir -p $out
+                        cp ${./Application/Migration}/*.sql $out/
                     '';
                 in {
                     # contents land in the image /bin (RunProdServer, RunJobs,
@@ -69,8 +75,10 @@
                         extraCommands = ''
                             mkdir -p share bin
                             ln -s ${dbInit} share/db-init
+                            ln -s ${dbMigrate} share/db-migrate
                             cp ${./deploy/docker/db-init.sh} bin/db-init
-                            chmod +x bin/db-init
+                            cp ${./deploy/docker/db-migrate.sh} bin/db-migrate
+                            chmod +x bin/db-init bin/db-migrate
                         '';
                         config = {
                             Cmd = [ "/bin/RunProdServer" ];

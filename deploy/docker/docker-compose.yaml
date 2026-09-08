@@ -11,6 +11,11 @@
 #     # paste the printed hash into provision.json (users.items[].passwordHash)
 #   docker compose up -d
 #
+# Upgrades: docker compose pull && docker compose up -d — pending database
+# migrations (/share/db-migrate in the image) are applied automatically by
+# /bin/db-migrate on every app/worker/enqueue-pollers start (idempotent,
+# advisory-locked against concurrent boots).
+#
 # The app listens on HALEMANS_PORT (default 8000). The provision config is
 # applied on every app/worker boot (idempotent upserts); edit provision.json
 # and `docker compose up -d --force-recreate app worker` to re-apply.
@@ -63,7 +68,7 @@ services:
   # Seeds the background poller jobs once per deployment.
   enqueue-pollers:
     <<: *halemans-image
-    command: ["/bin/EnqueuePollers"]
+    command: ["/bin/sh", "-c", "/bin/db-migrate && exec /bin/EnqueuePollers"]
     restart: "no"
     depends_on:
       db-init:
@@ -78,6 +83,7 @@ services:
 
   app:
     <<: *halemans-image
+    command: ["/bin/sh", "-c", "/bin/db-migrate && exec /bin/RunProdServer"]
     restart: unless-stopped
     depends_on:
       db-init:
@@ -97,7 +103,7 @@ services:
 
   worker:
     <<: *halemans-image
-    command: ["/bin/RunJobs"]
+    command: ["/bin/sh", "-c", "/bin/db-migrate && exec /bin/RunJobs"]
     restart: unless-stopped
     depends_on:
       db-init:
