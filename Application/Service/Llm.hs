@@ -13,6 +13,7 @@ module Application.Service.Llm
 , OpenAiCompat (..)
 , connectionOk
 , apiUrl
+, chatCompletionPayload
 ) where
 
 import IHP.Prelude
@@ -28,6 +29,7 @@ import qualified Network.HTTP.Client as HTTP
 import qualified Network.HTTP.Client.TLS as HTTP
 import Network.HTTP.Types.Status (statusCode)
 import Control.Exception (try, SomeException)
+import Data.Maybe (catMaybes)
 import System.Environment (lookupEnv)
 
 -- LLM provider subsystem (design_docs/milestone_4.md §3, 01_highlevel.md §9).
@@ -125,22 +127,27 @@ connectionOk config = do
             let code = statusCode (response ^. Wreq.responseStatus)
             in if code == 200 then Right () else Left ("status " <> tshow code)
 
+chatCompletionPayload :: LlmProviderConfig -> Prompt -> Value
+chatCompletionPayload config prompt = object $ catMaybes
+    [ Just ("model" .= config.model)
+    , Just ("messages" .= map messageJson prompt.messages)
+    , if null prompt.tools then Nothing else Just ("tools" .= prompt.tools)
+    ]
+
 chatCompletion :: LlmProviderConfig -> Prompt -> IO (Either LlmError Completion)
 chatCompletion config prompt = do
-    let payload = object
-            [ "model" .= config.model
-            , "messages" .= map messageJson prompt.messages
-            , "tools" .= (if null prompt.tools then Nothing else Just prompt.tools)
-            ]
+    let payload = chatCompletionPayload config prompt
     result <- try (Http.postFollowing (opts config) (cs (apiUrl config "/v1/chat/completions")) payload)
     pure case result of
         Left err -> Left (Retriable (tshow (err :: SomeException)))
         Right response ->
             let code = statusCode (response ^. Wreq.responseStatus)
+                bodyText = Text.strip (cs (response ^. Wreq.responseBody))
+                suffix = if Text.null bodyText then "" else ": " <> Text.take 800 bodyText
             in if
                 | code >= 200 && code < 300 -> decodeCompletion response
-                | code == 429 || code >= 500 -> Left (Retriable ("http " <> tshow code))
-                | otherwise -> Left (Terminal ("http " <> tshow code))
+                | code == 429 || code >= 500 -> Left (Retriable ("http " <> tshow code <> suffix))
+                | otherwise -> Left (Terminal ("http " <> tshow code <> suffix))
 
 opts :: LlmProviderConfig -> Wreq.Options
 opts config = Wreq.defaults
@@ -151,13 +158,11 @@ opts config = Wreq.defaults
     & Wreq.header "Authorization" .~ maybe [] (\key -> ["Bearer " <> cs key]) config.apiKey
 
 messageJson :: LlmMessage -> Value
-messageJson message = object
-    [ "role" .= message.role
-    , "content" .= message.content
-    , "tool_call_id" .= message.toolCallId
-    , "tool_calls" .= case message.msgToolCalls of
-        [] -> Nothing
-        calls -> Just (map toolCallJson calls)
+messageJson message = object $ catMaybes
+    [ Just ("role" .= message.role)
+    , Just ("content" .= message.content)
+    , ("tool_call_id" .=) <$> message.toolCallId
+    , if null message.msgToolCalls then Nothing else Just ("tool_calls" .= map toolCallJson message.msgToolCalls)
     ]
 
 toolCallJson :: ToolCall -> Value

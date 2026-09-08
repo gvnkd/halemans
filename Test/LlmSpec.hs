@@ -26,6 +26,16 @@ spec = describe "Milestone 4 LLM services" do
             apiUrl (LlmProviderConfig "default" "https://llm.example.com" "m" Nothing False) "/v1/chat/completions"
                 `shouldBe` "https://llm.example.com/v1/chat/completions"
 
+    describe "Llm.chatCompletionPayload" do
+        it "omits null optional request fields" do
+            let encoded = cs (Aeson.encode (chatCompletionPayload
+                    (LlmProviderConfig "default" "http://llm.example" "m" Nothing False)
+                    (Prompt [userMessage "hi"] []))) :: Text
+            "messages" `Text.isInfixOf` encoded `shouldBe` True
+            "tool_call_id" `Text.isInfixOf` encoded `shouldBe` False
+            "tool_calls" `Text.isInfixOf` encoded `shouldBe` False
+            "\"tools\"" `Text.isInfixOf` encoded `shouldBe` False
+
     describe "Output.parseCompletionOutput" do
         let fenced = Text.intercalate "\n"
                 [ "The disk is nearly full."
