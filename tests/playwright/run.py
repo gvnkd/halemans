@@ -830,6 +830,14 @@ with sync_playwright() as pw:
 
     @check("source health: dashboard shows the internal alert without reload")
     def _():
+        # Hermetic baseline: earlier scenarios leave firing generic-hook
+        # alerts in dev which PollGrafana absence-resolves ~60s later. Such a
+        # resolve can land between the baseline read and the source-health
+        # alert firing, leaving the count text identical ("1 firing" ->
+        # resolve -> "1 firing") and the move undetectable. Close all open
+        # alerts and re-read the baseline from a fresh page load so only the
+        # source-health alert can move the count.
+        sql("UPDATE alerts SET status = 'closed', updated_at = NOW() WHERE status <> 'closed'")
         page.goto(APP + "/")
         page.get_by_test_id("env-cards").wait_for()
         card = page.get_by_test_id("env-card").filter(has_text="dev").first

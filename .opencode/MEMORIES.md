@@ -103,6 +103,11 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - mock_llm echoes the prompt's "## Linked assets" first line BEFORE the fenced json — parseCompletionOutput drops prose after the fence, so trailing echoes never reach result_md.
 - m7 provision tests leave an ENABLED llm_configs row (m7-db.example) behind: any later spec that calls the LLM must `UPDATE llm_configs SET enabled = false` first (DB-first resolution beats LLM_ENDPOINT env).
 
+## Milestone 8 addendum (icon cache, v1.15.x)
+- Asset icons are served from the app: GET /assets/objects/{id}/icon (AssetsIconsController, view privilege) lazy-fills assets_icon_cache (config_id+url unique, bytea body) via Assets.fetchBinary; Fragments renders <img> at that route, never the Jira origin. absoluteIconUrl lives in Application/Service/Assets/Icons.hs.
+- mock-assets serves distinct 16x16 colored PNGs per icon id (1x1 transparent made cards look icon-less).
+- FIXED (1.15.2) smoke flake: Playwright "source health: dashboard count never moved". Cause: leftover firing generic-hook alerts (grafana:pw-*) in dev get absence-resolved by PollGrafana mid-check, returning the count to its baseline text. Fix: the check closes all open alerts + reloads for a hermetic baseline before inserting the probe source.
+
 ## Commands
 - Poll loops (PollZabbix/PollGrafana) STOP rescheduling when no enabled sources of their type exist; re-arm via `ensurePollerForSourceType` (Application/Service/PollerControl.hs) — called from SourcesController create/update/toggle + Provision.upsertSource. Sources inserted via raw SQL (seeds) need EnqueuePollers afterwards (seed-halemans.sh runs it last).
 - App logging: HALEMANS_LOG_LEVEL=debug|info|warn|error (default info, validated at boot in Config.hs, read per call in Application/Service/Log.hs); HALEMANS_ACCESS_LOG=0 disables wai request logging (RequestLoggerMiddleware override — `option` is first-wins vs ihpDefaultConfig).
