@@ -16,9 +16,14 @@ instance View IndexView where
         </div>
         <p class="text-secondary">
             Facet override chain: for each facet the first mapping (by ascending rank) that yields a
-            non-empty value wins. Kinds: <code>field:</code> alert column, <code>label:</code> alerts.labels key,
-            <code>attr:</code> linked Assets object attribute. Edits apply to newly ingested/enriched alerts;
-            use recompute to backfill non-closed alerts.
+            non-empty value wins. The key is an unprefixed name read according to the kind:
+            <code>field</code> = alert column (env, host, service, check, severity, status),
+            <code>label</code> = alerts.labels key, <code>attr</code> = linked Assets object attribute
+            (comma-separated list attributes yield their first element).
+            Facets are materialized on the alert and drive dashboards and grouping rules;
+            they are not shown on the alert card, which always displays the raw fields.
+            Edits apply to newly ingested/enriched alerts; use recompute to backfill non-closed alerts
+            (requires the worker; only alerts with linked Assets objects gain attr facets).
         </p>
         <table class="table" data-testid="field-mappings-table">
             <thead>

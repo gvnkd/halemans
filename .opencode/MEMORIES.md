@@ -182,3 +182,11 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager. Design: d
 - New files must be `git add -N`'d or the flake source won't see them.
 - postgres under devenv dies on full disk (PANIC checkpoint) and crash-loops even after space frees: kill leftover postmaster, rm postmaster.pid + core.*, `process-compose process start postgres`.
 - DB is named `halemans` (was IHP default `app`): the IHP flake module hardcodes `app` in env.DATABASE_URL/PGDATABASE/initialDatabases — flake.nix mkForce-overrides all three (replicating the IHPSchema+Schema+Fixtures schema bundle). ihp.appName only renames derivations.
+
+## Milestone 9 addendum (attr CSV mapping + demo matrix, v1.16.0)
+- attr-kind field mappings take the FIRST element of comma-separated Assets attribute values, stripped (`firstCsvElement`, Application/Service/Facets.hs); verbatim whitelisted-attribute copies keep the full string.
+- field_mappings.key is UNPREFIXED, interpreted by kind (field = closed enum env/host/service/check/severity/status, label = alerts.labels key, attr = Assets attribute name). The `field:`/`label:`/`attr:` prefixed refs exist only in dashboard card JSON.
+- Facets materialize onto alerts.facets only — the alert card always shows raw columns, so a successful recompute never changes the card's env. Recompute backfills non-closed alerts via facet_backfill_jobs (worker required); attr facets need linked assets (EnrichAlertJob ran).
+- mock-assets matrix hosts for field-mapping demos: etcd-eu-01 (ETCD/EU/"PROD,TEST"), etcd-us-01 (ETCD/US/TEST), pg-eu-01 (POSTGRES/EU/PROD), pg-us-01 (POSTGRES/US/"TEST, PROD"); linking matches `Name like "{host}"`. Seeds (BOTH seed-halemans.sh + smoke-check.sh) add rank-50 attr mappings Environments/Service/Location + 'Service matrix' dashboard (8 cards, one per Service×Location×Environments combo).
+- mock-assets reads ASSETS_TOKEN from its OWN process env per request — starting the working-tree mock without sourcing env.sh first gives 401 on everything.
+- seed-halemans re-run can die on llm_agent_roles_default_idx (is_default unique) if a default role exists under a different name; seed crash-loop removes seed.done and the worker then never starts — touch .devenv/state/halemans/seed.done manually when the DB is already seeded.

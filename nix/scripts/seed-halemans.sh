@@ -148,6 +148,19 @@ INSERT INTO field_mappings (facet, rank, kind, key, enabled)
 SELECT 'host', 100, 'field', 'host', true
 WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'host' AND rank = 100);
 
+-- Demo attr mappings for the mock CMDB matrix hosts (etcd-*/pg-*):
+-- Environments is a comma-separated Assets list attribute; mappings take
+-- its first element. Keep in sync with nix/scripts/smoke-check.sh.
+INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+SELECT 'Environments', 50, 'attr', 'Environments', true
+WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'Environments' AND rank = 50);
+INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+SELECT 'Service', 50, 'attr', 'Service', true
+WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'Service' AND rank = 50);
+INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+SELECT 'Location', 50, 'attr', 'Location', true
+WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'Location' AND rank = 50);
+
 -- Milestone 9 §9: a v2-JSON dashboard exercising match + groupBy over
 -- materialized facets (one section per DB Cluster value).
 INSERT INTO llm_agent_roles (name, description, prompt_template_name, tools, enabled, is_default)
@@ -204,6 +217,27 @@ SELECT id, 'DBA clusters',
        50, false
 FROM users WHERE email = 'sre@dev'
 AND NOT EXISTS (SELECT 1 FROM dashboards WHERE name = 'DBA clusters');
+SQL
+
+# Demo dashboard for the field-mapping matrix (mock CMDB etcd-*/pg-* hosts):
+# one card per Service x Location x Environments combination, matched against
+# materialized facets. Keep in sync with nix/scripts/smoke-check.sh.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO dashboards (user_id, name, config, position, is_default)
+SELECT id, 'Service matrix', $$
+[
+  {"title":"ETCD / EU / PROD","match":[{"facet":"attr:Service","op":"=","value":"ETCD"},{"facet":"attr:Location","op":"=","value":"EU"},{"facet":"attr:Environments","op":"=","value":"PROD"}],"groupBy":"field:host","limit":20},
+  {"title":"ETCD / EU / TEST","match":[{"facet":"attr:Service","op":"=","value":"ETCD"},{"facet":"attr:Location","op":"=","value":"EU"},{"facet":"attr:Environments","op":"=","value":"TEST"}],"groupBy":"field:host","limit":20},
+  {"title":"ETCD / US / PROD","match":[{"facet":"attr:Service","op":"=","value":"ETCD"},{"facet":"attr:Location","op":"=","value":"US"},{"facet":"attr:Environments","op":"=","value":"PROD"}],"groupBy":"field:host","limit":20},
+  {"title":"ETCD / US / TEST","match":[{"facet":"attr:Service","op":"=","value":"ETCD"},{"facet":"attr:Location","op":"=","value":"US"},{"facet":"attr:Environments","op":"=","value":"TEST"}],"groupBy":"field:host","limit":20},
+  {"title":"POSTGRES / EU / PROD","match":[{"facet":"attr:Service","op":"=","value":"POSTGRES"},{"facet":"attr:Location","op":"=","value":"EU"},{"facet":"attr:Environments","op":"=","value":"PROD"}],"groupBy":"field:host","limit":20},
+  {"title":"POSTGRES / EU / TEST","match":[{"facet":"attr:Service","op":"=","value":"POSTGRES"},{"facet":"attr:Location","op":"=","value":"EU"},{"facet":"attr:Environments","op":"=","value":"TEST"}],"groupBy":"field:host","limit":20},
+  {"title":"POSTGRES / US / PROD","match":[{"facet":"attr:Service","op":"=","value":"POSTGRES"},{"facet":"attr:Location","op":"=","value":"US"},{"facet":"attr:Environments","op":"=","value":"PROD"}],"groupBy":"field:host","limit":20},
+  {"title":"POSTGRES / US / TEST","match":[{"facet":"attr:Service","op":"=","value":"POSTGRES"},{"facet":"attr:Location","op":"=","value":"US"},{"facet":"attr:Environments","op":"=","value":"TEST"}],"groupBy":"field:host","limit":20}
+]
+$$::jsonb, 60, false
+FROM users WHERE email = 'sre@dev'
+AND NOT EXISTS (SELECT 1 FROM dashboards WHERE name = 'Service matrix');
 SQL
 
 # Demo API token for the sre@dev user (milestone 6 D8): both scopes, plaintext

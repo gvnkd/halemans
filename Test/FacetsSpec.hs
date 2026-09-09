@@ -75,6 +75,18 @@ spec = describe "Application.Service.Facets.resolveFacets" do
         let object = objectWith [("Service", "PostgreSQL")]
         resolveFacets [mapping "Service" 100 "field" "severity"] ["Service"] [object] alert
             `shouldBe` [("Service", "high")]
+    it "attr mappings take the first element of a comma-separated value" do
+        let object = objectWith [("Environments", "PROD,TEST")]
+        resolveFacets [mapping "env" 50 "attr" "Environments"] [] [object] alert
+            `shouldBe` [("env", "PROD")]
+    it "attr mappings strip whitespace around the first element" do
+        let object = objectWith [("Environments", " PROD , TEST ")]
+        resolveFacets [mapping "env" 50 "attr" "Environments"] [] [object] alert
+            `shouldBe` [("env", "PROD")]
+    it "verbatim copies keep the full comma-separated value" do
+        let object = objectWith [("Environments", "PROD,TEST")]
+        resolveFacets [] ["Environments"] [object] alert
+            `shouldBe` [("Environments", "PROD,TEST")]
     it "multi-object attributes are first-wins" do
         let first = objectWith [("DB Cluster", "ibstaffcopdb01")]
             second = objectWith [("DB Cluster", "ibstaffcopdb02")]

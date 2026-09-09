@@ -44,9 +44,12 @@ resolveFacets mappings attrNames objects alert = mapped ++ verbatim
                 Just field -> alertFieldText field alert
                 Nothing -> Nothing
             "label" -> labelValue alert mapping.key
-            "attr" -> attrFromObjects mapping.key
+            "attr" -> firstCsvElement =<< attrFromObjects mapping.key
             _ -> Nothing
         attrFromObjects name = head (catMaybes [lookup name (objectAttributes object) | object <- objects])
+        -- Assets list-typed attributes arrive as a comma-separated string;
+        -- mapping purposes use the first element only.
+        firstCsvElement value = Text.strip <$> head (Text.splitOn "," value)
         nonEmpty value
             | Text.null value = Nothing
             | otherwise = Just value
