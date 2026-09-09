@@ -230,6 +230,10 @@ a:hover { color: var(--accent-hover); }
 #dashboard-cards { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 #dashboard-cards > .dashboard-card { flex: 0 0 100%; }
 #dashboard-cards > .dashboard-card-summary { flex: 0 0 360px; margin-right: 0; }
+/* Overview env cards tile the same way: constant card width, column count
+   follows viewport (browser zoom) */
+#env-cards { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+#env-cards > .env-card-tile { flex: 0 0 360px; }
 .env-card { height: 168px; overflow: hidden; }
 .env-hourly { white-space: nowrap; overflow-x: auto; }
 .hourly-bucket { white-space: nowrap; }

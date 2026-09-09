@@ -86,7 +86,7 @@ instance View IndexView where
     html IndexView { .. } = [hsx|
         <h1>Overview</h1>
         {teamDefaultBanner}
-        <div class="row" data-testid="env-cards" data-live-scope="dashboard">
+        <div id="env-cards" data-testid="env-cards" data-live-scope="dashboard">
             {forEach cards renderCard}
             {forEach unassigned renderCard}
         </div>
@@ -112,7 +112,7 @@ teamBanner config = [hsx|
 
 renderCard :: EnvCard -> Html
 renderCard card = [hsx|
-    <div class="col-md-4 mb-3" id={cardDomId card} data-testid="env-card">
+    <div class="env-card-tile mb-3" id={cardDomId card} data-testid="env-card">
         {rollupCardHtml rollup}
     </div>
 |]
