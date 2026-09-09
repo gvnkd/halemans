@@ -1,6 +1,6 @@
 module Web.View.Dashboards.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml)
+import Web.View.Fragments (alertRowHtml, RollupCard (..), rollupCardHtml)
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
@@ -105,49 +105,20 @@ legacyEnv card
     | card.cardLegacy = head [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
     | otherwise = Nothing
 
--- | Overview-style rollup body (mirrors the env cards of the default
--- dashboard: status counts, suppressed badge, 24h hourly buckets). The whole
--- card is a stretched link to the card-alerts detail page.
+-- | Overview-style rollup body via the shared widget (same renderer and
+-- tooltips as the overview env cards); the whole card links to the
+-- card-alerts detail page.
 renderSummary :: Id Dashboard -> ExpandedCard -> CardSummary -> Html
-renderSummary dashboardId expanded summary = [hsx|
-    <div class={"card env-card position-relative " <> summarySeverityClass summary.csWorstSeverity}>
-        <div class="card-body">
-            <h5 class="card-title">{summarySeverityBadge summary.csWorstSeverity}</h5>
-            <div class="env-counts">
-                <span class="count status-firing" data-testid="count-firing">{summary.csFiring} firing</span>
-                <span class="count status-ack" data-testid="count-ack">{summary.csAcked} ack</span>
-                <span class="count status-resolved" data-testid="count-resolved">{summary.csResolved} resolved</span>
-                {summarySuppressedBadge summary.csSuppressed}
-            </div>
-            <div class="env-hourly" title="alerts per hour (last 24h)">
-                {forEach summary.csHourly renderHourBucket}
-            </div>
-            <a href={cardAlertsLink dashboardId expanded} class="stretched-link" data-testid="summary-link"></a>
-        </div>
-    </div>
-|]
-
-summarySeverityClass :: Maybe Text -> Text
-summarySeverityClass = \case
-    Just severity -> "env-card-" <> severity
-    Nothing -> "env-card-ok"
-
-summarySeverityBadge :: Maybe Text -> Html
-summarySeverityBadge Nothing = mempty
-summarySeverityBadge (Just severity) = [hsx|<span class={"badge severity-badge severity-" <> severity}>{severity}</span>|]
-
-summarySuppressedBadge :: Int -> Html
-summarySuppressedBadge count
-    | count > 0 = [hsx|<span class="count status-suppressed" data-testid="count-suppressed" title="muted by blackout">{count} suppressed</span>|]
-    | otherwise = mempty
-
-renderHourBucket :: (UTCTime, Int) -> Html
-renderHourBucket (hour, count) = [hsx|
-    <span class="hourly-bucket">
-        <span class="hourly-count">{count}</span>
-        <span class="hourly-hour">{formatTime defaultTimeLocale "%H:%M" hour}</span>
-    </span>
-|]
+renderSummary dashboardId expanded summary = rollupCardHtml RollupCard
+    { rcTitle = mempty
+    , rcWorstSeverity = summary.csWorstSeverity
+    , rcFiring = summary.csFiring
+    , rcAcked = summary.csAcked
+    , rcResolved = summary.csResolved
+    , rcSuppressed = summary.csSuppressed
+    , rcHourly = summary.csHourly
+    , rcLink = Just (cardAlertsLink dashboardId expanded)
+    }
 
 renderGroup :: Text -> CardGroup -> Html
 renderGroup cardId group = [hsx|

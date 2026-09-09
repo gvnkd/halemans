@@ -1,5 +1,6 @@
 module Web.View.Dashboard.Index where
 import Web.View.Prelude
+import Web.View.Fragments (RollupCard (..), rollupCardHtml)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.TypedSql.RowType (SqlRow)
 import IHP.QueryBuilder (orderByAsc)
@@ -112,52 +113,25 @@ teamBanner config = [hsx|
 renderCard :: EnvCard -> Html
 renderCard card = [hsx|
     <div class="col-md-4 mb-3" id={cardDomId card} data-testid="env-card">
-        <div class={"card env-card " <> severityClass card.cardWorstSeverity}>
-            <div class="card-body">
-                <h5 class="card-title">
-                    {cardLink card}
-                    {severityBadge card.cardWorstSeverity}
-                </h5>
-                <div class="env-counts">
-                    <span class="count status-firing" data-testid="count-firing">{card.cardFiring} firing</span>
-                    <span class="count status-ack">{card.cardAcked} ack</span>
-                    <span class="count status-resolved">{card.cardResolved} resolved</span>
-                    {suppressedBadge card.cardSuppressed}
-                </div>
-                <div class="env-hourly" title="alerts per hour (last 24h)">
-                    {forEach card.cardHourly renderHourBucket}
-                </div>
-            </div>
-        </div>
+        {rollupCardHtml rollup}
     </div>
 |]
+    where
+        rollup = RollupCard
+            { rcTitle = cardLink card
+            , rcWorstSeverity = card.cardWorstSeverity
+            , rcFiring = fromIntegral card.cardFiring
+            , rcAcked = fromIntegral card.cardAcked
+            , rcResolved = fromIntegral card.cardResolved
+            , rcSuppressed = fromIntegral card.cardSuppressed
+            , rcHourly = map (fmap fromIntegral) card.cardHourly
+            , rcLink = Nothing
+            }
 
 cardLink :: EnvCard -> Html
 cardLink card = case card.cardEnvironment of
     Just environment -> [hsx|<a href={ShowEnvironmentAction environment.name}>{environment.name}</a>|]
     Nothing -> [hsx|<span>unassigned</span>|]
 
-severityBadge :: Maybe Text -> Html
-severityBadge Nothing = mempty
-severityBadge (Just severity) = [hsx|<span class={"badge severity-badge severity-" <> severity}>{severity}</span>|]
-
-suppressedBadge :: Int64 -> Html
-suppressedBadge count
-    | count > 0 = [hsx|<span class="count status-suppressed" data-testid="count-suppressed" title="muted by blackout">{count} suppressed</span>|]
-    | otherwise = mempty
-
-renderHourBucket :: (UTCTime, Int64) -> Html
-renderHourBucket (hour, count) = [hsx|
-    <span class="hourly-bucket">
-        <span class="hourly-count">{count}</span>
-        <span class="hourly-hour">{formatTime defaultTimeLocale "%H:%M" hour}</span>
-    </span>
-|]
-
 cardDomId :: EnvCard -> Text
 cardDomId card = "env-card-" <> maybe "unassigned" (\environment -> environment.name) card.cardEnvironment
-
-severityClass :: Maybe Text -> Text
-severityClass = \case
-    Just severity -> "env-card-" <> severity
-    Nothing -> "env-card-ok"

@@ -225,12 +225,15 @@ a:hover { color: var(--accent-hover); }
 /* LLM analysis markdown: wrap long lines instead of overflowing the card */
 .llm-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* Summary cards flow in a grid like the overview env cards: flex-fill keeps
-   them >= ~340px and uses the whole row, so browser zoom just changes the
-   column count */
+/* Summary cards flow in a grid like the overview env cards; constant card
+   size (fixed flex basis + fixed height), zoom changes the column count */
 #dashboard-cards { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 #dashboard-cards > .dashboard-card { flex: 0 0 100%; }
-#dashboard-cards > .dashboard-card-summary { flex: 1 1 340px; margin-right: 0; }
+#dashboard-cards > .dashboard-card-summary { flex: 0 0 360px; margin-right: 0; }
+.env-card { height: 168px; overflow: hidden; }
+.env-hourly { white-space: nowrap; overflow-x: auto; }
+.hourly-bucket { white-space: nowrap; }
+.hourly-count-badge { background: var(--accent); color: var(--bg); border-radius: 4px; padding: 0 5px; margin-left: 3px; font-weight: 600; }
 
 .env-card { border-left: 4px solid var(--status-closed); }
 .env-card-critical { border-left-color: var(--severity-critical); }

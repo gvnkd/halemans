@@ -22,6 +22,8 @@ module Web.View.Fragments
 , eventSummary
 , filterMultiSelect
 , filterTextInput
+, RollupCard (..)
+, rollupCardHtml
 ) where
 
 import Web.View.Prelude
@@ -541,3 +543,71 @@ filterTextInput name placeholder value suggestions = [hsx|
         listId :: Text
         listId = "filter-suggestions-" <> name
         suggestionOption suggestion = [hsx|<option value={suggestion}></option>|]
+
+-- Shared rollup widget (v1.22.0): the overview env cards and custom-dashboard
+-- "summary": true cards render through this one renderer so counts, badges,
+-- hourly buckets and tooltips never diverge. rcLink, when set, turns the
+-- whole card into a stretched link (custom dashboard card-alerts page).
+data RollupCard = RollupCard
+    { rcTitle :: Html
+    , rcWorstSeverity :: Maybe Text
+    , rcFiring :: Int
+    , rcAcked :: Int
+    , rcResolved :: Int
+    , rcSuppressed :: Int
+    , rcHourly :: [(UTCTime, Int)]
+    , rcLink :: Maybe Text
+    }
+
+rollupCardHtml :: RollupCard -> Html
+rollupCardHtml RollupCard { .. } = [hsx|
+    <div class={cardClasses}>
+        <div class="card-body">
+            <h5 class="card-title">
+                {rcTitle}
+                {rollupSeverityBadge rcWorstSeverity}
+            </h5>
+            <div class="env-counts">
+                <span class="count status-firing" data-testid="count-firing">{rcFiring} firing</span>
+                <span class="count status-ack" data-testid="count-ack">{rcAcked} ack</span>
+                <span class="count status-resolved" data-testid="count-resolved">{rcResolved} resolved</span>
+                {rollupSuppressedBadge rcSuppressed}
+            </div>
+            <div class="env-hourly" title="alerts per hour (last 24h)">
+                {forEach rcHourly rollupHourBucket}
+            </div>
+            {rollupLink}
+        </div>
+    </div>
+|]
+    where
+        cardClasses :: Text
+        cardClasses = "card env-card " <> rollupSeverityClass rcWorstSeverity
+            <> if isJust rcLink then " position-relative" else ""
+        rollupLink = case rcLink of
+            Nothing -> mempty
+            Just href -> [hsx|<a href={href} class="stretched-link" data-testid="summary-link"></a>|]
+
+rollupSeverityClass :: Maybe Text -> Text
+rollupSeverityClass = \case
+    Just severity -> "env-card-" <> severity
+    Nothing -> "env-card-ok"
+
+rollupSeverityBadge :: Maybe Text -> Html
+rollupSeverityBadge Nothing = mempty
+rollupSeverityBadge (Just severity) = [hsx|<span class={"badge severity-badge severity-" <> severity}>{severity}</span>|]
+
+rollupSuppressedBadge :: Int -> Html
+rollupSuppressedBadge count
+    | count > 0 = [hsx|<span class="count status-suppressed" data-testid="count-suppressed" title="muted by blackout">{count} suppressed</span>|]
+    | otherwise = mempty
+
+-- Hour bucket as `<time> [count]`: the count sits in a colored rounded
+-- square so pairs don't run together visually.
+rollupHourBucket :: (UTCTime, Int) -> Html
+rollupHourBucket (hour, count) = [hsx|
+    <span class="hourly-bucket">
+        <span class="hourly-hour">{formatTime defaultTimeLocale "%H:%M" hour}</span>
+        <span class="hourly-count-badge">{count}</span>
+    </span>
+|]
