@@ -4,6 +4,7 @@ import Web.View.Fragments (alertRowHtml)
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
+import Network.HTTP.Types (urlEncode)
 import qualified Data.Text as Text
 
 data ShowView = ShowView
@@ -32,7 +33,7 @@ instance View ShowView where
                 <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">All dashboards</a>
             </p>
             <div id="dashboard-cards">
-                {forEach cardSections renderCardSection}
+                {forEach cardSections (renderCardSection dashboard.id)}
             </div>
         </div>
     |]
@@ -40,11 +41,11 @@ instance View ShowView where
             liveScope :: Text
             liveScope = "dash:" <> tshow dashboard.id
 
-renderCardSection :: (ExpandedCard, CardData) -> Html
-renderCardSection (expanded, result) = case result of
-    HiddenCard -> [hsx|<section class="dashboard-card d-none" id={domId} data-testid={domId}></section>|]
+renderCardSection :: Id Dashboard -> (ExpandedCard, CardData) -> Html
+renderCardSection dashboardId (expanded, result) = case result of
+    HiddenCard -> [hsx|<section class={sectionClass <> " d-none"} id={domId} data-testid={domId}></section>|]
     _ -> [hsx|
-        <section class="dashboard-card mb-4" id={domId} data-testid={domId}>
+        <section class={sectionClass} id={domId} data-testid={domId}>
             <h2>
                 {cardTitleText expanded.ecCard}
                 {filterChips}
@@ -55,6 +56,8 @@ renderCardSection (expanded, result) = case result of
     where
         card = expanded.ecCard
         domId = expanded.ecDomId
+        sectionClass :: Text
+        sectionClass = "dashboard-card" <> if card.cardSummary then " dashboard-card-summary mb-3" else " mb-4"
         cardBody = case result of
             FlatCard alerts -> [hsx|
                 <table class="table table-sm">
@@ -66,7 +69,7 @@ renderCardSection (expanded, result) = case result of
             GroupedCard groups -> [hsx|
                 {forEach groups (renderGroup domId)}
             |]
-            SummaryCard summary -> renderSummary summary
+            SummaryCard summary -> renderSummary dashboardId expanded summary
             HiddenCard -> [hsx||]
         tbodyId :: Text
         tbodyId = domId <> "-tbody"
@@ -79,6 +82,16 @@ renderCardSection (expanded, result) = case result of
         legacyList field
             | card.cardLegacy = concat [values | MatchClause (FacetField f) OpIn _ values <- card.cardMatch, f == field]
             | otherwise = []
+
+-- | Link to the card-alerts detail page; forEach expansions pass their value
+-- as a query param.
+cardAlertsLink :: Id Dashboard -> ExpandedCard -> Text
+cardAlertsLink dashboardId expanded =
+    pathTo (ShowDashboardCardAction dashboardId expanded.ecIndex) <> valueQuery
+    where
+        valueQuery = case expanded.ecValue of
+            Nothing -> ""
+            Just value -> "?value=" <> cs (urlEncode True (cs value))
 
 cardTitleText :: DashboardCard -> Text
 cardTitleText card = case (card.cardTitle, legacyEnv card, card.cardGroupBy) of
@@ -93,25 +106,23 @@ legacyEnv card
     | otherwise = Nothing
 
 -- | Overview-style rollup body (mirrors the env cards of the default
--- dashboard: status counts, suppressed badge, 24h hourly buckets).
-renderSummary :: CardSummary -> Html
-renderSummary summary = [hsx|
-    <div class="row">
-        <div class="col-md-4 mb-3">
-            <div class={"card env-card " <> summarySeverityClass summary.csWorstSeverity}>
-                <div class="card-body">
-                    <h5 class="card-title">{summarySeverityBadge summary.csWorstSeverity}</h5>
-                    <div class="env-counts">
-                        <span class="count status-firing" data-testid="count-firing">{summary.csFiring} firing</span>
-                        <span class="count status-ack" data-testid="count-ack">{summary.csAcked} ack</span>
-                        <span class="count status-resolved" data-testid="count-resolved">{summary.csResolved} resolved</span>
-                        {summarySuppressedBadge summary.csSuppressed}
-                    </div>
-                    <div class="env-hourly" title="alerts per hour (last 24h)">
-                        {forEach summary.csHourly renderHourBucket}
-                    </div>
-                </div>
+-- dashboard: status counts, suppressed badge, 24h hourly buckets). The whole
+-- card is a stretched link to the card-alerts detail page.
+renderSummary :: Id Dashboard -> ExpandedCard -> CardSummary -> Html
+renderSummary dashboardId expanded summary = [hsx|
+    <div class={"card env-card position-relative " <> summarySeverityClass summary.csWorstSeverity}>
+        <div class="card-body">
+            <h5 class="card-title">{summarySeverityBadge summary.csWorstSeverity}</h5>
+            <div class="env-counts">
+                <span class="count status-firing" data-testid="count-firing">{summary.csFiring} firing</span>
+                <span class="count status-ack" data-testid="count-ack">{summary.csAcked} ack</span>
+                <span class="count status-resolved" data-testid="count-resolved">{summary.csResolved} resolved</span>
+                {summarySuppressedBadge summary.csSuppressed}
             </div>
+            <div class="env-hourly" title="alerts per hour (last 24h)">
+                {forEach summary.csHourly renderHourBucket}
+            </div>
+            <a href={cardAlertsLink dashboardId expanded} class="stretched-link" data-testid="summary-link"></a>
         </div>
     </div>
 |]

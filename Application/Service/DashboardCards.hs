@@ -103,6 +103,8 @@ data ExpandedCard = ExpandedCard
     { ecDomId :: Text
     , ecCard :: DashboardCard
     , ecHidden :: Bool
+    , ecIndex :: Int
+    , ecValue :: Maybe Text
     } deriving (Eq, Show)
 
 -- | DOM key convention: legacy cards keep the M3 dashboard-card-<env> id;
@@ -118,18 +120,21 @@ legacyCardDomKey card
 expandDashboardCards :: (?modelContext :: ModelContext) => [DashboardCard] -> IO [ExpandedCard]
 expandDashboardCards cards = concat <$> forM (zip [0 ..] cards) \(index, card) -> do
     let baseKey = fromMaybe (tshow (index :: Int)) (legacyCardDomKey card)
-    expanded <- case card.cardForEach of
-        Nothing -> pure [card]
+    pinned <- case card.cardForEach of
+        Nothing -> pure [(card, Nothing)]
         Just facetRef -> do
             alerts <- cardBaseQuery card |> fetch
             let values = sort (nub (mapMaybe (clauseValue facetRef) alerts))
-            pure [pinCard card facetRef value | value <- values]
-    forM expanded \expandedCard -> do
+            pure [(pinCard card facetRef value, Just value) | value <- values]
+    forM pinned \(expandedCard, pinnedValue) -> do
         hidden <- evaluateHideWhen expandedCard
+        let valueSuffix = maybe "" ("-" <>) (Text.replace " " "_" <$> pinnedValue)
         pure ExpandedCard
-            { ecDomId = "dashboard-card-" <> baseKey <> forEachSuffix card expandedCard
+            { ecDomId = "dashboard-card-" <> baseKey <> valueSuffix
             , ecCard = expandedCard
             , ecHidden = hidden
+            , ecIndex = index
+            , ecValue = pinnedValue
             }
 
 pinCard :: DashboardCard -> FacetRef -> Text -> DashboardCard
@@ -137,15 +142,6 @@ pinCard card facetRef value = card
     { cardMatch = card.cardMatch ++ [MatchClause facetRef OpEq value []]
     , cardTitle = Just (Text.replace "{value}" value (fromMaybe value card.cardTitle))
     }
-
--- | Recover the pinned value from the clause pinCard appended, so the domId
--- is stable across expansion sites (HTTP render and WS broadcast).
-forEachSuffix :: DashboardCard -> DashboardCard -> Text
-forEachSuffix template expanded = case template.cardForEach of
-    Just facetRef -> case [value | MatchClause f OpEq value _ <- drop (length template.cardMatch) expanded.cardMatch, f == facetRef] of
-        (value : _) -> "-" <> Text.replace " " "_" value
-        [] -> ""
-    Nothing -> ""
 
 evaluateHideWhen :: (?modelContext :: ModelContext) => DashboardCard -> IO Bool
 evaluateHideWhen card = case card.cardHideWhen of

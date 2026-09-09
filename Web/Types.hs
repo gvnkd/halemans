@@ -56,6 +56,7 @@ data DashboardsController
     | NewDashboardAction
     | CreateDashboardAction
     | ShowDashboardAction { dashboardId :: !(Id Dashboard) }
+    | ShowDashboardCardAction { dashboardId :: !(Id Dashboard), cardIndex :: !Int }
     | EditDashboardAction { dashboardId :: !(Id Dashboard) }
     | UpdateDashboardAction { dashboardId :: !(Id Dashboard) }
     | DeleteDashboardAction { dashboardId :: !(Id Dashboard) }

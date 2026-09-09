@@ -2092,6 +2092,8 @@ m9Spec = describe "resolved facets (milestone 9)" do
             Right decoded -> pure decoded
         expanded <- expandDashboardCards cards
         map ecDomId expanded `shouldBe` ["dashboard-card-0-" <> envA, "dashboard-card-0-" <> envB]
+        map ecIndex expanded `shouldBe` [0, 0]
+        map ecValue expanded `shouldBe` [Just envA, Just envB]
         map (.cardTitle) (map ecCard expanded) `shouldBe` [Just ("probe " <> envA), Just ("probe " <> envB)]
         -- envA has no critical alert: hidden; envB has one: visible
         map ecHidden expanded `shouldBe` [True, False]
@@ -2107,6 +2109,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
                 Right decoded -> pure decoded
             [expandedCard] <- expandDashboardCards single
             expandedCard.ecDomId `shouldBe` "dashboard-card-0"
+            expandedCard.ecValue `shouldBe` Nothing
             expandedCard.ecHidden `shouldBe` expectedHidden
 
     it "summary cards aggregate status counts like the overview env cards" do

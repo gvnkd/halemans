@@ -5,8 +5,9 @@ import Web.View.Dashboards.Index
 import Web.View.Dashboards.New
 import Web.View.Dashboards.Edit
 import Web.View.Dashboards.Show
+import Web.View.Dashboards.Card
 import Application.Helper.DashboardConfig
-import Application.Service.DashboardCards (expandDashboardCards)
+import Application.Service.DashboardCards (runCardQuery, expandDashboardCards, ExpandedCard (..))
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Control.Monad (void)
@@ -55,6 +56,18 @@ instance Controller DashboardsController where
             result <- fetchCardData expandedCard
             pure (expandedCard, result)
         render ShowView { dashboard, cardSections }
+
+    action ShowDashboardCardAction { dashboardId, cardIndex } = do
+        dashboard <- fetchOwn dashboardId
+        let valueFilter = paramOrNothing @Text "value"
+        let cards = fromRight [] (decodeDashboardConfig dashboard.config)
+        expanded <- expandDashboardCards cards
+        let matches = [ec | ec <- expanded, ec.ecIndex == cardIndex, maybe True (\value -> ec.ecValue == Just value) valueFilter]
+        case matches of
+            (expandedCard : _) -> do
+                alerts <- runCardQuery expandedCard.ecCard
+                render CardView { dashboard, expandedCard, alerts }
+            [] -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "card not found"
 
     action EditDashboardAction { dashboardId } = do
         dashboard <- fetchOwn dashboardId

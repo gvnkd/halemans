@@ -185,7 +185,7 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                         ]
                     forM expanded \expandedCard -> do
                         result <- fetchCardData expandedCard
-                        pure (fragment expandedCard.ecDomId (renderCardSection (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
+                        pure (fragment expandedCard.ecDomId (renderCardSection (Id dashUuid) (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         matches <- matchesFilters scopeFilters alert

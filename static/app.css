@@ -225,6 +225,11 @@ a:hover { color: var(--accent-hover); }
 /* LLM analysis markdown: wrap long lines instead of overflowing the card */
 .llm-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* Summary cards flow in a grid like the overview env cards */
+.dashboard-card-summary { display: inline-block; width: 32%; vertical-align: top; margin-right: 1%; }
+@media (max-width: 992px) { .dashboard-card-summary { width: 48%; } }
+@media (max-width: 768px) { .dashboard-card-summary { width: 100%; margin-right: 0; } }
+
 .env-card { border-left: 4px solid var(--status-closed); }
 .env-card-critical { border-left-color: var(--severity-critical); }
 .env-card-high { border-left-color: var(--severity-high); }

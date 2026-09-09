@@ -101,6 +101,7 @@ GET  /dashboards                              DashboardsAction
 GET  /dashboards/new                          NewDashboardAction
 POST /dashboards                              CreateDashboardAction
 GET  /dashboards/{dashboardId}                ShowDashboardAction
+GET  /dashboards/{dashboardId}/cards/{cardIndex} ShowDashboardCardAction
 GET  /dashboards/{dashboardId}/edit           EditDashboardAction
 POST /dashboards/{dashboardId}/update         UpdateDashboardAction
 POST /dashboards/{dashboardId}/delete         DeleteDashboardAction
