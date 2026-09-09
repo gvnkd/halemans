@@ -15,7 +15,7 @@ spec :: Spec
 spec = describe "Application.Service.Provision" do
     describe "parseProvisionConfig" do
         it "parses the empty config" do
-            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing)
+            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
             let json = Aeson.encode $ object
@@ -175,6 +175,54 @@ spec = describe "Application.Service.Provision" do
             let json = "{\"sources\": {\"items\": [{\"type\": \"grafana\", \"name\": \"g\", \"hostGroupsFile\": \"groups.json\"}]}}"
             case parseProvisionConfig json of
                 Left err -> err `shouldSatisfy` ("hostGroupsFile" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "parses field mappings and dashboards" do
+            let json = Aeson.encode $ object
+                    [ "fieldMappings" .= object ["items" .= [object
+                        [ "facet" .= ("Environments" :: Text)
+                        , "rank" .= (50 :: Int)
+                        , "kind" .= ("attr" :: Text)
+                        , "key" .= ("Environments" :: Text)
+                        ]]]
+                    , "dashboards" .= object ["items" .= [object
+                        [ "name" .= ("Service matrix" :: Text)
+                        , "userEmail" .= ("ops@example.com" :: Text)
+                        , "position" .= (60 :: Int)
+                        , "config" .= [object
+                            [ "title" .= ("ETCD / EU / PROD" :: Text)
+                            , "match" .= [object ["facet" .= ("attr:Service" :: Text), "op" .= ("=" :: Text), "value" .= ("ETCD" :: Text)]]
+                            , "groupBy" .= ("field:host" :: Text)
+                            , "limit" .= (20 :: Int)
+                            ]]
+                        ]]]
+                    ]
+            case parseProvisionConfig json of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [mapping] = maybe [] (.items) config.fieldMappings
+                    mapping.facet `shouldBe` "Environments"
+                    mapping.enabled `shouldBe` True
+                    let [dashboard] = maybe [] (.items) config.dashboards
+                    dashboard.userEmail `shouldBe` "ops@example.com"
+                    dashboard.isDefault `shouldBe` False
+
+        it "rejects unknown field mapping kinds" do
+            let json = "{\"fieldMappings\": {\"items\": [{\"facet\": \"env\", \"rank\": 1, \"kind\": \"cmdb\", \"key\": \"env\"}]}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown field mapping kind" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects field-kind mappings with an unknown alert field" do
+            let json = "{\"fieldMappings\": {\"items\": [{\"facet\": \"env\", \"rank\": 1, \"kind\": \"field\", \"key\": \"bogus\"}]}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown alert field" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects dashboards with an undecodable config" do
+            let json = "{\"dashboards\": {\"items\": [{\"name\": \"d\", \"userEmail\": \"a@b.c\", \"config\": [{\"match\": [{\"facet\": \"bogus:x\", \"op\": \"=\", \"value\": \"y\"}]}]}]}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("invalid config for dashboard" `isInfixOf`)
                 Right _ -> expectationFailure "expected parse failure"
 
     describe "parseHostGroupsFile" do

@@ -1612,6 +1612,73 @@ m7Spec = describe "provisioning (milestone 7)" do
             m7Apply (object ["sources" .= object ["strict" .= True, "items" .= keepItems]])
                 `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf ("cannot delete source \"m7-doomed-src-" <> suffix <> "\"") msg
 
+    it "provisions field mappings and dashboards idempotently" do
+        suffix <- tshow <$> nextRandom
+        let email = "m7-" <> suffix <> "@dev"
+            facet = "m7facet-" <> suffix
+            dashName = "m7-dash-" <> suffix
+            config enabled = object
+                [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= ("x" :: Text)]]]
+                , "fieldMappings" .= object ["items" .= [object
+                    [ "facet" .= facet, "rank" .= (42 :: Int), "kind" .= ("field" :: Text)
+                    , "key" .= ("env" :: Text), "enabled" .= enabled ]]]
+                , "dashboards" .= object ["items" .= [object
+                    [ "name" .= dashName, "userEmail" .= email, "isDefault" .= True
+                    , "config" .= [object
+                        [ "title" .= ("probe" :: Text)
+                        , "match" .= [object ["facet" .= ("field:env" :: Text), "op" .= ("=" :: Text), "value" .= ("prod" :: Text)]]
+                        , "groupBy" .= ("field:host" :: Text) ]] ]]]
+                ]
+        m7Apply (config False)
+        m7Apply (config True)
+        mappings <- query @FieldMapping |> filterWhere (#facet, facet) |> fetch
+        map (\mapping -> (mapping.rank, mapping.enabled)) mappings `shouldBe` [(42, True)]
+        dashboards <- query @Dashboard |> filterWhere (#name, dashName) |> fetch
+        map (.isDefault) dashboards `shouldBe` [True]
+
+    it "dashboard provisioning rejects an unresolvable userEmail" do
+        suffix <- tshow <$> nextRandom
+        m7Apply (object ["dashboards" .= object ["items" .= [object
+            [ "name" .= ("m7-dash-" <> suffix), "userEmail" .= ("m7-ghost-" <> suffix <> "@dev") ]]]])
+            `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "does not resolve to any user" msg
+
+    it "strict fieldMappings/dashboards delete only unlisted rows" do
+        suffix <- tshow <$> nextRandom
+        let email = "m7-" <> suffix <> "@dev"
+            doomedFacet = "m7doomed-" <> suffix
+            doomedDash = "m7-doomed-dash-" <> suffix
+        owner <- m7User email
+        void $ sqlExecTyped [typedSql|
+            INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+            VALUES (${doomedFacet}, 7, 'field', 'env', true)
+        |]
+        _ <- newRecord @Dashboard
+            |> set #userId (get #id owner)
+            |> set #name doomedDash
+            |> createRecord
+        mappings <- query @FieldMapping |> fetch
+        let keepMappings = [object
+                [ "facet" .= mapping.facet, "rank" .= mapping.rank, "kind" .= mapping.kind
+                , "key" .= mapping.key, "enabled" .= mapping.enabled ]
+                | mapping <- mappings, mapping.facet /= doomedFacet ]
+        dashboards <- query @Dashboard |> fetch
+        keepDashboards <- fmap catMaybes $ forM dashboards \dashboard -> do
+            dashOwner <- fetch dashboard.userId
+            pure $ if dashboard.name == doomedDash then Nothing else Just (object
+                [ "name" .= dashboard.name, "userEmail" .= dashOwner.email
+                , "config" .= dashboard.config, "position" .= dashboard.position
+                , "isDefault" .= dashboard.isDefault ])
+        m7Apply (object
+            [ "fieldMappings" .= object ["strict" .= True, "items" .= keepMappings]
+            , "dashboards" .= object ["strict" .= True, "items" .= keepDashboards]
+            ])
+        query @FieldMapping |> filterWhere (#facet, doomedFacet) |> fetch `shouldReturn` []
+        query @Dashboard |> filterWhere (#name, doomedDash) |> fetch `shouldReturn` []
+        remainingMappings <- query @FieldMapping |> fetch
+        length remainingMappings `shouldBe` length keepMappings
+        remainingDashboards <- query @Dashboard |> fetch
+        length remainingDashboards `shouldBe` length keepDashboards
+
 m7Apply :: (?modelContext :: ModelContext) => Aeson.Value -> IO ()
 m7Apply config = do
     suffix <- tshow <$> nextRandom

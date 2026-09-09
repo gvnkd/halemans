@@ -8,6 +8,8 @@ module Application.Service.Provision
 , MemberItem (..)
 , LlmItem (..)
 , PromptTemplateItem (..)
+, FieldMappingItem (..)
+, DashboardItem (..)
 , ProvisionError (..)
 , parseProvisionConfig
 , parseHostGroupsFile
@@ -22,7 +24,9 @@ import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Helper.Theme (isValidTheme)
+import Application.Helper.DashboardConfig (decodeDashboardConfig)
 import Application.Connector.Zabbix (ZabbixGroup)
+import Application.Pipeline.Grouping (parseAlertField)
 import Application.Service.HostGroups (replaceHostGroupCache)
 import Application.Service.PollerControl (ensurePollerForSourceType)
 import qualified Data.Aeson as Aeson
@@ -38,10 +42,11 @@ import Control.Monad (void)
 
 -- Declarative bootstrap provisioning (design_docs/milestone_7.md). At process
 -- start (hooked from Config.hs) the JSON file named by
--- HALEMANS_PROVISION_CONFIG is upserted into users, sources, teams and LLM
--- config. Every category applies inside one transaction guarded by an
--- advisory lock so racing web/worker boots converge. Parsing is strict:
--- unknown keys and unresolvable references abort startup.
+-- HALEMANS_PROVISION_CONFIG is upserted into users, sources, teams, LLM
+-- config, field mappings and dashboards. Every category applies inside one
+-- transaction guarded by an advisory lock so racing web/worker boots
+-- converge. Parsing is strict: unknown keys and unresolvable references
+-- abort startup.
 
 newtype ProvisionError = ProvisionError Text deriving stock (Show)
 instance Exception ProvisionError
@@ -56,6 +61,8 @@ data ProvisionConfig = ProvisionConfig
     , sources :: Maybe (Section SourceItem)
     , teams :: Maybe (Section TeamItem)
     , llm :: Maybe (Section LlmItem)
+    , fieldMappings :: Maybe (Section FieldMappingItem)
+    , dashboards :: Maybe (Section DashboardItem)
     } deriving (Eq, Show)
 
 data UserItem = UserItem
@@ -112,6 +119,22 @@ data PromptTemplateItem = PromptTemplateItem
     , body :: Text
     , active :: Bool
     , notes :: Maybe Text
+    } deriving (Eq, Show)
+
+data FieldMappingItem = FieldMappingItem
+    { facet :: Text
+    , rank :: Int
+    , kind :: Text
+    , key :: Text
+    , enabled :: Bool
+    } deriving (Eq, Show)
+
+data DashboardItem = DashboardItem
+    { name :: Text
+    , userEmail :: Text
+    , config :: Value
+    , position :: Int
+    , isDefault :: Bool
     } deriving (Eq, Show)
 
 -- Parsing (strict: unknown keys rejected at every level, milestone_7.md §2)
@@ -222,13 +245,42 @@ instance FromJSON LlmItem where
         promptTemplates <- o .:? "promptTemplates" .!= []
         pure LlmItem { .. }
 
+instance FromJSON FieldMappingItem where
+    parseJSON = Aeson.withObject "fieldMappings item" \o -> do
+        rejectUnknownFields ["facet", "rank", "kind", "key", "enabled"] o
+        facet <- o .: "facet"
+        rank <- o .: "rank"
+        kind <- o .: "kind"
+        key <- o .: "key"
+        enabled <- o .:? "enabled" .!= True
+        unless (kind `elem` ["field", "label", "attr"]) do
+            fail ("unknown field mapping kind \"" <> cs kind <> "\" (valid: field label attr)")
+        when (kind == "field" && isNothing (parseAlertField key)) do
+            fail ("unknown alert field \"" <> cs key <> "\" (valid: env host service check severity status)")
+        pure FieldMappingItem { .. }
+
+instance FromJSON DashboardItem where
+    parseJSON = Aeson.withObject "dashboards item" \o -> do
+        rejectUnknownFields ["name", "userEmail", "config", "position", "isDefault"] o
+        name <- o .: "name"
+        userEmail <- o .: "userEmail"
+        config <- o .:? "config" .!= Aeson.toJSON ([] :: [Value])
+        position <- o .:? "position" .!= 0
+        isDefault <- o .:? "isDefault" .!= False
+        case decodeDashboardConfig config of
+            Left err -> fail ("invalid config for dashboard \"" <> cs name <> "\": " <> cs err)
+            Right _ -> pure ()
+        pure DashboardItem { .. }
+
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
-        rejectUnknownFields ["users", "sources", "teams", "llm"] o
+        rejectUnknownFields ["users", "sources", "teams", "llm", "fieldMappings", "dashboards"] o
         users <- o .:? "users"
         sources <- o .:? "sources"
         teams <- o .:? "teams"
         llm <- o .:? "llm"
+        fieldMappings <- o .:? "fieldMappings"
+        dashboards <- o .:? "dashboards"
         pure ProvisionConfig { .. }
 
 parseProvisionConfig :: LByteString -> Either Text ProvisionConfig
@@ -250,6 +302,8 @@ applyProvisionConfig path = do
     applySources config.sources
     applyTeams config.teams
     applyLlm config.llm
+    applyFieldMappings config.fieldMappings
+    applyDashboards config.dashboards
     putStrLn ("provision: applied " <> cs path)
 
 -- Category application: one advisory-locked transaction per category
@@ -586,3 +640,87 @@ strictReconcileLlm items = do
             case result of
                 Left err -> throwIO $ ProvisionError ("llm: cannot delete prompt template \"" <> name <> "\" v" <> tshow row.version <> ": " <> tshow (err :: SomeException))
                 Right () -> pure ()
+
+-- Field mappings (milestone 9 §2): upsert on the UNIQUE (facet, rank) pair;
+-- re-provision updates kind/key/enabled in place.
+
+applyFieldMappings :: (?modelContext :: ModelContext) => Maybe (Section FieldMappingItem) -> IO ()
+applyFieldMappings Nothing = pure ()
+applyFieldMappings (Just section) = withProvisionLock "fieldMappings" do
+    forM_ section.items upsertFieldMapping
+    when section.strict (strictDeleteFieldMappings section.items)
+
+upsertFieldMapping :: (?modelContext :: ModelContext) => FieldMappingItem -> IO ()
+upsertFieldMapping item = do
+    let facet = item.facet
+        rank = item.rank
+        kind = item.kind
+        key = item.key
+        enabled = item.enabled
+    void $ sqlExecTyped [typedSql|
+        INSERT INTO field_mappings (facet, rank, kind, key, enabled)
+        VALUES (${facet}, ${rank}, ${kind}, ${key}, ${enabled})
+        ON CONFLICT (facet, rank) DO UPDATE SET
+            kind = EXCLUDED.kind,
+            key = EXCLUDED.key,
+            enabled = EXCLUDED.enabled,
+            updated_at = NOW()
+    |]
+
+strictDeleteFieldMappings :: (?modelContext :: ModelContext) => [FieldMappingItem] -> IO ()
+strictDeleteFieldMappings items = do
+    let keepPairs = map (\item -> (item.facet, item.rank)) items
+    allMappings <- query @FieldMapping |> fetch
+    -- Nothing references field_mappings: deletes are always safe.
+    forM_ (filter (\mapping -> (mapping.facet, mapping.rank) `notElem` keepPairs) allMappings) deleteRecord
+
+-- Dashboards: upsert by (user email, name). isDefault flips the user's other
+-- dashboards off (mirrors dashboards_default_idx unique-WHERE).
+
+applyDashboards :: (?modelContext :: ModelContext) => Maybe (Section DashboardItem) -> IO ()
+applyDashboards Nothing = pure ()
+applyDashboards (Just section) = withProvisionLock "dashboards" do
+    forM_ section.items upsertDashboard
+    when section.strict (strictDeleteDashboards section.items)
+
+upsertDashboard :: (?modelContext :: ModelContext) => DashboardItem -> IO ()
+upsertDashboard item = do
+    maybeUser <- query @User |> filterWhere (#email, item.userEmail) |> fetchOneOrNothing
+    user <- case maybeUser of
+        Nothing -> throwIO $ ProvisionError ("dashboards." <> item.name <> ": userEmail \"" <> item.userEmail <> "\" does not resolve to any user")
+        Just user -> pure user
+    let userId = get #id user
+    maybeRow <- query @Dashboard
+        |> filterWhere (#userId, userId)
+        |> filterWhere (#name, item.name)
+        |> fetchOneOrNothing
+    now <- getCurrentTime
+    _ <- case maybeRow of
+        Nothing -> newRecord @Dashboard
+            |> set #userId userId
+            |> set #name item.name
+            |> set #config item.config
+            |> set #position item.position
+            |> set #isDefault item.isDefault
+            |> createRecord
+        Just row -> row
+            |> set #config item.config
+            |> set #position item.position
+            |> set #isDefault item.isDefault
+            |> set #updatedAt now
+            |> updateRecord
+    when item.isDefault do
+        let name = item.name
+        void $ sqlExecTyped [typedSql|
+            UPDATE dashboards SET is_default = false, updated_at = NOW()
+            WHERE user_id = ${userId} AND name <> ${name} AND is_default
+        |]
+
+strictDeleteDashboards :: (?modelContext :: ModelContext) => [DashboardItem] -> IO ()
+strictDeleteDashboards items = do
+    let keepPairs = map (\item -> (item.userEmail, item.name)) items
+    allDashboards <- query @Dashboard |> fetch
+    -- Nothing references dashboards: deletes are always safe.
+    forM_ allDashboards \dashboard -> do
+        owner <- fetch dashboard.userId
+        when ((owner.email, dashboard.name) `notElem` keepPairs) (deleteRecord dashboard)

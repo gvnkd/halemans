@@ -72,5 +72,55 @@
         "members": [{"email": "admin@example.com", "role": "lead"}]
       }
     ]
+  },
+  "fieldMappings": {
+    "items": [
+      {"facet": "env", "rank": 100, "kind": "field", "key": "env"},
+      {"facet": "service", "rank": 100, "kind": "field", "key": "service"},
+      {"facet": "host", "rank": 100, "kind": "field", "key": "host"},
+      {"facet": "Environments", "rank": 50, "kind": "attr", "key": "Environments"},
+      {"facet": "Service", "rank": 50, "kind": "attr", "key": "Service"},
+      {"facet": "Location", "rank": 50, "kind": "attr", "key": "Location"}
+    ]
+  },
+  "dashboards": {
+    "items": [
+      {
+        "name": "Service matrix",
+        "userEmail": "admin@example.com",
+        "position": 60,
+        "isDefault": false,
+        "config": [
+          {
+            "title": "ETCD / EU / PROD",
+            "match": [
+              {"facet": "attr:Service", "op": "=", "value": "ETCD"},
+              {"facet": "attr:Location", "op": "=", "value": "EU"},
+              {"facet": "attr:Environments", "op": "=", "value": "PROD"}
+            ],
+            "groupBy": "field:host",
+            "limit": 20
+          },
+          {
+            "title": "POSTGRES / US / TEST",
+            "match": [
+              {"facet": "attr:Service", "op": "=", "value": "POSTGRES"},
+              {"facet": "attr:Location", "op": "=", "value": "US"},
+              {"facet": "attr:Environments", "op": "=", "value": "TEST"}
+            ],
+            "groupBy": "field:host",
+            "limit": 20
+          },
+          {
+            "title": "All environments",
+            "match": [
+              {"facet": "attr:Environments", "op": "~", "value": "*"}
+            ],
+            "groupBy": "attr:Environments",
+            "limit": 50
+          }
+        ]
+      }
+    ]
   }
 }
