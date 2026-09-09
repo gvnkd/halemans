@@ -222,6 +222,9 @@ a:hover { color: var(--accent-hover); }
 
 .alert-row.suppressed { opacity: 0.5; }
 
+/* LLM analysis markdown: wrap long lines instead of overflowing the card */
+.llm-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .env-card { border-left: 4px solid var(--status-closed); }
 .env-card-critical { border-left-color: var(--severity-critical); }
 .env-card-high { border-left-color: var(--severity-high); }

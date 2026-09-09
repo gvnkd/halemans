@@ -9,7 +9,7 @@ dashboardFormFields name config isDefault = [hsx|
     </div>
     <div class="mb-3">
         <label class="form-label">Cards (JSON)</label>
-        <textarea name="config" class="form-control font-monospace" rows="6" data-testid="dashboard-config">{config}</textarea>
+        <textarea name="config" class="form-control font-monospace" rows="12" style="resize: vertical;" data-testid="dashboard-config">{config}</textarea>
         <div class="form-text">Ordered list of cards, e.g. {exampleConfig}. Empty filter lists match everything.</div>
     </div>
     <div class="mb-3 form-check">

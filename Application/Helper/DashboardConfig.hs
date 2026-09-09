@@ -22,6 +22,7 @@ import Application.Pipeline.Grouping (AlertField (..), alertFieldName, alertFiel
 import Application.Service.Facets (facetValue)
 import Data.Aeson (Value (..), object, (.=), (.:), (.:?), (.!=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encode.Pretty as Pretty
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.KeyMap (KeyMap)
@@ -228,7 +229,7 @@ encodeDashboardConfig = Aeson.toJSON
 
 -- | Pretty-printed JSON for the edit form textarea.
 renderDashboardConfig :: [DashboardCard] -> Text
-renderDashboardConfig = cs . Aeson.encode
+renderDashboardConfig = cs . Pretty.encodePretty
 
 -- | Value of a facet reference on an alert row: attr: reads the materialized
 -- facets map (resolved override chain), field: the raw column, label:

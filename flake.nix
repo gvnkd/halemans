@@ -111,6 +111,7 @@
                         wai
                         text
                         aeson
+                        aeson-pretty
                         lens
                         vector
                         wreq
