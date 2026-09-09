@@ -50,7 +50,7 @@ import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Assets.Attrs (objectAttributes)
 import Application.Pipeline.Grouping (facetValue)
 import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..), decodeDashboardConfig)
-import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..))
+import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..), runCardSummary, CardSummary (..))
 import Application.Job.FacetBackfill ()
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
@@ -2010,6 +2010,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
                 , cardLegacy = False
                 , cardForEach = Nothing
                 , cardHideWhen = Nothing
+                , cardSummary = False
                 , cardExtras = mempty
                 }
         groups <- runCardQueryGroups card (FacetAttr "DB Cluster")
@@ -2107,6 +2108,32 @@ m9Spec = describe "resolved facets (milestone 9)" do
             [expandedCard] <- expandDashboardCards single
             expandedCard.ecDomId `shouldBe` "dashboard-card-0"
             expandedCard.ecHidden `shouldBe` expectedHidden
+
+    it "summary cards aggregate status counts like the overview env cards" do
+        suffix <- tshow <$> nextRandom
+        let host = "m9sum-host-" <> suffix
+            envA = "m9sum-a-" <> suffix
+            envB = "m9sum-b-" <> suffix
+        source <- integrationSource "webhook" ("m9sum-" <> suffix) "" (object [])
+        let eventIn env fp severity status = (testEventIn env fp status :: NormalizedEvent) { host = Just host, severity = severity }
+        Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a1") "warning" Firing)
+        Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a2") "info" Firing)
+        void $ ingest source (eventIn envA ("itest:" <> suffix <> "-a2") "info" Resolved)
+        Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b1") "critical" Firing)
+        cards <- case decodeDashboardConfig (Aeson.toJSON [object
+                [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                , "forEach" .= ("field:env" :: Text)
+                , "summary" .= True
+                ]]) of
+            Left err -> expectationFailure (cs err) >> error "unreachable"
+            Right decoded -> pure decoded
+        expanded <- expandDashboardCards cards
+        map ecDomId expanded `shouldBe` ["dashboard-card-0-" <> envA, "dashboard-card-0-" <> envB]
+        forM_ (map ecCard expanded) \expandedCard -> expandedCard.cardSummary `shouldBe` True
+        [summaryA, summaryB] <- mapM (runCardSummary . ecCard) expanded
+        (summaryA.csFiring, summaryA.csResolved, summaryA.csWorstSeverity) `shouldBe` (1, 1, Just "warning")
+        (summaryB.csFiring, summaryB.csResolved, summaryB.csWorstSeverity) `shouldBe` (1, 0, Just "critical")
+        summaryA.csHourly `shouldSatisfy` (not . null)
 
 -- | Reuse an existing mapping row (dev DBs carry the seeded passthrough
 -- mappings); the Bool marks rows this run created and must delete.

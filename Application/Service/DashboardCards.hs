@@ -1,8 +1,10 @@
 module Application.Service.DashboardCards
 ( CardGroup (..)
+, CardSummary (..)
 , ExpandedCard (..)
 , runCardQuery
 , runCardQueryGroups
+, runCardSummary
 , expandDashboardCards
 , legacyCardDomKey
 ) where
@@ -18,6 +20,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Data.List (sortOn, nub, sort)
 import Data.Ord (Down (..))
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 
 -- Card query engine (design_docs/milestone_9.md §5): single-table queries
 -- over alerts; facet references compile to columns or jsonb accessors on the
@@ -60,6 +63,37 @@ runCardQueryGroups card groupBy = do
 
 groupWorst :: [Alert] -> Text
 groupWorst = foldl' (\worst alert -> if severityRank alert.severity > severityRank worst then alert.severity else worst) "info"
+
+-- | Rollup for "summary": true cards — the same numbers the overview env
+-- cards show (counts by status, suppressed, worst severity, hourly buckets
+-- over the last 24h), scoped to the card's match.
+data CardSummary = CardSummary
+    { csFiring :: Int
+    , csAcked :: Int
+    , csResolved :: Int
+    , csSuppressed :: Int
+    , csWorstSeverity :: Maybe Text
+    , csHourly :: [(UTCTime, Int)]
+    } deriving (Eq, Show)
+
+runCardSummary :: (?modelContext :: ModelContext) => DashboardCard -> IO CardSummary
+runCardSummary card = do
+    alerts <- cardBaseQuery card |> fetch
+    now <- getCurrentTime
+    let countFor status = length (filter (\alert -> alert.status == status) alerts)
+        cutoff = addUTCTime (-24 * 3600) now
+        hourOf alert = posixSecondsToUTCTime (fromIntegral (seconds - seconds `mod` 3600))
+            where seconds = floor (utcTimeToPOSIXSeconds alert.createdAt) :: Int
+        hourly = Map.toAscList (Map.fromListWith (+)
+            [(hourOf alert, 1) | alert <- alerts, alert.createdAt > cutoff])
+    pure CardSummary
+        { csFiring = countFor "firing"
+        , csAcked = countFor "ack"
+        , csResolved = countFor "resolved"
+        , csSuppressed = length (filter (.suppressed) alerts)
+        , csWorstSeverity = if null alerts then Nothing else Just (groupWorst alerts)
+        , csHourly = hourly
+        }
 
 -- | A template card expanded to a concrete renderable card: forEach pins the
 -- facet value into the match, the title gets {value} substituted, domId is

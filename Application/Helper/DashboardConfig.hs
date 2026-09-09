@@ -64,6 +64,7 @@ data DashboardCard = DashboardCard
     , cardLegacy :: Bool
     , cardForEach :: Maybe FacetRef
     , cardHideWhen :: Maybe HideWhen
+    , cardSummary :: Bool
     , cardExtras :: KeyMap Value
     } deriving (Eq, Show)
 
@@ -152,6 +153,7 @@ instance Aeson.FromJSON DashboardCard where
                     , cardLegacy = True
                     , cardForEach = Nothing
                     , cardHideWhen = Nothing
+                    , cardSummary = False
                     , cardExtras
                     }
             _ -> do
@@ -168,7 +170,8 @@ instance Aeson.FromJSON DashboardCard where
                     Nothing -> pure Nothing
                     Just text -> maybe (fail ("invalid forEach facet reference: " <> cs text)) (pure . Just) (parseFacetRef text)
                 cardHideWhen <- o .:? "hideWhen"
-                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen"]
+                cardSummary <- o .:? "summary" .!= False
+                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary"]
                 pure DashboardCard { cardLegacy = False, .. }
 
 instance Aeson.ToJSON DashboardCard where
@@ -183,6 +186,7 @@ instance Aeson.ToJSON DashboardCard where
                     ++ [ "groupBy" .= facetRefText groupBy | Just groupBy <- [card.cardGroupBy] ]
                     ++ [ "forEach" .= facetRefText forEach | Just forEach <- [card.cardForEach] ]
                     ++ [ "hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen] ]
+                    ++ [ "summary" .= True | card.cardSummary ]
 
 -- | Legacy {env, filters} re-encode (milestone_9.md §4): only cards decoded
 -- from the legacy shape whose clauses still fit it encode this way, so old
@@ -191,7 +195,7 @@ legacyCardValue :: DashboardCard -> Maybe Value
 legacyCardValue card = do
     guard card.cardLegacy
     guard (isNothing card.cardTitle && isNothing card.cardGroupBy && card.cardLimit == 100)
-    guard (isNothing card.cardForEach && isNothing card.cardHideWhen)
+    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary)
     let envValues = [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
         statusLists = [values | MatchClause (FacetField FieldStatus) OpIn _ values <- card.cardMatch]
         severityLists = [values | MatchClause (FacetField FieldSeverity) OpIn _ values <- card.cardMatch]

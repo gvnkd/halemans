@@ -120,6 +120,13 @@
             "limit": 50
           },
           {
+            "title": "PostgreSQL summary",
+            "match": [
+              {"facet": "attr:Service", "op": "=", "value": "PostgreSQL"}
+            ],
+            "summary": true
+          },
+          {
             "title": "PostgreSQL cluster {value}",
             "match": [
               {"facet": "attr:Service", "op": "=", "value": "PostgreSQL"}

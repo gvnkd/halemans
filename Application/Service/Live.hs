@@ -30,9 +30,9 @@ import qualified Data.ByteString.Lazy as BL
 import Network.Wai (Request)
 import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
-import Web.View.Dashboards.Show (renderCardSection, CardData (..))
+import Web.View.Dashboards.Show (renderCardSection, fetchCardData)
 import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, DashboardCard (..))
-import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups, expandDashboardCards, ExpandedCard (..))
+import Application.Service.DashboardCards (expandDashboardCards, ExpandedCard (..))
 import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
 import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.Assets.Cache as AssetsCache
@@ -184,11 +184,7 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                         , matchCardAlert card alert
                         ]
                     forM expanded \expandedCard -> do
-                        result <- if expandedCard.ecHidden
-                            then pure HiddenCard
-                            else case expandedCard.ecCard.cardGroupBy of
-                                Nothing -> FlatCard <$> runCardQuery expandedCard.ecCard
-                                Just groupBy -> GroupedCard <$> runCardQueryGroups expandedCard.ecCard groupBy
+                        result <- fetchCardData expandedCard
                         pure (fragment expandedCard.ecDomId (renderCardSection (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
