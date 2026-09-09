@@ -10,7 +10,7 @@ data NewView = NewView
 instance View NewView where
     html NewView { .. } = [hsx|
         <h1>New escalation policy</h1>
-        <form method="POST" action={CreateEscalationPolicyAction} data-testid="escalation-policy-form" style="max-width: 700px">
+        <form method="POST" action={CreateEscalationPolicyAction} data-testid="escalation-policy-form" class="maxw-700">
             <div class="mb-3">
                 <label class="form-label">Name</label>
                 <input name="name" type="text" class="form-control" data-testid="policy-name" required="required"/>

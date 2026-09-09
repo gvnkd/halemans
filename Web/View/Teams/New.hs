@@ -10,7 +10,7 @@ data NewView = NewView
 instance View NewView where
     html NewView { .. } = [hsx|
         <h1>New team</h1>
-        <form method="POST" action={CreateTeamAction} data-testid="team-form" style="max-width: 600px">
+        <form method="POST" action={CreateTeamAction} data-testid="team-form" class="maxw-600">
             <div class="mb-3">
                 <label class="form-label">Name</label>
                 <input name="name" type="text" class="form-control" data-testid="team-name" required="required"/>

@@ -126,6 +126,7 @@ renderCard card = [hsx|
             , rcSuppressed = fromIntegral card.cardSuppressed
             , rcHourly = map (fmap fromIntegral) card.cardHourly
             , rcLink = Nothing
+            , rcSize = Nothing
             }
 
 cardLink :: EnvCard -> Html

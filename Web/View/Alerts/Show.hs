@@ -1,6 +1,6 @@
 module Web.View.Alerts.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml)
+import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml, severityBadgeHtml, panelHtml, detailsJsonHtml, inlinePostFormHtml)
 import qualified Data.Aeson as Aeson
 
 data ShowView = ShowView
@@ -27,7 +27,7 @@ instance View ShowView where
             <h1 data-testid="alert-title">{alert.title}</h1>
             <p>
                 {alertStatusBadgeHtml alert}
-                <span class={"badge severity-badge severity-" <> alert.severity} data-testid="alert-severity">{alert.severity}</span>
+                {severityBadgeHtml alert.severity (Just "alert-severity")}
                 {suppressedBadge}
                 {writeBackChipHtml (head writeBackAttempts)}
             </p>
@@ -54,13 +54,7 @@ instance View ShowView where
 
             {llmPanelHtml alert analyses feedback llmJobErrors agentRoles}
 
-            <section class="card mb-3" data-testid="jira-panel">
-                <div class="card-body">
-                    <h5 class="card-title">Jira</h5>
-                    {jiraLinksHtml alert jiraLinks}
-                    {jiraCreateForm}
-                </div>
-            </section>
+            {panelHtml "jira-panel" Nothing "Jira" mempty jiraPanelBody}
 
             <h2>Timeline</h2>
             <ul class="timeline" id={timelineDomId} data-testid="alert-timeline">
@@ -79,15 +73,9 @@ instance View ShowView where
             </form>
 
             <h2>Labels</h2>
-            <details data-testid="alert-labels">
-                <summary>labels.json</summary>
-                <pre class="json-viewer">{prettyJson alert.labels}</pre>
-            </details>
+            {detailsJsonHtml "alert-labels" "labels.json" (prettyJson alert.labels)}
             <h2>Annotations</h2>
-            <details data-testid="alert-annotations">
-                <summary>annotations.json</summary>
-                <pre class="json-viewer">{prettyJson alert.annotations}</pre>
-            </details>
+            {detailsJsonHtml "alert-annotations" "annotations.json" (prettyJson alert.annotations)}
         </div>
     |]
         where
@@ -98,6 +86,7 @@ instance View ShowView where
                 Just url -> [hsx|<p class="source-link" data-testid="alert-source-link"><a href={url} target="_blank">source: {url}</a></p>|]
                 Nothing -> mempty
             actionBar = renderActionBar alert canAck canClose
+            jiraPanelBody = [hsx|{jiraLinksHtml alert jiraLinks}{jiraCreateForm}|]
             jiraCreateForm = if canAck && alert.status /= "closed"
                 then jiraTicketForm alert
                 else mempty
@@ -113,11 +102,7 @@ renderActionBar alert canAck canClose = [hsx|
 |]
     where
         ackButton = if canAck && alert.status == "firing"
-            then [hsx|
-                <form method="POST" action={AckAlertAction alert.id} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-warning" data-testid="ack-button">Ack</button>
-                </form>
-            |]
+            then inlinePostFormHtml (pathTo (AckAlertAction alert.id)) "Ack" "btn btn-sm btn-warning" (Just "ack-button") False
             else mempty
         ackTimeoutForm = if canAck && alert.status == "firing"
             then [hsx|
@@ -128,11 +113,7 @@ renderActionBar alert canAck canClose = [hsx|
             |]
             else mempty
         unackButton = if canAck && alert.status == "ack"
-            then [hsx|
-                <form method="POST" action={UnackAlertAction alert.id} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="unack-button">Unack</button>
-                </form>
-            |]
+            then inlinePostFormHtml (pathTo (UnackAlertAction alert.id)) "Unack" "btn btn-sm btn-outline-secondary" (Just "unack-button") False
             else mempty
         closeForm = if canClose && alert.status == "ack"
             then [hsx|

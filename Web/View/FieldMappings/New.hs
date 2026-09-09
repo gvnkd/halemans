@@ -6,7 +6,7 @@ data NewView = NewView
 instance View NewView where
     html NewView = [hsx|
         <h1>New field mapping</h1>
-        <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form" style="max-width: 600px">
+        <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form" class="maxw-600">
             {fieldMappingFormFields "" 100 "field" "" True}
             <button type="submit" class="btn btn-primary" data-testid="field-mapping-submit">Create</button>
         </form>

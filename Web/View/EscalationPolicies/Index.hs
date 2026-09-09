@@ -1,5 +1,6 @@
 module Web.View.EscalationPolicies.Index where
 import Web.View.Prelude
+import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml)
 import Application.Pipeline.Escalation (stepsFromJSON, EscalationStep (..))
 import qualified Data.Text as Text
 
@@ -7,10 +8,7 @@ data IndexView = IndexView { policies :: [EscalationPolicy] }
 
 instance View IndexView where
     html IndexView { .. } = [hsx|
-        <div class="d-flex justify-content-between align-items-center">
-            <h1>Escalation policies</h1>
-            <a href={NewEscalationPolicyAction} class="btn btn-sm btn-primary" data-testid="new-escalation-policy">New policy</a>
-        </div>
+        {pageHeaderHtml "Escalation policies" newButton}
         <table class="table" data-testid="escalation-policies-table">
             <thead>
                 <tr>
@@ -24,6 +22,8 @@ instance View IndexView where
             </tbody>
         </table>
     |]
+        where
+            newButton = [hsx|<a href={NewEscalationPolicyAction} class="btn btn-sm btn-primary" data-testid="new-escalation-policy">New policy</a>|]
 
 renderPolicy :: EscalationPolicy -> Html
 renderPolicy policy = [hsx|
@@ -31,10 +31,7 @@ renderPolicy policy = [hsx|
         <td>{policy.name}</td>
         <td>{forEach (stepsFromJSON policy.steps) renderStep}</td>
         <td>
-            <a href={EditEscalationPolicyAction policy.id} class="btn btn-sm btn-outline-secondary" data-testid="edit-escalation-policy">Edit</a>
-            <form method="POST" action={DeleteEscalationPolicyAction policy.id} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-            </form>
+            {editDeleteActionsHtml (pathTo (EditEscalationPolicyAction policy.id)) (pathTo (DeleteEscalationPolicyAction policy.id)) "edit-escalation-policy"}
         </td>
     </tr>
 |]

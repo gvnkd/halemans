@@ -1,5 +1,6 @@
 module Web.View.Integrations.Index where
 import Web.View.Prelude
+import Web.View.Fragments (inlinePostFormHtml)
 
 data IndexView = IndexView
     { confluenceConfigured :: Bool
@@ -10,7 +11,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView { .. } = [hsx|
         <h1>Integrations</h1>
-        <table class="table" style="max-width: 700px" data-testid="integrations-table">
+        <table class="table maxw-700" data-testid="integrations-table">
             <thead>
                 <tr><th>Integration</th><th>Configured</th><th></th></tr>
             </thead>
@@ -40,11 +41,7 @@ configuredBadge False = [hsx|<span class="badge status-firing">no</span>|]
 -- render an inert button that names the missing configuration.
 testButton :: Bool -> IntegrationsController -> Text -> Text -> Html
 testButton configured action testId envNames
-    | configured = [hsx|
-        <form method="POST" action={action} class="d-inline">
-            <button type="submit" class="btn btn-sm btn-outline-primary" data-testid={testId}>Test connection</button>
-        </form>
-    |]
+    | configured = inlinePostFormHtml (pathTo action) "Test connection" "btn btn-sm btn-outline-primary" (Just testId) False
     | otherwise = [hsx|
         <button class="btn btn-sm btn-outline-secondary" disabled={True} data-testid={testId} title={hint}>Test connection</button>
     |]

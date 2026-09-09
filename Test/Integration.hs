@@ -2012,6 +2012,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
                 , cardHideWhen = Nothing
                 , cardSummary = False
                 , cardSortBy = []
+                , cardSize = Nothing
                 , cardExtras = mempty
                 }
         groups <- runCardQueryGroups card (FacetAttr "DB Cluster")

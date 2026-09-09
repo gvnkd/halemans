@@ -124,7 +124,8 @@
             "match": [
               {"facet": "attr:Service", "op": "=", "value": "PostgreSQL"}
             ],
-            "summary": true
+            "summary": true,
+            "size": {"width": 480, "height": 200}
           },
           {
             "title": "PostgreSQL cluster {value}",

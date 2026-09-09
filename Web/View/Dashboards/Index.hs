@@ -1,12 +1,12 @@
 module Web.View.Dashboards.Index where
 import Web.View.Prelude
+import Web.View.Fragments (pageHeaderHtml, inlinePostFormHtml)
 
 data IndexView = IndexView { dashboards :: [Dashboard] }
 
 instance View IndexView where
     html IndexView { .. } = [hsx|
-        <h1>Dashboards</h1>
-        <p><a href={NewDashboardAction} class="btn btn-sm btn-primary" data-testid="new-dashboard">New dashboard</a></p>
+        {pageHeaderHtml "Dashboards" newButton}
         <table class="table" data-testid="dashboards-table">
             <thead>
                 <tr><th>Name</th><th>Default</th><th>Position</th><th></th></tr>
@@ -16,6 +16,8 @@ instance View IndexView where
             </tbody>
         </table>
     |]
+        where
+            newButton = [hsx|<a href={NewDashboardAction} class="btn btn-sm btn-primary" data-testid="new-dashboard">New dashboard</a>|]
 
 renderRow :: Dashboard -> Html
 renderRow dashboard = [hsx|
@@ -31,9 +33,7 @@ renderRow dashboard = [hsx|
         <td>
             {defaultButton}
             <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary" data-testid="edit-dashboard">Edit</a>
-            <form method="POST" action={DeleteDashboardAction dashboard.id} class="d-inline js-delete">
-                <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="delete-dashboard">Delete</button>
-            </form>
+            {inlinePostFormHtml (pathTo (DeleteDashboardAction dashboard.id)) "Delete" "btn btn-sm btn-outline-danger" (Just "delete-dashboard") True}
         </td>
     </tr>
 |]
@@ -43,8 +43,4 @@ renderRow dashboard = [hsx|
             else mempty
         defaultButton = if dashboard.isDefault
             then mempty
-            else [hsx|
-                <form method="POST" action={SetDefaultDashboardAction dashboard.id} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="set-default-dashboard">Set default</button>
-                </form>
-            |]
+            else inlinePostFormHtml (pathTo (SetDefaultDashboardAction dashboard.id)) "Set default" "btn btn-sm btn-outline-secondary" (Just "set-default-dashboard") False

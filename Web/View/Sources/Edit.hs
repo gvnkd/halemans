@@ -14,7 +14,7 @@ data EditView = EditView
 instance View EditView where
     html EditView { .. } = [hsx|
         <h1>Edit source</h1>
-        <form method="POST" action={UpdateSourceAction source.id} data-testid="source-edit-form" style="max-width: 500px">
+        <form method="POST" action={UpdateSourceAction source.id} data-testid="source-edit-form" class="maxw-500">
             <div class="mb-3">
                 <label class="form-label">Name</label>
                 <input name="name" type="text" class="form-control" value={source.name} data-testid="source-name" required="required"/>

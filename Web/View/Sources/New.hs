@@ -6,7 +6,7 @@ data NewView = NewView
 instance View NewView where
     html NewView = [hsx|
         <h1>New source</h1>
-        <form method="POST" action={CreateSourceAction} data-testid="source-form" style="max-width: 500px">
+        <form method="POST" action={CreateSourceAction} data-testid="source-form" class="maxw-500">
             <div class="mb-3">
                 <label class="form-label">Name</label>
                 <input name="name" type="text" class="form-control" data-testid="source-name" required="required"/>

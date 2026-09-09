@@ -7,7 +7,7 @@ instance View (NewView User) where
         <div class="h-100" id="sessions-new">
             <div class="d-flex align-items-center">
                 <div class="w-100">
-                    <div style="max-width: 400px" class="mx-auto mb-5">
+                    <div class="mx-auto mb-5 maxw-400">
                         <h5>Halemans — sign in</h5>
                         {renderForm user}
                     </div>

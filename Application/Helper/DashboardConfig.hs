@@ -5,6 +5,8 @@ module Application.Helper.DashboardConfig
 , HideWhen (..)
 , SortKey (..)
 , SortTarget (..)
+, CardSize (..)
+, defaultCardSize
 , DashboardCard (..)
 , decodeDashboardConfig
 , encodeDashboardConfig
@@ -61,6 +63,29 @@ data HideWhen = HideWhen
     , hwMaxCount :: Int
     } deriving (Eq, Show)
 
+-- | Summary-card dimensions in px. A card without "size" keeps the CSS
+-- defaults (defaultCardSize); "size" overrides per card and may itself omit
+-- either dimension.
+data CardSize = CardSize
+    { csWidth :: Int
+    , csHeight :: Int
+    } deriving (Eq, Show)
+
+-- | Sane defaults, mirroring the CSS (.env-card height, summary flex-basis).
+defaultCardSize :: CardSize
+defaultCardSize = CardSize 360 168
+
+instance Aeson.FromJSON CardSize where
+    parseJSON = Aeson.withObject "CardSize" \o -> do
+        csWidth <- o .:? "width" .!= csWidth defaultCardSize
+        csHeight <- o .:? "height" .!= csHeight defaultCardSize
+        when (csWidth < 80) (fail "size.width must be >= 80")
+        when (csHeight < 60) (fail "size.height must be >= 60")
+        pure CardSize { .. }
+
+instance Aeson.ToJSON CardSize where
+    toJSON size = object ["width" .= size.csWidth, "height" .= size.csHeight]
+
 data DashboardCard = DashboardCard
     { cardTitle :: Maybe Text
     , cardMatch :: [MatchClause]
@@ -71,6 +96,7 @@ data DashboardCard = DashboardCard
     , cardHideWhen :: Maybe HideWhen
     , cardSummary :: Bool
     , cardSortBy :: [SortKey]
+    , cardSize :: Maybe CardSize
     , cardExtras :: KeyMap Value
     } deriving (Eq, Show)
 
@@ -200,6 +226,7 @@ instance Aeson.FromJSON DashboardCard where
                     , cardHideWhen = Nothing
                     , cardSummary = False
                     , cardSortBy = []
+                    , cardSize = Nothing
                     , cardExtras
                     }
             _ -> do
@@ -218,7 +245,8 @@ instance Aeson.FromJSON DashboardCard where
                 cardHideWhen <- o .:? "hideWhen"
                 cardSummary <- o .:? "summary" .!= False
                 cardSortBy <- o .:? "sortBy" .!= []
-                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary", "sortBy"]
+                cardSize <- o .:? "size"
+                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary", "sortBy", "size"]
                 pure DashboardCard { cardLegacy = False, .. }
 
 instance Aeson.ToJSON DashboardCard where
@@ -235,6 +263,7 @@ instance Aeson.ToJSON DashboardCard where
                     ++ [ "hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen] ]
                     ++ [ "summary" .= True | card.cardSummary ]
                     ++ [ "sortBy" .= card.cardSortBy | not (null card.cardSortBy) ]
+                    ++ [ "size" .= size | Just size <- [card.cardSize] ]
 
 -- | Legacy {env, filters} re-encode (milestone_9.md §4): only cards decoded
 -- from the legacy shape whose clauses still fit it encode this way, so old
@@ -243,7 +272,7 @@ legacyCardValue :: DashboardCard -> Maybe Value
 legacyCardValue card = do
     guard card.cardLegacy
     guard (isNothing card.cardTitle && isNothing card.cardGroupBy && card.cardLimit == 100)
-    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary && null card.cardSortBy)
+    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary && null card.cardSortBy && isNothing card.cardSize)
     let envValues = [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
         statusLists = [values | MatchClause (FacetField FieldStatus) OpIn _ values <- card.cardMatch]
         severityLists = [values | MatchClause (FacetField FieldSeverity) OpIn _ values <- card.cardMatch]

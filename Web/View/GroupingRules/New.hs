@@ -6,7 +6,7 @@ data NewView = NewView
 instance View NewView where
     html NewView = [hsx|
         <h1>New grouping rule</h1>
-        <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form" style="max-width: 600px">
+        <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form" class="maxw-600">
             {groupingRuleFormFields "" 0 True "" "" ""}
             <button type="submit" class="btn btn-primary" data-testid="grouping-rule-submit">Create</button>
         </form>

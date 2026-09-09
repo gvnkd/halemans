@@ -1,6 +1,6 @@
 module Web.View.Dashboards.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml, RollupCard (..), rollupCardHtml)
+import Web.View.Fragments (alertRowHtml, RollupCard (..), rollupCardHtml, statusBadgeHtml, severityBadgeHtml)
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
@@ -43,9 +43,9 @@ instance View ShowView where
 
 renderCardSection :: Id Dashboard -> (ExpandedCard, CardData) -> Html
 renderCardSection dashboardId (expanded, result) = case result of
-    HiddenCard -> [hsx|<section class={sectionClass <> " d-none"} id={domId} data-testid={domId}></section>|]
+    HiddenCard -> [hsx|<section class={sectionClass <> " d-none"} id={domId} data-testid={domId} style={widthStyle}></section>|]
     _ -> [hsx|
-        <section class={sectionClass} id={domId} data-testid={domId}>
+        <section class={sectionClass} id={domId} data-testid={domId} style={widthStyle}>
             <h2>
                 {cardTitleText expanded.ecCard}
                 {filterChips}
@@ -58,6 +58,12 @@ renderCardSection dashboardId (expanded, result) = case result of
         domId = expanded.ecDomId
         sectionClass :: Text
         sectionClass = "dashboard-card" <> if card.cardSummary then " dashboard-card-summary mb-3" else " mb-4"
+        -- Summary cards are fixed-width flex items; "size".width overrides
+        -- the CSS flex-basis, flat/grouped cards always span full width.
+        widthStyle :: Maybe Text
+        widthStyle = case (card.cardSummary, card.cardSize) of
+            (True, Just size) -> Just ("flex: 0 0 " <> tshow size.csWidth <> "px")
+            _ -> Nothing
         cardBody = case result of
             FlatCard alerts -> [hsx|
                 <table class="table table-sm">
@@ -75,7 +81,7 @@ renderCardSection dashboardId (expanded, result) = case result of
         tbodyId = domId <> "-tbody"
         filterChips = [hsx|
             <span>
-                {forEach (legacyList FieldStatus) statusChip}
+                {forEach (legacyList FieldStatus) statusBadgeHtml}
                 {forEach (legacyList FieldSeverity) severityChip}
             </span>
         |]
@@ -118,6 +124,7 @@ renderSummary dashboardId expanded summary = rollupCardHtml RollupCard
     , rcSuppressed = summary.csSuppressed
     , rcHourly = summary.csHourly
     , rcLink = Just (cardAlertsLink dashboardId expanded)
+    , rcSize = expanded.ecCard.cardSize
     }
 
 renderGroup :: Text -> CardGroup -> Html
@@ -125,7 +132,7 @@ renderGroup cardId group = [hsx|
     <div class="dashboard-group mb-3" id={groupId} data-testid={groupId}>
         <h3>
             {group.cgValue}
-            <span class={"badge severity-badge severity-" <> group.cgWorstSeverity}>{group.cgWorstSeverity}</span>
+            {severityBadgeHtml group.cgWorstSeverity Nothing}
             <span class="badge bg-secondary" data-testid="dashboard-group-count">{group.cgTotal}</span>
         </h3>
         <table class="table table-sm">
@@ -138,8 +145,5 @@ renderGroup cardId group = [hsx|
     where
         groupId = cardId <> "-group-" <> Text.replace " " "_" group.cgValue
 
-statusChip :: Text -> Html
-statusChip status = [hsx|<span class={"badge status-" <> status}>{status}</span>|]
-
 severityChip :: Text -> Html
-severityChip severity = [hsx|<span class={"badge severity-badge severity-" <> severity}>{severity}</span>|]
+severityChip severity = severityBadgeHtml severity Nothing

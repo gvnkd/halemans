@@ -153,6 +153,3 @@ instance View ShowView where
                     </tbody>
                 </table>
             |]
-
-utcTooltip :: UTCTime -> Text
-utcTooltip time = "UTC: " <> cs (show time)

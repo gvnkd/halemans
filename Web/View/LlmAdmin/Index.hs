@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.Index where
 import Web.View.Prelude
+import Web.View.Fragments (sectionHeaderHtml, inlinePostFormHtml, stateBadgeHtml)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 
@@ -38,7 +39,7 @@ instance View IndexView where
         <h1>LLM</h1>
 
         <h2>Effective configuration</h2>
-        <table class="table" style="max-width: 700px" data-testid="llm-config">
+        <table class="table maxw-700" data-testid="llm-config">
             <tbody>
                 <tr><td>Endpoint</td><td>{fromMaybe "-" endpoint}</td></tr>
                 <tr><td>Model</td><td>{fromMaybe "-" model}</td></tr>
@@ -47,14 +48,9 @@ instance View IndexView where
                 <tr><td>Rate limit</td><td data-testid="llm-rate-limit">{rateLimit} requests/min</td></tr>
             </tbody>
         </table>
-        <form method="POST" action={TestLlmConnectionAction} class="d-inline">
-            <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="test-llm">Test connection</button>
-        </form>
+        {inlinePostFormHtml (pathTo TestLlmConnectionAction) "Test connection" "btn btn-sm btn-outline-primary" (Just "test-llm") False}
 
-        <div class="d-flex justify-content-between align-items-center mt-4">
-            <h2>Providers</h2>
-            <a href={NewLlmProviderAction} class="btn btn-sm btn-primary" data-testid="new-llm-provider">New provider</a>
-        </div>
+        {sectionHeaderHtml "Providers" newProviderButton}
         <table class="table" data-testid="llm-providers">
             <thead>
                 <tr><th>Name</th><th>Endpoint</th><th>Model</th><th>API key env</th><th>Tools</th><th>Enabled</th><th></th></tr>
@@ -64,10 +60,7 @@ instance View IndexView where
             </tbody>
         </table>
 
-        <div class="d-flex justify-content-between align-items-center mt-4">
-            <h2>Agent roles</h2>
-            <a href={NewLlmRoleAction} class="btn btn-sm btn-primary" data-testid="new-llm-role">New role</a>
-        </div>
+        {sectionHeaderHtml "Agent roles" newRoleButton}
         <table class="table" data-testid="llm-roles">
             <thead>
                 <tr><th>Name</th><th>Template</th><th>Tools</th><th>Enabled</th><th>Default</th><th></th></tr>
@@ -77,13 +70,7 @@ instance View IndexView where
             </tbody>
         </table>
 
-        <div class="d-flex justify-content-between align-items-center mt-4">
-            <h2>Prompt templates</h2>
-            <div>
-                <a href={LlmQueueAction} class="btn btn-sm btn-outline-secondary" data-testid="llm-queue-link">Queue</a>
-                <a href={NewLlmTemplateAction} class="btn btn-sm btn-primary" data-testid="new-llm-template">New template</a>
-            </div>
-        </div>
+        {sectionHeaderHtml "Prompt templates" templateActions}
         <table class="table" data-testid="llm-templates">
             <thead>
                 <tr><th>Name</th><th>Version</th><th>Active</th><th>Feedback</th><th>Notes</th><th></th></tr>
@@ -103,6 +90,15 @@ instance View IndexView where
             </tbody>
         </table>
     |]
+        where
+            newProviderButton = [hsx|<a href={NewLlmProviderAction} class="btn btn-sm btn-primary" data-testid="new-llm-provider">New provider</a>|]
+            newRoleButton = [hsx|<a href={NewLlmRoleAction} class="btn btn-sm btn-primary" data-testid="new-llm-role">New role</a>|]
+            templateActions = [hsx|
+                <div>
+                    <a href={LlmQueueAction} class="btn btn-sm btn-outline-secondary" data-testid="llm-queue-link">Queue</a>
+                    <a href={NewLlmTemplateAction} class="btn btn-sm btn-primary" data-testid="new-llm-template">New template</a>
+                </div>
+            |]
 
 providerRowHtml :: LlmConfig -> Html
 providerRowHtml provider = [hsx|
@@ -126,21 +122,9 @@ providerRowHtml provider = [hsx|
             then [hsx|<span class="badge status-resolved" data-testid="llm-provider-enabled">enabled</span>|]
             else mempty
         toggleForm = if provider.enabled
-            then [hsx|
-                <form method="POST" action={DisableLlmProviderAction providerId} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="llm-provider-disable">Disable</button>
-                </form>
-            |]
-            else [hsx|
-                <form method="POST" action={EnableLlmProviderAction providerId} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="llm-provider-enable">Enable</button>
-                </form>
-            |]
-        deleteForm = [hsx|
-            <form method="POST" action={DeleteLlmProviderAction providerId} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-provider-delete">Delete</button>
-            </form>
-        |]
+            then inlinePostFormHtml (pathTo (DisableLlmProviderAction providerId)) "Disable" "btn btn-sm btn-outline-warning" (Just "llm-provider-disable") False
+            else inlinePostFormHtml (pathTo (EnableLlmProviderAction providerId)) "Enable" "btn btn-sm btn-outline-primary" (Just "llm-provider-enable") False
+        deleteForm = inlinePostFormHtml (pathTo (DeleteLlmProviderAction providerId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-provider-delete") False
 
 roleRowHtml :: LlmAgentRole -> Html
 roleRowHtml role = [hsx|
@@ -164,33 +148,19 @@ roleRowHtml role = [hsx|
         toolsText = case decodeTools role.tools of
             [] -> "(none)"
             names -> Text.intercalate ", " names
-        enabledBadge = if role.enabled
-            then [hsx|<span class="badge status-resolved" data-testid="llm-role-enabled">enabled</span>|]
-            else [hsx|<span class="badge" data-testid="llm-role-disabled">disabled</span>|]
+        enabledBadge = stateBadgeHtml role.enabled "llm-role"
         defaultBadge = if role.isDefault
             then [hsx|<span class="badge status-ack" data-testid="llm-role-default">default</span>|]
             else mempty
-        toggleForm = [hsx|
-            <form method="POST" action={ToggleLlmRoleAction roleId} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="llm-role-toggle">{toggleLabel}</button>
-            </form>
-        |]
+        toggleForm = inlinePostFormHtml (pathTo (ToggleLlmRoleAction roleId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "llm-role-toggle") False
         toggleLabel :: Text
         toggleLabel = if role.enabled then "Disable" else "Enable"
         defaultForm = if role.isDefault || not role.enabled
             then mempty
-            else [hsx|
-                <form method="POST" action={SetDefaultLlmRoleAction roleId} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="llm-role-set-default">Set default</button>
-                </form>
-            |]
+            else inlinePostFormHtml (pathTo (SetDefaultLlmRoleAction roleId)) "Set default" "btn btn-sm btn-outline-primary" (Just "llm-role-set-default") False
         deleteForm = if role.isDefault
             then mempty
-            else [hsx|
-                <form method="POST" action={DeleteLlmRoleAction roleId} class="d-inline js-delete">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-role-delete">Delete</button>
-                </form>
-            |]
+            else inlinePostFormHtml (pathTo (DeleteLlmRoleAction roleId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-role-delete") True
 
 decodeTools :: Aeson.Value -> [Text]
 decodeTools value = fromMaybe [] (Aeson.decode (Aeson.encode value))
@@ -216,18 +186,10 @@ templateRowHtml row = [hsx|
             else mempty
         activateForm = if row.active
             then mempty
-            else [hsx|
-                <form method="POST" action={ActivateLlmTemplateAction row.templateId} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="llm-template-activate">Activate</button>
-                </form>
-            |]
+            else inlinePostFormHtml (pathTo (ActivateLlmTemplateAction row.templateId)) "Activate" "btn btn-sm btn-outline-primary" (Just "llm-template-activate") False
         deleteForm = if row.active
             then mempty
-            else [hsx|
-                <form method="POST" action={DeleteLlmTemplateAction row.templateId} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-template-delete">Delete</button>
-                </form>
-            |]
+            else inlinePostFormHtml (pathTo (DeleteLlmTemplateAction row.templateId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-template-delete") False
 
 counterRowHtml :: CounterRow -> Html
 counterRowHtml row = [hsx|

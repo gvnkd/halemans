@@ -10,7 +10,7 @@ data NewView = NewView
 instance View NewView where
     html NewView { .. } = [hsx|
         <h1>New blackout</h1>
-        <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form" style="max-width: 500px">
+        <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form" class="maxw-500">
             <div class="mb-3">
                 <label class="form-label">Scope type</label>
                 <select name="scopeType" class="form-select" data-testid="blackout-scope-type">

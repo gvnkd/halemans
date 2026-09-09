@@ -22,6 +22,17 @@ module Web.View.Fragments
 , eventSummary
 , filterMultiSelect
 , filterTextInput
+, pageHeaderHtml
+, sectionHeaderHtml
+, inlinePostFormHtml
+, editDeleteActionsHtml
+, enabledBadgeHtml
+, stateBadgeHtml
+, statusBadgeHtml
+, severityBadgeHtml
+, panelHtml
+, detailsJsonHtml
+, externalLinkFooterHtml
 , RollupCard (..)
 , rollupCardHtml
 ) where
@@ -33,6 +44,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
+import Application.Helper.DashboardConfig (CardSize (..))
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -44,10 +56,10 @@ alertRowHtml :: Alert -> Html
 alertRowHtml alert = [hsx|
     <tr data-fingerprint={alert.fingerprint} class={rowClass} id={alertRowDomId alert}>
         <td>
-            <span class={"badge status-badge status-" <> alert.status}>{alert.status}</span>
+            {statusBadgeHtml alert.status}
             {suppressedMarker}
         </td>
-        <td><span class={"badge severity-badge severity-" <> alert.severity}>{alert.severity}</span></td>
+        <td>{severityBadgeHtml alert.severity Nothing}</td>
         <td><a href={ShowAlertAction (get #id alert)}>{alert.title}</a>{groupBadge}</td>
         <td>{fromMaybe "" alert.env}</td>
         <td>{fromMaybe "" alert.host}</td>
@@ -135,8 +147,8 @@ groupRowDomId group = "group-row-" <> tshow (get #id group)
 groupRowHtml :: (AlertGroup, [Alert]) -> Html
 groupRowHtml (group, members) = [hsx|
     <tr class="group-row" id={groupRowDomId group} data-group-key={group.groupKey}>
-        <td><span class={"badge status-badge status-" <> group.status}>{group.status}</span></td>
-        <td><span class={"badge severity-badge severity-" <> group.worstSeverity}>{group.worstSeverity}</span></td>
+        <td>{statusBadgeHtml group.status}</td>
+        <td>{severityBadgeHtml group.worstSeverity Nothing}</td>
         <td>
             <a href={ShowGroupAction (get #id group)}>{group.title}</a>
             <span class="badge group-member-count" data-testid="group-member-count">{group.memberCount}</span>
@@ -167,8 +179,8 @@ groupHeaderHtml group = [hsx|
         <h1>{group.title}</h1>
         <p>
             <code>{group.groupKey}</code>
-            <span class={"badge status-badge status-" <> group.status}>{group.status}</span>
-            <span class={"badge severity-badge severity-" <> group.worstSeverity}>{group.worstSeverity}</span>
+            {statusBadgeHtml group.status}
+            {severityBadgeHtml group.worstSeverity Nothing}
             <span class="badge group-member-count">{group.memberCount} members</span>
         </p>
     </div>
@@ -181,20 +193,9 @@ cmdbPanelDomId :: Text
 cmdbPanelDomId = "cmdb-panel"
 
 cmdbPanelHtml :: Alert -> Maybe CmdbEntry -> Html
-cmdbPanelHtml alert entry = [hsx|
-    <section class="card mb-3" id={cmdbPanelDomId} data-testid="cmdb-panel">
-        <div class="card-body">
-            <h5 class="card-title">CMDB {refreshButton}</h5>
-            {body}
-        </div>
-    </section>
-|]
+cmdbPanelHtml alert entry = panelHtml "cmdb-panel" (Just cmdbPanelDomId) "CMDB" refreshButton body
     where
-        refreshButton = [hsx|
-            <form method="POST" action={RefreshCmdbAction (get #id alert)} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="cmdb-refresh">Refresh</button>
-            </form>
-        |]
+        refreshButton = inlinePostFormHtml (pathTo (RefreshCmdbAction (get #id alert))) "Refresh" "btn btn-sm btn-outline-secondary" (Just "cmdb-refresh") False
         body = case entry of
             Nothing -> [hsx|<p class="text-muted" data-testid="cmdb-empty">No CMDB entry (no host/service subject, or lookup pending).</p>|]
             Just cached
@@ -203,10 +204,7 @@ cmdbPanelHtml alert entry = [hsx|
                     <div data-testid="cmdb-entry">
                         <p><strong>{cached.title}</strong></p>
                         <p data-testid="cmdb-excerpt">{cached.excerpt}</p>
-                        <p>
-                            <a href={cached.url} target="_blank" data-testid="cmdb-link">Open in Confluence</a>
-                            <span class="text-muted"> · cached {utcTimeHtml cached.fetchedAt}</span>
-                        </p>
+                        {externalLinkFooterHtml cached.url "Open in Confluence" "cached" cached.fetchedAt (Just "cmdb-link")}
                     </div>
                 |]
 
@@ -221,20 +219,9 @@ assetsPanelDomId :: Text
 assetsPanelDomId = "assets-panel"
 
 assetsPanelHtml :: Alert -> [(AssetAlertLink, AssetsObject, AssetsConfig)] -> Html
-assetsPanelHtml alert linked = [hsx|
-    <section class="card mb-3" id={assetsPanelDomId} data-testid="assets-panel">
-        <div class="card-body">
-            <h5 class="card-title">Assets {refreshButton}</h5>
-            {body}
-        </div>
-    </section>
-|]
+assetsPanelHtml alert linked = panelHtml "assets-panel" (Just assetsPanelDomId) "Assets" refreshButton body
     where
-        refreshButton = [hsx|
-            <form method="POST" action={RefreshAssetsAction (get #id alert)} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="assets-refresh">Refresh</button>
-            </form>
-        |]
+        refreshButton = inlinePostFormHtml (pathTo (RefreshAssetsAction (get #id alert))) "Refresh" "btn btn-sm btn-outline-secondary" (Just "assets-refresh") False
         body = case linked of
             [] -> [hsx|<p class="text-muted" data-testid="assets-empty">No linked assets (no info source configured, or lookup pending).</p>|]
             entries -> [hsx|<div>{forEach entries assetEntryHtml}</div>|]
@@ -252,10 +239,7 @@ assetEntryHtml (_, object, config) = [hsx|
         <dl class="asset-attrs mb-1">
             {forEach displayAttrs attrRow}
         </dl>
-        <p>
-            <a href={object.sourceUrl} target="_blank" data-testid="asset-link">Open in Jira Assets</a>
-            <span class="text-muted"> · fetched {utcTimeHtml object.fetchedAt}</span>
-        </p>
+        {externalLinkFooterHtml object.sourceUrl "Open in Jira Assets" "fetched" object.fetchedAt (Just "asset-link")}
     </div>
 |]
     where
@@ -304,11 +288,7 @@ jiraLinkItem alert link = [hsx|
 |]
     where
         unlinkForm = if link.origin == "manual"
-            then [hsx|
-                <form method="POST" action={DeleteJiraLinkAction (get #id alert) (get #id link)} class="d-inline js-delete">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="jira-unlink">unlink</button>
-                </form>
-            |]
+            then inlinePostFormHtml (pathTo (DeleteJiraLinkAction (get #id alert) (get #id link))) "unlink" "btn btn-sm btn-outline-danger" (Just "jira-unlink") True
             else mempty
 
 writeBackChipDomId :: Text
@@ -335,16 +315,9 @@ llmPanelDomId :: Text
 llmPanelDomId = "llm-panel"
 
 llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> [(Id LlmAnalysis, Text)] -> [LlmAgentRole] -> Html
-llmPanelHtml alert analyses feedback jobErrors roles = [hsx|
-    <section class="card mb-3" id={llmPanelDomId} data-testid="llm-panel">
-        <div class="card-body">
-            <h5 class="card-title">LLM analysis {reanalyzeButton}</h5>
-            {body}
-            {historyBlock}
-        </div>
-    </section>
-|]
+llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Just llmPanelDomId) "LLM analysis" reanalyzeButton bodyWithHistory
     where
+        bodyWithHistory = [hsx|{body}{historyBlock}|]
         reanalyzeButton = [hsx|
             <form method="POST" action={ReanalyzeAlertAction (get #id alert)} class="d-inline">
                 {roleSelect}
@@ -557,11 +530,12 @@ data RollupCard = RollupCard
     , rcSuppressed :: Int
     , rcHourly :: [(UTCTime, Int)]
     , rcLink :: Maybe Text
+    , rcSize :: Maybe CardSize
     }
 
 rollupCardHtml :: RollupCard -> Html
 rollupCardHtml RollupCard { .. } = [hsx|
-    <div class={cardClasses}>
+    <div class={cardClasses} style={heightStyle}>
         <div class="card-body">
             <h5 class="card-title">
                 {rcTitle}
@@ -574,7 +548,7 @@ rollupCardHtml RollupCard { .. } = [hsx|
                 {rollupSuppressedBadge rcSuppressed}
             </div>
             <div class="env-hourly" title="alerts per hour (last 24h)">
-                {forEach rcHourly rollupHourBucket}
+                {hourlyContent}
             </div>
             {rollupLink}
         </div>
@@ -584,9 +558,15 @@ rollupCardHtml RollupCard { .. } = [hsx|
         cardClasses :: Text
         cardClasses = "card env-card " <> rollupSeverityClass rcWorstSeverity
             <> if isJust rcLink then " position-relative" else ""
+        -- Height override from the card's "size" config; Nothing = CSS default.
+        heightStyle :: Maybe Text
+        heightStyle = (\size -> "height: " <> tshow size.csHeight <> "px") <$> rcSize
         rollupLink = case rcLink of
             Nothing -> mempty
             Just href -> [hsx|<a href={href} class="stretched-link" data-testid="summary-link"></a>|]
+        hourlyContent = if null rcHourly
+            then [hsx|<span class="text-muted" data-testid="hourly-empty">No events in the last 24 hours.</span>|]
+            else forEach rcHourly rollupHourBucket
 
 rollupSeverityClass :: Maybe Text -> Text
 rollupSeverityClass = \case
@@ -595,7 +575,7 @@ rollupSeverityClass = \case
 
 rollupSeverityBadge :: Maybe Text -> Html
 rollupSeverityBadge Nothing = mempty
-rollupSeverityBadge (Just severity) = [hsx|<span class={"badge severity-badge severity-" <> severity}>{severity}</span>|]
+rollupSeverityBadge (Just severity) = severityBadgeHtml severity Nothing
 
 rollupSuppressedBadge :: Int -> Html
 rollupSuppressedBadge count
@@ -610,4 +590,97 @@ rollupHourBucket (hour, count) = [hsx|
         <span class="hourly-hour">{formatTime defaultTimeLocale "%H:%M" hour}</span>
         <span class="hourly-count-badge">{count}</span>
     </span>
+|]
+
+-- Generic widgets shared across CRUD/list views (v1.23.0 cleanup): page
+-- headers, one-button POST forms, row actions, badges, card panels and JSON
+-- viewers. All data-testids stay at the call sites so Playwright selectors
+-- never move.
+
+-- | Status pill for alert/group status values.
+statusBadgeHtml :: Text -> Html
+statusBadgeHtml status = [hsx|<span class={"badge status-badge status-" <> status}>{status}</span>|]
+
+-- | Severity pill; optional data-testid (omitted when Nothing).
+severityBadgeHtml :: Text -> Maybe Text -> Html
+severityBadgeHtml severity testId = [hsx|<span class={"badge severity-badge severity-" <> severity} data-testid={testId}>{severity}</span>|]
+
+-- | enabled/disabled state pill without testids (admin list rows).
+enabledBadgeHtml :: Bool -> Html
+enabledBadgeHtml enabled
+    | enabled = [hsx|<span class="badge status-resolved">enabled</span>|]
+    | otherwise = [hsx|<span class="badge bg-secondary">disabled</span>|]
+
+-- | enabled/disabled state pill with per-state testids derived from a base
+-- name (<base>-enabled / <base>-disabled).
+stateBadgeHtml :: Bool -> Text -> Html
+stateBadgeHtml enabled base
+    | enabled = [hsx|<span class="badge status-resolved" data-testid={base <> "-enabled"}>enabled</span>|]
+    | otherwise = [hsx|<span class="badge bg-secondary" data-testid={base <> "-disabled"}>disabled</span>|]
+
+-- | List-page header: title left, action buttons right.
+pageHeaderHtml :: Text -> Html -> Html
+pageHeaderHtml title actions = [hsx|
+    <div class="d-flex justify-content-between align-items-center">
+        <h1>{title}</h1>
+        {actions}
+    </div>
+|]
+
+-- | Same shape for h2-level sections inside a page (LlmAdmin).
+sectionHeaderHtml :: Text -> Html -> Html
+sectionHeaderHtml title actions = [hsx|
+    <div class="d-flex justify-content-between align-items-center mt-4">
+        <h2>{title}</h2>
+        {actions}
+    </div>
+|]
+
+-- | Inline one-button POST form (row toggles, refreshes, deletes). jsDelete
+-- adds the JS confirm hook class used by destructive actions.
+inlinePostFormHtml :: Text -> Text -> Text -> Maybe Text -> Bool -> Html
+inlinePostFormHtml actionPath label buttonClass testId jsDelete = [hsx|
+    <form method="POST" action={actionPath} class={formClass}>
+        <button type="submit" class={buttonClass} data-testid={testId}>{label}</button>
+    </form>
+|]
+    where
+        formClass :: Text
+        formClass = "d-inline" <> if jsDelete then " js-delete" else ""
+
+-- | Standard row actions: Edit link + Delete form.
+editDeleteActionsHtml :: Text -> Text -> Text -> Html
+editDeleteActionsHtml editPath deletePath editTestId = [hsx|
+    <a href={editPath} class="btn btn-sm btn-outline-secondary" data-testid={editTestId}>Edit</a>
+    {inlinePostFormHtml deletePath "Delete" "btn btn-sm btn-outline-danger" Nothing False}
+|]
+
+-- | Card panel scaffolding (card > card-body > title + header action).
+-- sectionId is the live-update DOM id when the panel is WS-replaceable.
+panelHtml :: Text -> Maybe Text -> Text -> Html -> Html -> Html
+panelHtml testId sectionId title titleAction body = [hsx|
+    <section class="card mb-3" id={sectionId} data-testid={testId}>
+        <div class="card-body">
+            <h5 class="card-title">{title} {titleAction}</h5>
+            {body}
+        </div>
+    </section>
+|]
+
+-- | Collapsible JSON viewer block.
+detailsJsonHtml :: Text -> Text -> Text -> Html
+detailsJsonHtml testId summary json = [hsx|
+    <details data-testid={testId}>
+        <summary>{summary}</summary>
+        <pre class="json-viewer">{json}</pre>
+    </details>
+|]
+
+-- | "Open in X · cached/fetched at <time>" footer of context panels.
+externalLinkFooterHtml :: Text -> Text -> Text -> UTCTime -> Maybe Text -> Html
+externalLinkFooterHtml url label verb time linkTestId = [hsx|
+    <p>
+        <a href={url} target="_blank" data-testid={linkTestId}>{label}</a>
+        <span class="text-muted"> · {verb} {utcTimeHtml time}</span>
+    </p>
 |]

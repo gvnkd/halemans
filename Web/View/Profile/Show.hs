@@ -1,5 +1,6 @@
 module Web.View.Profile.Show where
 import Web.View.Prelude
+import Web.View.Fragments (inlinePostFormHtml)
 import Application.Helper.Theme (themes)
 import Application.Service.Api.Token (allScopes)
 import qualified Data.Text as Text
@@ -96,29 +97,21 @@ renderApiTokenRow :: ApiToken -> Html
 renderApiTokenRow token =
     let scopes :: Text
         scopes = Text.intercalate ", " token.scopes
-        lastUsed :: Text
-        lastUsed = maybe "never" tshow token.lastUsedAt
-        expires :: Text
-        expires = maybe "never" tshow token.expiresAt
         revoked = isJust token.revokedAt
     in [hsx|
     <tr data-testid="api-token-row">
         <td data-testid="api-token-row-name">{token.name}</td>
         <td><code>{token.prefix}</code></td>
         <td>{scopes}</td>
-        <td data-testid="api-token-last-used">{lastUsed}</td>
-        <td>{expires}</td>
+        <td data-testid="api-token-last-used">{utcTimeOrHtml "never" token.lastUsedAt}</td>
+        <td>{utcTimeOrHtml "never" token.expiresAt}</td>
         <td>{revokeCell revoked}</td>
     </tr>
 |]
     where
         revokeCell revoked
             | revoked = [hsx|<span class="badge bg-secondary" data-testid="api-token-revoked">revoked</span>|]
-            | otherwise = [hsx|
-                <form method="POST" action={RevokeApiTokenAction (get #id token)}>
-                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="api-token-revoke">Revoke</button>
-                </form>
-            |]
+            | otherwise = inlinePostFormHtml (pathTo (RevokeApiTokenAction (get #id token))) "Revoke" "btn btn-sm btn-outline-danger" (Just "api-token-revoke") False
 
 -- Clicking a choice swaps data-theme live and persists via POST
 -- /profile/theme (static/app.js halemansApplyTheme).

@@ -1,5 +1,6 @@
 module Web.View.Admin.Index where
 import Web.View.Prelude
+import Web.View.Fragments (inlinePostFormHtml)
 import Application.Service.JobMetrics (JobTypeMetrics (..), FailedJobRow (..))
 import qualified Data.Text as Text
 
@@ -78,14 +79,13 @@ renderMetricsRow row =
 
 renderFailureRow :: FailedJobRow -> Html
 renderFailureRow row =
-    let updatedAt = show row.failedJobUpdatedAt :: Text
-        lastError = fromMaybe "" row.failedJobError
+    let lastError = fromMaybe "" row.failedJobError
     in [hsx|
     <tr data-testid="job-failure-row">
         <td>{row.failedJobType}</td>
         <td>{row.failedJobId}</td>
         <td>{lastError}</td>
-        <td>{updatedAt}</td>
+        <td>{utcTimeHtml row.failedJobUpdatedAt}</td>
     </tr>
 |]
 
@@ -93,8 +93,6 @@ renderApiTokenRow :: (ApiToken, Text) -> Html
 renderApiTokenRow (token, ownerEmail) =
     let scopes :: Text
         scopes = Text.intercalate ", " token.scopes
-        lastUsed :: Text
-        lastUsed = maybe "never" tshow token.lastUsedAt
         revoked = isJust token.revokedAt
     in [hsx|
     <tr data-testid="admin-api-token-row">
@@ -102,15 +100,11 @@ renderApiTokenRow (token, ownerEmail) =
         <td>{token.name}</td>
         <td><code>{token.prefix}</code></td>
         <td>{scopes}</td>
-        <td>{lastUsed}</td>
+        <td>{utcTimeOrHtml "never" token.lastUsedAt}</td>
         <td>{revokeCell revoked}</td>
     </tr>
 |]
     where
         revokeCell revoked
             | revoked = [hsx|<span class="badge bg-secondary">revoked</span>|]
-            | otherwise = [hsx|
-                <form method="POST" action={AdminRevokeApiTokenAction (get #id token)}>
-                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="admin-api-token-revoke">Revoke</button>
-                </form>
-            |]
+            | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) "Revoke" "btn btn-sm btn-outline-danger" (Just "admin-api-token-revoke") False

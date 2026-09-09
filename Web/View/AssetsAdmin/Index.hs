@@ -1,5 +1,6 @@
 module Web.View.AssetsAdmin.Index where
 import Web.View.Prelude
+import Web.View.Fragments (pageHeaderHtml, inlinePostFormHtml, stateBadgeHtml)
 
 data IndexView = IndexView
     { configs :: [AssetsConfig]
@@ -8,10 +9,7 @@ data IndexView = IndexView
 
 instance View IndexView where
     html IndexView { .. } = [hsx|
-        <div class="d-flex justify-content-between align-items-center">
-            <h1>Assets info sources</h1>
-            <a href={NewAssetsConfigAction} class="btn btn-sm btn-primary" data-testid="new-assets-config">New info source</a>
-        </div>
+        {pageHeaderHtml "Assets info sources" newButton}
         <table class="table" data-testid="assets-configs">
             <thead>
                 <tr><th>Name</th><th>Base URL</th><th>Schema</th><th>Auth</th><th>Cached objects</th><th>Newest fetch</th><th>Enabled</th><th></th></tr>
@@ -21,6 +19,8 @@ instance View IndexView where
             </tbody>
         </table>
     |]
+        where
+            newButton = [hsx|<a href={NewAssetsConfigAction} class="btn btn-sm btn-primary" data-testid="new-assets-config">New info source</a>|]
 
 configRowHtml :: (Id AssetsConfig -> (Int64, Maybe UTCTime)) -> AssetsConfig -> Html
 configRowHtml statsFor config = [hsx|
@@ -31,16 +31,12 @@ configRowHtml statsFor config = [hsx|
         <td>{config.authMode}</td>
         <td data-testid="assets-cached-count">{cachedCount}</td>
         <td>{newestFetch}</td>
-        <td>{enabledBadge}</td>
+        <td>{stateBadgeHtml config.enabled "assets-config"}</td>
         <td>
             <a href={EditAssetsConfigAction configId} class="btn btn-sm btn-outline-secondary" data-testid="assets-config-edit">Edit</a>
             {toggleForm}
-            <form method="POST" action={TestAssetsConnectionAction configId} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="assets-config-test">Test</button>
-            </form>
-            <form method="POST" action={DeleteAssetsConfigAction configId} class="d-inline js-delete">
-                <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="assets-config-delete">Delete</button>
-            </form>
+            {inlinePostFormHtml (pathTo (TestAssetsConnectionAction configId)) "Test" "btn btn-sm btn-outline-primary" (Just "assets-config-test") False}
+            {inlinePostFormHtml (pathTo (DeleteAssetsConfigAction configId)) "Delete" "btn btn-sm btn-outline-danger" (Just "assets-config-delete") True}
         </td>
     </tr>
 |]
@@ -50,13 +46,6 @@ configRowHtml statsFor config = [hsx|
         newestFetch = case maybeNewest of
             Just newest -> [hsx|{utcTimeHtml newest}|]
             Nothing -> [hsx|-|]
-        enabledBadge = if config.enabled
-            then [hsx|<span class="badge status-resolved" data-testid="assets-config-enabled">enabled</span>|]
-            else [hsx|<span class="badge" data-testid="assets-config-disabled">disabled</span>|]
-        toggleForm = [hsx|
-            <form method="POST" action={ToggleAssetsConfigAction configId} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="assets-config-toggle">{toggleLabel}</button>
-            </form>
-        |]
+        toggleForm = inlinePostFormHtml (pathTo (ToggleAssetsConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "assets-config-toggle") False
         toggleLabel :: Text
         toggleLabel = if config.enabled then "Disable" else "Enable"

@@ -1,14 +1,12 @@
 module Web.View.Teams.Index where
 import Web.View.Prelude
+import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml)
 
 data IndexView = IndexView { teamsWithMembers :: [(Team, [(User, Text)])] }
 
 instance View IndexView where
     html IndexView { .. } = [hsx|
-        <div class="d-flex justify-content-between align-items-center">
-            <h1>Teams</h1>
-            <a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">New team</a>
-        </div>
+        {pageHeaderHtml "Teams" newButton}
         <table class="table" data-testid="teams-table">
             <thead>
                 <tr>
@@ -23,6 +21,8 @@ instance View IndexView where
             </tbody>
         </table>
     |]
+        where
+            newButton = [hsx|<a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">New team</a>|]
 
 renderTeam :: (Team, [(User, Text)]) -> Html
 renderTeam (team, members) = [hsx|
@@ -31,10 +31,7 @@ renderTeam (team, members) = [hsx|
         <td>{team.description}</td>
         <td>{memberList}</td>
         <td>
-            <a href={EditTeamAction team.id} class="btn btn-sm btn-outline-secondary" data-testid="edit-team">Edit</a>
-            <form method="POST" action={DeleteTeamAction team.id} class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-            </form>
+            {editDeleteActionsHtml (pathTo (EditTeamAction team.id)) (pathTo (DeleteTeamAction team.id)) "edit-team"}
         </td>
     </tr>
 |]

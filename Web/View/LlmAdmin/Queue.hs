@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.Queue where
 import Web.View.Prelude
+import Web.View.Fragments (inlinePostFormHtml)
 
 data QueueRow = QueueRow
     { analysisId :: Id LlmAnalysis
@@ -83,9 +84,5 @@ queueRowHtml row = [hsx|
             (Nothing, Just err) -> err
             (Nothing, Nothing) -> ""
         dropForm = if row.analysisStatus == "queued"
-            then [hsx|
-                <form method="POST" action={DropLlmAnalysisAction row.analysisId} class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="llm-queue-drop">Drop</button>
-                </form>
-            |]
+            then inlinePostFormHtml (pathTo (DropLlmAnalysisAction row.analysisId)) "Drop" "btn btn-sm btn-outline-danger" (Just "llm-queue-drop") False
             else mempty

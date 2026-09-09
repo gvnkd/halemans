@@ -18,3 +18,7 @@ utcTimeHtml t = [hsx|<time class="utc-time" datetime={iso}>{fallback}</time>|]
 
 maybeUtcTimeHtml :: Maybe UTCTime -> Html
 maybeUtcTimeHtml = maybe mempty utcTimeHtml
+
+-- | Maybe timestamp with a plain-text fallback ("never", "on schedule").
+utcTimeOrHtml :: Text -> Maybe UTCTime -> Html
+utcTimeOrHtml fallback = maybe [hsx|{fallback}|] utcTimeHtml

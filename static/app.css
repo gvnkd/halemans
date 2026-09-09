@@ -263,3 +263,9 @@ a:hover { color: var(--accent-hover); }
 .json-viewer { background: var(--surface); padding: 0.75rem; overflow-x: auto; border: 1px solid var(--border); }
 
 #push-banner { cursor: pointer; }
+
+/* shared width limits replacing per-view inline styles */
+.maxw-400 { max-width: 400px; }
+.maxw-500 { max-width: 500px; }
+.maxw-600 { max-width: 600px; }
+.maxw-700 { max-width: 700px; }

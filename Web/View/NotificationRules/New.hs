@@ -10,7 +10,7 @@ data NewView = NewView
 instance View NewView where
     html NewView { .. } = [hsx|
         <h1>New notification rule</h1>
-        <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form" style="max-width: 600px">
+        <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form" class="maxw-600">
             {notificationRuleFormFields teams users policies "" 0 True "" "" "high" "" 300 Nothing}
             <button type="submit" class="btn btn-primary" data-testid="notification-rule-submit">Create</button>
         </form>
