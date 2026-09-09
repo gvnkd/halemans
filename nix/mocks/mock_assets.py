@@ -1,19 +1,35 @@
 import json
 import os
 import re
+import struct
 import sys
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 DEFAULT_PORT = 18085
 BASE = "/rest/assets/latest"
 
-# 1x1 transparent PNG for icon endpoints.
-TINY_PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000d49444154789c626001000000ffff030000060005"
-    "57bfabd40000000049454e44ae426082")
+# Distinct visible 16x16 icon PNGs per icon id (1x1 transparent squares made
+# every card look icon-less).
+def solid_png(rgb, size=16):
+    def chunk(typ, data):
+        return (struct.pack(">I", len(data)) + typ + data
+                + struct.pack(">I", zlib.crc32(typ + data) & 0xffffffff))
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    raw = b"".join(b"\x00" + bytes(rgb) * size for _ in range(size))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+ICON_COLORS = {
+    25: (70, 130, 180),   # server: steel blue
+    26: (60, 179, 113),   # database: medium sea green
+    27: (218, 165, 32),   # cluster: goldenrod
+}
+
+def icon_png(icon_id):
+    return solid_png(ICON_COLORS.get(icon_id, (128, 128, 128)))
 
 SCHEMA = {
     "id": 110,
@@ -248,12 +264,14 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
-        if re.fullmatch(r"/rest/(insight|assets)/[^/]+/icon/\d+/icon.png", path):
+        m_icon = re.fullmatch(r"/rest/(insight|assets)/[^/]+/icon/(\d+)/icon.png", path)
+        if m_icon:
+            data = icon_png(int(m_icon.group(2)))
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Length", str(len(TINY_PNG)))
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(TINY_PNG)
+            self.wfile.write(data)
             return
         if not path.startswith(BASE):
             self._redirect_login()
