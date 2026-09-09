@@ -132,6 +132,7 @@
               {"facet": "attr:Service", "op": "=", "value": "PostgreSQL"}
             ],
             "forEach": "attr:DB Cluster",
+            "sortBy": ["key:severity", "attr:DB Cluster"],
             "groupBy": "field:host",
             "limit": 20,
             "hideWhen": {

@@ -125,7 +125,7 @@ expandDashboardCards cards = concat <$> forM (zip [0 ..] cards) \(index, card) -
         Just facetRef -> do
             alerts <- cardBaseQuery card |> fetch
             let values = sort (nub (mapMaybe (clauseValue facetRef) alerts))
-            pure [(pinCard card facetRef value, Just value) | value <- values]
+            sortPinned card [(pinCard card facetRef value, Just value) | value <- values]
     forM pinned \(expandedCard, pinnedValue) -> do
         hidden <- evaluateHideWhen expandedCard
         let valueSuffix = maybe "" ("-" <>) (Text.replace " " "_" <$> pinnedValue)
@@ -142,6 +142,67 @@ pinCard card facetRef value = card
     { cardMatch = card.cardMatch ++ [MatchClause facetRef OpEq value []]
     , cardTitle = Just (Text.replace "{value}" value (fromMaybe value card.cardTitle))
     }
+
+-- | sortBy ordering of one template's expanded cards: stable, per template,
+-- so config order between templates is preserved. Metrics (worst severity,
+-- count) are fetched per expanded card only when the keys need them.
+data SortMetrics = SortMetrics
+    { smWorst :: Maybe Text
+    , smCount :: Int
+    , smTitle :: Text
+    }
+
+sortPinned :: (?modelContext :: ModelContext) => DashboardCard -> [(DashboardCard, Maybe Text)] -> IO [(DashboardCard, Maybe Text)]
+sortPinned card pinned
+    | null card.cardSortBy = pure pinned
+    | otherwise = do
+        entries <- forM pinned \(pinnedCard, value) -> do
+            metrics <- cardSortMetrics pinnedCard
+            pure (metrics, pinnedCard, value)
+        pure (map (\(_, pinnedCard, value) -> (pinnedCard, value)) (sortOn (sortEntryKey card.cardSortBy) entries))
+
+cardSortMetrics :: (?modelContext :: ModelContext) => DashboardCard -> IO SortMetrics
+cardSortMetrics card = do
+    alerts <- cardBaseQuery card |> fetch
+    pure SortMetrics
+        { smWorst = if null alerts then Nothing else Just (groupWorst alerts)
+        , smCount = length alerts
+        , smTitle = fromMaybe "" card.cardTitle
+        }
+
+-- | Mapped into a sortable key: each SortKey contributes its comparison
+-- payload in order; severityRank higher = more severe, so worst-first is
+-- Just-rank descending with alert-less cards last.
+sortEntryKey :: [SortKey] -> (SortMetrics, DashboardCard, Maybe Text) -> [SortKeyPayload]
+sortEntryKey keys (metrics, card, value) = map payload keys
+    where
+        payload key = SortKeyPayload (key.skDesc) $ case key.skTarget of
+            SortBuiltin "severity" -> PInt (Down (maybe (-1) severityRank metrics.smWorst))
+            SortBuiltin "count" -> PInt (Down metrics.smCount)
+            SortBuiltin "title" -> PText metrics.smTitle
+            SortBuiltin _ -> PText ""
+            SortFacet ref -> case (card.cardForEach, value) of
+                (Just forEachRef, Just pinned) | ref == forEachRef -> PMaybeText (Just pinned)
+                _ -> PMaybeText Nothing
+
+data SortKeyPayload = SortKeyPayload Bool Payload
+data Payload = PInt (Down Int) | PText Text | PMaybeText (Maybe Text)
+
+instance Eq SortKeyPayload where
+    a == b = compare a b == EQ
+
+instance Ord SortKeyPayload where
+    compare (SortKeyPayload desc a) (SortKeyPayload _ b) = applyDir desc (comparePayload a b)
+        where applyDir False o = o
+              applyDir True EQ = EQ
+              applyDir True LT = GT
+              applyDir True GT = LT
+
+comparePayload :: Payload -> Payload -> Ordering
+comparePayload (PInt a) (PInt b) = compare a b
+comparePayload (PText a) (PText b) = compare a b
+comparePayload (PMaybeText a) (PMaybeText b) = compare (Down (isJust a), a) (Down (isJust b), b)
+comparePayload _ _ = EQ
 
 evaluateHideWhen :: (?modelContext :: ModelContext) => DashboardCard -> IO Bool
 evaluateHideWhen card = case card.cardHideWhen of

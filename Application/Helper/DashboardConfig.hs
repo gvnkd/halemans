@@ -3,11 +3,15 @@ module Application.Helper.DashboardConfig
 , MatchOp (..)
 , MatchClause (..)
 , HideWhen (..)
+, SortKey (..)
+, SortTarget (..)
 , DashboardCard (..)
 , decodeDashboardConfig
 , encodeDashboardConfig
 , renderDashboardConfig
 , parseFacetRef
+, parseSortKey
+, sortKeyText
 , facetRefText
 , clauseValue
 , matchClauseAlert
@@ -66,8 +70,48 @@ data DashboardCard = DashboardCard
     , cardForEach :: Maybe FacetRef
     , cardHideWhen :: Maybe HideWhen
     , cardSummary :: Bool
+    , cardSortBy :: [SortKey]
     , cardExtras :: KeyMap Value
     } deriving (Eq, Show)
+
+-- | Ordering of the cards a template expands into. Builtins are "key:"
+-- prefixed (severity = worst severity of the card's alerts, count = matching
+-- alert count, title); anything else is a facet reference (the pinned value
+-- for forEach cards). A leading "-" flips the direction; defaults:
+-- severity/count descending (worst/most first), title/facet ascending.
+data SortKey = SortKey
+    { skDesc :: Bool
+    , skTarget :: SortTarget
+    } deriving (Eq, Show)
+
+data SortTarget = SortBuiltin Text | SortFacet FacetRef
+    deriving (Eq, Show)
+
+parseSortKey :: Text -> Maybe SortKey
+parseSortKey raw = do
+    let (skDesc, body) = case Text.uncons raw of
+            Just ('-', rest) -> (True, rest)
+            _ -> (False, raw)
+    skTarget <- case Text.stripPrefix "key:" body of
+        Just name
+            | name `elem` ["severity", "count", "title"] -> Just (SortBuiltin name)
+            | otherwise -> Nothing
+        Nothing -> SortFacet <$> parseFacetRef body
+    pure SortKey { .. }
+
+sortKeyText :: SortKey -> Text
+sortKeyText key = (if key.skDesc then "-" else "") <> targetText
+    where
+        targetText = case key.skTarget of
+            SortBuiltin name -> "key:" <> name
+            SortFacet ref -> facetRefText ref
+
+instance Aeson.FromJSON SortKey where
+    parseJSON = Aeson.withText "SortKey" \text ->
+        maybe (fail ("invalid sortBy key: " <> cs text)) pure (parseSortKey text)
+
+instance Aeson.ToJSON SortKey where
+    toJSON = Aeson.toJSON . sortKeyText
 
 parseFacetRef :: Text -> Maybe FacetRef
 parseFacetRef raw
@@ -155,6 +199,7 @@ instance Aeson.FromJSON DashboardCard where
                     , cardForEach = Nothing
                     , cardHideWhen = Nothing
                     , cardSummary = False
+                    , cardSortBy = []
                     , cardExtras
                     }
             _ -> do
@@ -172,7 +217,8 @@ instance Aeson.FromJSON DashboardCard where
                     Just text -> maybe (fail ("invalid forEach facet reference: " <> cs text)) (pure . Just) (parseFacetRef text)
                 cardHideWhen <- o .:? "hideWhen"
                 cardSummary <- o .:? "summary" .!= False
-                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary"]
+                cardSortBy <- o .:? "sortBy" .!= []
+                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary", "sortBy"]
                 pure DashboardCard { cardLegacy = False, .. }
 
 instance Aeson.ToJSON DashboardCard where
@@ -188,6 +234,7 @@ instance Aeson.ToJSON DashboardCard where
                     ++ [ "forEach" .= facetRefText forEach | Just forEach <- [card.cardForEach] ]
                     ++ [ "hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen] ]
                     ++ [ "summary" .= True | card.cardSummary ]
+                    ++ [ "sortBy" .= card.cardSortBy | not (null card.cardSortBy) ]
 
 -- | Legacy {env, filters} re-encode (milestone_9.md §4): only cards decoded
 -- from the legacy shape whose clauses still fit it encode this way, so old
@@ -196,7 +243,7 @@ legacyCardValue :: DashboardCard -> Maybe Value
 legacyCardValue card = do
     guard card.cardLegacy
     guard (isNothing card.cardTitle && isNothing card.cardGroupBy && card.cardLimit == 100)
-    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary)
+    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary && null card.cardSortBy)
     let envValues = [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
         statusLists = [values | MatchClause (FacetField FieldStatus) OpIn _ values <- card.cardMatch]
         severityLists = [values | MatchClause (FacetField FieldSeverity) OpIn _ values <- card.cardMatch]

@@ -2011,6 +2011,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
                 , cardForEach = Nothing
                 , cardHideWhen = Nothing
                 , cardSummary = False
+                , cardSortBy = []
                 , cardExtras = mempty
                 }
         groups <- runCardQueryGroups card (FacetAttr "DB Cluster")
@@ -2137,6 +2138,33 @@ m9Spec = describe "resolved facets (milestone 9)" do
         (summaryA.csFiring, summaryA.csResolved, summaryA.csWorstSeverity) `shouldBe` (1, 1, Just "warning")
         (summaryB.csFiring, summaryB.csResolved, summaryB.csWorstSeverity) `shouldBe` (1, 0, Just "critical")
         summaryA.csHourly `shouldSatisfy` (not . null)
+
+    it "sortBy orders the cards a template expands into" do
+        suffix <- tshow <$> nextRandom
+        let host = "m9srt-host-" <> suffix
+            envA = "m9srt-a-" <> suffix
+            envB = "m9srt-b-" <> suffix
+            envC = "m9srt-c-" <> suffix
+        source <- integrationSource "webhook" ("m9srt-" <> suffix) "" (object [])
+        let eventIn env fp severity = (testEventIn env fp Firing :: NormalizedEvent) { host = Just host, severity = severity }
+        Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a") "critical")
+        Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b") "info")
+        Just _ <- ingest source (eventIn envC ("itest:" <> suffix <> "-c") "warning")
+        let expandWith sortKeys = do
+                cards <- case decodeDashboardConfig (Aeson.toJSON [object
+                        [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                        , "forEach" .= ("field:env" :: Text)
+                        , "sortBy" .= sortKeys
+                        ]]) of
+                    Left err -> expectationFailure (cs err) >> error "unreachable"
+                    Right decoded -> pure decoded
+                map ecValue <$> expandDashboardCards cards
+        -- severity: worst first (critical > warning > info), not alphabetical
+        expandWith (["key:severity"] :: [Text]) `shouldReturn` [Just envA, Just envC, Just envB]
+        -- descending facet ref: reverse alphabetical
+        expandWith (["-field:env"] :: [Text]) `shouldReturn` [Just envC, Just envB, Just envA]
+        -- count as tiebreak-relevant key: single-alert cards tie, facet breaks ties
+        expandWith (["key:count", "field:env"] :: [Text]) `shouldReturn` [Just envA, Just envB, Just envC]
 
 -- | Reuse an existing mapping row (dev DBs carry the seeded passthrough
 -- mappings); the Bool marks rows this run created and must delete.
