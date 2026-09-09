@@ -3,15 +3,15 @@ import Web.View.Prelude
 import Web.View.Fragments (alertRowHtml)
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
-import Application.Service.DashboardCards (CardGroup (..))
+import Application.Service.DashboardCards (CardGroup (..), ExpandedCard (..))
 import qualified Data.Text as Text
 
 data ShowView = ShowView
     { dashboard :: Dashboard
-    , cardSections :: [(Int, DashboardCard, CardData)]
+    , cardSections :: [(ExpandedCard, CardData)]
     }
 
-data CardData = FlatCard [Alert] | GroupedCard [CardGroup]
+data CardData = FlatCard [Alert] | GroupedCard [CardGroup] | HiddenCard
 
 instance View ShowView where
     html ShowView { .. } = [hsx|
@@ -21,42 +21,30 @@ instance View ShowView where
                 <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary">Edit</a>
                 <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">All dashboards</a>
             </p>
-            {forEach cardSections renderCardSection}
+            <div id="dashboard-cards">
+                {forEach cardSections renderCardSection}
+            </div>
         </div>
     |]
         where
             liveScope :: Text
             liveScope = "dash:" <> tshow dashboard.id
 
--- | Stable DOM key: legacy cards keep the M3 convention
--- (dashboard-card-<env>); v2 cards key by position.
-cardSectionDomId :: Int -> DashboardCard -> Text
-cardSectionDomId index card = "dashboard-card-" <> fromMaybe (tshow index) (legacyEnv card)
-
-legacyEnv :: DashboardCard -> Maybe Text
-legacyEnv card
-    | card.cardLegacy = head [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
-    | otherwise = Nothing
-
-cardTitleText :: Int -> DashboardCard -> Text
-cardTitleText index card = case (card.cardTitle, legacyEnv card, card.cardGroupBy) of
-    (Just title, _, _) -> title
-    (Nothing, Just env, _) -> env
-    (Nothing, Nothing, Just groupBy) -> "by " <> facetRefText groupBy
-    _ -> "card " <> tshow index
-
-renderCardSection :: (Int, DashboardCard, CardData) -> Html
-renderCardSection (index, card, result) = [hsx|
-    <section class="dashboard-card mb-4" id={domId} data-testid={domId}>
-        <h2>
-            {cardTitleText index card}
-            {filterChips}
-        </h2>
-        {cardBody}
-    </section>
-|]
+renderCardSection :: (ExpandedCard, CardData) -> Html
+renderCardSection (expanded, result) = case result of
+    HiddenCard -> [hsx|<section class="dashboard-card d-none" id={domId} data-testid={domId}></section>|]
+    _ -> [hsx|
+        <section class="dashboard-card mb-4" id={domId} data-testid={domId}>
+            <h2>
+                {cardTitleText expanded.ecCard}
+                {filterChips}
+            </h2>
+            {cardBody}
+        </section>
+    |]
     where
-        domId = cardSectionDomId index card
+        card = expanded.ecCard
+        domId = expanded.ecDomId
         cardBody = case result of
             FlatCard alerts -> [hsx|
                 <table class="table table-sm">
@@ -68,8 +56,9 @@ renderCardSection (index, card, result) = [hsx|
             GroupedCard groups -> [hsx|
                 {forEach groups (renderGroup domId)}
             |]
+            HiddenCard -> [hsx||]
         tbodyId :: Text
-        tbodyId = "dashboard-card-tbody-" <> fromMaybe (tshow index) (legacyEnv card)
+        tbodyId = domId <> "-tbody"
         filterChips = [hsx|
             <span>
                 {forEach (legacyList FieldStatus) statusChip}
@@ -79,6 +68,18 @@ renderCardSection (index, card, result) = [hsx|
         legacyList field
             | card.cardLegacy = concat [values | MatchClause (FacetField f) OpIn _ values <- card.cardMatch, f == field]
             | otherwise = []
+
+cardTitleText :: DashboardCard -> Text
+cardTitleText card = case (card.cardTitle, legacyEnv card, card.cardGroupBy) of
+    (Just title, _, _) -> title
+    (Nothing, Just env, _) -> env
+    (Nothing, Nothing, Just groupBy) -> "by " <> facetRefText groupBy
+    _ -> "card"
+
+legacyEnv :: DashboardCard -> Maybe Text
+legacyEnv card
+    | card.cardLegacy = head [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
+    | otherwise = Nothing
 
 renderGroup :: Text -> CardGroup -> Html
 renderGroup cardId group = [hsx|

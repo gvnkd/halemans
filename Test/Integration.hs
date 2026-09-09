@@ -49,8 +49,8 @@ import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Assets.Attrs (objectAttributes)
 import Application.Pipeline.Grouping (facetValue)
-import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..))
-import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..))
+import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..), decodeDashboardConfig)
+import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..))
 import Application.Job.FacetBackfill ()
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
@@ -2008,6 +2008,8 @@ m9Spec = describe "resolved facets (milestone 9)" do
                 , cardGroupBy = Just (FacetAttr "DB Cluster")
                 , cardLimit = 50
                 , cardLegacy = False
+                , cardForEach = Nothing
+                , cardHideWhen = Nothing
                 , cardExtras = mempty
                 }
         groups <- runCardQueryGroups card (FacetAttr "DB Cluster")
@@ -2068,6 +2070,43 @@ m9Spec = describe "resolved facets (milestone 9)" do
             perform backfillJob
             after <- fetch alertId
             facetValue after "env" `shouldBe` Just "itest-env"
+
+    it "card templates: forEach expands per facet value; hideWhen hides zero-count cards" do
+        suffix <- tshow <$> nextRandom
+        let host = "m9tpl-host-" <> suffix
+            envA = "m9tpl-a-" <> suffix
+            envB = "m9tpl-b-" <> suffix
+        source <- integrationSource "webhook" ("m9tpl-" <> suffix) "" (object [])
+        let eventIn env fp severity = (testEventIn env fp Firing :: NormalizedEvent) { host = Just host, severity = severity }
+        Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a") "warning")
+        Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b") "critical")
+        cards <- case decodeDashboardConfig (Aeson.toJSON [object
+                [ "title" .= ("probe {value}" :: Text)
+                , "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                , "forEach" .= ("field:env" :: Text)
+                , "hideWhen" .= object
+                    [ "match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("=" :: Text), "value" .= ("critical" :: Text)]] ]
+                ]]) of
+            Left err -> expectationFailure (cs err) >> error "unreachable"
+            Right decoded -> pure decoded
+        expanded <- expandDashboardCards cards
+        map ecDomId expanded `shouldBe` ["dashboard-card-0-" <> envA, "dashboard-card-0-" <> envB]
+        map (.cardTitle) (map ecCard expanded) `shouldBe` [Just ("probe " <> envA), Just ("probe " <> envB)]
+        -- envA has no critical alert: hidden; envB has one: visible
+        map ecHidden expanded `shouldBe` [True, False]
+        -- same hideWhen on a plain (non-template) card
+        let plainCard sev = object
+                [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                , "hideWhen" .= object
+                    [ "match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("=" :: Text), "value" .= (sev :: Text)]] ]
+                ]
+        void $ forM [("critical", False), ("info", True)] \(sev, expectedHidden) -> do
+            single <- case decodeDashboardConfig (Aeson.toJSON [plainCard sev]) of
+                Left err -> expectationFailure (cs err) >> error "unreachable"
+                Right decoded -> pure decoded
+            [expandedCard] <- expandDashboardCards single
+            expandedCard.ecDomId `shouldBe` "dashboard-card-0"
+            expandedCard.ecHidden `shouldBe` expectedHidden
 
 -- | Reuse an existing mapping row (dev DBs carry the seeded passthrough
 -- mappings); the Bool marks rows this run created and must delete.

@@ -1,7 +1,10 @@
 module Application.Service.DashboardCards
 ( CardGroup (..)
+, ExpandedCard (..)
 , runCardQuery
 , runCardQueryGroups
+, expandDashboardCards
+, legacyCardDomKey
 ) where
 
 import IHP.Prelude
@@ -13,7 +16,7 @@ import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..), severityRank)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
-import Data.List (sortOn)
+import Data.List (sortOn, nub, sort)
 import Data.Ord (Down (..))
 
 -- Card query engine (design_docs/milestone_9.md §5): single-table queries
@@ -57,6 +60,66 @@ runCardQueryGroups card groupBy = do
 
 groupWorst :: [Alert] -> Text
 groupWorst = foldl' (\worst alert -> if severityRank alert.severity > severityRank worst then alert.severity else worst) "info"
+
+-- | A template card expanded to a concrete renderable card: forEach pins the
+-- facet value into the match, the title gets {value} substituted, domId is
+-- stable across renders, ecHidden reflects the hideWhen count at expansion
+-- time.
+data ExpandedCard = ExpandedCard
+    { ecDomId :: Text
+    , ecCard :: DashboardCard
+    , ecHidden :: Bool
+    } deriving (Eq, Show)
+
+-- | DOM key convention: legacy cards keep the M3 dashboard-card-<env> id;
+-- v2 cards key by config index, forEach expansions append the facet value.
+legacyCardDomKey :: DashboardCard -> Maybe Text
+legacyCardDomKey card
+    | card.cardLegacy = head [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
+    | otherwise = Nothing
+
+-- | Expand forEach templates into concrete cards (one per distinct facet
+-- value among the template's matching non-closed alerts, sorted) and
+-- evaluate hideWhen counts. Cards without forEach pass through unchanged.
+expandDashboardCards :: (?modelContext :: ModelContext) => [DashboardCard] -> IO [ExpandedCard]
+expandDashboardCards cards = concat <$> forM (zip [0 ..] cards) \(index, card) -> do
+    let baseKey = fromMaybe (tshow (index :: Int)) (legacyCardDomKey card)
+    expanded <- case card.cardForEach of
+        Nothing -> pure [card]
+        Just facetRef -> do
+            alerts <- cardBaseQuery card |> fetch
+            let values = sort (nub (mapMaybe (clauseValue facetRef) alerts))
+            pure [pinCard card facetRef value | value <- values]
+    forM expanded \expandedCard -> do
+        hidden <- evaluateHideWhen expandedCard
+        pure ExpandedCard
+            { ecDomId = "dashboard-card-" <> baseKey <> forEachSuffix card expandedCard
+            , ecCard = expandedCard
+            , ecHidden = hidden
+            }
+
+pinCard :: DashboardCard -> FacetRef -> Text -> DashboardCard
+pinCard card facetRef value = card
+    { cardMatch = card.cardMatch ++ [MatchClause facetRef OpEq value []]
+    , cardTitle = Just (Text.replace "{value}" value (fromMaybe value card.cardTitle))
+    }
+
+-- | Recover the pinned value from the clause pinCard appended, so the domId
+-- is stable across expansion sites (HTTP render and WS broadcast).
+forEachSuffix :: DashboardCard -> DashboardCard -> Text
+forEachSuffix template expanded = case template.cardForEach of
+    Just facetRef -> case [value | MatchClause f OpEq value _ <- drop (length template.cardMatch) expanded.cardMatch, f == facetRef] of
+        (value : _) -> "-" <> Text.replace " " "_" value
+        [] -> ""
+    Nothing -> ""
+
+evaluateHideWhen :: (?modelContext :: ModelContext) => DashboardCard -> IO Bool
+evaluateHideWhen card = case card.cardHideWhen of
+    Nothing -> pure False
+    Just hw -> do
+        let scoped = card { cardMatch = card.cardMatch ++ hw.hwMatch }
+        matches <- cardBaseQuery scoped |> fetch
+        pure (length matches <= hw.hwMaxCount)
 
 cardBaseQuery :: DashboardCard -> QueryBuilder "alerts"
 cardBaseQuery card = foldl' apply (query @Alert |> filterWhereNot (#status, "closed" :: Text)) card.cardMatch

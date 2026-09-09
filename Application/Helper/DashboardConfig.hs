@@ -2,6 +2,7 @@ module Application.Helper.DashboardConfig
 ( FacetRef (..)
 , MatchOp (..)
 , MatchClause (..)
+, HideWhen (..)
 , DashboardCard (..)
 , decodeDashboardConfig
 , encodeDashboardConfig
@@ -48,12 +49,21 @@ data MatchClause = MatchClause
     , mcValues :: [Text]
     } deriving (Eq, Show)
 
+-- | Conditional visibility: hide the card when the number of (non-closed)
+-- alerts matching hwMatch ON TOP of the card's own match is <= hwMaxCount.
+data HideWhen = HideWhen
+    { hwMatch :: [MatchClause]
+    , hwMaxCount :: Int
+    } deriving (Eq, Show)
+
 data DashboardCard = DashboardCard
     { cardTitle :: Maybe Text
     , cardMatch :: [MatchClause]
     , cardGroupBy :: Maybe FacetRef
     , cardLimit :: Int
     , cardLegacy :: Bool
+    , cardForEach :: Maybe FacetRef
+    , cardHideWhen :: Maybe HideWhen
     , cardExtras :: KeyMap Value
     } deriving (Eq, Show)
 
@@ -110,6 +120,16 @@ opText = \case
     OpGlob -> "~"
     OpIn -> "in"
 
+instance Aeson.FromJSON HideWhen where
+    parseJSON = Aeson.withObject "HideWhen" \o -> do
+        hwMatch <- o .:? "match" .!= []
+        hwMaxCount <- o .:? "maxCount" .!= 0
+        when (hwMaxCount < 0) (fail "maxCount must be >= 0")
+        pure HideWhen { .. }
+
+instance Aeson.ToJSON HideWhen where
+    toJSON hw = object ["match" .= hw.hwMatch, "maxCount" .= hw.hwMaxCount]
+
 instance Aeson.FromJSON DashboardCard where
     parseJSON = Aeson.withObject "DashboardCard" \o ->
         case KeyMap.lookup "env" o of
@@ -130,6 +150,8 @@ instance Aeson.FromJSON DashboardCard where
                     , cardGroupBy = Nothing
                     , cardLimit = 100
                     , cardLegacy = True
+                    , cardForEach = Nothing
+                    , cardHideWhen = Nothing
                     , cardExtras
                     }
             _ -> do
@@ -141,7 +163,12 @@ instance Aeson.FromJSON DashboardCard where
                     Just text -> maybe (fail ("invalid groupBy facet reference: " <> cs text)) (pure . Just) (parseFacetRef text)
                 cardLimit <- o .:? "limit" .!= 100
                 when (cardLimit < 1) (fail "limit must be >= 1")
-                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit"]
+                forEachText <- o .:? "forEach"
+                cardForEach <- case forEachText of
+                    Nothing -> pure Nothing
+                    Just text -> maybe (fail ("invalid forEach facet reference: " <> cs text)) (pure . Just) (parseFacetRef text)
+                cardHideWhen <- o .:? "hideWhen"
+                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen"]
                 pure DashboardCard { cardLegacy = False, .. }
 
 instance Aeson.ToJSON DashboardCard where
@@ -154,6 +181,8 @@ instance Aeson.ToJSON DashboardCard where
                     , "limit" .= card.cardLimit
                     ] ++ [ "title" .= title | Just title <- [card.cardTitle] ]
                     ++ [ "groupBy" .= facetRefText groupBy | Just groupBy <- [card.cardGroupBy] ]
+                    ++ [ "forEach" .= facetRefText forEach | Just forEach <- [card.cardForEach] ]
+                    ++ [ "hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen] ]
 
 -- | Legacy {env, filters} re-encode (milestone_9.md §4): only cards decoded
 -- from the legacy shape whose clauses still fit it encode this way, so old
@@ -162,6 +191,7 @@ legacyCardValue :: DashboardCard -> Maybe Value
 legacyCardValue card = do
     guard card.cardLegacy
     guard (isNothing card.cardTitle && isNothing card.cardGroupBy && card.cardLimit == 100)
+    guard (isNothing card.cardForEach && isNothing card.cardHideWhen)
     let envValues = [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
         statusLists = [values | MatchClause (FacetField FieldStatus) OpIn _ values <- card.cardMatch]
         severityLists = [values | MatchClause (FacetField FieldSeverity) OpIn _ values <- card.cardMatch]

@@ -118,6 +118,21 @@
             ],
             "groupBy": "attr:Environments",
             "limit": 50
+          },
+          {
+            "title": "PostgreSQL cluster {value}",
+            "match": [
+              {"facet": "attr:Service", "op": "=", "value": "PostgreSQL"}
+            ],
+            "forEach": "attr:DB Cluster",
+            "groupBy": "field:host",
+            "limit": 20,
+            "hideWhen": {
+              "match": [
+                {"facet": "field:severity", "op": "in", "values": ["critical", "warning"]}
+              ],
+              "maxCount": 0
+            }
           }
         ]
       }

@@ -55,6 +55,8 @@ spec = describe "Application.Helper.DashboardConfig" do
                     , cardGroupBy = Just (FacetAttr "DB Cluster")
                     , cardLimit = 50
                     , cardLegacy = False
+                    , cardForEach = Nothing
+                    , cardHideWhen = Nothing
                     , cardExtras = mempty
                     }
                 ]
@@ -65,7 +67,7 @@ spec = describe "Application.Helper.DashboardConfig" do
         it "defaults op to = and limit to 100" do
             let raw = Aeson.toJSON [object ["match" .= [object ["facet" .= ("label:team" :: Text), "value" .= ("dba" :: Text)]]]]
             decodeDashboardConfig raw `shouldBe` Right
-                [ DashboardCard Nothing [MatchClause (FacetLabel "team") OpEq "dba" []] Nothing 100 False mempty ]
+                [ DashboardCard Nothing [MatchClause (FacetLabel "team") OpEq "dba" []] Nothing 100 False Nothing Nothing mempty ]
         it "preserves unknown keys on round-trip" do
             let raw = Aeson.toJSON [object
                     [ "match" .= ([] :: [Int])
@@ -93,6 +95,40 @@ spec = describe "Application.Helper.DashboardConfig" do
                 `shouldSatisfy` isLeft
             decodeDashboardConfig (Aeson.toJSON [object ["limit" .= (0 :: Int)]]) `shouldSatisfy` isLeft
             decodeDashboardConfig (Aeson.toJSON [object ["groupBy" .= ("bogus:x" :: Text)]]) `shouldSatisfy` isLeft
+            decodeDashboardConfig (Aeson.toJSON [object ["forEach" .= ("bogus:x" :: Text)]]) `shouldSatisfy` isLeft
+            decodeDashboardConfig (Aeson.toJSON [object ["hideWhen" .= object ["maxCount" .= (-1 :: Int)]]]) `shouldSatisfy` isLeft
+    describe "forEach + hideWhen (card templates)" do
+        let templateJson = Aeson.toJSON [object
+                [ "title" .= ("PostgreSQL cluster {value}" :: Text)
+                , "match" .= [object ["facet" .= ("attr:Service" :: Text), "op" .= ("=" :: Text), "value" .= ("PostgreSQL" :: Text)]]
+                , "forEach" .= ("attr:DB Cluster" :: Text)
+                , "hideWhen" .= object
+                    [ "match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("in" :: Text), "values" .= (["critical", "warning"] :: [Text])]]
+                    , "maxCount" .= (0 :: Int)
+                    ]
+                , "limit" .= (20 :: Int)
+                ]]
+        it "decodes forEach and hideWhen" do
+            decodeDashboardConfig templateJson `shouldBe` Right
+                [ DashboardCard
+                    { cardTitle = Just "PostgreSQL cluster {value}"
+                    , cardMatch = [MatchClause (FacetAttr "Service") OpEq "PostgreSQL" []]
+                    , cardGroupBy = Nothing
+                    , cardLimit = 20
+                    , cardLegacy = False
+                    , cardForEach = Just (FacetAttr "DB Cluster")
+                    , cardHideWhen = Just (HideWhen [MatchClause (FacetField FieldSeverity) OpIn "" ["critical", "warning"]] 0)
+                    , cardExtras = mempty
+                    }
+                ]
+        it "round-trips templates through JSON" do
+            case decodeDashboardConfig templateJson of
+                Left err -> expectationFailure (cs err)
+                Right cards -> encodeDashboardConfig cards `shouldBe` templateJson
+        it "hideWhen defaults match to [] and maxCount to 0" do
+            let raw = Aeson.toJSON [object ["hideWhen" .= object []]]
+            decodeDashboardConfig raw `shouldBe` Right
+                [ DashboardCard Nothing [] Nothing 100 False Nothing (Just (HideWhen [] 0)) mempty ]
     describe "matchCardAlert" do
         let alert = newRecord @Alert
                 |> set #severity "critical"
@@ -101,7 +137,7 @@ spec = describe "Application.Helper.DashboardConfig" do
                 |> set #labels (object ["team" .= ("infra" :: Text)])
                 |> set #facets (object ["Service" .= ("PostgreSQL" :: Text), "DB Cluster" .= ("ibstaffcopdb01" :: Text)])
         it "matches field/label/attr clauses as conjunction" do
-            let card clauses = DashboardCard Nothing clauses Nothing 100 False mempty
+            let card clauses = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing mempty
             matchCardAlert (card [MatchClause (FacetAttr "Service") OpEq "PostgreSQL" []]) alert `shouldBe` True
             matchCardAlert (card [MatchClause (FacetAttr "Service") OpEq "MySQL" []]) alert `shouldBe` False
             matchCardAlert (card [MatchClause (FacetField FieldEnv) OpEq "dev" [], MatchClause (FacetAttr "DB Cluster") OpGlob "ib*" []]) alert `shouldBe` True
@@ -125,6 +161,8 @@ legacyCard env statuses severities = DashboardCard
     , cardGroupBy = Nothing
     , cardLimit = 100
     , cardLegacy = True
+    , cardForEach = Nothing
+    , cardHideWhen = Nothing
     , cardExtras = mempty
     }
 

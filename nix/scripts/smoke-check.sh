@@ -183,7 +183,8 @@ WHERE NOT EXISTS (SELECT 1 FROM field_mappings WHERE facet = 'Location' AND rank
 INSERT INTO llm_agent_roles (name, description, prompt_template_name, tools, enabled, is_default)
 SELECT 'default-enricher', 'Default enrichment role', 'alert_enrichment',
        '["cmdb_lookup", "jira_search", "assets_lookup"]'::jsonb, true, true
-WHERE NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE name = 'default-enricher');
+WHERE NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE name = 'default-enricher')
+  AND NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE is_default);
 
 -- Default retention config (milestone 5 D10): same as seed-halemans.
 INSERT INTO retention_configs (raw_events_days, enabled)

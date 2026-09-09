@@ -30,9 +30,9 @@ import qualified Data.ByteString.Lazy as BL
 import Network.Wai (Request)
 import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
-import Web.View.Dashboards.Show (renderCardSection, cardSectionDomId, CardData (..))
+import Web.View.Dashboards.Show (renderCardSection, CardData (..))
 import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, DashboardCard (..))
-import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups)
+import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups, expandDashboardCards, ExpandedCard (..))
 import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
 import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.Assets.Cache as AssetsCache
@@ -174,17 +174,22 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                 Left _ -> pure []
                 Right cards -> do
                     alert <- fetch (Id alertId)
-                    matching <- pure
-                        [ (index, card)
-                        | (index, card) <- zip [0 ..] cards
+                    -- Expand only templates the alert still matches: forEach
+                    -- pins and hideWhen counts are re-evaluated per event, so
+                    -- cards appear/disappear live (milestone_9.md §6).
+                    expanded <- expandDashboardCards
+                        [ card
+                        | card <- cards
                         , alert.status /= "closed"
                         , matchCardAlert card alert
                         ]
-                    forM matching \(index, card) -> do
-                        result <- case card.cardGroupBy of
-                            Nothing -> FlatCard <$> runCardQuery card
-                            Just groupBy -> GroupedCard <$> runCardQueryGroups card groupBy
-                        pure (fragment (cardSectionDomId index card) (renderCardSection (index, card, result)) "replace" "")
+                    forM expanded \expandedCard -> do
+                        result <- if expandedCard.ecHidden
+                            then pure HiddenCard
+                            else case expandedCard.ecCard.cardGroupBy of
+                                Nothing -> FlatCard <$> runCardQuery expandedCard.ecCard
+                                Just groupBy -> GroupedCard <$> runCardQueryGroups expandedCard.ecCard groupBy
+                        pure (fragment expandedCard.ecDomId (renderCardSection (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         matches <- matchesFilters scopeFilters alert

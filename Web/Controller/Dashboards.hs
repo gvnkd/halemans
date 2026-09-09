@@ -6,7 +6,7 @@ import Web.View.Dashboards.New
 import Web.View.Dashboards.Edit
 import Web.View.Dashboards.Show
 import Application.Helper.DashboardConfig
-import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups)
+import Application.Service.DashboardCards (runCardQuery, runCardQueryGroups, expandDashboardCards, ExpandedCard (..))
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Control.Monad (void)
@@ -50,11 +50,10 @@ instance Controller DashboardsController where
     action ShowDashboardAction { dashboardId } = do
         dashboard <- fetchOwn dashboardId
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
-        cardSections <- forM (zip [0 ..] cards) \(index, card) -> do
-            result <- case card.cardGroupBy of
-                Nothing -> FlatCard <$> runCardQuery card
-                Just groupBy -> GroupedCard <$> runCardQueryGroups card groupBy
-            pure (index, card, result)
+        expanded <- expandDashboardCards cards
+        cardSections <- forM expanded \expandedCard -> do
+            result <- cardData expandedCard
+            pure (expandedCard, result)
         render ShowView { dashboard, cardSections }
 
     action EditDashboardAction { dashboardId } = do
@@ -108,6 +107,14 @@ instance Controller DashboardsController where
         redirectTo DashboardsAction
 
 -- Helpers
+
+-- | Query the concrete card's data unless its hideWhen condition fired.
+cardData :: (?modelContext :: ModelContext) => ExpandedCard -> IO CardData
+cardData expandedCard
+    | expandedCard.ecHidden = pure HiddenCard
+    | otherwise = case expandedCard.ecCard.cardGroupBy of
+        Nothing -> FlatCard <$> runCardQuery expandedCard.ecCard
+        Just groupBy -> GroupedCard <$> runCardQueryGroups expandedCard.ecCard groupBy
 
 ownDashboards :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => IO [Dashboard]
 ownDashboards = query @Dashboard
