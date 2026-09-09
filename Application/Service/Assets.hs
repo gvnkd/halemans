@@ -82,13 +82,13 @@ clientFromConfig config = do
 apiUrl :: AssetsClient -> Text -> Text
 apiUrl client path = Text.dropWhileEnd (== '/') client.clientBaseUrl <> path
 
-opts :: AssetsClient -> Wreq.Options
-opts client = Wreq.defaults
+opts :: AssetsClient -> Text -> Wreq.Options
+opts client accept = Wreq.defaults
     & Wreq.manager .~ Left (HTTP.tlsManagerSettings
         { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro (30 * 1000000) })
     & checkResponse .~ Just (\_ _ -> pure ())
     & Wreq.redirects .~ 0
-    & Wreq.header "Accept" .~ ["application/json"]
+    & Wreq.header "Accept" .~ [cs accept]
     & Wreq.header "Authorization" .~ [authHeader client.clientAuth]
 
 authHeader :: AssetsAuth -> ByteString
@@ -103,7 +103,7 @@ getJson client requestObjectId path params = go 0
     where
         go :: Int -> IO (Either AssetsError Value)
         go attempt = do
-            let requestOpts = foldl (\o (k, v) -> o & Wreq.param k .~ [v]) (opts client) params
+            let requestOpts = foldl (\o (k, v) -> o & Wreq.param k .~ [v]) (opts client "application/json") params
             result <- try @SomeException (Wreq.getWith requestOpts (cs (apiUrl client path)))
             case result of
                 Left err
@@ -188,9 +188,11 @@ icon client iconId = decodeOne
 -- Raw GET of an absolute URL (icon/avatar images live on the Jira origin,
 -- outside the /rest/assets/latest API base). Same auth + no-redirect policy
 -- as the JSON endpoints; returns the upstream content type and the body.
+-- Accept must NOT be application/json: Jira's icon routes answer 406 to it
+-- (assets-api.md §2 content negotiation).
 fetchBinary :: AssetsClient -> Text -> IO (Either AssetsError (Text, BL.ByteString))
 fetchBinary client url = do
-    result <- try @SomeException (Wreq.getWith (opts client) (cs url))
+    result <- try @SomeException (Wreq.getWith (opts client "image/*, */*") (cs url))
     pure case result of
         Left err -> Left (Upstream 0 (tshow err))
         Right response ->

@@ -9,7 +9,7 @@ import Data.Aeson.Types (parseMaybe)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Maybe (fromJust)
-import Network.HTTP.Types (hContentType, hLocation, status200, status302, status404)
+import Network.HTTP.Types (hAccept, hContentType, hLocation, status200, status302, status404, status406)
 import qualified Network.Socket as Socket
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
@@ -208,6 +208,12 @@ spec = describe "Milestone 8 assets subsystem" do
                 fmap (BL.toStrict . snd) result `shouldBe` Right "PNG-BYTES"
                 requests <- readIORef seen
                 lookup "Authorization" (Wai.requestHeaders (fromJust (head requests))) `shouldBe` Just "Bearer sekret"
+            it "sends an Accept the icon route honors (Jira 406s application/json)" \(baseUrl, seen) -> do
+                let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
+                result <- fetchBinary client (cs baseUrl <> "/icon.png")
+                fmap fst result `shouldBe` Right "image/png"
+                requests <- readIORef seen
+                lookup hAccept (Wai.requestHeaders (fromJust (head requests))) `shouldBe` Just "image/*, */*"
             it "does not follow redirects to the login page" \(baseUrl, _) -> do
                 let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
                 result <- fetchBinary client (cs baseUrl <> "/redirect")
@@ -232,7 +238,12 @@ iconApp :: IORef [Wai.Request] -> Wai.Application
 iconApp seen request respond = do
     modifyIORef' seen (request :)
     case Wai.pathInfo request of
-        ["icon.png"] -> respond (Wai.responseLBS status200 [(hContentType, "image/png")] (BL.fromStrict iconPng))
+        ["icon.png"]
+            -- Jira's icon routes answer 406 to Accept: application/json
+            | lookup hAccept (Wai.requestHeaders request) == Just "application/json"
+                -> respond (Wai.responseLBS status406 [(hContentType, "application/json")] "\"content type not accepted\"")
+            | otherwise
+                -> respond (Wai.responseLBS status200 [(hContentType, "image/png")] (BL.fromStrict iconPng))
         ["redirect"] -> respond (Wai.responseLBS status302 [(hLocation, "/login.jsp")] "")
         _ -> respond (Wai.responseLBS status404 [] "")
 
