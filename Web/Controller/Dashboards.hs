@@ -7,7 +7,7 @@ import Web.View.Dashboards.Edit
 import Web.View.Dashboards.Show
 import Web.View.Dashboards.Card
 import Application.Helper.DashboardConfig
-import Application.Service.DashboardCards (runCardQuery, expandDashboardCards, ExpandedCard (..))
+import Application.Service.DashboardCards (runCardQuery, expandDashboardCards, expandedDomId, pinCard, ExpandedCard (..))
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
 import Control.Monad (void)
@@ -67,7 +67,11 @@ instance Controller DashboardsController where
             (expandedCard : _) -> do
                 alerts <- runCardQuery expandedCard.ecCard
                 render CardView { dashboard, expandedCard, alerts }
-            [] -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "card not found"
+            [] -> case fallbackExpandedCard valueFilter cards cardIndex of
+                Just expandedCard -> do
+                    alerts <- runCardQuery expandedCard.ecCard
+                    render CardView { dashboard, expandedCard, alerts }
+                Nothing -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "card not found"
 
     action EditDashboardAction { dashboardId } = do
         dashboard <- fetchOwn dashboardId
@@ -120,6 +124,23 @@ instance Controller DashboardsController where
         redirectTo DashboardsAction
 
 -- Helpers
+
+-- | The pinned value dropped out of the current expansion (its last
+-- non-closed alert left): rebuild the pinned card synthetically so a
+-- previously valid card link renders an empty table instead of 404ing.
+fallbackExpandedCard :: Maybe Text -> [DashboardCard] -> Int -> Maybe ExpandedCard
+fallbackExpandedCard valueFilter cards cardIndex = do
+    template <- if cardIndex < length cards && cardIndex >= 0 then Just (cards !! cardIndex) else Nothing
+    let card = case (valueFilter, template.cardForEach) of
+            (Just value, Just facetRef) -> pinCard template facetRef value
+            _ -> template
+    pure ExpandedCard
+        { ecDomId = expandedDomId cardIndex template valueFilter
+        , ecCard = card
+        , ecHidden = False
+        , ecIndex = cardIndex
+        , ecValue = valueFilter
+        }
 
 ownDashboards :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => IO [Dashboard]
 ownDashboards = query @Dashboard

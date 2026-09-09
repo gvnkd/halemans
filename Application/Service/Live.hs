@@ -31,8 +31,8 @@ import Network.Wai (Request)
 import Web.View.Fragments
 import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
 import Web.View.Dashboards.Show (renderCardSection, fetchCardData)
-import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, DashboardCard (..))
-import Application.Service.DashboardCards (expandDashboardCards, ExpandedCard (..))
+import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, clauseValue, DashboardCard (..))
+import Application.Service.DashboardCards (expandDashboardCards, expandedDomId, ExpandedCard (..))
 import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
 import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.Assets.Cache as AssetsCache
@@ -174,18 +174,29 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                 Left _ -> pure []
                 Right cards -> do
                     alert <- fetch (Id alertId)
-                    -- Expand only templates the alert still matches: forEach
-                    -- pins and hideWhen counts are re-evaluated per event, so
-                    -- cards appear/disappear live (milestone_9.md §6).
-                    expanded <- expandDashboardCards
-                        [ card
-                        | card <- cards
-                        , alert.status /= "closed"
-                        , matchCardAlert card alert
-                        ]
-                    forM expanded \expandedCard -> do
+                    -- Expand the FULL config first: filtering templates before
+                    -- expansion would shift ecIndex and re-render the wrong
+                    -- sections. No status pre-filter on the alert: a closed
+                    -- alert still matches its template's match clauses, and
+                    -- counts/summaries/hideWhen re-evaluate against the
+                    -- non-closed base query, so resolve/close updates cards.
+                    expanded <- expandDashboardCards cards
+                    let matching = [ec | ec <- expanded, matchCardAlert ec.ecCard alert]
+                    updates <- forM matching \expandedCard -> do
                         result <- fetchCardData expandedCard
                         pure (fragment expandedCard.ecDomId (renderCardSection (Id dashUuid) (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
+                    -- A forEach value vanishes when its last non-closed alert
+                    -- leaves: no expanded card matches the alert anymore, so
+                    -- remove the now-stale section explicitly.
+                    let removals =
+                            [ object ["id" .= expandedDomId index card value, "mode" .= ("remove" :: Text)]
+                            | (index, card) <- zip [0 ..] cards
+                            , matchCardAlert card alert
+                            , Just facetRef <- [card.cardForEach]
+                            , value <- [clauseValue facetRef alert]
+                            , not (any (\ec -> ec.ecIndex == index && ec.ecValue == value) expanded)
+                            ]
+                    pure (updates ++ removals)
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         matches <- matchesFilters scopeFilters alert

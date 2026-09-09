@@ -24,7 +24,7 @@ defaultLayout inner = [hsx|
     </head>
     <body>
         {navigation}
-        <div class="container mt-4">
+        <div class="container-fluid mt-4 px-4">
             {renderFlashMessages}
             <div id="push-banner" class="alert alert-warning d-none" data-testid="push-banner"></div>
             {inner}

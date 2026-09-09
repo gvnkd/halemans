@@ -7,6 +7,8 @@ module Application.Service.DashboardCards
 , runCardSummary
 , expandDashboardCards
 , legacyCardDomKey
+, expandedDomId
+, pinCard
 ) where
 
 import IHP.Prelude
@@ -119,7 +121,6 @@ legacyCardDomKey card
 -- evaluate hideWhen counts. Cards without forEach pass through unchanged.
 expandDashboardCards :: (?modelContext :: ModelContext) => [DashboardCard] -> IO [ExpandedCard]
 expandDashboardCards cards = concat <$> forM (zip [0 ..] cards) \(index, card) -> do
-    let baseKey = fromMaybe (tshow (index :: Int)) (legacyCardDomKey card)
     pinned <- case card.cardForEach of
         Nothing -> pure [(card, Nothing)]
         Just facetRef -> do
@@ -128,14 +129,21 @@ expandDashboardCards cards = concat <$> forM (zip [0 ..] cards) \(index, card) -
             sortPinned card [(pinCard card facetRef value, Just value) | value <- values]
     forM pinned \(expandedCard, pinnedValue) -> do
         hidden <- evaluateHideWhen expandedCard
-        let valueSuffix = maybe "" ("-" <>) (Text.replace " " "_" <$> pinnedValue)
         pure ExpandedCard
-            { ecDomId = "dashboard-card-" <> baseKey <> valueSuffix
+            { ecDomId = expandedDomId index card pinnedValue
             , ecCard = expandedCard
             , ecHidden = hidden
             , ecIndex = index
             , ecValue = pinnedValue
             }
+
+-- | Stable section dom id for a (possibly hypothetical) expanded card: config
+-- index (or legacy env key) plus the pinned forEach value when present.
+expandedDomId :: Int -> DashboardCard -> Maybe Text -> Text
+expandedDomId index card pinnedValue =
+    "dashboard-card-" <> fromMaybe (tshow index) (legacyCardDomKey card) <> valueSuffix
+    where
+        valueSuffix = maybe "" ("-" <>) (Text.replace " " "_" <$> pinnedValue)
 
 pinCard :: DashboardCard -> FacetRef -> Text -> DashboardCard
 pinCard card facetRef value = card
