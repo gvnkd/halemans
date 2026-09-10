@@ -8,6 +8,7 @@ import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Service.Push (VapidKeys (..), PushResult (..), loadVapidKeys, sendPush)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (object, (.=))
 import Data.Aeson.Types (parseMaybe)
@@ -38,7 +39,7 @@ instance Job PushNotificationJob where
             [ "title" .= alert.title
             , "severity" .= alert.severity
             , "status" .= alert.status
-            , "env" .= alert.env
+            , "env" .= effectiveFieldText FieldEnv alert
             , "alertId" .= get #id alert
             , "url" .= ("/alerts/" <> tshow (get #id alert))
             ])

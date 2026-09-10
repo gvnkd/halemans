@@ -1,6 +1,7 @@
 module Web.View.Environments.Show where
 import Web.View.Prelude
 import Web.View.Fragments (alertRowHtml, groupRowHtml, filterMultiSelect, filterTextInput)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Data.List as List
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.!=), (.=))
@@ -69,7 +70,8 @@ envPrefsAreDefault :: (EnvFilters, Text) -> Bool
 envPrefsAreDefault (filters, viewMode) = filters == emptyEnvFilters && viewMode == "flat"
 
 data ShowView = ShowView
-    { environment :: Environment
+    { environmentName :: Text
+    , environment :: Maybe Environment
     , alerts :: [Alert]
     , groups :: [(AlertGroup, [Alert])]
     , blackouts :: [Blackout]
@@ -79,10 +81,10 @@ data ShowView = ShowView
 
 instance View ShowView where
     html ShowView { .. } = [hsx|
-        <div data-live-scope={"env:" <> environment.name}>
-            <h1>{environment.name}</h1>
+        <div data-live-scope={"env:" <> environmentName}>
+            <h1>{environmentName}</h1>
             {activeBlackoutNotice}
-            <form method="GET" action={ShowEnvironmentAction environment.name} class="row g-2 mb-3" data-testid="env-filters">
+            <form method="GET" action={ShowEnvironmentAction environmentName} class="row g-2 mb-3" data-testid="env-filters">
                 {filterMultiSelect "severity" "severity" severities filters.filterSeverities}
                 {filterMultiSelect "status" "status" statuses filters.filterStatuses}
                 {filterTextInput "host" "host" filters.filterHost hostSuggestions}
@@ -102,8 +104,8 @@ instance View ShowView where
         where
             severities = ["critical", "high", "warning", "info"]
             statuses = ["firing", "ack", "resolved", "closed"]
-            hostSuggestions = List.sort (nub (mapMaybe (\alert -> alert.host) alerts))
-            serviceSuggestions = List.sort (nub (mapMaybe (\alert -> alert.service) alerts))
+            hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
+            serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
             titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
             activeBlackoutNotice = if null blackouts
                 then mempty
@@ -112,9 +114,9 @@ instance View ShowView where
                         Blackout active — new alerts are suppressed.
                     </div>
                 |]
-            toggleUrl mode = pathTo (ShowEnvironmentAction environment.name) <> cs (renderQuery True (envBaseItems filters mode))
+            toggleUrl mode = pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (envBaseItems filters mode))
             resetUrl :: Text
-            resetUrl = pathTo (ShowEnvironmentAction environment.name) <> "?reset=1"
+            resetUrl = pathTo (ShowEnvironmentAction environmentName) <> "?reset=1"
             toggleClass :: Text -> Text
             toggleClass mode = if viewMode == mode then "btn btn-sm btn-secondary" else "btn btn-sm btn-outline-secondary"
             content = if viewMode == "grouped"

@@ -46,19 +46,19 @@ instance Controller AuditController where
                     toText = iso8601 to
                 rows <- case (envParam, alertParam) of
                     (Just env, Nothing) -> sqlQueryTyped [typedSql|
-                        SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, a.env
+                        SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
-                            AND a.env = ${env}
+                            AND coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${env}
                         ORDER BY e.created_at |]
                     (Nothing, Just alertId) -> sqlQueryTyped [typedSql|
-                        SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, a.env
+                        SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                             AND e.alert_id = ${alertId}
                         ORDER BY e.created_at |]
                     _ -> sqlQueryTyped [typedSql|
-                        SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, a.env
+                        SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                         ORDER BY e.created_at |]

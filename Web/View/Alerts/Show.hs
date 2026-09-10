@@ -1,6 +1,7 @@
 module Web.View.Alerts.Show where
 import Web.View.Prelude
 import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml, severityBadgeHtml, panelHtml, detailsJsonHtml, inlinePostFormHtml)
+import Application.Pipeline.Grouping (AlertField (..), alertFieldText, effectiveFieldText)
 import qualified Data.Aeson as Aeson
 
 data ShowView = ShowView
@@ -33,9 +34,9 @@ instance View ShowView where
             </p>
             <dl>
                 <dt>Fingerprint</dt><dd>{alert.fingerprint}</dd>
-                <dt>Env</dt><dd>{fromMaybe "-" alert.env}</dd>
-                <dt>Host</dt><dd>{fromMaybe "-" alert.host}</dd>
-                <dt>Service</dt><dd>{fromMaybe "-" alert.service}</dd>
+                <dt>Env</dt><dd>{fieldCell FieldEnv}</dd>
+                <dt>Host</dt><dd>{fieldCell FieldHost}</dd>
+                <dt>Service</dt><dd>{fieldCell FieldService}</dd>
                 <dt>Check</dt><dd>{fromMaybe "-" alert.checkName}</dd>
                 <dt>Occurrences</dt><dd>{alert.occurrences}</dd>
                 <dt>Started at</dt><dd>{maybeUtcTimeHtml alert.startedAt}</dd>
@@ -90,6 +91,13 @@ instance View ShowView where
             jiraCreateForm = if canAck && alert.status /= "closed"
                 then jiraTicketForm alert
                 else mempty
+            -- Effective value (facet override wins); the raw column is shown
+            -- alongside when they differ, for provenance.
+            fieldCell :: AlertField -> Html
+            fieldCell field = case (effectiveFieldText field alert, alertFieldText field alert) of
+                (Just eff, Just raw) | eff /= raw -> [hsx|{eff} <span class="text-muted" data-testid="field-override-raw">(raw: {raw})</span>|]
+                (Just eff, _) -> [hsx|{eff}|]
+                (Nothing, _) -> [hsx|<span>-</span>|]
 
 renderActionBar :: Alert -> Bool -> Bool -> Html
 renderActionBar alert canAck canClose = [hsx|

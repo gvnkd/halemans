@@ -270,9 +270,7 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
             pure [fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" parentId]
 
 cardMatches :: LiveEvent -> EnvCard -> Bool
-cardMatches event card = case card.cardEnvironment of
-    Just environment -> event.leEnv == Just environment.name
-    Nothing -> isNothing event.leEnv
+cardMatches event card = event.leEnv == card.cardEnvName
 
 -- CMDB/Jira/write-back panels refresh when enrichment or write-back state
 -- changes land (milestone_3.md §3/§6).

@@ -13,6 +13,7 @@ import Data.UUID (UUID)
 import IHP.ModelSupport (Id' (..), PrimaryKey)
 import Web.View.Dashboard.Index (EnvCard (..))
 import Application.Service.Api.Alerts (AlertDetail (..))
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 
 -- Explicit encoder functions (design_docs/milestone_6.md §3): no ToJSON
 -- instances on Generated types so the wire shape survives schema drift.
@@ -33,10 +34,11 @@ encodeAlertSummary alert = object
     , "description" .= alert.description
     , "severity" .= alert.severity
     , "status" .= alert.status
-    , "env" .= alert.env
-    , "host" .= alert.host
-    , "service" .= alert.service
+    , "env" .= effectiveFieldText FieldEnv alert
+    , "host" .= effectiveFieldText FieldHost alert
+    , "service" .= effectiveFieldText FieldService alert
     , "check_name" .= alert.checkName
+    , "facets" .= alert.facets
     , "source_id" .= maybeIdValue alert.sourceId
     , "external_id" .= alert.externalId
     , "labels" .= alert.labels
@@ -121,7 +123,7 @@ encodeTimelineEvent (event, userEmail) = object
 -- query module the dashboard uses, so the numbers agree by construction.
 encodeEnvCard :: EnvCard -> Value
 encodeEnvCard card = object
-    [ "environment" .= maybe Aeson.Null (\e -> object ["id" .= idValue (get #id e), "name" .= get #name e]) card.cardEnvironment
+    [ "environment" .= maybe Aeson.Null (\name -> object ["id" .= maybeIdValue (get #id <$> card.cardEnvironment), "name" .= name]) card.cardEnvName
     , "worst_severity" .= card.cardWorstSeverity
     , "counts" .= object
         [ "firing" .= card.cardFiring

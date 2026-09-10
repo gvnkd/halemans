@@ -14,11 +14,28 @@ import Generated.Types
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import Control.Monad (void)
-import Application.Pipeline.Grouping (matchExprFromJSON, matchAlert, renderTemplate, severityRank, ruleReferencesFacets)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText, matchExprFromJSON, matchAlert, renderTemplate, severityRank, ruleReferencesFacets)
 
 -- AlertGroup membership + rollup maintenance (design_docs/milestone_2.md
 -- §3 step 5, §4). Rules are evaluated in position order, first match wins;
 -- no match leaves the alert standalone.
+
+-- | A new group's environment follows the alert's EFFECTIVE env (facet
+-- override wins), upserting the inventory row when the name is facet-only.
+-- Local copy of Ingest.upsertEnvironment — Ingest imports this module, so
+-- importing it back would cycle.
+effectiveEnvironmentRef :: (?modelContext :: ModelContext) => Alert -> IO (Maybe (Id Environment))
+effectiveEnvironmentRef alert = forM (effectiveFieldText FieldEnv alert) \name -> do
+    existing <- query @Environment
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
+    case existing of
+        Just environment -> pure (get #id environment)
+        Nothing -> do
+            created <- newRecord @Environment
+                |> set #name name
+                |> createRecord
+            pure (get #id created)
 
 -- | Evaluate grouping rules for a freshly created alert. Returns the updated
 -- alert (group_id + grouped_by_version set) or the alert unchanged. Alerts
@@ -26,7 +43,9 @@ import Application.Pipeline.Grouping (matchExprFromJSON, matchAlert, renderTempl
 -- rendered key would be all dashes and collapse unrelated alerts together.
 assignGroup :: (?modelContext :: ModelContext) => Alert -> IO Alert
 assignGroup alert
-    | isNothing alert.env && isNothing alert.host && isNothing alert.service = pure alert
+    | isNothing (effectiveFieldText FieldEnv alert)
+        && isNothing (effectiveFieldText FieldHost alert)
+        && isNothing (effectiveFieldText FieldService alert) = pure alert
 assignGroup alert = do
     rules <- query @GroupingRule
         |> filterWhere (#enabled, True)
@@ -42,10 +61,11 @@ assignGroup alert = do
             groupRef <- case group of
                 Just group -> pure (get #id group)
                 Nothing -> do
+                    environmentRef <- effectiveEnvironmentRef alert
                     created <- newRecord @AlertGroup
                         |> set #groupKey key
                         |> set #title key
-                        |> set #environmentId alert.environmentId
+                        |> set #environmentId environmentRef
                         |> createRecord
                     pure (get #id created)
             updated <- alert
@@ -85,10 +105,11 @@ regroupAlert alert = do
                         groupRef <- case group of
                             Just group -> pure (get #id group)
                             Nothing -> do
+                                environmentRef <- effectiveEnvironmentRef alert
                                 created <- newRecord @AlertGroup
                                     |> set #groupKey key
                                     |> set #title key
-                                    |> set #environmentId alert.environmentId
+                                    |> set #environmentId environmentRef
                                     |> createRecord
                                 pure (get #id created)
                         updated <- alert

@@ -2,6 +2,7 @@ module Web.View.Alerts.Index where
 import Web.View.Prelude
 import Web.View.Fragments (AlertsTable (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
 import Application.Service.AlertList (AlertListFilters (..))
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Network.HTTP.Types.URI (renderQuery)
 import qualified Data.List as List
 
@@ -9,7 +10,7 @@ data IndexView = IndexView
     { alerts :: [Alert]
     , filters :: AlertListFilters
     , counts :: [(Text, Int64)]
-    , environments :: [Environment]
+    , envNames :: [Text]
     }
 
 instance View IndexView where
@@ -44,9 +45,8 @@ instance View IndexView where
             statuses = ["firing", "ack", "resolved", "closed"]
             resetUrl :: Text
             resetUrl = pathTo AlertsAction <> "?reset=1"
-            envNames = map (\environment -> environment.name) environments
-            hostSuggestions = List.sort (nub (mapMaybe (\alert -> alert.host) alerts))
-            serviceSuggestions = List.sort (nub (mapMaybe (\alert -> alert.service) alerts))
+            hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
+            serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
             titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
 
             severityCounts = [hsx|

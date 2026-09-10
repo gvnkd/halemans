@@ -30,7 +30,7 @@ module Application.Helper.DashboardConfig
 
 import IHP.Prelude
 import Generated.Types (Alert)
-import Application.Pipeline.Grouping (AlertField (..), alertFieldName, alertFieldText, parseAlertField, labelValue, globMatch)
+import Application.Pipeline.Grouping (AlertField (..), alertFieldName, effectiveFieldText, parseAlertField, labelValue, globMatch)
 import Application.Service.Facets (facetValue)
 import Data.Aeson (Value (..), object, (.=), (.:), (.:?), (.!=))
 import qualified Data.Aeson as Aeson
@@ -364,10 +364,11 @@ renderDashboardConfig :: [DashboardCard] -> Text
 renderDashboardConfig = cs . Pretty.encodePretty
 
 -- | Value of a facet reference on an alert row: attr: reads the materialized
--- facets map (resolved override chain), field: the raw column, label:
--- alerts.labels.
+-- facets map (resolved override chain), field: the EFFECTIVE field value
+-- (facet named like an overridable field — env/host/service — wins over the
+-- raw column), label: alerts.labels.
 clauseValue :: FacetRef -> Alert -> Maybe Text
-clauseValue (FacetField field) alert = alertFieldText field alert
+clauseValue (FacetField field) alert = effectiveFieldText field alert
 clauseValue (FacetLabel name) alert = labelValue alert name
 clauseValue (FacetAttr name) alert = facetValue alert name
 

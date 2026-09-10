@@ -48,6 +48,7 @@ import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
 import Application.Helper.DashboardConfig (CardSize (..), alertSortNaturalDir)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -64,8 +65,8 @@ alertRowHtml alert = [hsx|
         </td>
         <td>{severityBadgeHtml alert.severity Nothing}</td>
         <td><a href={ShowAlertAction (get #id alert)}>{alert.title}</a>{groupBadge}</td>
-        <td>{fromMaybe "" alert.env}</td>
-        <td>{fromMaybe "" alert.host}</td>
+        <td>{fromMaybe "" (effectiveFieldText FieldEnv alert)}</td>
+        <td>{fromMaybe "" (effectiveFieldText FieldHost alert)}</td>
         <td>{alert.occurrences}</td>
         <td>{utcTimeHtml alert.lastSeenAt}</td>
     </tr>

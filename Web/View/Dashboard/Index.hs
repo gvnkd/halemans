@@ -7,9 +7,11 @@ import IHP.QueryBuilder (orderByAsc)
 import qualified IHP.QueryBuilder as QB (query)
 import qualified IHP.Fetch as Fetch (fetch)
 import qualified Data.Aeson as Aeson
+import qualified Data.List as List
 
 data EnvCard = EnvCard
-    { cardEnvironment :: Maybe Environment
+    { cardEnvName :: Maybe Text
+    , cardEnvironment :: Maybe Environment
     , cardFiring :: Int64
     , cardAcked :: Int64
     , cardResolved :: Int64
@@ -19,40 +21,45 @@ data EnvCard = EnvCard
     }
 
 -- | Aggregate non-closed alerts into per-environment cards (shared by the
--- dashboard controller and the websocket broadcaster).
+-- dashboard controller and the websocket broadcaster). Cards are keyed by
+-- the EFFECTIVE env (a materialized facet named "env" overrides the raw
+-- column), so alerts follow their field-mapping override; the inventory row
+-- is attached only when an environment with that name exists.
 computeEnvCards :: (?modelContext :: ModelContext) => IO ([EnvCard], Maybe EnvCard)
 computeEnvCards = do
     counts <- sqlQueryTyped [typedSql|
-        SELECT a.environment_id, a.status, a.severity, count(*), a.suppressed
+        SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env_name, a.status, a.severity, count(*), a.suppressed
         FROM alerts a
         WHERE a.status <> 'closed'
-        GROUP BY a.environment_id, a.status, a.severity, a.suppressed
+        GROUP BY coalesce(nullif(a.facets ->> 'env', ''), a.env), a.status, a.severity, a.suppressed
     |]
     hourly <- sqlQueryTyped [typedSql|
-        SELECT a.environment_id, date_trunc('hour', a.created_at) AS hour, count(*)
+        SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env_name, date_trunc('hour', a.created_at) AS hour, count(*)
         FROM alerts a
         WHERE a.created_at > now() - interval '24 hours'
-        GROUP BY a.environment_id, date_trunc('hour', a.created_at)
+        GROUP BY coalesce(nullif(a.facets ->> 'env', ''), a.env), date_trunc('hour', a.created_at)
         ORDER BY hour
     |]
     environments <- QB.query @Environment |> orderByAsc #name |> Fetch.fetch
-    let cards = map (buildCard counts hourly . Just) environments
-        unassigned = buildCard counts hourly Nothing
+    let lookupEnv name = find (\environment -> Just environment.name == name) environments
+        cardNames = List.sort (List.nub (map (Just . (.name)) environments ++ map (get #env_name) counts))
+        cards = [buildCard counts hourly name (lookupEnv name) | name <- cardNames, isJust name]
+        unassigned = buildCard counts hourly Nothing Nothing
     pure (cards, if cardTotal unassigned > 0 then Just unassigned else Nothing)
 
-type CountRow = SqlRow '[ '("environment_id", Maybe (Id Environment)), '("status", Text), '("severity", Text), '("count", Int64), '("suppressed", Bool)]
-type HourRow = SqlRow '[ '("environment_id", Maybe (Id Environment)), '("hour", Maybe UTCTime), '("count", Int64)]
+type CountRow = SqlRow '[ '("env_name", Maybe Text), '("status", Text), '("severity", Text), '("count", Int64), '("suppressed", Bool)]
+type HourRow = SqlRow '[ '("env_name", Maybe Text), '("hour", Maybe UTCTime), '("count", Int64)]
 
-buildCard :: [CountRow] -> [HourRow] -> Maybe Environment -> EnvCard
-buildCard counts hourly environment =
-    let envId = get #id <$> environment
-        relevant = filter (\row -> get #environment_id row == envId) counts
+buildCard :: [CountRow] -> [HourRow] -> Maybe Text -> Maybe Environment -> EnvCard
+buildCard counts hourly envName environment =
+    let relevant = filter (\row -> get #env_name row == envName) counts
         countFor status = sum [get #count row | row <- relevant, get #status row == status]
         suppressedCount = sum [get #count row | row <- relevant, get #suppressed row]
         severities = nub (map (get #severity) relevant)
-        hourlyBuckets = [(hour, get #count row) | row <- hourly, get #environment_id row == envId, Just hour <- [get #hour row]]
+        hourlyBuckets = [(hour, get #count row) | row <- hourly, get #env_name row == envName, Just hour <- [get #hour row]]
     in EnvCard
-        { cardEnvironment = environment
+        { cardEnvName = envName
+        , cardEnvironment = environment
         , cardFiring = countFor "firing"
         , cardAcked = countFor "ack"
         , cardResolved = countFor "resolved"
@@ -130,9 +137,10 @@ renderCard card = [hsx|
             }
 
 cardLink :: EnvCard -> Html
-cardLink card = case card.cardEnvironment of
-    Just environment -> [hsx|<a href={ShowEnvironmentAction environment.name}>{environment.name}</a>|]
-    Nothing -> [hsx|<span>unassigned</span>|]
+cardLink card = case (card.cardEnvironment, card.cardEnvName) of
+    (Just environment, _) -> [hsx|<a href={ShowEnvironmentAction environment.name}>{environment.name}</a>|]
+    (Nothing, Just name) -> [hsx|<span>{name}</span>|]
+    (Nothing, Nothing) -> [hsx|<span>unassigned</span>|]
 
 cardDomId :: EnvCard -> Text
-cardDomId card = "env-card-" <> maybe "unassigned" (\environment -> environment.name) card.cardEnvironment
+cardDomId card = "env-card-" <> fromMaybe "unassigned" card.cardEnvName

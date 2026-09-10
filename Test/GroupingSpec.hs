@@ -77,6 +77,22 @@ spec = describe "Application.Pipeline.Grouping" do
             renderTemplate "no placeholders" alert `shouldBe` "no placeholders"
             renderTemplate "{env" alert `shouldBe` "{env"
 
+    describe "effectiveFieldText (facet override of raw fields)" do
+        let overridden = alert |> set #facets (object ["env" .= ("prod" :: Text), "host" .= ("edge-01" :: Text), "severity" .= ("info" :: Text)])
+        it "facet named env/host/service wins over the raw column" do
+            effectiveFieldText FieldEnv overridden `shouldBe` Just "prod"
+            effectiveFieldText FieldHost overridden `shouldBe` Just "edge-01"
+        it "raw column is the fallback when the facet is absent" do
+            effectiveFieldText FieldEnv alert `shouldBe` Just "dev"
+            effectiveFieldText FieldService overridden `shouldBe` Nothing
+        it "check/severity/status are never overridden" do
+            effectiveFieldText FieldSeverity overridden `shouldBe` Just "critical"
+            effectiveFieldText FieldStatus overridden `shouldBe` Just "firing"
+            effectiveFieldText FieldCheck overridden `shouldBe` Just "cpu"
+        it "effectiveFieldSql only covers overridable fields" do
+            effectiveFieldSql "alerts" FieldEnv `shouldBe` Just "coalesce(nullif(alerts.facets ->> 'env', ''), alerts.env)"
+            effectiveFieldSql "alerts" FieldSeverity `shouldBe` Nothing
+
     describe "severity ordering" do
         it "critical > high > warning > info" do
             map severityRank ["critical", "high", "warning", "info"] `shouldBe` [3, 2, 1, 0]
@@ -96,8 +112,12 @@ spec = describe "Application.Pipeline.Grouping" do
             let expr = matchExprFromJSON (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
             expr `shouldBe` MatchExpr [] [] [("DB Cluster", "ib*")]
         it "{facet:name} placeholder renders from the facets map" do
-            renderTemplate "{facet:DB Cluster}/{env}" faceted `shouldBe` "ibstaffcopdb01/dev"
+            renderTemplate "{facet:DB Cluster}/{check}" faceted `shouldBe` "ibstaffcopdb01/cpu"
             renderTemplate "{facet:absent}" faceted `shouldBe` "-"
+        it "field placeholders and field-equals use the effective (facet-overridden) value" do
+            renderTemplate "{env}/{host}" faceted `shouldBe` "PROD/dev-host-01"
+            matchAlert (MatchExpr [(FieldEnv, "PROD")] [] []) faceted `shouldBe` True
+            matchAlert (MatchExpr [(FieldEnv, "dev")] [] []) faceted `shouldBe` False
         it "ruleReferencesFacets detects facet globs and facet placeholders" do
             let ruleWithGlob = newRecord @GroupingRule
                     |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])

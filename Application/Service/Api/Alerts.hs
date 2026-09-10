@@ -56,13 +56,12 @@ listAlertsPage AlertFilters { .. } = do
     rows <- sqlQueryTyped [typedSql|
         SELECT a.id, a.last_seen_at
         FROM alerts a
-        LEFT JOIN environments e ON e.id = a.environment_id
-        WHERE ('' = ${afEnvironment} OR e.name = ${afEnvironment})
+        WHERE ('' = ${afEnvironment} OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${afEnvironment})
           AND ('' = ${afStatus} OR a.status = ${afStatus})
           AND ('' = ${afSeverity} OR a.severity = ${afSeverity})
           AND ('' = ${afFingerprint} OR a.fingerprint = ${afFingerprint})
-          AND ('' = ${afHost} OR a.host = ${afHost})
-          AND ('' = ${afService} OR a.service = ${afService})
+          AND ('' = ${afHost} OR coalesce(nullif(a.facets ->> 'host', ''), a.host) = ${afHost})
+          AND ('' = ${afService} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${afService})
           AND a.last_seen_at >= ${afSince}
           AND a.last_seen_at <= ${afUntil}
           AND (a.last_seen_at, a.id) < (${cursorSeenAt}, ${cursorId})

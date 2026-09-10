@@ -3,6 +3,7 @@ module Web.Controller.Environments where
 import Web.Controller.Prelude
 import Web.View.Environments.Show
 import qualified Application.Helper.FilterPrefs as FilterPrefs
+import Application.Helper.DashboardConfig (quoteSqlText)
 import Network.HTTP.Types.URI (renderQuery)
 
 instance Controller EnvironmentsController where
@@ -33,9 +34,11 @@ instance Controller EnvironmentsController where
 
 renderEnv :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> EnvFilters -> Text -> IO ResponseReceived
 renderEnv environmentName filters viewMode = do
+    -- The inventory row is optional: an env name that exists only as a
+    -- materialized env facet (field-mapping override) still gets a page.
     environment <- query @Environment
         |> filterWhere (#name, environmentName)
-        |> fetchOne
+        |> fetchOneOrNothing
     groupFilterIds <- case filters.filterGroup of
         Nothing -> pure Nothing
         Just pattern -> do
@@ -43,35 +46,43 @@ renderEnv environmentName filters viewMode = do
                 |> filterWhereILike (#groupKey, "%" <> pattern <> "%")
                 |> fetch
             pure (Just (map (Just . get #id) matchingGroups))
+    -- Membership and host/service filters match on the EFFECTIVE value:
+    -- a facet named env/host/service overrides the raw column. The
+    -- filterWhereSql fragment is spliced behind `facets IS NOT NULL AND`
+    -- (facets is NOT NULL by schema) because the builder only appends.
     alerts <- query @Alert
-        |> filterWhere (#environmentId, Just (get #id environment))
+        |> filterWhereSql (#facets, "IS NOT NULL AND coalesce(nullif(alerts.facets ->> 'env', ''), alerts.env) = " <> quoteSqlText environmentName)
         |> applyList filters.filterSeverities (\values -> filterWhereIn (#severity, values))
         |> applyList filters.filterStatuses (\values -> filterWhereIn (#status, values))
-        |> applyMaybe filters.filterHost (\value -> filterWhere (#host, Just value))
-        |> applyMaybe filters.filterService (\value -> filterWhere (#service, Just value))
+        |> applyMaybe filters.filterHost (\value -> filterWhereSql (#facets, "IS NOT NULL AND coalesce(nullif(alerts.facets ->> 'host', ''), alerts.host) = " <> quoteSqlText value))
+        |> applyMaybe filters.filterService (\value -> filterWhereSql (#facets, "IS NOT NULL AND coalesce(nullif(alerts.facets ->> 'service', ''), alerts.service) = " <> quoteSqlText value))
         |> applyMaybe filters.filterText (\value -> filterWhereILike (#title, "%" <> value <> "%"))
         |> applyMaybe groupFilterIds (\ids -> filterWhereIn (#groupId, ids))
         |> orderByDesc #lastSeenAt
         |> limit 200
         |> fetch
     groups <- if viewMode == "grouped"
-        then do
-            envGroups <- query @AlertGroup
-                |> filterWhere (#environmentId, Just (get #id environment))
-                |> orderByDesc #createdAt
-                |> fetch
-            forM envGroups \group -> do
-                members <- query @Alert
-                    |> filterWhere (#groupId, Just (get #id group))
-                    |> orderByDesc #lastSeenAt
+        then case environment of
+            Nothing -> pure []
+            Just env -> do
+                envGroups <- query @AlertGroup
+                    |> filterWhere (#environmentId, Just (get #id env))
+                    |> orderByDesc #createdAt
                     |> fetch
-                pure (group, members)
+                forM envGroups \group -> do
+                    members <- query @Alert
+                        |> filterWhere (#groupId, Just (get #id group))
+                        |> orderByDesc #lastSeenAt
+                        |> fetch
+                    pure (group, members)
         else pure []
-    blackouts <- query @Blackout
-        |> filterWhere (#environmentId, Just (get #id environment))
-        |> filterWhereSql (#endsAt, "> NOW()")
-        |> orderByDesc #startsAt
-        |> fetch
+    blackouts <- case environment of
+        Nothing -> pure []
+        Just env -> query @Blackout
+            |> filterWhere (#environmentId, Just (get #id env))
+            |> filterWhereSql (#endsAt, "> NOW()")
+            |> orderByDesc #startsAt
+            |> fetch
     render ShowView { .. }
 
 envFilterQueryKeys :: [ByteString]

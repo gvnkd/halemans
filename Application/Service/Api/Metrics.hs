@@ -60,11 +60,10 @@ type LlmCounterRow = SqlRow '[ '("provider", Text), '("tokens_in", Int64), '("to
 collectMetrics :: (?modelContext :: ModelContext) => IO Text
 collectMetrics = do
     alertCounts <- sqlQueryTyped [typedSql|
-        SELECT coalesce(e.name, 'unassigned') AS environment, a.status, a.severity, count(*) AS count
+        SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env, 'unassigned') AS environment, a.status, a.severity, count(*) AS count
         FROM alerts a
-        LEFT JOIN environments e ON e.id = a.environment_id
         WHERE a.status <> 'closed'
-        GROUP BY e.name, a.status, a.severity
+        GROUP BY coalesce(nullif(a.facets ->> 'env', ''), a.env, 'unassigned'), a.status, a.severity
     |]
     sources <- query @Source |> fetch
     jobCounts <- sqlQueryTyped [typedSql|

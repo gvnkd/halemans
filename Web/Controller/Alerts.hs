@@ -9,6 +9,7 @@ import qualified Application.Service.AlertList as AlertList
 import Application.Service.AlertList (AlertListFilters (..), validSortColumns, defaultAlertListFilters)
 import qualified Application.Helper.FilterPrefs as FilterPrefs
 import Network.HTTP.Types.URI (renderQuery)
+import qualified Data.List as List
 import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Assets.Cache as AssetsCache
@@ -51,9 +52,11 @@ instance Controller AlertsController where
             renderAlertList filters = do
                 alerts <- AlertList.listAlerts filters 200
                 counts <- AlertList.countBySeverity filters
-                environments <- query @Environment
-                    |> orderByAsc #name
-                    |> fetch
+                -- Filter options: inventory names plus override-only names
+                -- that exist solely as materialized env facets.
+                inventoryNames <- map (.name) <$> (query @Environment |> orderByAsc #name |> fetch)
+                facetNames <- AlertList.effectiveEnvNames
+                let envNames = List.sort (List.nub (inventoryNames ++ facetNames))
                 render IndexView { .. }
 
     action ShowAlertAction { alertId } = do

@@ -1,19 +1,8 @@
 name: Test
+# Disabled on push/PR: the suite runs locally via `nix flake check --impure`.
+# Trigger manually from the Actions tab when needed.
 on:
-  push:
-    branches: [master, main]
-    paths-ignore:
-      - "**.md"
-      - "design_docs/**"
-      - ".opencode/**"
-      - "deploy/docker/*.example.json"
-  pull_request:
-    branches: [master, main]
-    paths-ignore:
-      - "**.md"
-      - "design_docs/**"
-      - ".opencode/**"
-      - "deploy/docker/*.example.json"
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest

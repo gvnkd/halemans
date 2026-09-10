@@ -48,9 +48,11 @@ import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Assets.Attrs (objectAttributes)
-import Application.Pipeline.Grouping (facetValue)
+import Application.Pipeline.Grouping (AlertField (..), facetValue)
 import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..), decodeDashboardConfig)
 import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..), runCardSummary, CardSummary (..), runCardQuery)
+import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, listAlerts, effectiveEnvNames)
+import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..))
 import Application.Job.FacetBackfill ()
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
@@ -2100,6 +2102,54 @@ m9Spec = describe "resolved facets (milestone 9)" do
                     group <- fetch groupId
                     group.groupKey `shouldBe` "db-ibstaffcopdb01"
                     alert.groupedByVersion `shouldBe` Just rule.version
+
+    it "facet env override drives list filters, card queries and overview cards" do
+        _ <- ensureAssetsConfig
+        overrideMapping <- createRecord (newRecord @FieldMapping |> set #facet "env" |> set #rank 50 |> set #kind "attr" |> set #key "Environments" |> set #enabled True)
+        (fallbackMapping, fallbackCreated) <- ensureMapping "env" 100 "field" "env"
+        flip finally (cleanupMappings [(overrideMapping, True), (fallbackMapping, fallbackCreated)]) do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+                { host = Just "dev-host-01", checkName = Just "halemans test trigger", env = Just "m9-override-raw" }
+            job <- enrichJobFor alertId
+            perform job
+            -- /alerts env filter matches the override, not the raw env
+            -- (dev-DB tolerant: other runs may leave PROD-overridden alerts)
+            let idsFor envName = map (get #id) <$> listAlerts defaultAlertListFilters { alfEnvs = [envName] } 500
+            prodIds <- idsFor "PROD"
+            prodIds `shouldContain` [alertId]
+            idsFor "m9-override-raw" `shouldReturn` []
+            -- env filter dropdown source includes the override-only name
+            names <- effectiveEnvNames
+            names `shouldContain` ["PROD"]
+            -- dashboard card with a legacy field:env clause follows the override
+            let card = DashboardCard
+                    { cardTitle = Nothing
+                    , cardMatch = [MatchClause (FacetField FieldEnv) OpEq "PROD" []]
+                    , cardGroupBy = Nothing
+                    , cardLimit = 50
+                    , cardLegacy = False
+                    , cardForEach = Nothing
+                    , cardHideWhen = Nothing
+                    , cardSummary = False
+                    , cardSortBy = []
+                    , cardAlertSortBy = []
+                    , cardSize = Nothing
+                    , cardExtras = mempty
+                    }
+            cardIds <- map (get #id) <$> runCardQuery card
+            cardIds `shouldContain` [alertId]
+            -- overview cards are keyed by the effective env
+            let cardTotal' card = card.cardFiring + card.cardAcked + card.cardResolved
+            (cards, _) <- computeEnvCards
+            let cardFor name = find (\card -> card.cardEnvName == Just name) cards
+            case cardFor "PROD" of
+                Nothing -> expectationFailure "no overview card for the overridden env"
+                Just card -> cardTotal' card `shouldSatisfy` (> 0)
+            case cardFor "m9-override-raw" of
+                Nothing -> pure ()
+                Just card -> cardTotal' card `shouldBe` 0
 
     it "facet backfill job recomputes facets for non-closed alerts" do
         (mapping, created) <- ensureMapping "env" 100 "field" "env"

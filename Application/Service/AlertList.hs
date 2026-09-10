@@ -4,6 +4,7 @@ module Application.Service.AlertList
 , validSortColumns
 , listAlerts
 , countBySeverity
+, effectiveEnvNames
 , matchesFilters
 , parseAlertFilters
 , alertFiltersToValue
@@ -17,6 +18,7 @@ import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Generated.Types
 import Application.Helper.DashboardConfig (validAlertSortColumns)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.!=), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -58,7 +60,8 @@ validSortColumns = validAlertSortColumns
 -- not parameterizable), so the id page comes from one typedSql statement
 -- with a computed text sort key; rows are then fetched as model records.
 -- Severity/status map to rank strings so textual ordering matches the
--- domain ordering.
+-- domain ordering. env/host/service filters and sort keys read the EFFECTIVE
+-- value: a materialized facet named like the field overrides the raw column.
 listAlerts :: (?modelContext :: ModelContext) => AlertListFilters -> Int -> IO [Alert]
 listAlerts filters lim = do
     let sevs = filters.alfSeverities
@@ -79,20 +82,19 @@ listAlerts filters lim = do
                     WHEN 'status' THEN CASE a.status WHEN 'firing' THEN '0' WHEN 'ack' THEN '1' WHEN 'resolved' THEN '2' ELSE '3' END
                     WHEN 'severity' THEN CASE a.severity WHEN 'critical' THEN '0' WHEN 'high' THEN '1' WHEN 'warning' THEN '2' WHEN 'info' THEN '3' ELSE '4' END
                     WHEN 'title' THEN lower(a.title)
-                    WHEN 'env' THEN coalesce(e.name, a.env, '')
-                    WHEN 'host' THEN coalesce(a.host, '')
+                    WHEN 'env' THEN coalesce(nullif(a.facets ->> 'env', ''), a.env, '')
+                    WHEN 'host' THEN coalesce(nullif(a.facets ->> 'host', ''), a.host, '')
                     WHEN 'occurrences' THEN lpad(a.occurrences::text, 12, '0')
                     ELSE to_char(a.last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')
                 END AS sort_key,
                 a.last_seen_at
             FROM alerts a
-            LEFT JOIN environments e ON e.id = a.environment_id
             LEFT JOIN alert_groups g ON g.id = a.group_id
             WHERE (CASE WHEN cardinality(${statuses}::text[]) = 0 THEN a.status <> 'closed' ELSE a.status = ANY(${statuses}) END)
               AND (cardinality(${sevs}::text[]) = 0 OR a.severity = ANY(${sevs}))
-              AND (cardinality(${envs}::text[]) = 0 OR e.name = ANY(${envs}))
-              AND ('' = ${host} OR a.host = ${host})
-              AND ('' = ${service} OR a.service = ${service})
+              AND (cardinality(${envs}::text[]) = 0 OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ANY(${envs}))
+              AND ('' = ${host} OR coalesce(nullif(a.facets ->> 'host', ''), a.host) = ${host})
+              AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
               AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
               AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
         ) AS sorted
@@ -119,18 +121,31 @@ countBySeverity filters = do
     rows <- sqlQueryTyped [typedSql|
         SELECT a.severity, COUNT(*) AS n
         FROM alerts a
-        LEFT JOIN environments e ON e.id = a.environment_id
         LEFT JOIN alert_groups g ON g.id = a.group_id
         WHERE (CASE WHEN cardinality(${statuses}::text[]) = 0 THEN a.status <> 'closed' ELSE a.status = ANY(${statuses}) END)
           AND (cardinality(${sevs}::text[]) = 0 OR a.severity = ANY(${sevs}))
-          AND (cardinality(${envs}::text[]) = 0 OR e.name = ANY(${envs}))
-          AND ('' = ${host} OR a.host = ${host})
-          AND ('' = ${service} OR a.service = ${service})
+          AND (cardinality(${envs}::text[]) = 0 OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ANY(${envs}))
+          AND ('' = ${host} OR coalesce(nullif(a.facets ->> 'host', ''), a.host) = ${host})
+          AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
           AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
           AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
         GROUP BY a.severity
     |]
     pure (map (\row -> (get #severity row, get #n row)) rows)
+
+-- | Distinct effective env names among non-closed alerts, for the /alerts
+-- env filter dropdown (override-only names never appear in the environments
+-- table). The controller merges these with the inventory names.
+effectiveEnvNames :: (?modelContext :: ModelContext) => IO [Text]
+effectiveEnvNames = do
+    rows <- sqlQueryTyped [typedSql|
+        SELECT DISTINCT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS name
+        FROM alerts a
+        WHERE a.status <> 'closed'
+          AND coalesce(nullif(a.facets ->> 'env', ''), a.env) IS NOT NULL
+        ORDER BY name
+    |]
+    pure (catMaybes rows)
 
 -- Pure predicate mirror of the list query, used by the websocket
 -- broadcaster to decide whether an alert event is visible to a filtered
@@ -147,9 +162,9 @@ matchesFilters filters alert = do
     pure (and
         [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
         , statusOk
-        , null filters.alfEnvs || maybe False (`elem` filters.alfEnvs) alert.env
-        , maybe True (\host -> alert.host == Just host) filters.alfHost
-        , maybe True (\service -> alert.service == Just service) filters.alfService
+        , null filters.alfEnvs || maybe False (`elem` filters.alfEnvs) (effectiveFieldText FieldEnv alert)
+        , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
+        , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
         , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
         , groupOk
         ])

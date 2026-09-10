@@ -24,6 +24,7 @@ import Application.Service.Notify (dispatchNotification)
 import Application.Service.Groups (assignGroup, recomputeGroupRollup)
 import Application.Service.Escalation (cancelTrackersFor)
 import qualified Application.Service.Facets as Facets
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 
 data SourceStatus = Firing | Resolved deriving (Eq, Show)
 
@@ -276,7 +277,7 @@ publishAlertUpdate alert kind = do
     let payload :: Text
         payload = cs (Aeson.encode (object
             [ "alertId" .= get #id alert
-            , "env" .= alert.env
+            , "env" .= effectiveFieldText FieldEnv alert
             , "kind" .= kind
             , "title" .= alert.title
             , "severity" .= alert.severity

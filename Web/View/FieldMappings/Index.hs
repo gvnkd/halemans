@@ -13,8 +13,13 @@ instance View IndexView where
             <code>field</code> = alert column (env, host, service, check, severity, status),
             <code>label</code> = alerts.labels key, <code>attr</code> = linked Assets object attribute
             (comma-separated list attributes yield their first element).
-            Facets are materialized on the alert and drive dashboards and grouping rules;
-            they are not shown on the alert card, which always displays the raw fields.
+            Facets are materialized on the alert and drive dashboards and grouping rules.
+            A facet named exactly <code>env</code>, <code>host</code> or <code>service</code>
+            overrides the raw alert field everywhere: the alert card and list tables show the
+            effective value (raw value in parentheses), list/env filters, overview cards, the
+            JSON API and metrics all follow the override. <code>check</code>, <code>severity</code>
+            and <code>status</code> are never overridable, and blackouts/inventory
+            (environments/hosts/services tables) always use the raw ingest values.
             Edits apply to newly ingested/enriched alerts; use recompute to backfill non-closed alerts
             (requires the worker; only alerts with linked Assets objects gain attr facets).
         </p>

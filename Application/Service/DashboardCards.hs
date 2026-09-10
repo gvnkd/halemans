@@ -18,7 +18,7 @@ import IHP.Fetch (fetch)
 import IHP.QueryBuilder
 import Generated.Types
 import Application.Helper.DashboardConfig
-import Application.Pipeline.Grouping (AlertField (..), severityRank)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldSql, effectiveFieldText, severityRank)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Data.List (sortOn, nub, sort)
@@ -64,8 +64,8 @@ alertSortPayload alert key = AlertSortPayload key.askDesc $ case key.askColumn o
     "status" -> APInt (statusRank alert.status)
     "severity" -> APDownInt (Down (severityRank alert.severity))
     "title" -> APText (Text.toLower alert.title)
-    "env" -> APText (fromMaybe "" alert.env)
-    "host" -> APText (fromMaybe "" alert.host)
+    "env" -> APText (fromMaybe "" (effectiveFieldText FieldEnv alert))
+    "host" -> APText (fromMaybe "" (effectiveFieldText FieldHost alert))
     "occurrences" -> APInt alert.occurrences
     _ -> APDownTime (Down alert.lastSeenAt)
 
@@ -280,18 +280,30 @@ cardBaseQuery card = foldl' apply (query @Alert |> filterWhereNot (#status, "clo
 
 applyClause :: MatchClause -> QueryBuilder "alerts" -> QueryBuilder "alerts"
 applyClause clause builder = case clause.mcFacet of
-    FacetField field -> case field of
-        FieldEnv -> builder |> filterWhereSql (#env, fragment "" "alerts.env")
-        FieldHost -> builder |> filterWhereSql (#host, fragment "" "alerts.host")
-        FieldService -> builder |> filterWhereSql (#service, fragment "" "alerts.service")
-        FieldCheck -> builder |> filterWhereSql (#checkName, fragment "" "alerts.check_name")
-        FieldSeverity -> builder |> filterWhereSql (#severity, fragment "" "alerts.severity")
-        FieldStatus -> builder |> filterWhereSql (#status, fragment "" "alerts.status")
+    FacetField field -> case effectiveFieldSql "alerts" field of
+        -- Overridable fields match on the effective value (facet override
+        -- wins over the raw column). filterWhereSql only APPENDS the fragment
+        -- after the qualified proxy column, so the condition is spliced
+        -- behind `alerts.facets IS NOT NULL AND` — facets is NOT NULL by
+        -- schema, making the prefix a no-op.
+        Just expr -> builder |> filterWhereSql (#facets, effectiveCondition expr)
+        Nothing -> case field of
+            FieldCheck -> builder |> filterWhereSql (#checkName, fragment "" "alerts.check_name")
+            FieldSeverity -> builder |> filterWhereSql (#severity, fragment "" "alerts.severity")
+            FieldStatus -> builder |> filterWhereSql (#status, fragment "" "alerts.status")
+            _ -> builder
     FacetLabel name -> builder |> filterWhereSql (#labels, fragment accessor ("alerts.labels " <> accessor))
         where accessor = "->> " <> quoteSqlText name
     FacetAttr name -> builder |> filterWhereSql (#facets, fragment accessor ("alerts.facets " <> accessor))
         where accessor = "->> " <> quoteSqlText name
     where
+        -- A NULL effective value (facet and raw column both absent) never
+        -- matches, mirroring matchClauseAlert on Nothing.
+        effectiveCondition expr = "IS NOT NULL AND " <> case clause.mcOp of
+            OpEq -> expr <> " = " <> quoteSqlText clause.mcValue
+            OpNe -> expr <> " IS NOT NULL AND " <> expr <> " <> " <> quoteSqlText clause.mcValue
+            OpGlob -> expr <> " LIKE " <> quoteSqlText (globToLike clause.mcValue)
+            OpIn -> expr <> " IN (" <> Text.intercalate ", " (map quoteSqlText clause.mcValues) <> ")"
         -- filterWhereSql appends the fragment after the qualified proxy
         -- column; `accessor` extends the column to the value expression and
         -- `valueExpr` repeats it in full for the != null guard.

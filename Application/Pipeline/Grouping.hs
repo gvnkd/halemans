@@ -6,6 +6,9 @@ module Application.Pipeline.Grouping
 , matchAlert
 , alertFieldText
 , alertFieldName
+, effectiveFieldText
+, effectiveFieldSql
+, fieldOverridable
 , parseAlertField
 , labelValue
 , facetValue
@@ -100,12 +103,47 @@ alertFieldText = \case
     FieldSeverity -> Just . (.severity)
     FieldStatus -> Just . (.status)
 
+-- | A materialized facet named exactly like an overridable field becomes the
+-- effective value of that field everywhere (display, filters, dashboards,
+-- grouping). Only env/host/service are overridable: check/severity/status
+-- stay raw (status is lifecycle-managed; severity/check drive rollups and
+-- source correlation).
+fieldOverridable :: AlertField -> Bool
+fieldOverridable = \case
+    FieldEnv -> True
+    FieldHost -> True
+    FieldService -> True
+    _ -> False
+
+-- | Effective field value: facet override wins, raw column is the fallback.
+effectiveFieldText :: AlertField -> Alert -> Maybe Text
+effectiveFieldText field alert
+    | fieldOverridable field = facetValue alert (alertFieldName field) <|> alertFieldText field alert
+    | otherwise = alertFieldText field alert
+
+-- | SQL expression for the effective value of an overridable field, e.g.
+-- @coalesce(nullif(alerts.facets ->> 'env', ''), alerts.env)@. Facet values
+-- are non-empty by construction (resolveFacets drops empties); nullif guards
+-- against hand-written rows. Nothing for non-overridable fields.
+effectiveFieldSql :: Text -> AlertField -> Maybe Text
+effectiveFieldSql alias field
+    | fieldOverridable field = Just ("coalesce(nullif(" <> alias <> ".facets ->> '" <> alertFieldName field <> "', ''), " <> alias <> "." <> column <> ")")
+    | otherwise = Nothing
+    where
+        column = case field of
+            FieldEnv -> "env"
+            FieldHost -> "host"
+            FieldService -> "service"
+            FieldCheck -> "check_name"
+            FieldSeverity -> "severity"
+            FieldStatus -> "status"
+
 -- | Conjunction only (§13 decision): every field-equals, every label glob
 -- and every facet glob must hold. An empty MatchExpr matches everything.
 matchAlert :: MatchExpr -> Alert -> Bool
 matchAlert expr alert = fieldsHold && labelsHold && facetsHold
     where
-        fieldsHold = all (\(field, expected) -> alertFieldText field alert == Just expected) expr.meFieldEquals
+        fieldsHold = all (\(field, expected) -> effectiveFieldText field alert == Just expected) expr.meFieldEquals
         labelsHold = all (labelHolds alert) expr.meLabelGlobs
         facetsHold = all (\(name, glob) -> maybe False (globMatch glob) (facetValue alert name)) expr.meFacetGlobs
 
@@ -159,7 +197,7 @@ renderTemplate template alert = mconcat (map renderSegment (parseTemplate templa
             Literal text -> text
             Placeholder name -> fromMaybe "-" (placeholderValue name alert)
         placeholderValue name alert
-            | Just field <- parseAlertField name = alertFieldText field alert
+            | Just field <- parseAlertField name = effectiveFieldText field alert
             | Just labelName <- Text.stripPrefix "label:" name = labelValue alert labelName
             | Just facetName <- Text.stripPrefix "facet:" name = facetValue alert facetName
             | otherwise = Nothing

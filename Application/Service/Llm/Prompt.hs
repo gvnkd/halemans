@@ -24,6 +24,7 @@ import "cryptonite" Crypto.Hash (hashWith, SHA256 (..))
 import Data.ByteArray.Encoding (convertToBase, Base (Base16))
 import Data.List (nubBy)
 import Application.Service.Llm.Output (outputContract)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
 
@@ -203,9 +204,9 @@ gatherInputs alert = do
     pure emptyInputs
         { piTitle = alert.title
         , piSeverity = alert.severity
-        , piEnv = fromMaybe "unknown" alert.env
-        , piHost = fromMaybe "unknown" alert.host
-        , piService = fromMaybe "unknown" alert.service
+        , piEnv = fromMaybe "unknown" (effectiveFieldText FieldEnv alert)
+        , piHost = fromMaybe "unknown" (effectiveFieldText FieldHost alert)
+        , piService = fromMaybe "unknown" (effectiveFieldText FieldService alert)
         , piCheckName = fromMaybe "unknown" alert.checkName
         , piDescription = alert.description
         , piLabels = cs (Aeson.encode alert.labels)

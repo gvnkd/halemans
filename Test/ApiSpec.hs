@@ -81,7 +81,8 @@ spec = describe "Milestone 6 API" do
             lookupKey "host" json `shouldBe` Just Null
         it "env card rollup matches the dashboard shape" do
             let json = encodeEnvCard EnvCard
-                    { cardEnvironment = Nothing
+                    { cardEnvName = Nothing
+                    , cardEnvironment = Nothing
                     , cardFiring = 2
                     , cardAcked = 1
                     , cardResolved = 3
