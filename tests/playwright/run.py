@@ -648,7 +648,13 @@ with sync_playwright() as pw:
     def _():
         alert_id = sql("SELECT alert_id FROM llm_analyses WHERE status = 'done' ORDER BY created_at DESC LIMIT 1")
         assert alert_id, "no completed analysis"
-        page.goto(f"{APP}/alerts/{alert_id}")
+        # Navigate via turbolinks (list -> card): the websocket keeps the page
+        # it was opened on, so the live client must re-subscribe on navigation
+        # or the llm panel never updates without a full reload.
+        page.goto(f"{APP}/alerts")
+        page.get_by_test_id("alerts-table").wait_for()
+        page.locator(f"a[href='/alerts/{alert_id}']").first.click()
+        page.get_by_test_id("alert-card").wait_for()
         page.get_by_test_id("llm-reanalyze").click()
         # .first: alerts with a history block render one llm-markdown per
         # older analysis too
@@ -664,8 +670,8 @@ with sync_playwright() as pw:
             time.sleep(1)
         else:
             raise AssertionError("re-analyze never landed")
-        page.reload()
-        page.get_by_test_id("llm-history").wait_for()
+        # The completed analysis must live-update the open card (no reload).
+        page.get_by_test_id("llm-history").wait_for(timeout=90000)
 
     @check("llm: feedback up/down round-trip persists")
     def _():

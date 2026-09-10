@@ -16,6 +16,7 @@ import IHP.ModelSupport (Id' (..))
 import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Generated.Types
+import Application.Helper.DashboardConfig (validAlertSortColumns)
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.!=), (.=))
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -51,7 +52,7 @@ defaultAlertListFilters = AlertListFilters
     }
 
 validSortColumns :: [Text]
-validSortColumns = ["status", "severity", "title", "env", "host", "occurrences", "last_seen_at"]
+validSortColumns = validAlertSortColumns
 
 -- Sorting is dynamic, which the query builder cannot express (ORDER BY is
 -- not parameterizable), so the id page comes from one typedSql statement

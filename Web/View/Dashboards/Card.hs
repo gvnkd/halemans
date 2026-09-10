@@ -1,13 +1,16 @@
 module Web.View.Dashboards.Card where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml)
+import Web.View.Fragments (AlertsTable (..), alertsTableHtml, nextSortDir)
 import Web.View.Dashboards.Show (cardTitleText)
 import Application.Service.DashboardCards (ExpandedCard (..))
+import Network.HTTP.Types.URI (renderQuery)
 
 data CardView = CardView
     { dashboard :: Dashboard
     , expandedCard :: ExpandedCard
     , alerts :: [Alert]
+    , sortColumn :: Text
+    , sortDir :: Text
     }
 
 instance View CardView where
@@ -17,14 +20,27 @@ instance View CardView where
         <p>
             <a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-outline-secondary">Back to dashboard</a>
         </p>
-        <table class="table table-sm" data-testid="dashboard-card-alerts">
-            <tbody>
-                {forEach alerts alertRowHtml}
-            </tbody>
-        </table>
+        {table}
         {emptyNote}
     |]
         where
+            table = alertsTableHtml AlertsTable
+                { atTestId = "dashboard-card-alerts"
+                , atTbodyId = "dashboard-card-alerts-tbody"
+                , atLiveScope = Nothing
+                , atSort = sortColumn
+                , atDir = sortDir
+                , atSortUrl = sortUrl
+                , atAlerts = alerts
+                }
             emptyNote = if null alerts
                 then [hsx|<p class="text-secondary" data-testid="dashboard-card-empty">No matching alerts.</p>|]
                 else mempty
+            sortUrl :: Text -> Text
+            sortUrl column = pathTo (ShowDashboardCardAction dashboard.id expandedCard.ecIndex) <> cs (renderQuery True (queryItems column))
+                where
+                    queryItems col = valueItem ++
+                        [ ("sort", Just (cs col))
+                        , ("dir", Just (cs (nextSortDir sortColumn sortDir col)))
+                        ]
+                    valueItem = maybe [] (\value -> [("value", Just (cs value))]) expandedCard.ecValue

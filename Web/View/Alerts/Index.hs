@@ -1,6 +1,6 @@
 module Web.View.Alerts.Index where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml, filterMultiSelect, filterTextInput)
+import Web.View.Fragments (AlertsTable (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
 import Application.Service.AlertList (AlertListFilters (..))
 import Network.HTTP.Types.URI (renderQuery)
 import qualified Data.List as List
@@ -28,24 +28,18 @@ instance View IndexView where
             <input type="hidden" name="dir" value={filters.alfDir}/>
             <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="alerts-filters-reset">Reset</a></div>
         </form>
-        <table class="table" data-testid="alerts-table" data-live-scope="alerts">
-            <thead>
-                <tr>
-                    {sortableTh "status" "Status"}
-                    {sortableTh "severity" "Severity"}
-                    {sortableTh "title" "Title"}
-                    {sortableTh "env" "Env"}
-                    {sortableTh "host" "Host"}
-                    {sortableTh "occurrences" "Occurrences"}
-                    {sortableTh "last_seen_at" "Last seen"}
-                </tr>
-            </thead>
-            <tbody id="alerts-tbody">
-                {forEach alerts alertRowHtml}
-            </tbody>
-        </table>
+        {table}
     |]
         where
+            table = alertsTableHtml AlertsTable
+                { atTestId = "alerts-table"
+                , atTbodyId = "alerts-tbody"
+                , atLiveScope = Just "alerts"
+                , atSort = filters.alfSort
+                , atDir = filters.alfDir
+                , atSortUrl = sortUrl
+                , atAlerts = alerts
+                }
             severities = ["critical", "high", "warning", "info"]
             statuses = ["firing", "ack", "resolved", "closed"]
             resetUrl :: Text
@@ -65,25 +59,10 @@ instance View IndexView where
             |]
             countFor severity = fromMaybe 0 (lookup severity counts)
 
-            sortableTh :: Text -> Text -> Html
-            sortableTh column label = [hsx|
-                <th><a href={sortUrl column} class="text-decoration-none" data-testid={"sort-" <> column}>{label}{indicator}</a></th>
-            |]
-                where
-                    indicator = if filters.alfSort == column
-                        then [hsx|<span class="sort-indicator">{arrow}</span>|]
-                        else mempty
-                    arrow :: Text
-                    arrow = if filters.alfDir == "asc" then " ▲" else " ▼"
-
             sortUrl :: Text -> Text
             sortUrl column = pathTo AlertsAction <> cs (renderQuery True (queryItems column))
                 where
-                    queryItems col = baseItems filters { alfSort = col, alfDir = nextDir col }
-                    nextDir col
-                        | filters.alfSort == col = if filters.alfDir == "asc" then "desc" else "asc"
-                        | col == "last_seen_at" = "desc"
-                        | otherwise = "asc"
+                    queryItems col = baseItems filters { alfSort = col, alfDir = nextSortDir filters.alfSort filters.alfDir col }
 
 baseItems :: AlertListFilters -> [(ByteString, Maybe ByteString)]
 baseItems f =

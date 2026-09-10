@@ -50,7 +50,7 @@ import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Assets.Attrs (objectAttributes)
 import Application.Pipeline.Grouping (facetValue)
 import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..), decodeDashboardConfig)
-import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..), runCardSummary, CardSummary (..))
+import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..), runCardSummary, CardSummary (..), runCardQuery)
 import Application.Job.FacetBackfill ()
 import qualified Application.Connector.Grafana as Grafana
 import Data.Aeson ((.=))
@@ -2012,6 +2012,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
                 , cardHideWhen = Nothing
                 , cardSummary = False
                 , cardSortBy = []
+                , cardAlertSortBy = []
                 , cardSize = Nothing
                 , cardExtras = mempty
                 }
@@ -2166,6 +2167,31 @@ m9Spec = describe "resolved facets (milestone 9)" do
         expandWith (["-field:env"] :: [Text]) `shouldReturn` [Just envC, Just envB, Just envA]
         -- count as tiebreak-relevant key: single-alert cards tie, facet breaks ties
         expandWith (["key:count", "field:env"] :: [Text]) `shouldReturn` [Just envA, Just envB, Just envC]
+
+    it "alertSortBy orders the card's alert list" do
+        suffix <- tshow <$> nextRandom
+        let host = "m9asrt-host-" <> suffix
+            env = "m9asrt-" <> suffix
+        source <- integrationSource "webhook" ("m9asrt-" <> suffix) "" (object [])
+        let eventIn fp severity = (testEventIn env fp Firing :: NormalizedEvent) { host = Just host, severity = severity }
+        Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-i1") "info")
+        Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-w1") "warning")
+        Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-i2") "info")
+        Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-c1") "critical")
+        let queryWith alertSortBy = do
+                cards <- case decodeDashboardConfig (Aeson.toJSON [object
+                        [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                        , "alertSortBy" .= alertSortBy
+                        ]]) of
+                    Left err -> expectationFailure (cs err) >> error "unreachable"
+                    Right decoded -> pure decoded
+                case cards of
+                    (card : _) -> map (\alert -> alert.severity) <$> runCardQuery card
+                    [] -> expectationFailure "expected one card" >> error "unreachable"
+        -- severity worst-first, not fetch (newest-first) order
+        queryWith (["severity"] :: [Text]) `shouldReturn` ["critical", "warning", "info", "info"]
+        -- flipped: info first
+        queryWith (["-severity"] :: [Text]) `shouldReturn` ["info", "info", "warning", "critical"]
 
 -- | Reuse an existing mapping row (dev DBs carry the seeded passthrough
 -- mappings); the Bool marks rows this run created and must delete.

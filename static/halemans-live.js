@@ -7,6 +7,7 @@
 
     var reconnectDelay = 500;
     var disconnectedAt = null;
+    var currentSocket = null;
 
     function scopesFromPage() {
         var el = document.querySelector('[data-live-scope]');
@@ -74,9 +75,20 @@
         }
     }
 
+    // Subscribe with the CURRENT page's scopes: 'reset' drops scopes from
+    // previous pages (the socket survives turbolinks in-place navigation).
+    function sendScopes() {
+        if (!currentSocket || currentSocket.readyState !== 1) return;
+        currentSocket.send(JSON.stringify({ type: 'reset' }));
+        scopesFromPage().forEach(function (scope) {
+            currentSocket.send(JSON.stringify(scope));
+        });
+    }
+
     function connect() {
         var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         var socket = new WebSocket(proto + '//' + window.location.host + '/ws');
+        currentSocket = socket;
 
         socket.onopen = function () {
             reconnectDelay = 500;
@@ -85,9 +97,7 @@
                 return;
             }
             disconnectedAt = null;
-            scopesFromPage().forEach(function (scope) {
-                socket.send(JSON.stringify(scope));
-            });
+            sendScopes();
         };
 
         socket.onmessage = function (event) {
@@ -103,6 +113,11 @@
             reconnectDelay = Math.min(reconnectDelay * 2, 10000);
         };
     }
+
+    // Turbolinks swaps the body without reopening the websocket: re-subscribe
+    // with the new page's scope(s) or live updates keep flowing for the page
+    // the socket was opened on.
+    document.addEventListener('turbolinks:load', sendScopes);
 
     if (!window.Turbolinks) {
         connect();

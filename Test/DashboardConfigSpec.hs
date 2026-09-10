@@ -59,6 +59,7 @@ spec = describe "Application.Helper.DashboardConfig" do
                     , cardHideWhen = Nothing
                     , cardSummary = False
                     , cardSortBy = []
+                    , cardAlertSortBy = []
                     , cardSize = Nothing
                     , cardExtras = mempty
                     }
@@ -70,7 +71,7 @@ spec = describe "Application.Helper.DashboardConfig" do
         it "defaults op to = and limit to 100" do
             let raw = Aeson.toJSON [object ["match" .= [object ["facet" .= ("label:team" :: Text), "value" .= ("dba" :: Text)]]]]
             decodeDashboardConfig raw `shouldBe` Right
-                [ DashboardCard Nothing [MatchClause (FacetLabel "team") OpEq "dba" []] Nothing 100 False Nothing Nothing False [] Nothing mempty ]
+                [ DashboardCard Nothing [MatchClause (FacetLabel "team") OpEq "dba" []] Nothing 100 False Nothing Nothing False [] [] Nothing mempty ]
         it "preserves unknown keys on round-trip" do
             let raw = Aeson.toJSON [object
                     [ "match" .= ([] :: [Int])
@@ -123,6 +124,7 @@ spec = describe "Application.Helper.DashboardConfig" do
                     , cardHideWhen = Just (HideWhen [MatchClause (FacetField FieldSeverity) OpIn "" ["critical", "warning"]] 0)
                     , cardSummary = False
                     , cardSortBy = []
+                    , cardAlertSortBy = []
                     , cardSize = Nothing
                     , cardExtras = mempty
                     }
@@ -134,7 +136,7 @@ spec = describe "Application.Helper.DashboardConfig" do
         it "hideWhen defaults match to [] and maxCount to 0" do
             let raw = Aeson.toJSON [object ["hideWhen" .= object []]]
             decodeDashboardConfig raw `shouldBe` Right
-                [ DashboardCard Nothing [] Nothing 100 False Nothing (Just (HideWhen [] 0)) False [] Nothing mempty ]
+                [ DashboardCard Nothing [] Nothing 100 False Nothing (Just (HideWhen [] 0)) False [] [] Nothing mempty ]
         it "decodes sortBy keys (builtins, facet refs, descending)" do
             let raw = Aeson.toJSON [object ["sortBy" .= (["key:severity", "attr:DB Cluster", "-field:env"] :: [Text])]]
             decodeDashboardConfig raw `shouldBe` Right
@@ -142,7 +144,7 @@ spec = describe "Application.Helper.DashboardConfig" do
                     [ SortKey False (SortBuiltin "severity")
                     , SortKey False (SortFacet (FacetAttr "DB Cluster"))
                     , SortKey True (SortFacet (FacetField FieldEnv))
-                    ] Nothing mempty ]
+                    ] [] Nothing mempty ]
             fmap encodeDashboardConfig (decodeDashboardConfig raw)
                 `shouldBe` Right (Aeson.toJSON [object
                     [ "sortBy" .= (["key:severity", "attr:DB Cluster", "-field:env"] :: [Text])
@@ -152,10 +154,26 @@ spec = describe "Application.Helper.DashboardConfig" do
         it "rejects invalid sortBy keys" do
             decodeDashboardConfig (Aeson.toJSON [object ["sortBy" .= (["key:bogus"] :: [Text])]]) `shouldSatisfy` isLeft
             decodeDashboardConfig (Aeson.toJSON [object ["sortBy" .= (["bogus:x"] :: [Text])]]) `shouldSatisfy` isLeft
+        it "decodes alertSortBy columns (natural direction, flipped)" do
+            let raw = Aeson.toJSON [object ["alertSortBy" .= (["severity", "-last_seen_at"] :: [Text])]]
+            decodeDashboardConfig raw `shouldBe` Right
+                [ DashboardCard Nothing [] Nothing 100 False Nothing Nothing False []
+                    [ AlertSortKey False "severity"
+                    , AlertSortKey True "last_seen_at"
+                    ] Nothing mempty ]
+            fmap encodeDashboardConfig (decodeDashboardConfig raw)
+                `shouldBe` Right (Aeson.toJSON [object
+                    [ "alertSortBy" .= (["severity", "-last_seen_at"] :: [Text])
+                    , "match" .= ([] :: [Int])
+                    , "limit" .= (100 :: Int)
+                    ]])
+        it "rejects invalid alertSortBy columns" do
+            decodeDashboardConfig (Aeson.toJSON [object ["alertSortBy" .= (["bogus"] :: [Text])]]) `shouldSatisfy` isLeft
+            decodeDashboardConfig (Aeson.toJSON [object ["alertSortBy" .= (["key:severity"] :: [Text])]]) `shouldSatisfy` isLeft
         it "summary defaults to False and round-trips when True" do
             let raw = Aeson.toJSON [object ["summary" .= True, "match" .= ([] :: [Int])]]
             decodeDashboardConfig raw `shouldBe` Right
-                [ DashboardCard Nothing [] Nothing 100 False Nothing Nothing True [] Nothing mempty ]
+                [ DashboardCard Nothing [] Nothing 100 False Nothing Nothing True [] [] Nothing mempty ]
             case decodeDashboardConfig raw of
                 Left err -> expectationFailure (cs err)
                 Right cards -> encodeDashboardConfig cards
@@ -164,7 +182,7 @@ spec = describe "Application.Helper.DashboardConfig" do
         it "decodes size, defaulting omitted dimensions" do
             let raw = Aeson.toJSON [object ["summary" .= True, "size" .= object ["width" .= (480 :: Int)]]]
             decodeDashboardConfig raw `shouldBe` Right
-                [ DashboardCard Nothing [] Nothing 100 False Nothing Nothing True [] (Just (CardSize 480 168)) mempty ]
+                [ DashboardCard Nothing [] Nothing 100 False Nothing Nothing True [] [] (Just (CardSize 480 168)) mempty ]
         it "round-trips size through JSON" do
             let raw = Aeson.toJSON [object ["size" .= object ["width" .= (480 :: Int), "height" .= (200 :: Int)]]]
             case decodeDashboardConfig raw of
@@ -187,7 +205,7 @@ spec = describe "Application.Helper.DashboardConfig" do
                 |> set #labels (object ["team" .= ("infra" :: Text)])
                 |> set #facets (object ["Service" .= ("PostgreSQL" :: Text), "DB Cluster" .= ("ibstaffcopdb01" :: Text)])
         it "matches field/label/attr clauses as conjunction" do
-            let card clauses = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing False [] Nothing mempty
+            let card clauses = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing False [] [] Nothing mempty
             matchCardAlert (card [MatchClause (FacetAttr "Service") OpEq "PostgreSQL" []]) alert `shouldBe` True
             matchCardAlert (card [MatchClause (FacetAttr "Service") OpEq "MySQL" []]) alert `shouldBe` False
             matchCardAlert (card [MatchClause (FacetField FieldEnv) OpEq "dev" [], MatchClause (FacetAttr "DB Cluster") OpGlob "ib*" []]) alert `shouldBe` True
@@ -215,6 +233,7 @@ legacyCard env statuses severities = DashboardCard
     , cardHideWhen = Nothing
     , cardSummary = False
     , cardSortBy = []
+    , cardAlertSortBy = []
     , cardSize = Nothing
     , cardExtras = mempty
     }

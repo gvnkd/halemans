@@ -35,6 +35,9 @@ module Web.View.Fragments
 , externalLinkFooterHtml
 , RollupCard (..)
 , rollupCardHtml
+, AlertsTable (..)
+, alertsTableHtml
+, nextSortDir
 ) where
 
 import Web.View.Prelude
@@ -44,7 +47,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
-import Application.Helper.DashboardConfig (CardSize (..))
+import Application.Helper.DashboardConfig (CardSize (..), alertSortNaturalDir)
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -76,6 +79,59 @@ alertRowHtml alert = [hsx|
         groupBadge = case alert.groupId of
             Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">group</a>|]
             Nothing -> mempty
+
+-- | Sortable alerts table shared by /alerts and the dashboard card detail
+-- page. atSortUrl builds the href for a header click (page-specific query
+-- params, e.g. via nextSortDir); atSort/atDir drive the ▲/▼ indicator.
+-- RecordWildCards pattern-match: the function field breaks HasField
+-- selector magic.
+data AlertsTable = AlertsTable
+    { atTestId :: Text
+    , atTbodyId :: Text
+    , atLiveScope :: Maybe Text
+    , atSort :: Text
+    , atDir :: Text
+    , atSortUrl :: Text -> Text
+    , atAlerts :: [Alert]
+    }
+
+alertsTableHtml :: AlertsTable -> Html
+alertsTableHtml AlertsTable { .. } = [hsx|
+    <table class="table" data-testid={atTestId} data-live-scope={atLiveScope}>
+        <thead>
+            <tr>
+                {sortableTh "status" "Status"}
+                {sortableTh "severity" "Severity"}
+                {sortableTh "title" "Title"}
+                {sortableTh "env" "Env"}
+                {sortableTh "host" "Host"}
+                {sortableTh "occurrences" "Occurrences"}
+                {sortableTh "last_seen_at" "Last seen"}
+            </tr>
+        </thead>
+        <tbody id={atTbodyId}>
+            {forEach atAlerts alertRowHtml}
+        </tbody>
+    </table>
+|]
+    where
+        sortableTh :: Text -> Text -> Html
+        sortableTh column label = [hsx|
+            <th><a href={atSortUrl column} class="text-decoration-none" data-testid={"sort-" <> column}>{label}{indicator}</a></th>
+        |]
+            where
+                indicator = if atSort == column
+                    then [hsx|<span class="sort-indicator">{arrow}</span>|]
+                    else mempty
+                arrow :: Text
+                arrow = if atDir == "asc" then " ▲" else " ▼"
+
+-- | Direction for a header click: toggles on the active column, otherwise
+-- the column's natural direction (matches /alerts).
+nextSortDir :: Text -> Text -> Text -> Text
+nextSortDir currentSort currentDir column
+    | currentSort == column = if currentDir == "asc" then "desc" else "asc"
+    | otherwise = alertSortNaturalDir column
 
 alertStatusDomId :: Alert -> Text
 alertStatusDomId alert = "alert-status-" <> tshow (get #id alert)
@@ -324,16 +380,20 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
                 <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="llm-reanalyze">Re-analyze</button>
             </form>
         |]
-        -- Agent-role choice (milestone_8.md §7): empty = default role (or
-        -- legacy behaviour when no roles exist).
+        -- Agent-role choice (milestone_8.md §7): empty = the is_default role
+        -- (or legacy behaviour when no role is marked default).
         roleSelect = case roles of
             [] -> mempty
             _ -> [hsx|
                 <select name="roleId" class="form-select form-select-sm d-inline-block w-auto" data-testid="llm-role-select">
-                    <option value="">role: default</option>
+                    <option value="">{defaultLabel}</option>
                     {forEach roles roleOption}
                 </select>
             |]
+        defaultLabel :: Text
+        defaultLabel = case find (.isDefault) roles of
+            Just defaultRole -> "role: " <> defaultRole.name <> " (default)"
+            Nothing -> "role: default"
         roleOption role = [hsx|<option value={tshow (get #id role)}>{role.name}</option>|]
         body = case analyses of
             [] -> [hsx|<p class="text-muted" data-testid="llm-empty">No analysis yet.</p>|]

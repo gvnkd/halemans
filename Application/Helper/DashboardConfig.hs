@@ -5,6 +5,12 @@ module Application.Helper.DashboardConfig
 , HideWhen (..)
 , SortKey (..)
 , SortTarget (..)
+, AlertSortKey (..)
+, validAlertSortColumns
+, parseAlertSortKey
+, alertSortKeyText
+, alertSortNaturalDir
+, alertSortDisplayDir
 , CardSize (..)
 , defaultCardSize
 , DashboardCard (..)
@@ -96,6 +102,7 @@ data DashboardCard = DashboardCard
     , cardHideWhen :: Maybe HideWhen
     , cardSummary :: Bool
     , cardSortBy :: [SortKey]
+    , cardAlertSortBy :: [AlertSortKey]
     , cardSize :: Maybe CardSize
     , cardExtras :: KeyMap Value
     } deriving (Eq, Show)
@@ -138,6 +145,52 @@ instance Aeson.FromJSON SortKey where
 
 instance Aeson.ToJSON SortKey where
     toJSON = Aeson.toJSON . sortKeyText
+
+-- | Ordering of the alerts inside one card (flat list + detail table).
+-- Columns are the /alerts sortable columns; the natural direction is
+-- worst/newest first (severity: critical first, last_seen_at: newest first,
+-- everything else ascending), a leading "-" flips it.
+data AlertSortKey = AlertSortKey
+    { askDesc :: Bool
+    , askColumn :: Text
+    } deriving (Eq, Show)
+
+-- | Canonical list of alert-sortable columns; Application.Service.AlertList
+-- re-exports it as validSortColumns so the widget, the list query and the
+-- card config never drift apart.
+validAlertSortColumns :: [Text]
+validAlertSortColumns = ["status", "severity", "title", "env", "host", "occurrences", "last_seen_at"]
+
+parseAlertSortKey :: Text -> Maybe AlertSortKey
+parseAlertSortKey raw = do
+    let (askDesc, body) = case Text.uncons raw of
+            Just ('-', rest) -> (True, rest)
+            _ -> (False, raw)
+    guard (body `elem` validAlertSortColumns)
+    pure AlertSortKey { askColumn = body, .. }
+
+alertSortKeyText :: AlertSortKey -> Text
+alertSortKeyText key = (if key.askDesc then "-" else "") <> key.askColumn
+
+-- | Direction a fresh header click sorts by (matches /alerts): newest-first
+-- for last_seen_at, ascending otherwise.
+alertSortNaturalDir :: Text -> Text
+alertSortNaturalDir "last_seen_at" = "desc"
+alertSortNaturalDir _ = "asc"
+
+-- | asc/desc as shown by the widget indicator for a configured key.
+alertSortDisplayDir :: AlertSortKey -> Text
+alertSortDisplayDir key = case (key.askDesc, alertSortNaturalDir key.askColumn) of
+    (False, dir) -> dir
+    (True, "asc") -> "desc"
+    (True, _) -> "asc"
+
+instance Aeson.FromJSON AlertSortKey where
+    parseJSON = Aeson.withText "AlertSortKey" \text ->
+        maybe (fail ("invalid alertSortBy key: " <> cs text)) pure (parseAlertSortKey text)
+
+instance Aeson.ToJSON AlertSortKey where
+    toJSON = Aeson.toJSON . alertSortKeyText
 
 parseFacetRef :: Text -> Maybe FacetRef
 parseFacetRef raw
@@ -226,6 +279,7 @@ instance Aeson.FromJSON DashboardCard where
                     , cardHideWhen = Nothing
                     , cardSummary = False
                     , cardSortBy = []
+                    , cardAlertSortBy = []
                     , cardSize = Nothing
                     , cardExtras
                     }
@@ -245,8 +299,9 @@ instance Aeson.FromJSON DashboardCard where
                 cardHideWhen <- o .:? "hideWhen"
                 cardSummary <- o .:? "summary" .!= False
                 cardSortBy <- o .:? "sortBy" .!= []
+                cardAlertSortBy <- o .:? "alertSortBy" .!= []
                 cardSize <- o .:? "size"
-                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary", "sortBy", "size"]
+                let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary", "sortBy", "alertSortBy", "size"]
                 pure DashboardCard { cardLegacy = False, .. }
 
 instance Aeson.ToJSON DashboardCard where
@@ -263,6 +318,7 @@ instance Aeson.ToJSON DashboardCard where
                     ++ [ "hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen] ]
                     ++ [ "summary" .= True | card.cardSummary ]
                     ++ [ "sortBy" .= card.cardSortBy | not (null card.cardSortBy) ]
+                    ++ [ "alertSortBy" .= card.cardAlertSortBy | not (null card.cardAlertSortBy) ]
                     ++ [ "size" .= size | Just size <- [card.cardSize] ]
 
 -- | Legacy {env, filters} re-encode (milestone_9.md §4): only cards decoded
@@ -272,7 +328,7 @@ legacyCardValue :: DashboardCard -> Maybe Value
 legacyCardValue card = do
     guard card.cardLegacy
     guard (isNothing card.cardTitle && isNothing card.cardGroupBy && card.cardLimit == 100)
-    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary && null card.cardSortBy && isNothing card.cardSize)
+    guard (isNothing card.cardForEach && isNothing card.cardHideWhen && not card.cardSummary && null card.cardSortBy && null card.cardAlertSortBy && isNothing card.cardSize)
     let envValues = [value | MatchClause (FacetField FieldEnv) OpEq value _ <- card.cardMatch]
         statusLists = [values | MatchClause (FacetField FieldStatus) OpIn _ values <- card.cardMatch]
         severityLists = [values | MatchClause (FacetField FieldSeverity) OpIn _ values <- card.cardMatch]

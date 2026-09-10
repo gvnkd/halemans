@@ -10,11 +10,11 @@ import Application.Helper.DashboardConfig
 import Application.Service.DashboardCards (runCardQuery, expandDashboardCards, expandedDomId, pinCard, ExpandedCard (..))
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
-import Control.Monad (void)
+import Control.Monad (void, guard)
 import IHP.ModelSupport (withTransaction)
 import IHP.ControllerSupport (respondAndExit)
 import Network.HTTP.Types (status404)
-import Network.Wai (responseLBS)
+import Network.Wai (responseLBS, ResponseReceived)
 
 instance Controller DashboardsController where
     beforeAction = ensureIsUser
@@ -64,13 +64,9 @@ instance Controller DashboardsController where
         expanded <- expandDashboardCards cards
         let matches = [ec | ec <- expanded, ec.ecIndex == cardIndex, maybe True (\value -> ec.ecValue == Just value) valueFilter]
         case matches of
-            (expandedCard : _) -> do
-                alerts <- runCardQuery expandedCard.ecCard
-                render CardView { dashboard, expandedCard, alerts }
+            (expandedCard : _) -> renderCardDetail dashboard expandedCard
             [] -> case fallbackExpandedCard valueFilter cards cardIndex of
-                Just expandedCard -> do
-                    alerts <- runCardQuery expandedCard.ecCard
-                    render CardView { dashboard, expandedCard, alerts }
+                Just expandedCard -> renderCardDetail dashboard expandedCard
                 Nothing -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "card not found"
 
     action EditDashboardAction { dashboardId } = do
@@ -141,6 +137,30 @@ fallbackExpandedCard valueFilter cards cardIndex = do
         , ecIndex = cardIndex
         , ecValue = valueFilter
         }
+
+-- | Card detail table: transient ?sort/?dir params (never persisted to
+-- users.settings, unlike /alerts) override the card's alertSortBy for this
+-- render only; without either, alertSortBy or newest-first applies.
+renderCardDetail :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => Dashboard -> ExpandedCard -> IO ResponseReceived
+renderCardDetail dashboard expandedCard = do
+    let sortParam = paramOrNothing @Text "sort"
+        dirParam = paramOrNothing @Text "dir"
+        override = do
+            column <- sortParam
+            guard (column `elem` validAlertSortColumns)
+            let dir = if dirParam == Just "asc" then "asc" else "desc"
+            pure (AlertSortKey (dir /= alertSortNaturalDir column) column, dir)
+        effectiveCard = case override of
+            Just (key, _) -> expandedCard.ecCard { cardAlertSortBy = [key] }
+            Nothing -> expandedCard.ecCard
+        (sortColumn, sortDir) = case override of
+            Just (key, dir) -> (key.askColumn, dir)
+            Nothing -> case expandedCard.ecCard.cardAlertSortBy of
+                (key : _) -> (key.askColumn, alertSortDisplayDir key)
+                [] -> ("last_seen_at", "desc")
+    alerts <- runCardQuery effectiveCard
+    render CardView { dashboard, expandedCard, alerts, sortColumn, sortDir }
+
 
 ownDashboards :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => IO [Dashboard]
 ownDashboards = query @Dashboard

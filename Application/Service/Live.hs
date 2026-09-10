@@ -77,11 +77,23 @@ liveBroadcastLoop = do
     flip Exception.finally (modifyIORef' registry (filter (\(id, _, _) -> id /= connectionId))) do
         forever do
             message <- receiveData @LByteString
-            case parseScope message of
-                -- A page may subscribe to several scopes (dashboard pages
-                -- cover one env:<name> scope per included card, §7).
-                Just scope -> modifyIORef' scopeRef (scope :)
-                Nothing -> pure ()
+            if isResetFrame message
+                -- The client navigated (turbolinks swaps pages without
+                -- reopening the socket): drop the previous page's scopes
+                -- before it sends the new ones.
+                then writeIORef scopeRef []
+                else case parseScope message of
+                    -- A page may subscribe to several scopes (dashboard pages
+                    -- cover one env:<name> scope per included card, §7).
+                    Just scope -> modifyIORef' scopeRef (scope :)
+                    Nothing -> pure ()
+
+isResetFrame :: LByteString -> Bool
+isResetFrame message = fromMaybe False do
+    value <- Aeson.decode message
+    parseMaybe (Aeson.withObject "frame" (\o -> do
+        scopeType <- o Aeson..: "type" :: Parser Text
+        pure (scopeType == "reset"))) value
 
 parseScope :: LByteString -> Maybe Scope
 parseScope message = do

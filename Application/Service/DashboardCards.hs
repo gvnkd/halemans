@@ -5,6 +5,7 @@ module Application.Service.DashboardCards
 , runCardQuery
 , runCardQueryGroups
 , runCardSummary
+, sortCardAlerts
 , expandDashboardCards
 , legacyCardDomKey
 , expandedDomId
@@ -35,13 +36,65 @@ data CardGroup = CardGroup
     , cgAlerts :: [Alert]
     } deriving (Eq, Show)
 
--- | Flat card: global limit, newest first.
+-- | Flat card: global limit. alertSortBy orders the list (stable over the
+-- newest-first base order, so ties stay newest-first); without it the SQL
+-- limit applies directly on newest-first.
 runCardQuery :: (?modelContext :: ModelContext) => DashboardCard -> IO [Alert]
-runCardQuery card =
-    cardBaseQuery card
-        |> orderByDesc #lastSeenAt
-        |> limit (fromIntegral card.cardLimit)
-        |> fetch
+runCardQuery card
+    | null card.cardAlertSortBy =
+        cardBaseQuery card
+            |> orderByDesc #lastSeenAt
+            |> limit (fromIntegral card.cardLimit)
+            |> fetch
+    | otherwise = do
+        alerts <- cardBaseQuery card
+            |> orderByDesc #lastSeenAt
+            |> fetch
+        pure (take card.cardLimit (sortCardAlerts card.cardAlertSortBy alerts))
+
+-- | alertSortBy ordering of a card's alerts: stable sort over the
+-- lastSeenAt-descending fetch order. Each column's natural direction
+-- (severity worst-first, last_seen_at newest-first, others ascending) is
+-- baked into the payload; askDesc flips it.
+sortCardAlerts :: [AlertSortKey] -> [Alert] -> [Alert]
+sortCardAlerts keys = sortOn (\alert -> map (alertSortPayload alert) keys)
+
+alertSortPayload :: Alert -> AlertSortKey -> AlertSortPayload
+alertSortPayload alert key = AlertSortPayload key.askDesc $ case key.askColumn of
+    "status" -> APInt (statusRank alert.status)
+    "severity" -> APDownInt (Down (severityRank alert.severity))
+    "title" -> APText (Text.toLower alert.title)
+    "env" -> APText (fromMaybe "" alert.env)
+    "host" -> APText (fromMaybe "" alert.host)
+    "occurrences" -> APInt alert.occurrences
+    _ -> APDownTime (Down alert.lastSeenAt)
+
+statusRank :: Text -> Int
+statusRank = \case
+    "firing" -> 0
+    "ack" -> 1
+    "resolved" -> 2
+    _ -> 3
+
+data AlertSortPayload = AlertSortPayload Bool AlertSortValue
+data AlertSortValue = APInt Int | APDownInt (Down Int) | APText Text | APDownTime (Down UTCTime)
+
+instance Eq AlertSortPayload where
+    a == b = compare a b == EQ
+
+instance Ord AlertSortPayload where
+    compare (AlertSortPayload desc a) (AlertSortPayload _ b) = applyDir desc (compareAlertSortValue a b)
+        where applyDir False o = o
+              applyDir True EQ = EQ
+              applyDir True LT = GT
+              applyDir True GT = LT
+
+compareAlertSortValue :: AlertSortValue -> AlertSortValue -> Ordering
+compareAlertSortValue (APInt a) (APInt b) = compare a b
+compareAlertSortValue (APDownInt a) (APDownInt b) = compare a b
+compareAlertSortValue (APText a) (APText b) = compare a b
+compareAlertSortValue (APDownTime a) (APDownTime b) = compare a b
+compareAlertSortValue _ _ = EQ
 
 -- | Grouped card: group by the groupBy facet (absent lands in "-"), sections
 -- ordered by worst severity then count desc, limit per group.

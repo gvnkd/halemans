@@ -134,6 +134,7 @@
             ],
             "forEach": "attr:DB Cluster",
             "sortBy": ["key:severity", "attr:DB Cluster"],
+            "alertSortBy": ["severity", "last_seen_at"],
             "groupBy": "field:host",
             "limit": 20,
             "hideWhen": {
