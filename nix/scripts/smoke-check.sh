@@ -415,9 +415,9 @@ bash "$SMOKE_RUN"
 # Zabbix RPC failures on the reconcile path are warn-logged and otherwise
 # invisible (non-fatal by design); the scenarios above always leave tracked
 # zabbix alerts, so any such line means the reconcile call itself is broken.
-if grep -q "problem-state reconcile failed" "$T/worker.log"; then
-    echo "worker log shows problem-state reconcile failures:" >&2
-    grep "problem-state reconcile failed" "$T/worker.log" | head -5 >&2
+if grep -q "trigger-state reconcile failed" "$T/worker.log"; then
+    echo "worker log shows trigger-state reconcile failures:" >&2
+    grep "trigger-state reconcile failed" "$T/worker.log" | head -5 >&2
     exit 1
 fi
 

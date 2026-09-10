@@ -87,7 +87,7 @@ A **read-only** token needs two API methods:
 | Method | Required | Used for |
 |---|---|---|
 | `event.get` | **yes** | Trigger event polling (problem/OK) and ack-state reconciliation |
-| `problem.get` | recommended | Resolved-state reconciliation: alerts whose OK event was missed (outage, purged history) are resolved locally from trigger problem state. Without it that safety net is off (polling still works) |
+| `trigger.get` | recommended | Resolved-state reconciliation: alerts whose OK event was missed (outage, purged history) are resolved locally from the trigger's current value. Without it that safety net is off (polling still works) |
 | `user.get` | optional | Resolving ack author names when mirroring Zabbix acks; without it acks still mirror, but the actor shows as a raw userid |
 | `hostgroup.get` | optional | The "Sync host groups" button (host-group cache for `hostGroupScope: "teams"`). Skip it when provisioning the cache from `hostGroupsFile` instead |
 
@@ -105,7 +105,7 @@ A `result` array (even empty) means the polling path works; an `error` object li
 
 ### Zabbix reconciliation tuning
 
-Cursor-based polling only ever returns *new* events, so an OK event missed while Zabbix was unreachable could leave an alert firing forever. Each poll cycle the poller additionally re-checks the problem state of every trigger behind a tracked (firing/ack) alert with **one batched `problem.get` call** and resolves locally whatever Zabbix no longer reports as open. Behavior is tunable per source via `config` keys (shown with defaults):
+Cursor-based polling only ever returns *new* events, so an OK event missed while Zabbix was unreachable could leave an alert firing forever. Each poll cycle the poller additionally re-checks the current value of every trigger behind a tracked (firing/ack) alert with **one batched `trigger.get` call** and resolves locally whatever Zabbix no longer reports as a problem, back-dating `resolved_at` to the trigger's `lastchange`. Behavior is tunable per source via `config` keys (shown with defaults):
 
 ```json
 {
@@ -119,7 +119,7 @@ Cursor-based polling only ever returns *new* events, so an OK event missed while
 
 - `reconcileGraceSeconds` — minimum age of the last local activity before source state is trusted (guards the ingest/reconcile race on refires).
 - `reconcileIntervalSeconds` — minimum seconds between reconciles; `0` means every poll cycle.
-- `absentResolveMinAgeSeconds` — a trigger with *no* problem rows at all (housekeeper purge or deleted trigger) resolves the local alert only when the alert is older than this; also guards against token permission gaps hiding problems.
+- `absentResolveMinAgeSeconds` — a trigger *missing* from `trigger.get` (deleted, or invisible to the token) resolves the local alert only when the alert is older than this; guards against token permission gaps hiding triggers.
 - `eventPageLimit` — `event.get` page size; catch-up after an outage pages until a short page, so no events are skipped.
 
 ## API

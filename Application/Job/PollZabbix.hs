@@ -8,7 +8,8 @@ import IHP.QueryBuilder
 import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
-import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest, ingestEvents)
+import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
+import Application.Pipeline.Blackouts (blackoutApplies)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
@@ -200,11 +201,14 @@ lastMaybe = last
 -- Resolved-state reconciliation: cursor-based event.get only returns NEW
 -- events, so an OK event missed during an outage (truncated catch-up page,
 -- housekeeper-purged history) leaves the local alert firing forever. Each
--- due cycle re-fetches problem state for the triggers behind our tracked
--- (firing/ack) alerts via ONE batched problem.get and locally resolves
--- whatever zabbix no longer reports as open. Keyed on the trigger id from
--- the fingerprint, not alerts.external_id: refires don't rotate external_id,
--- so the stored event id can point at an already-resolved older problem.
+-- due cycle re-fetches the CURRENT value of every trigger behind a tracked
+-- (firing/ack) alert via ONE batched trigger.get and locally resolves
+-- whatever zabbix no longer reports as a problem. Keyed on the trigger id
+-- from the fingerprint, not alerts.external_id: refires don't rotate
+-- external_id, so the stored event id can point at an already-resolved older
+-- problem. The resolve is applied to the tracked row BY ID via
+-- transitionAlert — rediscovering it by fingerprint would let a duplicate
+-- non-closed row eat the transition as an illegal no-op (endless loop).
 --
 -- Source config keys (all optional, defaults in the accessors below):
 --   reconcileResolved           bool  master switch (default true)
@@ -212,10 +216,10 @@ lastMaybe = last
 --                                     trusting source state (default 60)
 --   reconcileIntervalSeconds    int   min seconds between reconciles,
 --                                     0 = every poll cycle (default 0)
---   absentResolveMinAgeSeconds  int   min alert age before "no problem rows
---                                     at all" is treated as resolved
---                                     (housekeeper purge or deleted trigger;
---                                     guards permission gaps) (default 86400)
+--   absentResolveMinAgeSeconds  int   min alert age before a trigger MISSING
+--                                     from trigger.get (deleted, or invisible
+--                                     to the token) is treated as resolved
+--                                     (default 86400)
 --   eventPageLimit              int   event.get page size (default 1000)
 reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
 reconcileProblemStates source token now = do
@@ -225,54 +229,46 @@ reconcileProblemStates source token now = do
         |> fetch
     let tracked = [(triggerId, alert) | alert <- alerts, Just triggerId <- [triggerIdOf alert]]
     unless (null tracked) do
-        result <- Zabbix.problemStateGet source.baseUrl token (nub (map fst tracked))
+        result <- Zabbix.triggerStateGet source.baseUrl token (nub (map fst tracked))
         case result of
-            Left err -> logWarn ("zabbix source \"" <> source.name <> "\" problem-state reconcile failed: " <> err)
+            Left err -> logWarn ("zabbix source \"" <> source.name <> "\" trigger-state reconcile failed: " <> err)
             Right states -> do
-                let latest = latestProblemByTrigger states
+                let stateByTrigger = Map.fromList (map (\state -> (state.triggerStateId, state)) states)
                 forM_ tracked \(triggerId, alert) ->
-                    case resolveDecision now source alert (Map.lookup triggerId latest) of
+                    case resolveDecision now source alert (Map.lookup triggerId stateByTrigger) of
                         Nothing -> pure ()
                         Just resolvedAt -> do
-                            logInfo ("zabbix source \"" <> source.name <> "\": resolving alert " <> tshow (get #id alert) <> " (no open problem on " <> triggerId <> ")")
-                            resolveFromProblem source alert resolvedAt
+                            updated <- resolveFromProblem alert resolvedAt
+                            when (updated.status == "resolved") do
+                                logInfo ("zabbix source \"" <> source.name <> "\": resolved alert " <> tshow (get #id alert) <> " (trigger " <> triggerId <> " not in problem state)")
 
--- | Resolve via the normal ingest path (state machine, events, WS fan-out),
--- then back-date resolved_at to the zabbix-side resolution time when known.
-resolveFromProblem :: (?modelContext :: ModelContext) => Source -> Alert -> UTCTime -> IO ()
-resolveFromProblem source alert resolvedAt = do
-    mAlertId <- ingest source NormalizedEvent
-        { fingerprint = alert.fingerprint
-        , externalId = alert.externalId
-        , status = Resolved
-        , severity = alert.severity
-        , title = alert.title
-        , description = alert.description
-        , env = alert.env
-        , host = alert.host
-        , service = alert.service
-        , checkName = alert.checkName
-        , labels = alert.labels
-        , annotations = alert.annotations
-        , startedAt = alert.startedAt
-        , sourceUrl = alert.sourceUrl
-        }
-    forM_ mAlertId \alertId ->
+-- | Resolve the tracked row itself through the normal transition path (state
+-- machine, audit events, notifications, WS fan-out), then back-date
+-- resolved_at to the zabbix-side state-change time when known.
+resolveFromProblem :: (?modelContext :: ModelContext) => Alert -> UTCTime -> IO Alert
+resolveFromProblem alert resolvedAt = do
+    now <- getCurrentTime
+    blackouts <- fetchActiveBlackouts now
+    let suppressedNow = any (blackoutApplies now alert.environmentId alert.hostId alert.serviceId) blackouts
+    updated <- transitionAlert now Resolved alert.env alert.environmentId alert.hostId alert.serviceId suppressedNow alert
+    when (updated.status == "resolved") do
+        let alertId = get #id alert
         void (sqlExecTyped [typedSql|
             UPDATE alerts SET resolved_at = ${resolvedAt}
             WHERE id = ${alertId} AND status = 'resolved' AND resolved_at > ${resolvedAt}
         |])
+    pure updated
 
 -- | Just resolvedAt when the alert should be locally resolved; Nothing when
--- the source still reports an open problem or local activity is too fresh to
+-- the trigger is still in problem state or local activity is too fresh to
 -- trust source state (grace window covers the ingest/reconcile race).
-resolveDecision :: UTCTime -> Source -> Alert -> Maybe Zabbix.ZabbixProblemState -> Maybe UTCTime
-resolveDecision now source alert mLatest
+resolveDecision :: UTCTime -> Source -> Alert -> Maybe Zabbix.ZabbixTriggerState -> Maybe UTCTime
+resolveDecision now source alert mState
     | alert.lastSeenAt >= graceCutoff = Nothing
-    | otherwise = case mLatest of
+    | otherwise = case mState of
         Just state
-            | state.problemREventId == "0" -> Nothing
-            | state.problemRClock > 0 -> Just (min now (posixSecondsToUTCTime (fromIntegral state.problemRClock)))
+            | state.triggerStateValue == "1" -> Nothing
+            | state.triggerStateLastChange > 0 -> Just (min now (posixSecondsToUTCTime (fromIntegral state.triggerStateLastChange)))
             | otherwise -> Just now
         Nothing
             | addUTCTime (negate absentMinAge) now >= fromMaybe now alert.startedAt -> Just now
@@ -280,12 +276,6 @@ resolveDecision now source alert mLatest
   where
     graceCutoff = addUTCTime (negate (fromIntegral (reconcileGraceSeconds source))) now
     absentMinAge = fromIntegral (absentResolveMinAgeSeconds source)
-
--- | The row that tells the CURRENT state of a trigger: its newest problem.
-latestProblemByTrigger :: [Zabbix.ZabbixProblemState] -> Map Text Zabbix.ZabbixProblemState
-latestProblemByTrigger = Map.fromListWith newer . map (\state -> (state.problemTriggerId, state))
-  where
-    newer a b = if (a.problemClock, a.problemEventId) >= (b.problemClock, b.problemEventId) then a else b
 
 triggerIdOf :: Alert -> Maybe Text
 triggerIdOf alert = Text.stripPrefix "zabbix:trigger:" alert.fingerprint

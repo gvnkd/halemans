@@ -8,8 +8,8 @@ module Application.Connector.Zabbix
 , ZabbixEventAck (..)
 , ZabbixAckRow (..)
 , ackStateGet
-, ZabbixProblemState (..)
-, problemStateGet
+, ZabbixTriggerState (..)
+, triggerStateGet
 , usersGet
 ) where
 
@@ -260,42 +260,38 @@ ackStateGet baseUrl token eventIds = do
                     Just events -> pure (Right events)
                     Nothing -> pure (Left (rpcError decoded))
 
--- | Problem state for a set of triggers (resolved-state reconciliation):
--- problem.get with recent=false returns open AND resolved problems, so the
--- poller can learn that a tracked trigger resolved while we weren't polling
--- (outage, truncated catch-up, housekeeper-purged OK events). A trigger with
--- no rows at all was purged or deleted — the caller decides what that means.
-data ZabbixProblemState = ZabbixProblemState
-    { problemEventId :: Text
-    , problemTriggerId :: Text
-    , problemClock :: Integer
-    , problemREventId :: Text   -- "0" while the problem is open
-    , problemRClock :: Integer  -- 0 while the problem is open
+-- | Current state of a set of triggers (resolved-state reconciliation).
+-- trigger.get reports the LIVE trigger value plus lastchange (when it last
+-- flipped), so a missed OK event is recoverable no matter how old it is.
+-- problem.get can't serve this: recent=false returns only UNRESOLVED
+-- problems, recent=true only covers zabbix's ok_period — an old resolve is
+-- indistinguishable from a housekeeper purge there. A trigger absent from
+-- the result was deleted or is invisible to the token (permissions) — the
+-- caller decides what that means. Disabled triggers keep their last value.
+data ZabbixTriggerState = ZabbixTriggerState
+    { triggerStateId :: Text
+    , triggerStateValue :: Text          -- "0" OK, "1" problem
+    , triggerStateLastChange :: Integer  -- unix time of last state flip
     } deriving (Eq, Show)
 
-instance Aeson.FromJSON ZabbixProblemState where
-    parseJSON = Aeson.withObject "ZabbixProblemState" $ \o -> do
-        problemEventId <- o .: "eventid"
-        problemTriggerId <- o .: "objectid"
-        clockText <- o .: "clock"
-        problemClock <- maybe mempty pure (readMaybe clockText)
-        problemREventId <- o .:? "r_eventid" .!= "0"
-        rClockText <- o .:? "r_clock" .!= "0"
-        problemRClock <- maybe mempty pure (readMaybe rClockText)
-        pure ZabbixProblemState { .. }
+instance Aeson.FromJSON ZabbixTriggerState where
+    parseJSON = Aeson.withObject "ZabbixTriggerState" $ \o -> do
+        triggerStateId <- o .: "triggerid"
+        triggerStateValue <- o .:? "value" .!= "1"
+        lastChangeText <- o .:? "lastchange" .!= "0"
+        triggerStateLastChange <- maybe mempty pure (readMaybe lastChangeText)
+        pure ZabbixTriggerState { .. }
 
-problemStateGet :: Text -> Text -> [Text] -> IO (Either Text [ZabbixProblemState])
-problemStateGet baseUrl token triggerIds = do
+triggerStateGet :: Text -> Text -> [Text] -> IO (Either Text [ZabbixTriggerState])
+triggerStateGet baseUrl token triggerIds = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
         body = Aeson.object
             [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("problem.get" :: Text)
+            , "method" .= ("trigger.get" :: Text)
             , "id" .= (1 :: Int)
             , "params" .= Aeson.object
-                [ "object" .= (0 :: Int)  -- 0 = trigger; problem.get has no triggerids param
-                , "objectids" .= triggerIds
-                , "recent" .= False
-                , "output" .= (["eventid", "objectid", "clock", "r_eventid", "r_clock"] :: [Text])
+                [ "triggerids" .= triggerIds
+                , "output" .= (["triggerid", "value", "lastchange"] :: [Text])
                 ]
             ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
@@ -305,7 +301,7 @@ problemStateGet baseUrl token triggerIds = do
             Left err -> pure (Left (cs err))
             Right decoded ->
                 case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
-                    Just problems -> pure (Right problems)
+                    Just triggers -> pure (Right triggers)
                     Nothing -> pure (Left (rpcError decoded))
 
 -- | userid -> display name (alias or name+surname), for ack attribution.

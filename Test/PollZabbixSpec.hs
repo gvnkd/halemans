@@ -8,12 +8,11 @@ import Application.Job.PollZabbix
     ( initialCursor, initialHistoryDays
     , reconcileResolvedEnabled, reconcileGraceSeconds, reconcileIntervalSeconds
     , absentResolveMinAgeSeconds, eventPageLimit, reconcileDue
-    , resolveDecision, latestProblemByTrigger
+    , resolveDecision
     )
-import Application.Connector.Zabbix (ZabbixProblemState (..))
+import Application.Connector.Zabbix (ZabbixTriggerState (..))
 import Data.Aeson (object, (.=))
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import qualified Data.Map.Strict as Map
 
 spec :: Spec
 spec = describe "Application.Job.PollZabbix" do
@@ -84,33 +83,29 @@ spec = describe "Application.Job.PollZabbix" do
             reconcileDue now source `shouldBe` True
 
     describe "resolveDecision" do
-        it "leaves alerts with fresh local activity alone even when the source reports resolved" do
+        it "leaves alerts with fresh local activity alone even when the source reports OK" do
             let alert = firingAlert |> set #lastSeenAt (addUTCTime (-30) now)
-            resolveDecision now (newRecord @Source) alert (Just resolvedProblem) `shouldBe` Nothing
-        it "leaves still-open problems alone" do
-            resolveDecision now (newRecord @Source) firingAlert (Just openProblem) `shouldBe` Nothing
-        it "resolves at the zabbix-side resolution time" do
-            resolveDecision now (newRecord @Source) firingAlert (Just resolvedProblem)
+            resolveDecision now (newRecord @Source) alert (Just okTrigger) `shouldBe` Nothing
+        it "leaves triggers still in problem state alone" do
+            resolveDecision now (newRecord @Source) firingAlert (Just problemTrigger) `shouldBe` Nothing
+        it "resolves at the zabbix-side state-change time" do
+            resolveDecision now (newRecord @Source) firingAlert (Just okTrigger)
                 `shouldBe` Just (addUTCTime (-600) now)
-        it "caps a future resolution time at now" do
-            let future = resolvedProblem { problemRClock = nowPosix + 600 }
+        it "caps a future state-change time at now" do
+            let future = okTrigger { triggerStateLastChange = nowPosix + 600 }
             resolveDecision now (newRecord @Source) firingAlert (Just future) `shouldBe` Just now
-        it "leaves a young alert with no problem rows alone (permission-gap guard)" do
+        it "resolves at now when the trigger carries no lastchange" do
+            let noClock = okTrigger { triggerStateLastChange = 0 }
+            resolveDecision now (newRecord @Source) firingAlert (Just noClock) `shouldBe` Just now
+        it "leaves a young alert whose trigger is missing alone (permission-gap guard)" do
             let young = firingAlert |> set #startedAt (Just (addUTCTime (-3600) now))
             resolveDecision now (newRecord @Source) young Nothing `shouldBe` Nothing
-        it "resolves an old alert with no problem rows (purged or deleted trigger)" do
+        it "resolves an old alert whose trigger is missing (deleted trigger)" do
             resolveDecision now (newRecord @Source) firingAlert Nothing `shouldBe` Just now
         it "honors reconcileGraceSeconds overrides" do
             let source = newRecord @Source |> set #config (object ["reconcileGraceSeconds" .= (10 :: Int)])
                 alert = firingAlert |> set #lastSeenAt (addUTCTime (-30) now)
-            resolveDecision now source alert (Just resolvedProblem) `shouldBe` Just (addUTCTime (-600) now)
-
-    describe "latestProblemByTrigger" do
-        it "keeps the newest problem row per trigger" do
-            let older = openProblem { problemEventId = "10", problemClock = nowPosix - 700 }
-                newer = resolvedProblem { problemEventId = "11", problemClock = nowPosix - 600 }
-            Map.lookup "42" (latestProblemByTrigger [older, newer]) `shouldBe` Just newer
-            Map.lookup "42" (latestProblemByTrigger [newer, older]) `shouldBe` Just newer
+            resolveDecision now source alert (Just okTrigger) `shouldBe` Just (addUTCTime (-600) now)
   where
     now = UTCTime (fromGregorian 2026 6 1) 43200
     nowPosix = floor (utcTimeToPOSIXSeconds now) :: Integer
@@ -119,11 +114,9 @@ spec = describe "Application.Job.PollZabbix" do
         |> set #status "firing"
         |> set #lastSeenAt (addUTCTime (-3600) now)
         |> set #startedAt (Just (addUTCTime (-90000) now))
-    openProblem = ZabbixProblemState
-        { problemEventId = "11"
-        , problemTriggerId = "42"
-        , problemClock = nowPosix - 600
-        , problemREventId = "0"
-        , problemRClock = 0
+    problemTrigger = ZabbixTriggerState
+        { triggerStateId = "42"
+        , triggerStateValue = "1"
+        , triggerStateLastChange = nowPosix - 600
         }
-    resolvedProblem = openProblem { problemREventId = "12", problemRClock = nowPosix - 600 }
+    okTrigger = problemTrigger { triggerStateValue = "0" }

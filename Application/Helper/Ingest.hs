@@ -3,6 +3,8 @@ module Application.Helper.Ingest
 , SourceStatus (..)
 , ingestEvents
 , ingest
+, transitionAlert
+, fetchActiveBlackouts
 , publishAlertUpdate
 ) where
 
@@ -121,18 +123,38 @@ ingest source event = do
                         |> createRecord
             pure (Just (get #id grouped))
         (Just alert, sourceStatus) -> do
-            let currentState = fromMaybe SM.Firing (SM.alertStateFromText alert.status)
-            let trigger = case sourceStatus of
-                    Firing -> Refire
-                    Resolved -> SourceResolved
-            let transition = SM.step currentState trigger
-            updated <- applyTransition now event.env environmentRef hostRef serviceRef suppressedNow alert transition
-            when (transition.applied && transition.to == SM.Resolved) do
-                cancelTrackersFor (get #id alert)
-                unless suppressedNow do
-                    void (dispatchNotification updated)
-            publishAlertUpdate updated transition.eventKind
-            pure (Just (get #id alert))
+            updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow alert
+            pure (Just (get #id updated))
+
+-- | State-machine transition + side effects (escalation cancel, notification,
+-- WS fan-out) for a source status applied to a KNOWN alert row. Split from
+-- ingest so reconcile paths that already hold the row don't rediscover it by
+-- fingerprint: a duplicate non-closed row with the same fingerprint would
+-- otherwise eat the transition as an illegal no-op.
+transitionAlert
+    :: (?modelContext :: ModelContext)
+    => UTCTime
+    -> SourceStatus
+    -> Maybe Text
+    -> Maybe (Id Environment)
+    -> Maybe (Id Host)
+    -> Maybe (Id Service)
+    -> Bool
+    -> Alert
+    -> IO Alert
+transitionAlert now sourceStatus eventEnv environmentRef hostRef serviceRef suppressedNow alert = do
+    let currentState = fromMaybe SM.Firing (SM.alertStateFromText alert.status)
+        trigger = case sourceStatus of
+            Firing -> Refire
+            Resolved -> SourceResolved
+        transition = SM.step currentState trigger
+    updated <- applyTransition now eventEnv environmentRef hostRef serviceRef suppressedNow alert transition
+    when (transition.applied && transition.to == SM.Resolved) do
+        cancelTrackersFor (get #id alert)
+        unless suppressedNow do
+            void (dispatchNotification updated)
+    publishAlertUpdate updated transition.eventKind
+    pure updated
 
 -- | Apply a state-machine transition to the alert row and append the audit
 -- event. Illegal transitions are no-ops with an AlertEvent note (§4).
