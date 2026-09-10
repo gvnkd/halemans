@@ -29,6 +29,7 @@ import qualified Test.VersionSpec
 import qualified Test.AssetsSpec
 import qualified Test.FacetsSpec
 import qualified Test.FilterPrefsSpec
+import qualified Test.MarkdownSpec
 
 main :: IO ()
 main = hspec do
@@ -57,3 +58,4 @@ main = hspec do
     Test.AssetsSpec.spec
     Test.FacetsSpec.spec
     Test.FilterPrefsSpec.spec
+    Test.MarkdownSpec.spec

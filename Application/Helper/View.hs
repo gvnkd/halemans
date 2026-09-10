@@ -2,6 +2,7 @@ module Application.Helper.View where
 
 import IHP.ViewPrelude
 import Data.Time.Format (formatTime, defaultTimeLocale)
+import qualified CMark
 
 -- Here you can add functions which are available in all your views
 
@@ -22,3 +23,12 @@ maybeUtcTimeHtml = maybe mempty utcTimeHtml
 -- | Maybe timestamp with a plain-text fallback ("never", "on schedule").
 utcTimeOrHtml :: Text -> Maybe UTCTime -> Html
 utcTimeOrHtml fallback = maybe [hsx|{fallback}|] utcTimeHtml
+
+-- LLM analysis markdown renders server-side via cmark (milestone_4.md §7).
+-- Safe mode suppresses raw HTML and dangerous link URLs — the text is model
+-- output and must never inject markup into the card.
+renderMarkdownText :: Text -> Text
+renderMarkdownText = CMark.commonmarkToHtml [CMark.optSafe]
+
+markdownHtml :: Text -> Html
+markdownHtml = preEscapedToHtml . renderMarkdownText

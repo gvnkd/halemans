@@ -367,8 +367,8 @@ writeBackChipHtml latest = [hsx|<span id={writeBackChipDomId}>{chip}</span>|]
 -- LLM analysis panel (milestone_4.md §7). Latest analysis wins; older rows
 -- are expandable history. Feedback is per analysis; the `feedback` list
 -- carries the viewing user's own votes (empty on the websocket path, which
--- renders the neutral state). Markdown renders as escaped pre text (no
--- markdown library in the dependency set).
+-- renders the neutral state). Markdown renders server-side via cmark
+-- (Application.Helper.View.markdownHtml).
 
 llmPanelDomId :: Text
 llmPanelDomId = "llm-panel"
@@ -437,7 +437,7 @@ llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
     "done" -> [hsx|
         <div class="llm-analysis" data-testid="llm-analysis">
             {dedupedBadge}
-            <pre class="llm-markdown" data-testid="llm-markdown">{fromMaybe "" analysis.resultMd}</pre>
+            <div class="llm-markdown" data-testid="llm-markdown">{markdownHtml (fromMaybe "" analysis.resultMd)}</div>
             {structuredBlock}
             <p class="text-muted llm-footer" data-testid="llm-footer">
                 provider {analysis.provider} · model {analysis.model} · template v{versionText} · {utcTimeHtml analysis.updatedAt}

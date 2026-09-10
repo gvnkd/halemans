@@ -229,7 +229,8 @@ a:hover { color: var(--accent-hover); }
 .alert-row.suppressed { opacity: 0.5; }
 
 /* LLM analysis markdown: wrap long lines instead of overflowing the card */
-.llm-markdown { white-space: pre-wrap; overflow-wrap: anywhere; }
+.llm-markdown { overflow-wrap: anywhere; }
+.llm-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Summary cards flow in a grid like the overview env cards; constant card
    size (fixed flex basis + fixed height), zoom changes the column count */

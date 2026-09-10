@@ -46,7 +46,7 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager/generic we
 ## LLM
 - Never name a column `error`: generated `LlmAnalysis.error` would clash with Prelude.error in every module importing Generated.Types (llm_analyses uses `error_message`).
 - LLM provider CRUD on /admin/llm: llm_configs UI, enable flips others off transactionally (llm_configs_enabled_idx unique-WHERE). DB-first resolution (`llmConfigFromDb`/`currentLlmConfig`) in Application/Service/Llm/DbConfig.hs — separate module because the service record `LlmProviderConfig` shares field names with the generated one; callers using `.endpoint` etc must import `LlmProviderConfig (..)`.
-- Structured output = fenced ```json, parsed best-effort in Application/Service/Llm/Output.hs; card renders markdown as escaped <pre> (no markdown lib in deps).
+- Structured output = fenced ```json, parsed best-effort in Application/Service/Llm/Output.hs; card renders result_md as real HTML via cmark (`markdownHtml`/`renderMarkdownText` in Application.Helper.View, optSafe suppresses raw HTML + javascript: links; embedded via preEscapedToHtml).
 - Prompt-hash dedupe runs in the JOB (not at ingest): hash needs the rendered prompt. Only hits for same-alert re-analysis — AlertEvent timestamps make cross-alert prompts unique.
 - Enrichment re-analysis marker: llm_analyses.error_message = 'enrichment_retrigger', caps at one per alert.
 - Agent roles: llm_analyses.agent_role_id (nullable) + llm_agent_roles; resolveAgentRole = row id → is_default → legacy. tools jsonb [] means NO tools (role filters toolDefinitions by name); no role + toolsEnabled = full set. Seeds create default-enricher in BOTH seed-halemans and smoke-check.sh (guard checks `NOT EXISTS (is_default)`, not just name).
