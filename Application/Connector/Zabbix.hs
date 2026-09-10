@@ -292,7 +292,8 @@ problemStateGet baseUrl token triggerIds = do
             , "method" .= ("problem.get" :: Text)
             , "id" .= (1 :: Int)
             , "params" .= Aeson.object
-                [ "triggerids" .= triggerIds
+                [ "object" .= (0 :: Int)  -- 0 = trigger; problem.get has no triggerids param
+                , "objectids" .= triggerIds
                 , "recent" .= False
                 , "output" .= (["eventid", "objectid", "clock", "r_eventid", "r_clock"] :: [Text])
                 ]
