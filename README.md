@@ -22,7 +22,7 @@ Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, serve
 - **Live UI** — server-rendered pages with WebSocket fragment updates, per-environment scopes, browser notifications, theme packs.
 - **Public API & metrics** — read-only JSON API (`/api/v1/alerts`, `/api/v1/environments`) with per-token rate limits, `/metrics` Prometheus exporter, audit export (CSV/JSONL).
 - **Provisioning** — declarative JSON config (users/teams/sources/rules) applied idempotently at boot; env-var indirection for secrets.
-- **Source health** — connector failure tracking with exponential backoff, webhook silence detection, internal health alerts.
+- **Source health** — connector failure tracking with exponential backoff, webhook silence detection, reverse state reconciliation (acks, silences, missed resolves), internal health alerts.
 
 Full design: [`design_docs/01_highlevel.md`](design_docs/01_highlevel.md); per-milestone notes in `design_docs/milestone_*.md`.
 
@@ -82,11 +82,12 @@ See [`deploy/docker/.env.example`](deploy/docker/.env.example) for all configura
 
 Halemans authenticates to Zabbix with an API token (`Authorization: Bearer`, referenced from source config via `tokenEnv`). In Zabbix ≥ 6.4 token permissions come from the user's **role** (Administration → User roles → *API access* → allowed methods) plus the user's **host group permissions** — `event.get` only returns events for hosts the token's user can read. Grant read access to the relevant host groups via the user's group membership.
 
-A **read-only** token needs exactly one API method:
+A **read-only** token needs two API methods:
 
 | Method | Required | Used for |
 |---|---|---|
 | `event.get` | **yes** | Trigger event polling (problem/OK) and ack-state reconciliation |
+| `problem.get` | recommended | Resolved-state reconciliation: alerts whose OK event was missed (outage, purged history) are resolved locally from trigger problem state. Without it that safety net is off (polling still works) |
 | `user.get` | optional | Resolving ack author names when mirroring Zabbix acks; without it acks still mirror, but the actor shows as a raw userid |
 | `hostgroup.get` | optional | The "Sync host groups" button (host-group cache for `hostGroupScope: "teams"`). Skip it when provisioning the cache from `hostGroupsFile` instead |
 
@@ -101,6 +102,25 @@ curl -s -X POST 'https://<zabbix>/api_jsonrpc.php' \
 ```
 
 A `result` array (even empty) means the polling path works; an `error` object like `No permissions to call "event.get"` means the role's API allow-list is missing the method. At runtime the rpc error text is shown verbatim in the source's `last_error` on the Sources page.
+
+### Zabbix reconciliation tuning
+
+Cursor-based polling only ever returns *new* events, so an OK event missed while Zabbix was unreachable could leave an alert firing forever. Each poll cycle the poller additionally re-checks the problem state of every trigger behind a tracked (firing/ack) alert with **one batched `problem.get` call** and resolves locally whatever Zabbix no longer reports as open. Behavior is tunable per source via `config` keys (shown with defaults):
+
+```json
+{
+  "reconcileResolved": true,
+  "reconcileGraceSeconds": 60,
+  "reconcileIntervalSeconds": 0,
+  "absentResolveMinAgeSeconds": 86400,
+  "eventPageLimit": 1000
+}
+```
+
+- `reconcileGraceSeconds` — minimum age of the last local activity before source state is trusted (guards the ingest/reconcile race on refires).
+- `reconcileIntervalSeconds` — minimum seconds between reconciles; `0` means every poll cycle.
+- `absentResolveMinAgeSeconds` — a trigger with *no* problem rows at all (housekeeper purge or deleted trigger) resolves the local alert only when the alert is older than this; also guards against token permission gaps hiding problems.
+- `eventPageLimit` — `event.get` page size; catch-up after an outage pages until a short page, so no events are skipped.
 
 ## API
 

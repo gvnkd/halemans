@@ -8,7 +8,7 @@ import IHP.QueryBuilder
 import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
-import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingestEvents)
+import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest, ingestEvents)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
@@ -21,6 +21,8 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Data.Bits ((.&.))
 import Data.Either (fromRight)
 import Data.List (nub, sortOn)
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as Text
 import Control.Monad (void)
 import Control.Exception (try, SomeException)
 import System.Environment (lookupEnv)
@@ -83,7 +85,7 @@ pollSource source = do
                     logWarn ("zabbix source \"" <> source.name <> "\" host group scope failed: " <> err)
                 Right Nothing -> logDebug ("zabbix source \"" <> source.name <> "\": hostGroupScope=teams but no cached groups match; skipping poll cycle")
                 Right (Just groupIds) -> do
-                    outcome <- try (Zabbix.eventGet source.baseUrl token cursor groupIds)
+                    outcome <- try (Zabbix.eventGet source.baseUrl token cursor groupIds (eventPageLimit source))
                     result <- pure case outcome of
                         Left err -> Left (tshow (err :: SomeException))
                         Right result -> result
@@ -96,6 +98,9 @@ pollSource source = do
                             recordSuccess source
                             ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl source.env) events)
                             reconcileAcks source token
+                            when (reconcileResolvedEnabled source && reconcileDue now source) do
+                                reconcileProblemStates source token now
+                                void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                             case maximumMaybe (map (.clock) events) of
                                 Just maxClock -> do
                                     _ <- source
@@ -191,3 +196,122 @@ mirrorState alerts userNames state =
 
 lastMaybe :: [a] -> Maybe a
 lastMaybe = last
+
+-- Resolved-state reconciliation: cursor-based event.get only returns NEW
+-- events, so an OK event missed during an outage (truncated catch-up page,
+-- housekeeper-purged history) leaves the local alert firing forever. Each
+-- due cycle re-fetches problem state for the triggers behind our tracked
+-- (firing/ack) alerts via ONE batched problem.get and locally resolves
+-- whatever zabbix no longer reports as open. Keyed on the trigger id from
+-- the fingerprint, not alerts.external_id: refires don't rotate external_id,
+-- so the stored event id can point at an already-resolved older problem.
+--
+-- Source config keys (all optional, defaults in the accessors below):
+--   reconcileResolved           bool  master switch (default true)
+--   reconcileGraceSeconds       int   min age of last local activity before
+--                                     trusting source state (default 60)
+--   reconcileIntervalSeconds    int   min seconds between reconciles,
+--                                     0 = every poll cycle (default 0)
+--   absentResolveMinAgeSeconds  int   min alert age before "no problem rows
+--                                     at all" is treated as resolved
+--                                     (housekeeper purge or deleted trigger;
+--                                     guards permission gaps) (default 86400)
+--   eventPageLimit              int   event.get page size (default 1000)
+reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
+reconcileProblemStates source token now = do
+    alerts <- query @Alert
+        |> filterWhere (#sourceId, Just (get #id source))
+        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+        |> fetch
+    let tracked = [(triggerId, alert) | alert <- alerts, Just triggerId <- [triggerIdOf alert]]
+    unless (null tracked) do
+        result <- Zabbix.problemStateGet source.baseUrl token (nub (map fst tracked))
+        case result of
+            Left err -> logWarn ("zabbix source \"" <> source.name <> "\" problem-state reconcile failed: " <> err)
+            Right states -> do
+                let latest = latestProblemByTrigger states
+                forM_ tracked \(triggerId, alert) ->
+                    case resolveDecision now source alert (Map.lookup triggerId latest) of
+                        Nothing -> pure ()
+                        Just resolvedAt -> do
+                            logInfo ("zabbix source \"" <> source.name <> "\": resolving alert " <> tshow (get #id alert) <> " (no open problem on " <> triggerId <> ")")
+                            resolveFromProblem source alert resolvedAt
+
+-- | Resolve via the normal ingest path (state machine, events, WS fan-out),
+-- then back-date resolved_at to the zabbix-side resolution time when known.
+resolveFromProblem :: (?modelContext :: ModelContext) => Source -> Alert -> UTCTime -> IO ()
+resolveFromProblem source alert resolvedAt = do
+    mAlertId <- ingest source NormalizedEvent
+        { fingerprint = alert.fingerprint
+        , externalId = alert.externalId
+        , status = Resolved
+        , severity = alert.severity
+        , title = alert.title
+        , description = alert.description
+        , env = alert.env
+        , host = alert.host
+        , service = alert.service
+        , checkName = alert.checkName
+        , labels = alert.labels
+        , annotations = alert.annotations
+        , startedAt = alert.startedAt
+        , sourceUrl = alert.sourceUrl
+        }
+    forM_ mAlertId \alertId ->
+        void (sqlExecTyped [typedSql|
+            UPDATE alerts SET resolved_at = ${resolvedAt}
+            WHERE id = ${alertId} AND status = 'resolved' AND resolved_at > ${resolvedAt}
+        |])
+
+-- | Just resolvedAt when the alert should be locally resolved; Nothing when
+-- the source still reports an open problem or local activity is too fresh to
+-- trust source state (grace window covers the ingest/reconcile race).
+resolveDecision :: UTCTime -> Source -> Alert -> Maybe Zabbix.ZabbixProblemState -> Maybe UTCTime
+resolveDecision now source alert mLatest
+    | alert.lastSeenAt >= graceCutoff = Nothing
+    | otherwise = case mLatest of
+        Just state
+            | state.problemREventId == "0" -> Nothing
+            | state.problemRClock > 0 -> Just (min now (posixSecondsToUTCTime (fromIntegral state.problemRClock)))
+            | otherwise -> Just now
+        Nothing
+            | addUTCTime (negate absentMinAge) now >= fromMaybe now alert.startedAt -> Just now
+            | otherwise -> Nothing
+  where
+    graceCutoff = addUTCTime (negate (fromIntegral (reconcileGraceSeconds source))) now
+    absentMinAge = fromIntegral (absentResolveMinAgeSeconds source)
+
+-- | The row that tells the CURRENT state of a trigger: its newest problem.
+latestProblemByTrigger :: [Zabbix.ZabbixProblemState] -> Map Text Zabbix.ZabbixProblemState
+latestProblemByTrigger = Map.fromListWith newer . map (\state -> (state.problemTriggerId, state))
+  where
+    newer a b = if (a.problemClock, a.problemEventId) >= (b.problemClock, b.problemEventId) then a else b
+
+triggerIdOf :: Alert -> Maybe Text
+triggerIdOf alert = Text.stripPrefix "zabbix:trigger:" alert.fingerprint
+
+reconcileDue :: UTCTime -> Source -> Bool
+reconcileDue now source = case source.lastReconcileAt of
+    Nothing -> True
+    Just lastAt -> addUTCTime (fromIntegral (reconcileIntervalSeconds source)) lastAt <= now
+
+reconcileResolvedEnabled :: Source -> Bool
+reconcileResolvedEnabled = configBool True "reconcileResolved"
+
+reconcileGraceSeconds :: Source -> Int
+reconcileGraceSeconds = configInt 60 "reconcileGraceSeconds"
+
+reconcileIntervalSeconds :: Source -> Int
+reconcileIntervalSeconds = configInt 0 "reconcileIntervalSeconds"
+
+absentResolveMinAgeSeconds :: Source -> Int
+absentResolveMinAgeSeconds = configInt 86400 "absentResolveMinAgeSeconds"
+
+eventPageLimit :: Source -> Int
+eventPageLimit source = max 1 (configInt 1000 "eventPageLimit" source)
+
+configInt :: Int -> Text -> Source -> Int
+configInt def key source = fromMaybe def (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText key)) source.config)
+
+configBool :: Bool -> Text -> Source -> Bool
+configBool def key source = fromMaybe def (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText key)) source.config)

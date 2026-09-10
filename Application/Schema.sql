@@ -13,6 +13,7 @@ CREATE TABLE sources (
     enabled BOOLEAN NOT NULL DEFAULT true,
     config JSONB NOT NULL DEFAULT '{}',
     last_sync_cursor TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    last_reconcile_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
     consecutive_failures INT NOT NULL DEFAULT 0,
     last_error TEXT DEFAULT NULL,
     next_poll_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,

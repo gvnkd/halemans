@@ -8,6 +8,7 @@ import Data.Aeson (object, (.=))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Text.Read (readMaybe)
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Service.HostGroups (replaceHostGroupCache)
@@ -38,7 +39,7 @@ instance Controller SourcesController where
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
             |> set #enabled True
-            |> set #config (sourceConfig (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
+            |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
             |> createRecord
         ensurePollerForSourceType (param @Text "type")
         setSuccessMessage "Source created"
@@ -66,7 +67,7 @@ instance Controller SourcesController where
             |> set #baseUrl (param @Text "baseUrl")
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-            |> set #config (sourceConfig (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
+            |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
             |> updateRecord
         when source.enabled (ensurePollerForSourceType (param @Text "type"))
         setSuccessMessage "Source updated"
@@ -99,15 +100,26 @@ instance Controller SourcesController where
 
 -- | Credentials stay env-var references ({"tokenEnv":"GRAFANA_TOKEN"}), never
 -- raw tokens in the row. Integration toggles (milestone_3.md §8): writeBack,
--- cmdbSpace, jiraProject.
-sourceConfig :: Text -> Bool -> Text -> Text -> Maybe Int -> Text -> Aeson.Value
-sourceConfig tokenEnv writeBack cmdbSpace jiraProject historyDays scope = object $
-    [ "writeBack" .= writeBack ]
-    ++ [ "tokenEnv" .= tokenEnv | tokenEnv /= "" ]
-    ++ [ "cmdbSpace" .= cmdbSpace | cmdbSpace /= "" ]
-    ++ [ "jiraProject" .= jiraProject | jiraProject /= "" ]
-    ++ [ "initialHistoryDays" .= days | Just days <- [historyDays] ]
-    ++ [ "hostGroupScope" .= scope | scope == "teams" ]
+-- cmdbSpace, jiraProject. Form-managed keys are overlaid on the EXISTING
+-- config: keys the form doesn't know (provisioned or hand-set, e.g.
+-- reconcileGraceSeconds / reconcileIntervalSeconds /
+-- absentResolveMinAgeSeconds / eventPageLimit / reconcileResolved /
+-- expectedIntervalSeconds / hostGroupsFile) survive a UI edit.
+sourceConfig :: Aeson.Value -> Text -> Bool -> Text -> Text -> Maybe Int -> Text -> Aeson.Value
+sourceConfig base tokenEnv writeBack cmdbSpace jiraProject historyDays scope =
+    Aeson.Object (extra <> managed)
+  where
+    managed = KeyMap.fromList $
+        [ "writeBack" .= writeBack ]
+        ++ [ "tokenEnv" .= tokenEnv | tokenEnv /= "" ]
+        ++ [ "cmdbSpace" .= cmdbSpace | cmdbSpace /= "" ]
+        ++ [ "jiraProject" .= jiraProject | jiraProject /= "" ]
+        ++ [ "initialHistoryDays" .= days | Just days <- [historyDays] ]
+        ++ [ "hostGroupScope" .= scope | scope == "teams" ]
+    managedKeys = ["writeBack", "tokenEnv", "cmdbSpace", "jiraProject", "initialHistoryDays", "hostGroupScope"]
+    extra = case base of
+        Aeson.Object o -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) o
+        _ -> mempty
 
 -- | Empty/unparseable input omits the key (poller default applies).
 historyDaysParam :: (?request :: Request, ?respond :: Respond) => Maybe Int
