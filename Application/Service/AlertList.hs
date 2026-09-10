@@ -79,7 +79,7 @@ listAlerts filters lim = do
         FROM (
             SELECT a.id,
                 CASE ${sort}
-                    WHEN 'status' THEN CASE a.status WHEN 'firing' THEN '0' WHEN 'ack' THEN '1' WHEN 'resolved' THEN '2' ELSE '3' END
+                    WHEN 'status' THEN CASE a.status WHEN 'firing' THEN '0' WHEN 'ack' THEN '1' WHEN 'resolved' THEN '2' WHEN 'stalled' THEN '3' ELSE '4' END
                     WHEN 'severity' THEN CASE a.severity WHEN 'critical' THEN '0' WHEN 'high' THEN '1' WHEN 'warning' THEN '2' WHEN 'info' THEN '3' ELSE '4' END
                     WHEN 'title' THEN lower(a.title)
                     WHEN 'env' THEN coalesce(nullif(a.facets ->> 'env', ''), a.env, '')

@@ -148,7 +148,7 @@ reconcileAbsences source now alerts = do
     let listedFingerprints = map ("grafana:" <>) (map (.amFingerprint) alerts)
     firing <- query @Alert
         |> filterWhere (#sourceId, Just (get #id source))
-        |> filterWhere (#status, "firing" :: Text)
+        |> filterWhereIn (#status, ["firing", "stalled"] :: [Text])
         |> fetch
     let graceCutoff = addUTCTime (-60) now
         vanished = filter (\alert ->

@@ -25,6 +25,20 @@ spec = describe "Application.Pipeline.StateMachine" do
             step Resolved Refire `shouldBe` Transition Resolved Firing Refire "repeated" True
         it "resolved --auto-close--> closed" do
             step Resolved AutoClose `shouldBe` Transition Resolved Closed AutoClose "closed" True
+        it "firing --stall-timeout--> stalled" do
+            step Firing StallTimeout `shouldBe` Transition Firing Stalled StallTimeout "stalled" True
+        it "ack --stall-timeout--> stalled" do
+            step Acked StallTimeout `shouldBe` Transition Acked Stalled StallTimeout "stalled" True
+        it "stalled --refire--> firing (revive)" do
+            step Stalled Refire `shouldBe` Transition Stalled Firing Refire "repeated" True
+        it "stalled --resolved--> resolved" do
+            step Stalled SourceResolved `shouldBe` Transition Stalled Resolved SourceResolved "resolved" True
+        it "stalled --ack--> ack" do
+            step Stalled AckTrigger `shouldBe` Transition Stalled Acked AckTrigger "ack" True
+        it "stalled --close--> closed" do
+            step Stalled CloseTrigger `shouldBe` Transition Stalled Closed CloseTrigger "closed" True
+        it "stalled --auto-close--> closed" do
+            step Stalled AutoClose `shouldBe` Transition Stalled Closed AutoClose "closed" True
 
     describe "step (illegal transitions are no-ops)" do
         it "never applies and keeps the state" do
@@ -50,9 +64,10 @@ spec = describe "Application.Pipeline.StateMachine" do
 
         it "applied transitions only ever use the legal edge set" do
             let legalEdges =
-                    [ (Firing, Refire), (Firing, SourceResolved), (Firing, AckTrigger)
-                    , (Acked, Refire), (Acked, SourceResolved), (Acked, Unack), (Acked, CloseTrigger)
+                    [ (Firing, Refire), (Firing, SourceResolved), (Firing, AckTrigger), (Firing, StallTimeout)
+                    , (Acked, Refire), (Acked, SourceResolved), (Acked, Unack), (Acked, CloseTrigger), (Acked, StallTimeout)
                     , (Resolved, Refire), (Resolved, AutoClose)
+                    , (Stalled, Refire), (Stalled, SourceResolved), (Stalled, AckTrigger), (Stalled, CloseTrigger), (Stalled, AutoClose)
                     ]
             forEach allStates \start ->
                 forEach (sequencesUpTo 4) \triggers ->

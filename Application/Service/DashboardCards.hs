@@ -74,7 +74,8 @@ statusRank = \case
     "firing" -> 0
     "ack" -> 1
     "resolved" -> 2
-    _ -> 3
+    "stalled" -> 3
+    _ -> 4
 
 data AlertSortPayload = AlertSortPayload Bool AlertSortValue
 data AlertSortValue = APInt Int | APDownInt (Down Int) | APText Text | APDownTime (Down UTCTime)
@@ -126,6 +127,7 @@ data CardSummary = CardSummary
     { csFiring :: Int
     , csAcked :: Int
     , csResolved :: Int
+    , csStalled :: Int
     , csSuppressed :: Int
     , csWorstSeverity :: Maybe Text
     , csHourly :: [(UTCTime, Int)]
@@ -145,6 +147,7 @@ runCardSummary card = do
         { csFiring = countFor "firing"
         , csAcked = countFor "ack"
         , csResolved = countFor "resolved"
+        , csStalled = countFor "stalled"
         , csSuppressed = length (filter (.suppressed) alerts)
         , csWorstSeverity = if null alerts then Nothing else Just (groupWorst alerts)
         , csHourly = hourly

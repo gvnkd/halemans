@@ -15,7 +15,7 @@ import IHP.Prelude
 -- Core alert states per design_docs/01_highlevel.md §5.2.
 -- @suppressed@ is intentionally NOT a state: it is an overlay flag on the
 -- alert row (design_docs/milestone_1.md §12).
-data AlertState = Firing | Acked | Resolved | Closed
+data AlertState = Firing | Acked | Resolved | Stalled | Closed
     deriving (Eq, Show, Enum, Bounded)
 
 -- External triggers that can move an alert between states.
@@ -25,7 +25,8 @@ data Trigger
     | AckTrigger      -- manual ack
     | Unack           -- manual unack or ack-timeout expiry
     | CloseTrigger    -- manual close
-    | AutoClose       -- resolved TTL expired
+    | AutoClose       -- resolved/stalled TTL expired
+    | StallTimeout    -- no source update within the stall TTL
     deriving (Eq, Show, Enum, Bounded)
 
 data Transition = Transition
@@ -43,6 +44,7 @@ alertStateToText = \case
     Firing -> "firing"
     Acked -> "ack"
     Resolved -> "resolved"
+    Stalled -> "stalled"
     Closed -> "closed"
 
 alertStateFromText :: Text -> Maybe AlertState
@@ -50,6 +52,7 @@ alertStateFromText = \case
     "firing" -> Just Firing
     "ack" -> Just Acked
     "resolved" -> Just Resolved
+    "stalled" -> Just Stalled
     "closed" -> Just Closed
     _ -> Nothing
 
@@ -63,12 +66,19 @@ step current trigger = case (current, trigger) of
     (Firing, Refire) -> ok Firing "repeated"
     (Firing, SourceResolved) -> ok Resolved "resolved"
     (Firing, AckTrigger) -> ok Acked "ack"
+    (Firing, StallTimeout) -> ok Stalled "stalled"
     (Acked, Refire) -> ok Acked "repeated"
     (Acked, SourceResolved) -> ok Resolved "resolved"
     (Acked, Unack) -> ok Firing "unack"
     (Acked, CloseTrigger) -> ok Closed "closed"
+    (Acked, StallTimeout) -> ok Stalled "stalled"
     (Resolved, Refire) -> ok Firing "repeated"
     (Resolved, AutoClose) -> ok Closed "closed"
+    (Stalled, Refire) -> ok Firing "repeated"
+    (Stalled, SourceResolved) -> ok Resolved "resolved"
+    (Stalled, AckTrigger) -> ok Acked "ack"
+    (Stalled, CloseTrigger) -> ok Closed "closed"
+    (Stalled, AutoClose) -> ok Closed "closed"
     _ -> illegal
     where
         ok to kind = Transition { from = current, to, trigger, eventKind = kind, applied = True }

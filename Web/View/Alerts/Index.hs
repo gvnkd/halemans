@@ -50,7 +50,7 @@ instance View IndexView where
             liveFilters :: Text
             liveFilters = cs (Aeson.encode (alertFiltersToValue filters))
             severities = ["critical", "high", "warning", "info"]
-            statuses = ["firing", "ack", "resolved", "closed"]
+            statuses = ["firing", "ack", "resolved", "stalled", "closed"]
             resetUrl :: Text
             resetUrl = pathTo AlertsAction <> "?reset=1"
             hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))

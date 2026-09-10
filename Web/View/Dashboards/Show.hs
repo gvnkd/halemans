@@ -121,6 +121,7 @@ renderSummary dashboardId expanded summary = rollupCardHtml RollupCard
     , rcFiring = summary.csFiring
     , rcAcked = summary.csAcked
     , rcResolved = summary.csResolved
+    , rcStalled = summary.csStalled
     , rcSuppressed = summary.csSuppressed
     , rcHourly = summary.csHourly
     , rcLink = Just (cardAlertsLink dashboardId expanded)

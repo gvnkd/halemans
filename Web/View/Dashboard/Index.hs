@@ -15,6 +15,7 @@ data EnvCard = EnvCard
     , cardFiring :: Int64
     , cardAcked :: Int64
     , cardResolved :: Int64
+    , cardStalled :: Int64
     , cardSuppressed :: Int64
     , cardWorstSeverity :: Maybe Text
     , cardHourly :: [(UTCTime, Int64)]
@@ -63,13 +64,14 @@ buildCard counts hourly envName environment =
         , cardFiring = countFor "firing"
         , cardAcked = countFor "ack"
         , cardResolved = countFor "resolved"
+        , cardStalled = countFor "stalled"
         , cardSuppressed = suppressedCount
         , cardWorstSeverity = cardWorst severities
         , cardHourly = hourlyBuckets
         }
 
 cardTotal :: EnvCard -> Int64
-cardTotal card = card.cardFiring + card.cardAcked + card.cardResolved
+cardTotal card = card.cardFiring + card.cardAcked + card.cardResolved + card.cardStalled
 
 cardSeverityRank :: Text -> Int
 cardSeverityRank = \case
@@ -130,6 +132,7 @@ renderCard card = [hsx|
             , rcFiring = fromIntegral card.cardFiring
             , rcAcked = fromIntegral card.cardAcked
             , rcResolved = fromIntegral card.cardResolved
+            , rcStalled = fromIntegral card.cardStalled
             , rcSuppressed = fromIntegral card.cardSuppressed
             , rcHourly = map (fmap fromIntegral) card.cardHourly
             , rcLink = Nothing

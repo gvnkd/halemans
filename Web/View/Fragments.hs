@@ -169,6 +169,7 @@ eventSummary event = case event.kind of
     "resolved" -> case (payloadText "from", payloadText "to") of
         (Just from, Just to) -> from <> " → " <> to
         _ -> ""
+    "stalled" -> "no source updates" <> maybe "" (\from -> " (was " <> from <> ")") (payloadText "from")
     "writeback_failed" -> "write-back failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
     "enrichment_failed" -> "enrichment failed" <> maybe "" (\s -> " (" <> s <> ")") (payloadText "subsystem")
     "llm_failed" -> "LLM analysis failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
@@ -589,6 +590,7 @@ data RollupCard = RollupCard
     , rcFiring :: Int
     , rcAcked :: Int
     , rcResolved :: Int
+    , rcStalled :: Int
     , rcSuppressed :: Int
     , rcHourly :: [(UTCTime, Int)]
     , rcLink :: Maybe Text
@@ -607,6 +609,7 @@ rollupCardHtml RollupCard { .. } = [hsx|
                 <span class="count status-firing" data-testid="count-firing">{rcFiring} firing</span>
                 <span class="count status-ack" data-testid="count-ack">{rcAcked} ack</span>
                 <span class="count status-resolved" data-testid="count-resolved">{rcResolved} resolved</span>
+                <span class="count status-stalled" data-testid="count-stalled">{rcStalled} stalled</span>
                 {rollupSuppressedBadge rcSuppressed}
             </div>
             <div class="env-hourly" title="alerts per hour (last 24h)">

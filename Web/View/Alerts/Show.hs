@@ -109,10 +109,10 @@ renderActionBar alert canAck canClose = [hsx|
     </div>
 |]
     where
-        ackButton = if canAck && alert.status == "firing"
+        ackButton = if canAck && alert.status `elem` ["firing", "stalled"]
             then inlinePostFormHtml (pathTo (AckAlertAction alert.id)) "Ack" "btn btn-sm btn-warning" (Just "ack-button") False
             else mempty
-        ackTimeoutForm = if canAck && alert.status == "firing"
+        ackTimeoutForm = if canAck && alert.status `elem` ["firing", "stalled"]
             then [hsx|
                 <form method="POST" action={AckAlertAction alert.id} class="d-inline" data-testid="ack-timeout-form">
                     <input type="hidden" name="timeoutMinutes" value="120"/>
@@ -123,7 +123,7 @@ renderActionBar alert canAck canClose = [hsx|
         unackButton = if canAck && alert.status == "ack"
             then inlinePostFormHtml (pathTo (UnackAlertAction alert.id)) "Unack" "btn btn-sm btn-outline-secondary" (Just "unack-button") False
             else mempty
-        closeForm = if canClose && alert.status == "ack"
+        closeForm = if canClose && alert.status `elem` ["ack", "stalled"]
             then [hsx|
                 <form method="POST" action={CloseAlertAction alert.id} class="d-inline" data-testid="close-form">
                     <input type="text" name="reason" class="form-control form-control-sm d-inline-block w-auto" placeholder="reason" data-testid="close-reason"/>

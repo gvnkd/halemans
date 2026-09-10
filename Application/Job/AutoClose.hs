@@ -8,21 +8,26 @@ import IHP.QueryBuilder
 import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
-import Application.Pipeline.Actions (unackAlert, closeAlert)
+import Application.Pipeline.Actions (unackAlert, autoCloseAlert, stallAlert)
 import Application.Pipeline.Blackouts (blackoutApplies)
 import Application.Helper.Ingest (publishAlertUpdate)
 import Control.Monad (void)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
+import qualified Data.Set as Set
 
 -- Periodic maintenance (design_docs/milestone_1.md §9): auto-close resolved
 -- alerts after TTL, unack expired acks, clear suppression once the covering
--- blackout expired. Self-rescheduling like PollZabbixJob.
+-- blackout expired, stall alerts that stopped receiving source updates, and
+-- auto-close stalled alerts after their own TTL. Self-rescheduling like
+-- PollZabbixJob.
 instance Job AutoCloseJob where
     perform _job = do
         autoCloseResolved
         unackExpiredAcks
         unsuppressExpired
+        stallStaleAlerts
+        closeStalledAlerts
 
         now <- getCurrentTime
         next <- newRecord @AutoCloseJob
@@ -39,10 +44,21 @@ instance Job AutoCloseJob where
     queuePollInterval = 5 * 1000000
     maxAttempts = 3
 
+envSeconds :: Text -> Int -> IO Int
+envSeconds name fallback = do
+    override <- lookupEnv (cs name)
+    pure (fromMaybe fallback (override >>= readMaybe))
+
 autoCloseTtlSeconds :: IO Int
-autoCloseTtlSeconds = do
-    override <- lookupEnv "HALEMANS_AUTO_CLOSE_SECONDS"
-    pure (fromMaybe 86400 (override >>= readMaybe))
+autoCloseTtlSeconds = envSeconds "HALEMANS_AUTO_CLOSE_SECONDS" 86400
+
+-- | No source update within this window marks a firing/ack alert stalled.
+stallTtlSeconds :: IO Int
+stallTtlSeconds = envSeconds "HALEMANS_STALL_SECONDS" (6 * 3600)
+
+-- | A stalled alert is auto-closed once it spent this long without updates.
+stalledCloseTtlSeconds :: IO Int
+stalledCloseTtlSeconds = envSeconds "HALEMANS_STALLED_CLOSE_SECONDS" (3 * 86400)
 
 autoCloseResolved :: (?modelContext :: ModelContext) => IO ()
 autoCloseResolved = do
@@ -52,11 +68,44 @@ autoCloseResolved = do
         |> filterWhere (#status, "resolved" :: Text)
         |> fetch
     forM_ (filter (resolvedBefore cutoff) stale) \alert ->
-        void (closeAlert Nothing alert (Just "auto-closed: resolved TTL expired"))
+        void (autoCloseAlert alert "auto-closed: resolved TTL expired")
     where
         resolvedBefore cutoff alert = case alert.resolvedAt of
             Just resolvedAt -> resolvedAt < cutoff
             Nothing -> False
+
+-- | Stall detection: firing/ack alerts whose last_seen_at is older than the
+-- stall TTL never got a refire/resolve from their source (deleted trigger,
+-- removed grafana rule, dead webhook). Alerts of a source with consecutive
+-- poll failures are SKIPPED — a dead source must not mass-stall its alerts;
+-- the source-health alert already covers that outage.
+stallStaleAlerts :: (?modelContext :: ModelContext) => IO ()
+stallStaleAlerts = do
+    ttlSeconds <- stallTtlSeconds
+    now <- getCurrentTime
+    let cutoff = addUTCTime (fromIntegral (- ttlSeconds)) now
+    stale <- query @Alert
+        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+        |> fetch
+    sources <- query @Source |> fetch
+    let failing = Set.fromList [get #id source | source <- sources, source.consecutiveFailures > 0]
+        overdue alert = alert.lastSeenAt < cutoff
+            && maybe True (\sourceId -> Set.notMember sourceId failing) alert.sourceId
+    forM_ (filter overdue stale) \alert ->
+        void (stallAlert alert "no update from source within stall TTL")
+
+closeStalledAlerts :: (?modelContext :: ModelContext) => IO ()
+closeStalledAlerts = do
+    ttlSeconds <- stalledCloseTtlSeconds
+    now <- getCurrentTime
+    let cutoff = addUTCTime (fromIntegral (- ttlSeconds)) now
+    stalled <- query @Alert
+        |> filterWhere (#status, "stalled" :: Text)
+        |> fetch
+    forM_ (filter (expired cutoff) stalled) \alert ->
+        void (autoCloseAlert alert "auto-closed: stalled TTL expired")
+    where
+        expired cutoff alert = alert.updatedAt < cutoff && alert.lastSeenAt < cutoff
 
 unackExpiredAcks :: (?modelContext :: ModelContext) => IO ()
 unackExpiredAcks = do

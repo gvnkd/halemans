@@ -129,6 +129,7 @@ encodeEnvCard card = object
         [ "firing" .= card.cardFiring
         , "ack" .= card.cardAcked
         , "resolved" .= card.cardResolved
+        , "stalled" .= card.cardStalled
         ]
     , "suppressed" .= card.cardSuppressed
     ]

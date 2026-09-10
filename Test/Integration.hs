@@ -23,7 +23,7 @@ import qualified Network.Wreq as Wreq
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert)
-import Application.Job.AutoClose (unackExpiredAcks, unsuppressExpired)
+import Application.Job.AutoClose (autoCloseResolved, unackExpiredAcks, unsuppressExpired, stallStaleAlerts, closeStalledAlerts)
 import Application.Job.Escalation (runDueTrackers)
 import Application.Job.EnrichAlert ()
 import Application.Job.LlmAnalysis ()
@@ -210,6 +210,53 @@ spec = describe "alert pipeline (milestone 1)" do
         updated.status `shouldBe` "firing"
         events <- eventKinds alertId
         events `shouldSatisfy` ("unack" `elem`)
+
+    it "alert with no source updates stalls, revives on refire, auto-closes after stalled TTL" do
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        let alertUuid = unpackId alertId
+        void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = NOW() - INTERVAL '7 hours' WHERE id = ${alertUuid} |])
+        stallStaleAlerts
+        stalled <- fetch alertId
+        stalled.status `shouldBe` "stalled"
+        events <- eventKinds alertId
+        events `shouldSatisfy` ("stalled" `elem`)
+        Just revivedId <- ingest source (testEvent fp Firing)
+        revivedId `shouldBe` alertId
+        revived <- fetch alertId
+        revived.status `shouldBe` "firing"
+        void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = NOW() - INTERVAL '7 hours' WHERE id = ${alertUuid} |])
+        stallStaleAlerts
+        void (sqlExecTyped [typedSql| UPDATE alerts SET updated_at = NOW() - INTERVAL '4 days', last_seen_at = NOW() - INTERVAL '4 days' WHERE id = ${alertUuid} |])
+        closeStalledAlerts
+        closed <- fetch alertId
+        closed.status `shouldBe` "closed"
+        closed.closeReason `shouldBe` Just "auto-closed: stalled TTL expired"
+
+    it "alerts of a failing source are not stalled" do
+        suffix <- tshow <$> nextRandom
+        failing <- integrationSource "webhook" ("stall-guard-" <> suffix) "" (object [])
+        void (failing |> set #consecutiveFailures 2 |> updateRecord)
+        fp <- freshFingerprint
+        Just alertId <- ingest failing (testEvent fp Firing)
+        let alertUuid = unpackId alertId
+        void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = NOW() - INTERVAL '7 hours' WHERE id = ${alertUuid} |])
+        stallStaleAlerts
+        alert <- fetch alertId
+        alert.status `shouldBe` "firing"
+
+    it "resolved alerts auto-close after the resolved TTL" do
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        void (ingest source (testEvent fp Resolved))
+        let alertUuid = unpackId alertId
+        void (sqlExecTyped [typedSql| UPDATE alerts SET resolved_at = NOW() - INTERVAL '25 hours' WHERE id = ${alertUuid} |])
+        autoCloseResolved
+        closed <- fetch alertId
+        closed.status `shouldBe` "closed"
+        closed.closeReason `shouldBe` Just "auto-closed: resolved TTL expired"
 
     describe "milestone 2: correlation & teams" do
         it "two alerts on the same host group under the env+host rule; rollup is worst severity + member count" do
@@ -2141,7 +2188,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
             cardIds <- map (get #id) <$> runCardQuery card
             cardIds `shouldContain` [alertId]
             -- overview cards are keyed by the effective env
-            let cardTotal' card = card.cardFiring + card.cardAcked + card.cardResolved
+            let cardTotal' card = card.cardFiring + card.cardAcked + card.cardResolved + card.cardStalled
             (cards, _) <- computeEnvCards
             let cardFor name = find (\card -> card.cardEnvName == Just name) cards
             case cardFor "PROD" of

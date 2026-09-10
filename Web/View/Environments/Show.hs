@@ -107,7 +107,7 @@ instance View ShowView where
             liveFilters :: Text
             liveFilters = cs (Aeson.encode (envFiltersToValue filters viewMode))
             severities = ["critical", "high", "warning", "info"]
-            statuses = ["firing", "ack", "resolved", "closed"]
+            statuses = ["firing", "ack", "resolved", "stalled", "closed"]
             hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
             serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
             titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))

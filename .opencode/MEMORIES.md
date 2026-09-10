@@ -3,6 +3,9 @@
 ## Versioning
 - ANY code change bumps the version per semver (patch: fixes/internal, minor: features/compatible, major: breaking). Version lives in Halemans.cabal (`version:` field) AND in Application/Version.hs (`appVersion` — runtime copy, cabal not readable in nix build; Test/VersionSpec fails the suite when they drift); releases are git tags `vX.Y.Z` pushed to both remotes (origin=gitea, github). When several version bumps accumulate in one uncommitted session, commit them together but tag ONLY the latest version.
 
+## Alert lifecycle
+- States: firing/ack/resolved/stalled/closed (Application/Pipeline/StateMachine.hs). `stalled` = no source update within HALEMANS_STALL_SECONDS (default 6h); refire REVIVES stalled→firing on the same row (dedupe index keeps stalled active); auto-closed after HALEMANS_STALLED_CLOSE_SECONDS (default 3d). Detection lives in AutoCloseJob (stallStaleAlerts/closeStalledAlerts); sources with consecutive_failures > 0 are skipped (no mass-stall on source outage). Zabbix/grafana reconciles include stalled rows. Manual close of resolved/stalled MUST go through autoCloseAlert (CloseTrigger is illegal there; closeAlert only works from ack — autoCloseResolved once silently no-op'd because of this).
+
 ## IHP sources
 - Local IHP checkout: `/home/pion/work/dev/ihp` — read it directly for framework internals (IHP.ModelSupport, IHP.Job.*, IHP.HSX, LoginSupport, etc). Do NOT grep /nix/store for IHP sources.
 

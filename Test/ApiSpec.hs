@@ -86,13 +86,14 @@ spec = describe "Milestone 6 API" do
                     , cardFiring = 2
                     , cardAcked = 1
                     , cardResolved = 3
+                    , cardStalled = 1
                     , cardSuppressed = 1
                     , cardWorstSeverity = Just "critical"
                     , cardHourly = []
                     }
             lookupKey "worst_severity" json `shouldBe` Just (String "critical")
             lookupKey "environment" json `shouldBe` Just Null
-            lookupKey "counts" json `shouldBe` Just (object ["firing" .= (2 :: Int), "ack" .= (1 :: Int), "resolved" .= (3 :: Int)])
+            lookupKey "counts" json `shouldBe` Just (object ["firing" .= (2 :: Int), "ack" .= (1 :: Int), "resolved" .= (3 :: Int), "stalled" .= (1 :: Int)])
   where
     t0 = UTCTime (fromGregorian 2026 1 1) 0
     testUuid = fromJust (UUID.fromText "12345678-1234-1234-1234-1234567890ab")

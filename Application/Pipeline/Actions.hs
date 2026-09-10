@@ -2,6 +2,8 @@ module Application.Pipeline.Actions
 ( ackAlert
 , unackAlert
 , closeAlert
+, stallAlert
+, autoCloseAlert
 , addComment
 ) where
 
@@ -104,6 +106,54 @@ closeAlert actor alert reason = do
             publishAlertUpdate updated "closed"
             when (isJust actor) do
                 WriteBack.enqueueForAction updated "close"
+            pure updated
+
+-- | Stall an alert that stopped receiving source updates (deleted trigger,
+-- dead webhook). System-initiated like the auto-close path below.
+stallAlert :: (?modelContext :: ModelContext) => Alert -> Text -> IO Alert
+stallAlert alert note = do
+    now <- getCurrentTime
+    let transition = SM.step (currentState alert) StallTimeout
+    if not transition.applied
+        then do
+            recordSystemEvent alert "external" (illegalPayload transition)
+            pure alert
+        else do
+            updated <- alert
+                |> set #status "stalled"
+                |> set #updatedAt now
+                |> updateRecord
+            recordSystemEvent alert "stalled" (object
+                [ "from" .= SM.alertStateToText transition.from
+                , "note" .= note
+                ])
+            cancelTrackersFor (get #id alert)
+            forM_ alert.groupId (void . recomputeGroupRollup)
+            publishAlertUpdate updated "stalled"
+            pure updated
+
+-- | TTL-driven close (resolved TTL, stalled TTL). Steps with AutoClose —
+-- closeAlert uses CloseTrigger, which is illegal from resolved/stalled.
+autoCloseAlert :: (?modelContext :: ModelContext) => Alert -> Text -> IO Alert
+autoCloseAlert alert reason = do
+    now <- getCurrentTime
+    let transition = SM.step (currentState alert) AutoClose
+    if not transition.applied
+        then do
+            recordSystemEvent alert "external" (illegalPayload transition)
+            pure alert
+        else do
+            updated <- alert
+                |> set #status "closed"
+                |> set #closedBy Nothing
+                |> set #closedAt (Just now)
+                |> set #closeReason (Just reason)
+                |> set #updatedAt now
+                |> updateRecord
+            recordSystemEvent alert "closed" (object ["reason" .= Just reason])
+            cancelTrackersFor (get #id alert)
+            forM_ alert.groupId (void . recomputeGroupRollup)
+            publishAlertUpdate updated "closed"
             pure updated
 
 addComment :: (?modelContext :: ModelContext) => User -> Alert -> Text -> IO Comment

@@ -133,6 +133,7 @@ recomputeGroupRollup groupId = do
         live = filter (\alert -> alert.status `notElem` ["resolved", "closed"]) members
         rollupStatus
             | any (\alert -> alert.status == "firing") live = "firing"
+            | any (\alert -> alert.status == "stalled") live = "stalled"
             | not (null live) = "ack"
             | otherwise = "resolved"
     now <- getCurrentTime

@@ -20,6 +20,7 @@
     --status-firing: #f38ba8;
     --status-ack: #f9e2af;
     --status-resolved: #a6e3a1;
+    --status-stalled: #fab387;
     --status-closed: #9399b2;
     --status-suppressed: #6c7086;
 }
@@ -40,6 +41,7 @@
     --status-firing: #d20f39;
     --status-ack: #df8e1d;
     --status-resolved: #40a02b;
+    --status-stalled: #fe640b;
     --status-closed: #6c6f85;
     --status-suppressed: #9ca0b0;
 }
@@ -60,6 +62,7 @@
     --status-firing: #e78284;
     --status-ack: #e5c890;
     --status-resolved: #a6d189;
+    --status-stalled: #ef9f76;
     --status-closed: #a5adce;
     --status-suppressed: #737994;
 }
@@ -80,6 +83,7 @@
     --status-firing: #ed8796;
     --status-ack: #eed49f;
     --status-resolved: #a6da95;
+    --status-stalled: #f5a97f;
     --status-closed: #a5adcb;
     --status-suppressed: #6e738d;
 }
@@ -100,6 +104,7 @@
     --status-firing: #ff5555;
     --status-ack: #f1fa8c;
     --status-resolved: #50fa7b;
+    --status-stalled: #ffb86c;
     --status-closed: #8c96b8;
     --status-suppressed: #bd93f9;
 }
@@ -216,6 +221,7 @@ a:hover { color: var(--accent-hover); }
 .status-badge.status-firing, .badge.status-firing { background: var(--status-firing); color: var(--bg); border: none; }
 .status-badge.status-ack, .badge.status-ack { background: var(--status-ack); color: var(--bg); border: none; }
 .status-badge.status-resolved, .badge.status-resolved { background: var(--status-resolved); color: var(--bg); border: none; }
+.status-badge.status-stalled, .badge.status-stalled { background: var(--status-stalled); color: var(--bg); border: none; }
 .status-badge.status-closed, .badge.status-closed { background: var(--status-closed); color: var(--bg); border: none; }
 .status-suppressed { background: var(--status-suppressed); color: var(--text); }
 .badge.status-suppressed { color: var(--bg); border: none; }
@@ -249,6 +255,7 @@ a:hover { color: var(--accent-hover); }
 .count.status-firing { color: var(--status-firing); }
 .count.status-ack { color: var(--status-ack); }
 .count.status-resolved { color: var(--status-resolved); }
+.count.status-stalled { color: var(--status-stalled); }
 .count.status-suppressed { color: var(--text-muted); }
 
 .env-hourly { margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); }

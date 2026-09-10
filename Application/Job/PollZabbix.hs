@@ -251,7 +251,7 @@ reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkC
 reconcileProblemStates source token now = do
     alerts <- query @Alert
         |> filterWhere (#sourceId, Just (get #id source))
-        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+        |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
         |> fetch
     let tracked = [(triggerId, alert) | alert <- alerts, Just triggerId <- [triggerIdOf alert]]
     unless (null tracked) do
