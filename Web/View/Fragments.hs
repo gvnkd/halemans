@@ -90,6 +90,7 @@ data AlertsTable = AlertsTable
     { atTestId :: Text
     , atTbodyId :: Text
     , atLiveScope :: Maybe Text
+    , atLiveFilters :: Maybe Text
     , atSort :: Text
     , atDir :: Text
     , atSortUrl :: Text -> Text
@@ -98,7 +99,7 @@ data AlertsTable = AlertsTable
 
 alertsTableHtml :: AlertsTable -> Html
 alertsTableHtml AlertsTable { .. } = [hsx|
-    <table class="table" data-testid={atTestId} data-live-scope={atLiveScope}>
+    <table class="table" data-testid={atTestId} data-live-scope={atLiveScope} data-live-filters={atLiveFilters}>
         <thead>
             <tr>
                 {sortableTh "status" "Status"}

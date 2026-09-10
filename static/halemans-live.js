@@ -12,13 +12,22 @@
     function scopesFromPage() {
         var el = document.querySelector('[data-live-scope]');
         if (!el) return [{ type: 'none' }];
+        // The server embeds the RENDERED view's filters in data-live-filters.
+        // Prefer them over location.search: after a turbolinks visit that
+        // followed a prefs redirect, the address bar still shows the bare
+        // path while the page renders filtered content.
+        var domFilters = null;
+        var filtersAttr = el.getAttribute('data-live-filters');
+        if (filtersAttr) {
+            try { domFilters = JSON.parse(filtersAttr); } catch (e) { }
+        }
         return el.getAttribute('data-live-scope').split(',').map(function (scope) {
             scope = scope.trim();
             if (scope === 'dashboard') return { type: 'dashboard' };
-            // The alerts scope carries the current filter query string so the
+            // The alerts scope carries the current filter state so the
             // broadcaster only sends rows that match the rendered view.
-            if (scope === 'alerts') return { type: 'alerts', filters: alertsFiltersFromUrl() };
-            if (scope.indexOf('env:') === 0) return { type: 'env', name: scope.slice(4) };
+            if (scope === 'alerts') return { type: 'alerts', filters: domFilters || alertsFiltersFromUrl() };
+            if (scope.indexOf('env:') === 0) return { type: 'env', name: scope.slice(4), filters: domFilters || alertsFiltersFromUrl() };
             if (scope.indexOf('alert:') === 0) return { type: 'alert', id: scope.slice(6) };
             if (scope.indexOf('group:') === 0) return { type: 'group', id: scope.slice(6) };
             // User dashboard pages: server-side card evaluation (milestone 9).
@@ -40,6 +49,10 @@
         };
     }
 
+    function localize(node) {
+        if (node && window.halemansLocalizeTimes) window.halemansLocalizeTimes(node);
+    }
+
     function applyUpdate(update) {
         if (update.mode === 'remove') {
             var stale = document.getElementById(update.id);
@@ -48,15 +61,26 @@
         }
         var target = document.getElementById(update.id);
         if (target && window.morphdom) {
+            // morphdom reuses existing <time> elements and rewrites only their
+            // textContent back to the UTC fallback; the childList observer in
+            // app.js misses that, so re-localize explicitly.
             window.morphdom(target, update.html);
+            localize(document.getElementById(update.id) || target);
         } else if (target) {
             target.outerHTML = update.html;
+            localize(document.getElementById(update.id));
         } else if (update.mode === 'replaceOrPrepend' && update.parent) {
             var parent = document.getElementById(update.parent);
-            if (parent) parent.insertAdjacentHTML('afterbegin', update.html);
+            if (parent) {
+                parent.insertAdjacentHTML('afterbegin', update.html);
+                localize(parent);
+            }
         } else if (update.mode === 'prepend') {
             var container = document.getElementById(update.id);
-            if (container) container.insertAdjacentHTML('afterbegin', update.html);
+            if (container) {
+                container.insertAdjacentHTML('afterbegin', update.html);
+                localize(container);
+            }
         }
     }
 

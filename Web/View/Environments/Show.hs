@@ -81,7 +81,7 @@ data ShowView = ShowView
 
 instance View ShowView where
     html ShowView { .. } = [hsx|
-        <div data-live-scope={"env:" <> environmentName}>
+        <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters}>
             <h1>{environmentName}</h1>
             {activeBlackoutNotice}
             <form method="GET" action={ShowEnvironmentAction environmentName} class="row g-2 mb-3" data-testid="env-filters">
@@ -102,6 +102,10 @@ instance View ShowView where
         </div>
     |]
         where
+            -- Same staleness caveat as the /alerts table (see Alerts.Index):
+            -- the client subscribes with THESE filters, not location.search.
+            liveFilters :: Text
+            liveFilters = cs (Aeson.encode (envFiltersToValue filters viewMode))
             severities = ["critical", "high", "warning", "info"]
             statuses = ["firing", "ack", "resolved", "closed"]
             hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))

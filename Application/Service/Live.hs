@@ -33,7 +33,9 @@ import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, card
 import Web.View.Dashboards.Show (renderCardSection, fetchCardData)
 import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, clauseValue, DashboardCard (..))
 import Application.Service.DashboardCards (expandDashboardCards, expandedDomId, ExpandedCard (..))
-import Application.Service.AlertList (AlertListFilters, defaultAlertListFilters, matchesFilters, parseAlertFilters)
+import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import qualified Data.Text as Text
 import Application.Service.Llm.Queue (latestJobErrors)
 import qualified Application.Service.Assets.Cache as AssetsCache
 
@@ -44,7 +46,7 @@ import qualified Application.Service.Assets.Cache as AssetsCache
 data Scope
     = ScopeDashboard
     | ScopeAlerts AlertListFilters
-    | ScopeEnv Text
+    | ScopeEnv Text AlertListFilters
     | ScopeAlert UUID
     | ScopeGroup UUID
     | ScopeUserDashboard UUID
@@ -106,7 +108,11 @@ parseScope message = do
                 filterValue <- o Aeson..:? "filters"
                 filters <- maybe (pure defaultAlertListFilters) parseAlertFilters filterValue
                 pure (ScopeAlerts filters)
-            "env" -> ScopeEnv <$> o Aeson..: "name"
+            "env" -> do
+                name <- o Aeson..: "name"
+                filterValue <- o Aeson..:? "filters"
+                filters <- maybe (pure defaultAlertListFilters) parseAlertFilters filterValue
+                pure (ScopeEnv name filters)
             "alert" -> ScopeAlert <$> o Aeson..: "id"
             "group" -> ScopeGroup <$> o Aeson..: "id"
             "dash" -> ScopeUserDashboard <$> o Aeson..: "id"
@@ -216,8 +222,14 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
             then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "alerts-tbody"
             else object [ "id" .= alertRowDomId alert, "mode" .= ("remove" :: Text) ]
             ]
-    (ScopeEnv name, Just alertId, _)
-        | event.leEnv == Just name -> rowUpdate "env-alerts-tbody" alertId
+    (ScopeEnv name scopeFilters, Just alertId, _)
+        | event.leEnv == Just name -> do
+            alert <- fetch (Id alertId)
+            matches <- matchesEnvFilters scopeFilters alert
+            pure [ if matches
+                then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "env-alerts-tbody"
+                else object [ "id" .= alertRowDomId alert, "mode" .= ("remove" :: Text) ]
+                ]
         | otherwise -> pure []
     (ScopeAlert alertUuid, Just alertId, _)
         | alertId == alertUuid -> do
@@ -248,7 +260,7 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
             group <- fetch (Id groupId)
             pure [fragment (groupHeaderDomId group) (groupHeaderHtml group) "replace" ""]
         | otherwise -> pure []
-    (ScopeEnv name, _, Just groupId)
+    (ScopeEnv name _, _, Just groupId)
         | event.leEnv == Just name -> do
             group <- fetch (Id groupId)
             members <- query @Alert
@@ -264,10 +276,27 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
             then pure [fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "group-members-tbody"]
             else pure []
     _ -> pure []
-    where
-        rowUpdate parentId alertId = do
-            alert <- fetch (Id alertId)
-            pure [fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" parentId]
+
+-- | Predicate mirror of the /env/:name alert list query
+-- (Web.Controller.Environments.renderEnv). Unlike /alerts, an empty status
+-- selection shows ALL statuses there (closed included).
+matchesEnvFilters :: (?modelContext :: ModelContext) => AlertListFilters -> Alert -> IO Bool
+matchesEnvFilters filters alert = do
+    groupOk <- case filters.alfGroup of
+        Nothing -> pure True
+        Just pattern -> case alert.groupId of
+            Nothing -> pure False
+            Just groupId -> do
+                group <- fetch groupId
+                pure (Text.isInfixOf (Text.toLower pattern) (Text.toLower group.groupKey))
+    pure (and
+        [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
+        , null filters.alfStatuses || alert.status `elem` filters.alfStatuses
+        , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
+        , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
+        , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
+        , groupOk
+        ])
 
 cardMatches :: LiveEvent -> EnvCard -> Bool
 cardMatches event card = event.leEnv == card.cardEnvName

@@ -1,9 +1,10 @@
 module Web.View.Alerts.Index where
 import Web.View.Prelude
 import Web.View.Fragments (AlertsTable (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
-import Application.Service.AlertList (AlertListFilters (..))
+import Application.Service.AlertList (AlertListFilters (..), alertFiltersToValue)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Network.HTTP.Types.URI (renderQuery)
+import qualified Data.Aeson as Aeson
 import qualified Data.List as List
 
 data IndexView = IndexView
@@ -36,11 +37,18 @@ instance View IndexView where
                 { atTestId = "alerts-table"
                 , atTbodyId = "alerts-tbody"
                 , atLiveScope = Just "alerts"
+                -- Canonical filter state for the WS subscription: the URL can
+                -- be stale after turbolinks followed the prefs redirect
+                -- without a pushState, so the client reads THESE, not
+                -- location.search.
+                , atLiveFilters = Just liveFilters
                 , atSort = filters.alfSort
                 , atDir = filters.alfDir
                 , atSortUrl = sortUrl
                 , atAlerts = alerts
                 }
+            liveFilters :: Text
+            liveFilters = cs (Aeson.encode (alertFiltersToValue filters))
             severities = ["critical", "high", "warning", "info"]
             statuses = ["firing", "ack", "resolved", "closed"]
             resetUrl :: Text

@@ -28,6 +28,7 @@ instance View CardView where
                 { atTestId = "dashboard-card-alerts"
                 , atTbodyId = "dashboard-card-alerts-tbody"
                 , atLiveScope = Nothing
+                , atLiveFilters = Nothing
                 , atSort = sortColumn
                 , atDir = sortDir
                 , atSortUrl = sortUrl
