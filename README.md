@@ -87,7 +87,7 @@ A **read-only** token needs two API methods:
 | Method | Required | Used for |
 |---|---|---|
 | `event.get` | **yes** | Trigger event polling (problem/OK) and ack-state reconciliation |
-| `trigger.get` | recommended | Resolved-state reconciliation: alerts whose OK event was missed (outage, purged history) are resolved locally from the trigger's current value. Without it that safety net is off (polling still works) |
+| `trigger.get` | recommended | Resolved-state reconciliation: alerts whose OK event was missed (outage, purged history) are resolved locally from the trigger's current value. Without it that safety net is off (polling still works); while reconcile calls fail, an internal `source_reconcile` alert is raised so the misconfiguration is visible in the UI |
 | `user.get` | optional | Resolving ack author names when mirroring Zabbix acks; without it acks still mirror, but the actor shows as a raw userid |
 | `hostgroup.get` | optional | The "Sync host groups" button (host-group cache for `hostGroupScope: "teams"`). Skip it when provisioning the cache from `hostGroupsFile` instead |
 

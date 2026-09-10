@@ -11,7 +11,7 @@ import Generated.Types
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
 import Application.Pipeline.Blackouts (blackoutApplies)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
-import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
+import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
 import qualified Application.Connector.Zabbix as Zabbix
@@ -257,8 +257,11 @@ reconcileProblemStates source token now = do
     unless (null tracked) do
         result <- Zabbix.triggerStateGet source.baseUrl token (nub (map fst tracked))
         case result of
-            Left err -> logWarn ("zabbix source \"" <> source.name <> "\" trigger-state reconcile failed: " <> err)
+            Left err -> do
+                logWarn ("zabbix source \"" <> source.name <> "\" trigger-state reconcile failed: " <> err)
+                recordReconcileFailure source err
             Right states -> do
+                recordReconcileSuccess source
                 let stateByTrigger = Map.fromList (map (\state -> (state.triggerStateId, state)) states)
                 forM_ tracked \(triggerId, alert) ->
                     case resolveDecision now source alert (Map.lookup triggerId stateByTrigger) of

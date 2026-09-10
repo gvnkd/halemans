@@ -34,7 +34,7 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager/generic we
 - LlmAnalysisJob retries count `llm_analysis_jobs` ROWS per analysis (fresh requeued rows reset attempts_count).
 
 ## Source health & write-back
-- Fingerprint `halemans:source-health:<source_id>`; warning → high at 5 failures (severity_upgraded event); recordSuccess posts Resolved + resets backoff. Backoff: `interval × 2^failures` cap 30min, deterministic ±10% jitter from fingerprint hash. Pollers skip sources with next_poll_at > now.
+- Fingerprint `halemans:source-health:<source_id>`; warning → high at 5 failures (severity_upgraded event); recordSuccess posts Resolved + resets backoff. Backoff: `interval × 2^failures` cap 30min, deterministic ±10% jitter from fingerprint hash. Pollers skip sources with next_poll_at > now. Reconcile-path failures (e.g. token role missing trigger.get) get a SEPARATE fingerprint `halemans:source-reconcile:<source_id>` via recordReconcileFailure/Success — internal alert with NO backoff (polling is healthy, only the state-sync safety net is down).
 - Webhook silence: SourceHealthJob checks sources with config.expectedIntervalSeconds; baseline = max(raw_events.received_at) or sources.created_at.
 - Pure alertmanager sources have NO reverse silence reconcile (no poller); only grafana (PollGrafana) and zabbix (PollZabbix) mirror source acks.
 - Generic-hook alerts get fingerprint prefix `grafana:` (quirk, not `generic:`) → PollGrafana's absence-reconcile can resolve them mid-scenario: smoke/Playwright must NOT assert dedupe copies for them.

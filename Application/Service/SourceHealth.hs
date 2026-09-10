@@ -3,7 +3,7 @@ module Application.Service.SourceHealth where
 import IHP.Prelude
 import IHP.ModelSupport
 import IHP.QueryBuilder
-import IHP.Fetch (fetch)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest, publishAlertUpdate)
 import Data.Aeson (object, (.=))
@@ -138,3 +138,59 @@ recordSuccess source =
                 , startedAt = Just now
                 , sourceUrl = Nothing
                 }
+
+-- Reconcile-path health (halemans:source-reconcile:<source_id>): the reverse
+-- state sync (trigger.get for zabbix) can fail while polling itself is fine
+-- — classically a token role missing the method from its API allow-list.
+-- No backoff state is touched; the alert is the only signal, resolved on the
+-- first successful reconcile after the fix.
+
+reconcileFingerprint :: Id Source -> Text
+reconcileFingerprint sourceId = "halemans:source-reconcile:" <> tshow sourceId
+
+recordReconcileFailure :: (?modelContext :: ModelContext) => Source -> Text -> IO ()
+recordReconcileFailure source err = do
+    now <- getCurrentTime
+    void $ ingest source NormalizedEvent
+        { fingerprint = reconcileFingerprint (get #id source)
+        , externalId = Nothing
+        , status = Firing
+        , severity = "warning"
+        , title = "Source " <> source.name <> " state reconcile failing"
+        , description = err
+        , env = Just source.env
+        , host = Nothing
+        , service = Nothing
+        , checkName = Just "source_reconcile"
+        , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
+        , annotations = object []
+        , startedAt = Just now
+        , sourceUrl = Nothing
+        }
+
+-- | No-op unless a reconcile alert is currently open (avoids a write per
+-- successful cycle).
+recordReconcileSuccess :: (?modelContext :: ModelContext) => Source -> IO ()
+recordReconcileSuccess source = do
+    open <- query @Alert
+        |> filterWhere (#fingerprint, reconcileFingerprint (get #id source))
+        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+        |> fetchOneOrNothing
+    forM_ open \_ -> do
+        now <- getCurrentTime
+        void $ ingest source NormalizedEvent
+            { fingerprint = reconcileFingerprint (get #id source)
+            , externalId = Nothing
+            , status = Resolved
+            , severity = "warning"
+            , title = "Source " <> source.name <> " state reconcile failing"
+            , description = "reconcile recovered"
+            , env = Just source.env
+            , host = Nothing
+            , service = Nothing
+            , checkName = Just "source_reconcile"
+            , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
+            , annotations = object []
+            , startedAt = Just now
+            , sourceUrl = Nothing
+            }

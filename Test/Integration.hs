@@ -31,7 +31,7 @@ import Application.Job.Retention ()
 import Application.Job.SourceHealth (checkSilence)
 import Application.Job.PollZabbix ()
 import Application.Service.PollerControl (ensurePollerForSourceType)
-import Application.Service.SourceHealth (healthFingerprint, recordFailure, recordSuccess)
+import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Application.Service.Api.Token (newApiToken, resolveToken, hashToken)
 import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage, alertDetail, AlertDetail (..))
 import Application.Service.Api.Auth (AuthDecision (..), authorizeToken)
@@ -878,6 +878,30 @@ m5Spec = describe "milestone 5 hardening" do
         reset.nextPollAt `shouldBe` Nothing
         resolved <- fetch (get #id alert)
         resolved.status `shouldBe` "resolved"
+
+    it "reconcile failure raises an internal alert without backoff; success resolves it" do
+        source <- integrationSource "zabbix" "itest-zabbix-reconcile-health" "" (object [])
+        recordReconcileFailure source "No permissions to call \"trigger.get\""
+        Just alert <- query @Alert
+            |> filterWhere (#fingerprint, reconcileFingerprint (get #id source))
+            |> fetchOneOrNothing
+        alert.severity `shouldBe` "warning"
+        alert.status `shouldBe` "firing"
+        -- polling health state untouched: no backoff, no last_error
+        untouched <- fetch (get #id source)
+        untouched.consecutiveFailures `shouldBe` 0
+        untouched.nextPollAt `shouldBe` Nothing
+        untouched.lastError `shouldBe` Nothing
+        recordReconcileSuccess source
+        resolved <- fetch (get #id alert)
+        resolved.status `shouldBe` "resolved"
+        -- success with no open alert is a no-op (no new row)
+        recordReconcileSuccess source
+        let fp = reconcileFingerprint (get #id source)
+        count <- sqlQueryTyped [typedSql|
+            SELECT count(*) FROM alerts WHERE fingerprint = ${fp}
+        |]
+        pure (fromMaybe 0 (head count)) `shouldReturn` 1
 
     it "webhook silence check flags a push source past 3x its expected interval" do
         source <- integrationSource "alertmanager" "itest-silent" "" (object ["expectedIntervalSeconds" .= (10 :: Int)])
