@@ -1009,6 +1009,22 @@ pollerLifecycleSpec = describe "poll loop lifecycle" do
         void $ sqlExecTyped [typedSql| UPDATE sources SET enabled = true WHERE type = 'zabbix' |]
         pending `shouldBe` 1
 
+    it "stops a duplicate loop when an older poll job is running" do
+        void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_not_started' |]
+        void $ sqlExecTyped [typedSql|
+            INSERT INTO poll_zabbix_jobs (status, created_at)
+            VALUES ('job_status_running', now() - interval '1 minute')
+        |]
+        job <- newRecord @PollZabbixJob |> createRecord
+        -- Direct perform doesn't run the runner's status bookkeeping; mark
+        -- the row running so it doesn't count as a pending sibling.
+        let jobId = get #id job
+        void $ sqlExecTyped [typedSql| UPDATE poll_zabbix_jobs SET status = 'job_status_running' WHERE id = ${jobId} |]
+        perform job
+        pending <- pendingZabbixJobs
+        void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_running' |]
+        pending `shouldBe` 0
+
 pendingZabbixJobs :: (?modelContext :: ModelContext) => IO Int64
 pendingZabbixJobs = do
     rows <- sqlQueryTyped [typedSql|

@@ -6,7 +6,7 @@ import IHP.Job.Types
 import IHP.ModelSupport
 import IHP.QueryBuilder
 import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlExecTyped, typedSql)
+import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
 import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
@@ -34,34 +34,57 @@ import System.Environment (lookupEnv)
 -- inverse race — the listing still showing an alert the webhook already
 -- resolved.
 instance Job PollGrafanaJob where
-    perform _job = do
-        now <- getCurrentTime
-        sources <- query @Source
-            |> filterWhere (#type_, "grafana" :: Text)
-            |> filterWhere (#enabled, True)
-            |> fetch
-        forM_ (filter (pollDue now) sources) pollSource
-
-        if null sources
-            then do
-                logInfo "no enabled grafana sources; poll loop stopped (re-arms on source create/enable)"
-                void $ sqlExecTyped [typedSql|
-                    DELETE FROM poll_grafana_jobs
-                    WHERE status = 'job_status_not_started'
-                |]
-            else do
+    perform job = do
+        -- Single-loop guard: see PollZabbixJob — concurrent duplicate loops
+        -- double-ingest and create duplicate alert rows. The older-created
+        -- running job wins; this one stops without rescheduling.
+        let createdAt = job.createdAt
+        olderRunning <- sqlQueryTyped [typedSql|
+            SELECT count(*) FROM poll_grafana_jobs
+            WHERE status = 'job_status_running' AND created_at < ${createdAt}
+        |]
+        case olderRunning of
+            (count_ : _) | count_ > 0 ->
+                logWarn "duplicate PollGrafanaJob loop detected (an older poll job is running); stopping this one"
+            _ -> do
                 now <- getCurrentTime
-                next <- newRecord @PollGrafanaJob
-                    |> set #runAt (addUTCTime 5 now)
-                    |> createRecord
-                let nextId = get #id next
-                void $ sqlExecTyped [typedSql|
-                    DELETE FROM poll_grafana_jobs
-                    WHERE status = 'job_status_not_started' AND id <> ${nextId}
-                |]
+                sources <- query @Source
+                    |> filterWhere (#type_, "grafana" :: Text)
+                    |> filterWhere (#enabled, True)
+                    |> fetch
+                forM_ (filter (pollDue now) sources) pollSource
+
+                if null sources
+                    then do
+                        logInfo "no enabled grafana sources; poll loop stopped (re-arms on source create/enable)"
+                        void $ sqlExecTyped [typedSql|
+                            DELETE FROM poll_grafana_jobs
+                            WHERE status = 'job_status_not_started'
+                        |]
+                    else reschedule
 
     queuePollInterval = 3 * 1000000
     maxAttempts = 3
+
+-- Guarded reschedule: insert only when nothing is pending, so a duplicate
+-- loop's reschedule no-ops and the loop dies instead of fighting over (or
+-- deleting) the surviving loop's successor row.
+reschedule :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => IO ()
+reschedule = do
+    now <- getCurrentTime
+    let runAt = addUTCTime 5 now
+    inserted <- sqlQueryTyped [typedSql|
+        INSERT INTO poll_grafana_jobs (run_at)
+        SELECT ${runAt}
+        WHERE NOT EXISTS (SELECT 1 FROM poll_grafana_jobs WHERE status = 'job_status_not_started')
+        RETURNING id
+    |]
+    case inserted of
+        (nextId:_) -> void $ sqlExecTyped [typedSql|
+            DELETE FROM poll_grafana_jobs
+            WHERE status = 'job_status_not_started' AND id <> ${nextId}
+        |]
+        [] -> logInfo "another PollGrafanaJob is already pending; stopping this loop"
 
 pollSource :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> IO ()
 pollSource source = do
