@@ -7,7 +7,7 @@
 #   cd deploy/docker
 #   cp .env.example .env            # fill in the required values
 #   cp provision.example.json provision.json
-#   docker run --rm ghcr.io/omg/halemans:latest /bin/GenPassword 'your-plaintext-password'
+#   docker run --rm ghcr.io/gvnkd/halemans:latest /bin/GenPassword 'your-plaintext-password'
 #     # paste the printed hash into provision.json (users.items[].passwordHash)
 #   docker compose up -d
 #
@@ -36,7 +36,7 @@ x-halemans-env: &halemans-env
   HALEMANS_PROVISION_CONFIG: /provision/provision.json
 
 x-halemans-image: &halemans-image
-  image: ${HALEMANS_IMAGE:-ghcr.io/omg/halemans:latest}
+  image: ${HALEMANS_IMAGE:-ghcr.io/gvnkd/halemans:latest}
 
 services:
   db:

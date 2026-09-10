@@ -21,6 +21,7 @@ in
         jq
         coreutils
         pwgen
+        imagemagick # favicon/icon regeneration: magick images/halemans-favicon-{16,32,48,64}.png static/favicon.ico
         halemansLib.ensureTokens
         halemansLib.genPassword
     ];

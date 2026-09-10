@@ -127,5 +127,9 @@ metaTags = [hsx|
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"/>
     <meta property="og:title" content="Halemans"/>
+    <link rel="icon" href={assetPath "/favicon.ico"} sizes="any"/>
+    <link rel="icon" type="image/png" sizes="32x32" href={assetPath "/halemans-favicon-32.png"}/>
+    <link rel="icon" type="image/png" sizes="16x16" href={assetPath "/halemans-favicon-16.png"}/>
+    <link rel="apple-touch-icon" href={assetPath "/halemans-app-icon-180.png"}/>
     {autoRefreshMeta}
 |]

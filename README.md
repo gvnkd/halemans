@@ -1,6 +1,12 @@
 # Halemans
 
-**H**ome **ALE**rt **MAN**agement **S**ystem — a single-node alert aggregation and management server. It collects alerts from Zabbix, Grafana, Prometheus Alertmanager and generic webhooks, deduplicates and groups them, enriches them with CMDB/Jira/LLM context, and presents a unified operational picture to SRE teams.
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/halemans-lockup-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="images/halemans-lockup-light.png">
+    <img alt="Halemans — Home Alert Management System" src="images/halemans-lockup-light.png" width="520">
+</picture>
+
+**H**ome **ALE**rt **MAN**agement **S**ystem — a single-node alert aggregation and management server. It collects alerts from Zabbix, Grafana, Prometheus Alertmanager and generic webhooks, deduplicates and groups them, enriches them with CMDB/Jira/Jira Assets/LLM context, and presents a unified operational picture to SRE teams.
 
 Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, server-rendered HSX UI and WebSocket live updates. All async work runs on a DB-backed job queue — no extra broker.
 
@@ -10,8 +16,9 @@ Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, serve
 - **Alert pipeline** — normalize → dedupe → blackout check → grouping rules → state machine (firing / ack / resolved / closed / suppressed) → notification dispatch. Every mutation lands in an append-only audit log.
 - **Grouping & dedup** — DB-backed ordered grouping rules; exact dedupe by source-scoped fingerprint with occurrence counters.
 - **Teams & RBAC** — roles as data (composable privilege sets), team-based notification/escalation routing, blackouts (maintenance windows) per environment/host/service.
-- **Context enrichment** — Confluence CMDB lookup (TTL-cached), Jira issue linking/status sync, hybrid write-back (ack/close/silence propagated back to Zabbix/Grafana/Alertmanager).
-- **LLM enrichment** — advisory-only analysis (probable cause, suggested actions) via any OpenAI-compatible endpoint; prompt-hash dedupe, retry with backoff, per-DB config.
+- **Context enrichment** — Confluence CMDB lookup (TTL-cached), Jira issue linking/status sync, Jira Assets object linking with served icon cache, hybrid write-back (ack/close/silence propagated back to Zabbix/Grafana/Alertmanager).
+- **LLM enrichment** — advisory-only analysis (probable cause, suggested actions) via any OpenAI-compatible endpoint; agent roles with tool filtering, prompt-hash dedupe, retry with backoff, per-DB provider config.
+- **Facets & custom dashboards** — facet extraction from fields/labels/Assets attributes via ranked field mappings, per-user dashboards with match/groupBy/summary/forEach card templates, live-updated over WebSocket.
 - **Live UI** — server-rendered pages with WebSocket fragment updates, per-environment scopes, browser notifications, theme packs.
 - **Public API & metrics** — read-only JSON API (`/api/v1/alerts`, `/api/v1/environments`) with per-token rate limits, `/metrics` Prometheus exporter, audit export (CSV/JSONL).
 - **Provisioning** — declarative JSON config (users/teams/sources/rules) applied idempotently at boot; env-var indirection for secrets.
@@ -62,12 +69,12 @@ Pre-built images carry the server, worker, schema bootstrap and password tool:
 cd deploy/docker
 cp .env.example .env                       # fill in required values
 cp provision.example.json provision.json
-docker run --rm ghcr.io/omg/halemans:latest /bin/GenPassword 'your-plaintext-password'
+docker run --rm ghcr.io/gvnkd/halemans:latest /bin/GenPassword 'your-plaintext-password'
 # paste the printed hash into provision.json (users.items[].passwordHash)
 docker compose up -d
 ```
 
-The app listens on `HALEMANS_PORT` (default 8000). `provision.json` is re-applied on every boot — edit and `docker compose up -d --force-recreate app worker` to update. Images are built by GitHub Actions (`.github/workflows/docker-images.yaml`) and pushed to `ghcr.io/<repo>:{latest,sha,v*}`.
+The app listens on `HALEMANS_PORT` (default 8000). `provision.json` is re-applied on every boot — edit and `docker compose up -d --force-recreate app worker` to update. Images are built by GitHub Actions (`.github/workflows/docker-images.yaml`) and pushed to `ghcr.io/gvnkd/halemans:{latest,sha,v*}` (override with `HALEMANS_IMAGE` if you host your own).
 
 See [`deploy/docker/.env.example`](deploy/docker/.env.example) for all configuration options (source tokens, Jira/Confluence, LLM endpoint, session secret).
 
