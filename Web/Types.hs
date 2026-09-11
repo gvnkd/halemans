@@ -141,6 +141,10 @@ data FlappingController
     = FlappingAction
     deriving (Eq, Show, Data)
 
+data ReportsController
+    = ReportsAction
+    deriving (Eq, Show, Data)
+
 data PushSubscriptionsController
     = SubscribePushAction
     | UnsubscribePushAction

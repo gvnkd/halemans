@@ -32,6 +32,7 @@ import qualified Test.FilterPrefsSpec
 import qualified Test.MarkdownSpec
 import qualified Test.TimelineSpec
 import qualified Test.FlappingSpec
+import qualified Test.ReportsSpec
 
 main :: IO ()
 main = hspec do
@@ -63,3 +64,4 @@ main = hspec do
     Test.MarkdownSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec
+    Test.ReportsSpec.spec

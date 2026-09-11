@@ -52,6 +52,7 @@ navigation = [hsx|
             <li class="nav-item"><a class="nav-link" href={DashboardAction}>Overview</a></li>
             <li class="nav-item"><a class="nav-link" href={DashboardsAction}>Dashboards</a></li>
             <li class="nav-item"><a class="nav-link" href={AlertsAction}>Alerts</a></li>
+            <li class="nav-item"><a class="nav-link" href={ReportsAction} data-testid="nav-reports">Reports</a></li>
             <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>Blackouts</a></li>
             <li class="nav-item"><a class="nav-link" href={SourcesAction}>Sources</a></li>
             <li class="nav-item dropdown">

@@ -129,6 +129,11 @@
                         network
                         base64-bytestring
                         cmark
+                        # static report charts (GET /reports)
+                        diagrams-core
+                        diagrams-lib
+                        diagrams-svg
+                        svg-builder
                         # ihp-mail           # Email support: https://ihp.digitallyinduced.com/Guide/mail.html
                         # ihp-datasync       # Real-time DataSync
                         # ihp-job-dashboard  # Job dashboard UI

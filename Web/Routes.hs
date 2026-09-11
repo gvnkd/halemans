@@ -215,3 +215,7 @@ GET  /admin/audit/export    ExportAuditAction
 [routes|FlappingController
 GET  /admin/flapping    FlappingAction
 |]
+
+[routes|ReportsController
+GET  /reports    ReportsAction
+|]
