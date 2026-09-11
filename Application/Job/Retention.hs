@@ -17,6 +17,7 @@ import Control.Monad (void)
 -- self-rescheduling like JiraSyncJob. enabled=false logs and exits.
 instance Job RetentionJob where
     perform _job = do
+        pruneTerminalJobRows
         maybeConfig <- query @RetentionConfig
             |> orderByDesc #updatedAt
             |> fetchOneOrNothing
@@ -64,4 +65,60 @@ deleteBatch :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
 deleteBatch cutoff = sqlExecTyped [typedSql|
     DELETE FROM raw_events
     WHERE id IN (SELECT id FROM raw_events WHERE received_at < ${cutoff} LIMIT 1000)
+|]
+
+-- One-shot event-job rows are never removed by the job runner (it marks
+-- them succeeded/failed in place), so tables like enrich_alert_jobs grow
+-- unbounded — prune terminal rows older than a day, unconditionally
+-- (independent of the raw_events retention config).
+pruneTerminalJobRows :: (?modelContext :: ModelContext) => IO ()
+pruneTerminalJobRows = do
+    cutoff <- addUTCTime (-86400) <$> getCurrentTime
+    counts <- mapM (pruneTable cutoff)
+        [ pruneEnrichAlertJobs, pruneWriteBackJobs
+        , prunePushNotificationJobs, pruneLlmAnalysisJobs
+        ]
+    let total = sum counts
+    when (total > 0) do
+        putStrLn ("retention: pruned " <> tshow total <> " terminal job rows" :: Text)
+  where
+    pruneTable cutoff prune = do
+        deleted <- prune cutoff
+        rest <- if deleted == 0 then pure 0 else pruneTable cutoff prune
+        pure (deleted + rest)
+
+pruneEnrichAlertJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
+pruneEnrichAlertJobs cutoff = sqlExecTyped [typedSql|
+    DELETE FROM enrich_alert_jobs
+    WHERE id IN (SELECT id FROM enrich_alert_jobs
+        WHERE updated_at < ${cutoff}
+        AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
+        LIMIT 1000)
+|]
+
+pruneWriteBackJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
+pruneWriteBackJobs cutoff = sqlExecTyped [typedSql|
+    DELETE FROM write_back_jobs
+    WHERE id IN (SELECT id FROM write_back_jobs
+        WHERE updated_at < ${cutoff}
+        AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
+        LIMIT 1000)
+|]
+
+prunePushNotificationJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
+prunePushNotificationJobs cutoff = sqlExecTyped [typedSql|
+    DELETE FROM push_notification_jobs
+    WHERE id IN (SELECT id FROM push_notification_jobs
+        WHERE updated_at < ${cutoff}
+        AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
+        LIMIT 1000)
+|]
+
+pruneLlmAnalysisJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
+pruneLlmAnalysisJobs cutoff = sqlExecTyped [typedSql|
+    DELETE FROM llm_analysis_jobs
+    WHERE id IN (SELECT id FROM llm_analysis_jobs
+        WHERE updated_at < ${cutoff}
+        AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
+        LIMIT 1000)
 |]

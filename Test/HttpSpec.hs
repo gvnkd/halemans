@@ -2,7 +2,7 @@ module Test.HttpSpec where
 
 import Test.Hspec
 import IHP.Prelude
-import Application.Service.Http (HttpStatusError (..), getFollowing, postFollowing)
+import Application.Service.Http (HttpStatusError (..), isDeterministicClientError, getFollowing, postFollowing)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Lens ((&), (.~), (^.))
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
@@ -47,6 +47,17 @@ spec = describe "Application.Service.Http" do
             let opts = Wreq.defaults & Wreq.checkResponse .~ Just (\_ _ -> pure ())
             response <- getFollowing opts (baseUrl <> "/forbidden")
             statusCodeOf response `shouldBe` 403
+
+    describe "isDeterministicClientError" do
+        it "flags 4xx client errors as not worth retrying" do
+            isDeterministicClientError (tshow (HttpStatusError "http://x/rest/api/3/search" 400)) `shouldBe` True
+            isDeterministicClientError (tshow (HttpStatusError "http://x/rest/api/3/search" 403)) `shouldBe` True
+            isDeterministicClientError (tshow (HttpStatusError "http://x/confluence/rest/api/content" 404)) `shouldBe` True
+        it "keeps 408/429, 5xx and non-http errors retryable" do
+            isDeterministicClientError (tshow (HttpStatusError "http://x/" 408)) `shouldBe` False
+            isDeterministicClientError (tshow (HttpStatusError "http://x/" 429)) `shouldBe` False
+            isDeterministicClientError (tshow (HttpStatusError "http://x/" 502)) `shouldBe` False
+            isDeterministicClientError "Connection refused" `shouldBe` False
 
 statusCodeOf :: Wreq.Response body -> Int
 statusCodeOf response = statusCode (response ^. Wreq.responseStatus)

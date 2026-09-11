@@ -22,6 +22,7 @@ import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Types (Ticket (..))
 import Application.Service.Llm (Prompt (..), userMessage, Completion (..), LlmProviderConfig (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import Application.Service.Llm.Output (parseCompletionOutput, ParsedOutput (..))
 import Application.Service.Llm.Prompt (PromptInputs (..), emptyInputs, bindingsFor, renderTemplate)
 import Application.Service.Llm.Roles (resolveAgentRoleByName, toolsForRole)
@@ -65,6 +66,16 @@ data RelatedCandidate = RelatedCandidate
 
 relatedTasksForAlert :: (?modelContext :: ModelContext) => Maybe Source -> Alert -> IO (Either Text ())
 relatedTasksForAlert maybeSource alert = do
+    -- Non-actionable alerts (resolved/closed/stalled, per the same status
+    -- gate as auto-analysis) skip the search + LLM filter entirely —
+    -- related tasks are advisory and must not churn on dead alerts.
+    rules <- AutoAnalyze.currentRules
+    if alert.status `notElem` rules.aaStatuses
+        then pure (Right ())
+        else runRelated maybeSource alert
+
+runRelated :: (?modelContext :: ModelContext) => Maybe Source -> Alert -> IO (Either Text ())
+runRelated maybeSource alert = do
     configs <- case maybeSource of
         Just source -> JiraDb.jiraConfigsForSource source
         Nothing -> JiraDb.currentJiraConfigs
@@ -98,8 +109,14 @@ relatedTasksForAlert maybeSource alert = do
                 |> set #status candidate.candidateStatus
                 |> set #url candidate.candidateUrl
                 |> set #syncedAt now
+        -- Skip the write when nothing changed — re-upserting identical rows
+        -- every cycle is pure churn (syncedAt only moves on real changes).
         _ <- case existingLink of
-            Just link -> updateRecord (applyFields link)
+            Just link
+                | link.summary == candidate.candidateSummary
+                , link.status == candidate.candidateStatus
+                , link.url == candidate.candidateUrl -> pure link
+                | otherwise -> updateRecord (applyFields link)
             Nothing -> createRecord (applyFields (newRecord @JiraLink
                 |> set #alertId (get #id alert)
                 |> set #ticketKey candidate.candidateKey

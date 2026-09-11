@@ -7,6 +7,7 @@ module Application.Service.Jira
 , apiUrl
 , jqlForAlert
 , jqlSubjectTerms
+, jqlStringLiteral
 , projectClause
 , searchIssues
 , getIssue
@@ -153,10 +154,20 @@ jqlSubjectTerms :: Alert -> Text
 jqlSubjectTerms alert = Text.intercalate " OR " terms
     where
         subjectTerms = mapMaybe (\term -> term)
-            [ alert.host <&> (\host -> "labels ~ " <> host)
-            , alert.checkName <&> (\check -> "text ~ \"" <> check <> "\"")
+            [ alert.host <&> (\host -> "labels ~ " <> jqlStringLiteral host)
+            , alert.checkName <&> (\check -> "text ~ " <> jqlStringLiteral check)
             ]
-        terms = if null subjectTerms then ["text ~ \"" <> alert.title <> "\""] else subjectTerms
+        terms = if null subjectTerms then ["text ~ " <> jqlStringLiteral alert.title] else subjectTerms
+
+-- JQL string literal: quoting is mandatory for multi-word values (hosts
+-- with spaces, check names), and embedded double quotes/backslashes must
+-- be escaped or Jira rejects the whole query with a 400.
+jqlStringLiteral :: Text -> Text
+jqlStringLiteral text = "\"" <> Text.concatMap escape text <> "\""
+    where
+        escape '"' = "\\\""
+        escape '\\' = "\\\\"
+        escape c = Text.singleton c
 
 projectClause :: [Text] -> Text
 projectClause [] = ""

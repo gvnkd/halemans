@@ -13,6 +13,7 @@ import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Facets as Facets
 import qualified Application.Service.Groups as Groups
+import qualified Application.Service.Http as Http
 import Application.Helper.Ingest (publishAlertUpdate)
 import Data.Aeson (object, (.=))
 import Control.Exception (try, SomeException)
@@ -69,11 +70,24 @@ instance Job EnrichAlertJob where
                 |> set #kind "enrichment_failed"
                 |> set #payload (object ["subsystem" .= subsystem, "error" .= err])
                 |> createRecord
-        when (not (null allFailures) && job.attemptsCount < 2) do
+        -- Retry policy: only actionable alerts (same status gate as
+        -- auto-analysis — enrichment is advisory, resolved/closed alerts
+        -- must not loop) and only failures worth retrying — 4xx responses
+        -- are deterministic and would fail identically forever. The
+        -- attempts counter carries forward into the fresh row so the budget
+        -- actually exhausts (a fresh row's attempts_count starts at 0).
+        let retryableFailures = filter (\(_, err) -> not (Http.isDeterministicClientError err)) allFailures
+        retryAllowed <- if null retryableFailures
+            then pure False
+            else do
+                rules <- AutoAnalyze.currentRules
+                pure (alert.status `elem` rules.aaStatuses)
+        when (retryAllowed && job.attemptsCount < 2) do
             now <- getCurrentTime
             void do
                 newRecord @EnrichAlertJob
                     |> set #alertId job.alertId
+                    |> set #attemptsCount (job.attemptsCount + 1)
                     |> set #runAt (addUTCTime 60 now)
                     |> createRecord
         -- Facet materialization (milestone_9.md §3): re-resolve with the

@@ -590,6 +590,54 @@ spec = describe "alert pipeline (milestone 1)" do
                     |> fetch
                 length links `shouldBe` 1
 
+        it "enrich retry carries attempts forward and stops once resolved" do
+            oldConfluenceUrl <- lookupEnv "HALEMANS_CONFLUENCE_URL"
+            setEnv "HALEMANS_CONFLUENCE_URL" "http://127.0.0.1:9"
+            flip finally (maybe (unsetEnv "HALEMANS_CONFLUENCE_URL") (setEnv "HALEMANS_CONFLUENCE_URL") oldConfluenceUrl) do
+                source <- integrationSource "zabbix" "itest-m3-retry" "" (object
+                    [ "cmdbSpace" .= ("DEV" :: Text) ])
+                fp <- freshFingerprint
+                Just alertId <- ingest source (testEvent fp Firing)
+                    { host = Just "itest-m3-retry-host", checkName = Just "halemans test trigger" }
+                job <- freshEnrichJob alertId
+                perform job
+                retries <- query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> orderByAsc #createdAt
+                    |> fetch
+                map (get #attemptsCount) retries `shouldBe` [0, 1]
+                -- resolved alert: retry budget is irrelevant, no re-enqueue
+                alert <- fetch alertId
+                _ <- alert |> set #status "resolved" |> updateRecord
+                perform (retries !! 1)
+                retriesAfter <- query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+                length retriesAfter `shouldBe` 2
+
+        it "enrich does not re-enqueue on deterministic client errors (401)" do
+            oldConfluenceUrl <- lookupEnv "HALEMANS_CONFLUENCE_URL"
+            oldConfluenceToken <- lookupEnv "CONFLUENCE_TOKEN"
+            setEnv "HALEMANS_CONFLUENCE_URL" "http://127.0.0.1:18082"
+            setEnv "CONFLUENCE_TOKEN" "wrong-token"
+            flip finally (do
+                maybe (unsetEnv "HALEMANS_CONFLUENCE_URL") (setEnv "HALEMANS_CONFLUENCE_URL") oldConfluenceUrl
+                maybe (unsetEnv "CONFLUENCE_TOKEN") (setEnv "CONFLUENCE_TOKEN") oldConfluenceToken) do
+                source <- integrationSource "zabbix" "itest-m3-4xx" "" (object
+                    [ "cmdbSpace" .= ("DEV" :: Text) ])
+                fp <- freshFingerprint
+                Just alertId <- ingest source (testEvent fp Firing)
+                    { host = Just "itest-m3-4xx-host", checkName = Just "halemans test trigger" }
+                job <- freshEnrichJob alertId
+                perform job
+                -- deterministic client error (401): no re-enqueue, whatever
+                -- the other subsystems did (the dev worker may have raced us
+                -- to a cached cmdb row, so event contents are not asserted)
+                retries <- query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+                length retries `shouldBe` 1
+
         it "ack enqueues write-back; webhook sources record unsupported" do
             user <- testUser
             zabbixSource <- integrationSource "zabbix" "itest-m3-wb" "" (object ["writeBack" .= True])
@@ -2036,6 +2084,18 @@ enrichJobFor alertId = query @EnrichAlertJob
     |> filterWhere (#alertId, alertId)
     |> fetchOneOrNothing
     >>= maybe (error "enrich job missing") pure
+
+-- Replaces the ingest-created row (which the dev worker races us for) with
+-- a manually inserted one whose run_at is in the future, so only the test
+-- performs it.
+freshEnrichJob :: (?modelContext :: ModelContext) => Id Alert -> IO EnrichAlertJob
+freshEnrichJob alertId = do
+    _ <- sqlExecTyped [typedSql| DELETE FROM enrich_alert_jobs WHERE alert_id = ${alertId} |]
+    now <- getCurrentTime
+    newRecord @EnrichAlertJob
+        |> set #alertId alertId
+        |> set #runAt (addUTCTime 86400 now)
+        |> createRecord
 
 assetAttr :: Text -> AssetsObject -> Maybe Text
 assetAttr name object = lookup name (objectAttributes object)

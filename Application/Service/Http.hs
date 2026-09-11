@@ -1,5 +1,6 @@
 module Application.Service.Http
 ( HttpStatusError (..)
+, isDeterministicClientError
 , getFollowing
 , postFollowing
 , deleteFollowing
@@ -14,6 +15,7 @@ import qualified Data.Text as Text
 import Network.HTTP.Types (statusCode)
 import Network.URI (nonStrictRelativeTo, parseURI, parseURIReference, uriToString)
 import qualified Network.Wreq as Wreq
+import Text.Read (readMaybe)
 
 -- | Non-2xx final response, mirroring wreq's default checkResponse semantics
 -- (which these wrappers must disable per-hop to follow redirects manually).
@@ -59,6 +61,19 @@ follow issue opts url = go url maxRedirectHops
 
 isRedirect :: Int -> Bool
 isRedirect code = code `elem` [301, 302, 303, 307, 308]
+
+-- | 4xx responses (except 408/429) fail identically on every retry, so
+-- callers use this on rendered HttpStatusError texts to stop re-enqueue
+-- loops on deterministic client errors; 5xx/timeouts stay retryable.
+isDeterministicClientError :: Text -> Bool
+isDeterministicClientError err = case statusCodeOf err of
+    Just code -> code >= 400 && code < 500 && code `notElem` [408, 429]
+    Nothing -> False
+    where
+        statusCodeOf text = do
+            rest <- Text.stripPrefix "HttpStatusError " text
+            code <- last (Text.words rest)
+            readMaybe (Text.unpack code)
 
 resolveRedirect :: String -> String -> Maybe String
 resolveRedirect current location = do
