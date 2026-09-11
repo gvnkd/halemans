@@ -163,9 +163,11 @@ data CmdbConfigItem = CmdbConfigItem
 
 -- Auto-analysis gate (milestone 10 §5): singleton, not a Section — no
 -- strict-delete semantics; an absent key leaves the row untouched.
+-- environments scopes to effective env names; absent/empty = all envs.
 data AutoAnalyzeItem = AutoAnalyzeItem
     { aaItemStatuses :: [Text]
     , aaItemSeverities :: [Text]
+    , aaItemEnvironments :: [Text]
     , aaItemEnabled :: Bool
     } deriving (Eq, Show)
 
@@ -343,9 +345,10 @@ instance FromJSON CmdbConfigItem where
 
 instance FromJSON AutoAnalyzeItem where
     parseJSON = Aeson.withObject "autoAnalyze" \o -> do
-        rejectUnknownFields ["statuses", "severities", "enabled"] o
+        rejectUnknownFields ["statuses", "severities", "environments", "enabled"] o
         aaItemStatuses <- o .:? "statuses" .!= ["firing", "ack"]
         aaItemSeverities <- o .:? "severities" .!= AutoAnalyze.allSeverities
+        aaItemEnvironments <- o .:? "environments" .!= []
         aaItemEnabled <- o .:? "enabled" .!= True
         forM_ aaItemStatuses \status ->
             unless (status `elem` AutoAnalyze.allStatuses) do
@@ -885,15 +888,18 @@ applyAutoAnalyze (Just item) = withProvisionLock "autoAnalyze" do
     now <- getCurrentTime
     let statusesJson = Aeson.toJSON item.aaItemStatuses
         severitiesJson = Aeson.toJSON item.aaItemSeverities
+        environmentsJson = Aeson.toJSON item.aaItemEnvironments
     _ <- case existing of
         (row:_) -> row
             |> set #statuses statusesJson
             |> set #severities severitiesJson
+            |> set #environments environmentsJson
             |> set #enabled item.aaItemEnabled
             |> set #updatedAt now
             |> updateRecord
         [] -> createRecord (newRecord @LlmAutoAnalyzeConfig
             |> set #statuses statusesJson
             |> set #severities severitiesJson
+            |> set #environments environmentsJson
             |> set #enabled item.aaItemEnabled)
     pure ()

@@ -49,7 +49,7 @@ navigation = [hsx|
             <span class="badge app-version-badge" data-testid="app-version">v{appVersion}</span>
         </div>
         <ul class="navbar-nav me-auto">
-            <li class="nav-item"><a class="nav-link" href={DashboardAction}>Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link" href={DashboardAction}>Overview</a></li>
             <li class="nav-item"><a class="nav-link" href={DashboardsAction}>Dashboards</a></li>
             <li class="nav-item"><a class="nav-link" href={AlertsAction}>Alerts</a></li>
             <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>Blackouts</a></li>

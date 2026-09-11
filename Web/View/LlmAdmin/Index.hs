@@ -71,6 +71,10 @@ instance View IndexView where
                     {forEach allSeverities (flagCheckbox "severities" autoAnalyze.aaSeverities "auto-analyze-severity")}
                 </div>
             </div>
+            <div class="mb-2">
+                <label class="form-label">Environments (comma-separated, empty = all; matches the effective env)</label>
+                <input name="environments" type="text" class="form-control" value={Text.intercalate ", " autoAnalyze.aaEnvironments} placeholder="dev, prod" data-testid="auto-analyze-envs"/>
+            </div>
             <button type="submit" class="btn btn-sm btn-primary" data-testid="auto-analyze-submit">Save</button>
         </form>
 

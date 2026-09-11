@@ -154,19 +154,27 @@ spec = describe "Milestone 4 LLM services" do
 
     describe "AutoAnalyze.allowedByRules (milestone 10 §5)" do
         it "defaults allow firing/ack of any severity" do
-            allowedByRules defaultRules "firing" "info" `shouldBe` True
-            allowedByRules defaultRules "ack" "critical" `shouldBe` True
+            allowedByRules defaultRules "firing" "info" (Just "dev") `shouldBe` True
+            allowedByRules defaultRules "ack" "critical" Nothing `shouldBe` True
         it "defaults exclude stalled, resolved and closed" do
-            allowedByRules defaultRules "stalled" "critical" `shouldBe` False
-            allowedByRules defaultRules "resolved" "critical" `shouldBe` False
-            allowedByRules defaultRules "closed" "critical" `shouldBe` False
+            allowedByRules defaultRules "stalled" "critical" (Just "dev") `shouldBe` False
+            allowedByRules defaultRules "resolved" "critical" (Just "dev") `shouldBe` False
+            allowedByRules defaultRules "closed" "critical" (Just "dev") `shouldBe` False
         it "a disabled gate allows nothing" do
-            allowedByRules defaultRules { aaEnabled = False } "firing" "critical" `shouldBe` False
+            allowedByRules defaultRules { aaEnabled = False } "firing" "critical" (Just "dev") `shouldBe` False
         it "custom severity/status lists are honoured" do
-            let rules = AutoAnalyzeRules True ["firing", "resolved"] ["critical", "high"]
-            allowedByRules rules "resolved" "high" `shouldBe` True
-            allowedByRules rules "resolved" "info" `shouldBe` False
-            allowedByRules rules "ack" "critical" `shouldBe` False
+            let rules = AutoAnalyzeRules True ["firing", "resolved"] ["critical", "high"] []
+            allowedByRules rules "resolved" "high" (Just "dev") `shouldBe` True
+            allowedByRules rules "resolved" "info" (Just "dev") `shouldBe` False
+            allowedByRules rules "ack" "critical" (Just "dev") `shouldBe` False
+        it "an empty env scope matches every env" do
+            allowedByRules defaultRules "firing" "info" (Just "prod") `shouldBe` True
+            allowedByRules defaultRules "firing" "info" Nothing `shouldBe` True
+        it "a non-empty env scope matches only listed envs" do
+            let rules = defaultRules { aaEnvironments = ["dev", "staging"] }
+            allowedByRules rules "firing" "critical" (Just "dev") `shouldBe` True
+            allowedByRules rules "firing" "critical" (Just "prod") `shouldBe` False
+            allowedByRules rules "firing" "critical" Nothing `shouldBe` False
 
     describe "ToolCache (milestone 10 §6)" do
         let now = atTime "2026-09-05 12:00:00 UTC"

@@ -8,4 +8,4 @@ import IHP.Prelude
 -- Halemans.cabal is not readable at compile time. Keep in sync with the
 -- `version:` field in Halemans.cabal (guarded by Test/Main.hs).
 appVersion :: Text
-appVersion = "1.36.0"
+appVersion = "1.38.0"

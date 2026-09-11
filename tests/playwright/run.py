@@ -1169,10 +1169,11 @@ with sync_playwright() as pw:
         assert admin.get_by_test_id("auto-analyze-status-ack").is_checked()
         assert not admin.get_by_test_id("auto-analyze-status-stalled").is_checked()
         assert not admin.get_by_test_id("auto-analyze-status-resolved").is_checked()
-        # restrict to critical-only firing, save, verify persistence
+        # restrict to critical-only firing in env dev, save, verify persistence
         admin.get_by_test_id("auto-analyze-status-ack").uncheck()
         for sev in ["high", "warning", "info"]:
             admin.get_by_test_id(f"auto-analyze-severity-{sev}").uncheck()
+        admin.get_by_test_id("auto-analyze-envs").fill("dev")
         admin.get_by_test_id("auto-analyze-submit").click()
         admin.get_by_text("Auto-analysis rules updated").wait_for()
         admin.goto(f"{APP}/admin/llm")
@@ -1181,12 +1182,14 @@ with sync_playwright() as pw:
         assert not admin.get_by_test_id("auto-analyze-status-ack").is_checked()
         assert admin.get_by_test_id("auto-analyze-severity-critical").is_checked()
         assert not admin.get_by_test_id("auto-analyze-severity-warning").is_checked()
-        stored = sql("SELECT statuses::text, severities::text FROM llm_auto_analyze_configs")
-        assert stored == '["firing"]|["critical"]', f"stored rules: {stored!r}"
+        assert admin.get_by_test_id("auto-analyze-envs").input_value() == "dev"
+        stored = sql("SELECT statuses::text, severities::text, environments::text FROM llm_auto_analyze_configs")
+        assert stored == '["firing"]|["critical"]|["dev"]', f"stored rules: {stored!r}"
         # restore defaults so later analysis-dependent checks keep working
         admin.get_by_test_id("auto-analyze-status-ack").check()
         for sev in ["high", "warning", "info"]:
             admin.get_by_test_id(f"auto-analyze-severity-{sev}").check()
+        admin.get_by_test_id("auto-analyze-envs").fill("")
         admin.get_by_test_id("auto-analyze-submit").click()
         admin.get_by_text("Auto-analysis rules updated").wait_for()
         admin.close()

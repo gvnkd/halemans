@@ -262,7 +262,15 @@ spec = describe "Application.Service.Provision" do
                     let Just gate = config.autoAnalyze
                     gate.aaItemStatuses `shouldBe` ["firing", "ack"]
                     gate.aaItemSeverities `shouldBe` ["critical", "high", "warning", "info"]
+                    gate.aaItemEnvironments `shouldBe` []
                     gate.aaItemEnabled `shouldBe` True
+
+        it "parses the autoAnalyze env scope" do
+            case parseProvisionConfig "{\"autoAnalyze\": {\"environments\": [\"dev\", \"staging\"]}}" of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let Just gate = config.autoAnalyze
+                    gate.aaItemEnvironments `shouldBe` ["dev", "staging"]
 
         it "rejects unknown statuses in autoAnalyze" do
             case parseProvisionConfig "{\"autoAnalyze\": {\"statuses\": [\"firing\", \"bogus\"]}}" of

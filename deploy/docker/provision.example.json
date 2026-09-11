@@ -92,7 +92,8 @@
   "autoAnalyze": {
     "enabled": true,
     "statuses": ["firing", "ack"],
-    "severities": ["critical", "high", "warning", "info"]
+    "severities": ["critical", "high", "warning", "info"],
+    "environments": []
   },
   "teams": {
     "items": [

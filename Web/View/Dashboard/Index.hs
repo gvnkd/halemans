@@ -140,10 +140,9 @@ renderCard card = [hsx|
             }
 
 cardLink :: EnvCard -> Html
-cardLink card = case (card.cardEnvironment, card.cardEnvName) of
-    (Just environment, _) -> [hsx|<a href={ShowEnvironmentAction environment.name}>{environment.name}</a>|]
-    (Nothing, Just name) -> [hsx|<span>{name}</span>|]
-    (Nothing, Nothing) -> [hsx|<span>unassigned</span>|]
+cardLink card = case card.cardEnvName of
+    Just name -> [hsx|<a href={ShowEnvironmentAction name}>{name}</a>|]
+    Nothing -> [hsx|<span>unassigned</span>|]
 
 cardDomId :: EnvCard -> Text
 cardDomId card = "env-card-" <> fromMaybe "unassigned" card.cardEnvName

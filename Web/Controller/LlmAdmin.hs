@@ -494,12 +494,15 @@ instance Controller LlmAdminController where
         redirectTo LlmAdminAction
 
     -- Auto-analysis gate (milestone 10 §5): singleton row upsert; only known
-    -- statuses/severities are stored, empty selection = nothing triggers.
+    -- statuses/severities are stored, empty selection = nothing triggers. The
+    -- environments field is a comma-separated list of effective env names;
+    -- empty = no env scope.
     action UpdateAutoAnalyzeAction = do
         requirePrivilege "manage_rules"
         let enabled = isJust (paramOrNothing @Text "enabled")
             statuses = [s | s <- paramList @Text "statuses", s `elem` AutoAnalyze.allStatuses]
             severities = [s | s <- paramList @Text "severities", s `elem` AutoAnalyze.allSeverities]
+            environments = parseCsv (paramOrDefault "" "environments")
         existing <- query @LlmAutoAnalyzeConfig |> fetch
         now <- getCurrentTime
         _ <- case existing of
@@ -507,12 +510,14 @@ instance Controller LlmAdminController where
                 |> set #enabled enabled
                 |> set #statuses (Aeson.toJSON statuses)
                 |> set #severities (Aeson.toJSON severities)
+                |> set #environments (Aeson.toJSON environments)
                 |> set #updatedAt now
                 |> updateRecord
             [] -> createRecord (newRecord @LlmAutoAnalyzeConfig
                 |> set #enabled enabled
                 |> set #statuses (Aeson.toJSON statuses)
-                |> set #severities (Aeson.toJSON severities))
+                |> set #severities (Aeson.toJSON severities)
+                |> set #environments (Aeson.toJSON environments))
         setSuccessMessage "Auto-analysis rules updated"
         redirectTo LlmAdminAction
 
@@ -547,3 +552,12 @@ parseTools raw = Aeson.toJSON
 
 knownToolNames :: [Text]
 knownToolNames = ["cmdb_lookup", "jira_search", "jira_issue_details", "assets_lookup"]
+
+-- Comma-separated form input into a stripped non-empty list (auto-analysis
+-- env scope); empty input = no scope.
+parseCsv :: Text -> [Text]
+parseCsv raw =
+    [ name
+    | name <- map Text.strip (Text.splitOn "," raw)
+    , not (Text.null name)
+    ]

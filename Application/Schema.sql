@@ -802,11 +802,13 @@ CREATE UNIQUE INDEX cmdb_configs_name_idx ON cmdb_configs(name);
 -- Auto-analysis gate (milestone 10 §5): which alert statuses/severities get
 -- an LLM analysis enqueued automatically (ingest + enrichment retrigger).
 -- Singleton-by-convention like retention_configs: no row = built-in
--- defaults (statuses firing+ack, all severities).
+-- defaults (statuses firing+ack, all severities, all environments).
+-- environments matches the EFFECTIVE env; empty list = no env scope.
 CREATE TABLE llm_auto_analyze_configs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
     statuses JSONB NOT NULL DEFAULT '["firing", "ack"]',
     severities JSONB NOT NULL DEFAULT '["critical", "high", "warning", "info"]',
+    environments JSONB NOT NULL DEFAULT '[]',
     enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
