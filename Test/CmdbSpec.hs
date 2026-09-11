@@ -13,12 +13,16 @@ spec :: Spec
 spec = describe "Application.Service.Cmdb" do
     describe "apiUrl" do
         it "strips a trailing slash from the base url" do
-            apiUrl (CmdbConfig "https://confluence.example.com/confluence/" "t" "DEV") "/rest/api/content/search"
+            apiUrl (CmdbConfig "https://confluence.example.com/confluence/" "t" "DEV" ["DEV"]) "/rest/api/content/search"
                 `shouldBe` "https://confluence.example.com/confluence/rest/api/content/search"
 
     describe "cqlForSubject" do
         it "scopes to space and page type with a text match" do
-            cqlForSubject "DEV" "dev-host-01" `shouldBe` "space = \"DEV\" AND text ~ \"dev-host-01\" AND type = page"
+            cqlForSubject ["DEV"] "dev-host-01" `shouldBe` "space = \"DEV\" AND text ~ \"dev-host-01\" AND type = page"
+        it "OR-es several configured spaces" do
+            cqlForSubject ["DEV", "OPS"] "dev-host-01" `shouldBe` "space in (\"DEV\", \"OPS\") AND text ~ \"dev-host-01\" AND type = page"
+        it "drops the space clause when no spaces are configured" do
+            cqlForSubject [] "dev-host-01" `shouldBe` "text ~ \"dev-host-01\" AND type = page"
 
     describe "pickBestPage" do
         let pageA = ConfPage "1" "dev-host-01 notes" "" ""

@@ -5,12 +5,15 @@ module Application.Service.Jira
 , jiraEnvConfig
 , apiUrl
 , jqlForAlert
+, jqlSubjectTerms
+, projectClause
 , searchIssues
 , getIssue
 , createIssue
-, autoLinkForAlert
-, createTicketForAlert
-, syncOpenLinks
+, upsertLink
+, issueUrl
+, createTicketWithConfig
+, sourceConfigText
 , connectionOk
 ) where
 
@@ -18,7 +21,7 @@ import IHP.Prelude
 import IHP.ModelSupport
 import IHP.QueryBuilder
 import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types
+import Generated.Types hiding (JiraConfig)
 import Data.Aeson (Value, object, (.=), (.:), (.:?), (.!=))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
@@ -38,6 +41,7 @@ data JiraConfig = JiraConfig
     { baseUrl :: Text
     , token :: Text
     , project :: Text
+    , projects :: [Text]
     , apiVersion :: Text
     } deriving (Eq, Show)
 
@@ -51,7 +55,7 @@ jiraEnvConfig project = do
     token <- lookupEnv "JIRA_TOKEN"
     version <- lookupEnv "HALEMANS_JIRA_API_VERSION"
     pure case (url, token) of
-        (Just url, Just token) -> Just JiraConfig { baseUrl = cs url, token = cs token, project, apiVersion = maybe defaultApiVersion cs version }
+        (Just url, Just token) -> Just JiraConfig { baseUrl = cs url, token = cs token, project, projects = [project], apiVersion = maybe defaultApiVersion cs version }
         _ -> Nothing
 
 -- Jira Cloud serves REST v3; Server/Data Center only has v2
@@ -65,6 +69,10 @@ apiUrl config path =
 
 configText :: Text -> Value -> Maybe Text
 configText key value = parseMaybe (Aeson.withObject "config" (\o -> o .: Key.fromText key)) value
+
+-- Per-source config jsonb string lookup (jiraProject, jiraWritable, ...).
+sourceConfigText :: Text -> Source -> Maybe Text
+sourceConfigText key source = configText key source.config
 
 data JiraIssue = JiraIssue
     { issueKey :: Text
@@ -92,15 +100,28 @@ instance Aeson.FromJSON JiraIssue where
             Nothing -> pure ("", "")
         pure JiraIssue { .. }
 
-jqlForAlert :: Text -> Alert -> Text
-jqlForAlert project alert =
-    "project = " <> project <> " AND statusCategory != Done AND (" <> Text.intercalate " OR " terms <> ")"
+-- Multi-project JQL (milestone 10): several projects from jira_configs are
+-- OR-ed via `project in (...)`; an empty list drops the project clause
+-- entirely (search everything the token can see).
+jqlForAlert :: [Text] -> Alert -> Text
+jqlForAlert projects alert =
+    projectClause projects <> "statusCategory != Done AND (" <> jqlSubjectTerms alert <> ")"
+
+-- Subject terms shared by the auto-link JQL (open tickets only) and the
+-- related-tasks JQL (any status — historical tickets included).
+jqlSubjectTerms :: Alert -> Text
+jqlSubjectTerms alert = Text.intercalate " OR " terms
     where
         subjectTerms = mapMaybe (\term -> term)
             [ alert.host <&> (\host -> "labels ~ " <> host)
             , alert.checkName <&> (\check -> "text ~ \"" <> check <> "\"")
             ]
         terms = if null subjectTerms then ["text ~ \"" <> alert.title <> "\""] else subjectTerms
+
+projectClause :: [Text] -> Text
+projectClause [] = ""
+projectClause [project] = "project = " <> project <> " AND "
+projectClause projects = "project in (" <> Text.intercalate ", " projects <> ") AND "
 
 authOpts :: JiraConfig -> Wreq.Options
 authOpts config = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs config.token]
@@ -176,73 +197,30 @@ upsertLink config alertId origin issue = do
             |> set #ticketKey issue.issueKey
             |> set #origin origin))
 
--- Auto-link (milestone_3.md §5): top 5 open tickets matching the alert
--- subject become jira_links rows with origin 'auto'.
-autoLinkForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> IO (Either Text [JiraLink])
-autoLinkForAlert source alert = do
-    configResult <- jiraConfigFromEnv source
-    case configResult of
-        Nothing -> pure (Left "jira not configured")
-        Just config -> do
-            result <- searchIssues config (jqlForAlert config.project alert) 5
-            case result of
-                Left err -> pure (Left err)
-                Right issues -> Right <$> mapM (upsertLink config (get #id alert) "auto") issues
+-- Config-explicit ticket creation (milestone 10): the caller picks the
+-- config and target project; DB resolution lives in
+-- Application.Service.Jira.DbConfig.createTicketForAlert.
+createTicketWithConfig :: (?modelContext :: ModelContext) => JiraConfig -> Id Alert -> Text -> Text -> Text -> IO (Either Text JiraLink)
+createTicketWithConfig config alertId issueType summary body = do
+    result <- createIssue config issueType summary body
+    case result of
+        Left err -> pure (Left err)
+        Right key -> do
+            issueResult <- getIssue config key
+            case issueResult of
+                Right issue -> Right <$> upsertLink config alertId "manual" issue
+                Left _ -> do
+                    now <- getCurrentTime
+                    link <- newRecord @JiraLink
+                        |> set #alertId alertId
+                        |> set #ticketKey key
+                        |> set #summary summary
+                        |> set #status ""
+                        |> set #url (issueUrl config key)
+                        |> set #origin "manual"
+                        |> set #syncedAt now
+                        |> createRecord
+                    pure (Right link)
 
-createTicketForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> Text -> Text -> Text -> IO (Either Text JiraLink)
-createTicketForAlert source alert issueType summary body = do
-    configResult <- jiraConfigFromEnv source
-    case configResult of
-        Nothing -> pure (Left "jira not configured")
-        Just config -> do
-            result <- createIssue config issueType summary body
-            case result of
-                Left err -> pure (Left err)
-                Right key -> do
-                    issueResult <- getIssue config key
-                    case issueResult of
-                        Right issue -> Right <$> upsertLink config (get #id alert) "manual" issue
-                        Left _ -> do
-                            now <- getCurrentTime
-                            link <- newRecord @JiraLink
-                                |> set #alertId (get #id alert)
-                                |> set #ticketKey key
-                                |> set #summary summary
-                                |> set #status ""
-                                |> set #url (issueUrl config key)
-                                |> set #origin "manual"
-                                |> set #syncedAt now
-                                |> createRecord
-                            pure (Right link)
-
--- JiraSyncJob body (§5): refresh status/summary of every link whose alert is
--- not closed. Returns the number of links refreshed.
-syncOpenLinks :: (?modelContext :: ModelContext) => IO Int
-syncOpenLinks = do
-    openAlerts <- query @Alert
-        |> filterWhereNot (#status, "closed" :: Text)
-        |> fetch
-    links <- case openAlerts of
-        [] -> pure []
-        alerts -> query @JiraLink
-            |> filterWhereIn (#alertId, map (get #id) alerts)
-            |> fetch
-    sources <- query @Source |> fetch
-    configs <- forM sources jiraConfigFromEnv
-    let config = foldr (<|>) Nothing configs
-    case config of
-        Nothing -> pure 0
-        Just cfg -> do
-            refreshed <- forM links \link -> do
-                result <- getIssue cfg link.ticketKey
-                case result of
-                    Left _ -> pure False
-                    Right issue -> do
-                        now <- getCurrentTime
-                        _ <- link
-                            |> set #summary issue.issueSummary
-                            |> set #status issue.issueStatus
-                            |> set #syncedAt now
-                            |> updateRecord
-                        pure True
-            pure (length (filter (\did -> did) refreshed))
+-- JiraSyncJob body lives in Application.Service.Jira.DbConfig (needs DB
+-- config resolution, which imports this module).

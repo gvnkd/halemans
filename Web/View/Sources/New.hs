@@ -40,6 +40,10 @@ instance View NewView where
                 <input name="writeBack" type="checkbox" class="form-check-input" data-testid="source-write-back"/>
                 <label class="form-check-label">Write-back (ack/close propagates to the source)</label>
             </div>
+            <div class="mb-3 form-check">
+                <input name="jiraWritable" type="checkbox" class="form-check-input" data-testid="source-jira-writable"/>
+                <label class="form-check-label">Jira writable (alerts of this source may create Jira tickets)</label>
+            </div>
             <div class="mb-3">
                 <label class="form-label">CMDB space</label>
                 <input name="cmdbSpace" type="text" class="form-control" data-testid="source-cmdb-space" placeholder="DEV"/>

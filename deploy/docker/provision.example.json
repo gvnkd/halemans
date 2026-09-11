@@ -34,6 +34,7 @@
           "initialHistoryDays": 1,
           "expectedIntervalSeconds": 120,
           "writeBack": true,
+          "jiraWritable": true,
           "cmdbSpace": "OPS",
           "jiraProject": "OPS"
         }
@@ -49,6 +50,7 @@
         "config": {
           "tokenEnv": "GRAFANA_TOKEN",
           "writeBack": true,
+          "jiraWritable": true,
           "cmdbSpace": "OPS",
           "jiraProject": "OPS"
         }
@@ -61,6 +63,29 @@
         "env": "prod",
         "enabled": false,
         "webhookTokens": [{"tokenEnv": "HALEMANS_AM_HOOK_TOKEN"}]
+      }
+    ]
+  },
+  "jiraConfigs": {
+    "items": [
+      {
+        "name": "jira-prod",
+        "baseUrl": "https://jira.example.com",
+        "tokenEnv": "JIRA_TOKEN",
+        "apiVersion": "3",
+        "projects": ["OPS", "SRE"],
+        "enabled": true
+      }
+    ]
+  },
+  "cmdbConfigs": {
+    "items": [
+      {
+        "name": "confluence-prod",
+        "baseUrl": "https://confluence.example.com",
+        "tokenEnv": "CONFLUENCE_TOKEN",
+        "spaces": ["OPS", "INFRA"],
+        "enabled": true
       }
     ]
   },

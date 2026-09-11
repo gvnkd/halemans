@@ -10,8 +10,11 @@ import Application.Service.AlertList (AlertListFilters (..), validSortColumns, d
 import qualified Application.Helper.FilterPrefs as FilterPrefs
 import Network.HTTP.Types.URI (renderQuery)
 import qualified Data.List as List
-import qualified Application.Service.Cmdb as Cmdb
-import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Cmdb.DbConfig as Cmdb
+import qualified Application.Service.Jira.DbConfig as Jira
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Facets as Facets
 import IHP.TypedSql (sqlQueryTyped, typedSql)
@@ -19,6 +22,11 @@ import Control.Monad (void)
 
 alertFilterQueryKeys :: [ByteString]
 alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "group", "sort", "dir"]
+
+-- Boolean flag in sources.config jsonb (writeBack, jiraWritable, ...).
+sourceConfigBool :: Text -> Source -> Bool
+sourceConfigBool key source =
+    fromMaybe False (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? Key.fromText key Aeson..!= False)) source.config)
 
 instance Controller AlertsController where
     beforeAction = ensureIsUser
@@ -109,6 +117,11 @@ instance Controller AlertsController where
                 |> fetch
         canAck <- currentUserHasPrivilege "ack"
         canClose <- currentUserHasPrivilege "close"
+        -- Ticket creation is only offered when the alert's source opts into
+        -- writable Jira (milestone 10: sources.config.jiraWritable).
+        jiraWritable <- case alert.sourceId of
+            Nothing -> pure False
+            Just sourceId -> sourceConfigBool "jiraWritable" <$> fetch sourceId
         render ShowView { .. }
 
     action AckAlertAction { alertId } = do
@@ -173,15 +186,18 @@ instance Controller AlertsController where
             Nothing -> setErrorMessage "Alert has no source; cannot create ticket"
             Just sourceId -> do
                 source <- fetch sourceId
-                let issueType = paramOrNothing @Text "issueType" |> fromMaybe "Task"
-                    defaultSummary = alert.title
-                    defaultBody = alert.description <> "\n\nSource: " <> fromMaybe "-" alert.sourceUrl
-                    summary = paramOrNothing @Text "summary" |> fromMaybe defaultSummary
-                    body = paramOrNothing @Text "body" |> fromMaybe defaultBody
-                result <- Jira.createTicketForAlert source alert issueType summary body
-                case result of
-                    Left err -> setErrorMessage ("Jira ticket creation failed: " <> err)
-                    Right link -> setSuccessMessage ("Linked " <> link.ticketKey)
+                if not (sourceConfigBool "jiraWritable" source)
+                    then setErrorMessage "Jira is read-only for this source (enable \"Jira writable\" on the source to create tickets)"
+                    else do
+                        let issueType = paramOrNothing @Text "issueType" |> fromMaybe "Task"
+                            defaultSummary = alert.title
+                            defaultBody = alert.description <> "\n\nSource: " <> fromMaybe "-" alert.sourceUrl
+                            summary = paramOrNothing @Text "summary" |> fromMaybe defaultSummary
+                            body = paramOrNothing @Text "body" |> fromMaybe defaultBody
+                        result <- Jira.createTicketForAlert source alert issueType summary body
+                        case result of
+                            Left err -> setErrorMessage ("Jira ticket creation failed: " <> err)
+                            Right link -> setSuccessMessage ("Linked " <> link.ticketKey)
         redirectTo ShowAlertAction { alertId }
 
     action DeleteJiraLinkAction { alertId, jiraLinkId } = do

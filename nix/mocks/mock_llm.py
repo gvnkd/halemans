@@ -78,6 +78,15 @@ intentionally malformed for failure-path testing.
 """
 
 
+def related_verdict(content):
+    """Deterministic relevance verdict for the related-tasks filter
+    (milestone 10): a prompt carrying a '## Candidate Jira tasks' section
+    gets a fenced json verdict echoing every candidate key."""
+    keys = re.findall(r"^-\s+([A-Za-z][A-Za-z0-9]+-\d+):", content, re.MULTILINE)
+    verdict = json.dumps({"relevant": keys}, indent=2)
+    return "## Relevance verdict\n\nAll candidates passed the mock filter.\n\n```json\n" + verdict + "\n```\n"
+
+
 def last_user_content(body):
     for message in reversed(body.get("messages", [])):
         if message.get("role") != "user":
@@ -308,6 +317,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, validation_error)
             return
         content = last_user_content(body)
+        if "## candidate jira tasks" in content.lower():
+            self._respond(related_verdict(content), body)
+            return
         analysis = DISK_ANALYSIS if "disk" in content.lower() else GENERIC_ANALYSIS
         # Deterministic context echo (milestone 8 D10): when the prompt's
         # "## Linked assets" section is non-empty, the first asset line is

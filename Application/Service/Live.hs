@@ -259,6 +259,7 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                             _ -> []
                     pure
                         ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
+                          , fragment alertDetailsDomId (alertDetailsCardHtml alert) "replace" ""
                           ] ++ timelineUpdates ++ panelUpdates )
         | otherwise -> pure []
     -- Group events (kind "group", milestone_2.md §9): the group card header

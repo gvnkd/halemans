@@ -69,7 +69,7 @@ SQL
 # same SQL as seed-halemans (keep both in sync per project convention).
 psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
 UPDATE sources
-SET config = config || '{"writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
+SET config = config || '{"writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
 WHERE type IN ('zabbix', 'grafana', 'alertmanager');
 
 INSERT INTO cmdb_entries (host_id, page_id, title, excerpt, url)

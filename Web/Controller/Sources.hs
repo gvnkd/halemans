@@ -39,7 +39,7 @@ instance Controller SourcesController where
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
             |> set #enabled True
-            |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
+            |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
             |> createRecord
         ensurePollerForSourceType (param @Text "type")
         setSuccessMessage "Source created"
@@ -52,6 +52,7 @@ instance Controller SourcesController where
             { source
             , tokenEnv = tokenEnvOf source
             , writeBack = configBool "writeBack" source
+            , jiraWritable = configBool "jiraWritable" source
             , cmdbSpace = configValue "cmdbSpace" source
             , jiraProject = configValue "jiraProject" source
             , initialHistoryDays = maybe "" tshow (configInt "initialHistoryDays" source)
@@ -67,7 +68,7 @@ instance Controller SourcesController where
             |> set #baseUrl (param @Text "baseUrl")
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-            |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
+            |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
             |> updateRecord
         when source.enabled (ensurePollerForSourceType (param @Text "type"))
         setSuccessMessage "Source updated"
@@ -105,18 +106,19 @@ instance Controller SourcesController where
 -- reconcileGraceSeconds / reconcileIntervalSeconds /
 -- absentResolveMinAgeSeconds / eventPageLimit / reconcileResolved /
 -- expectedIntervalSeconds / hostGroupsFile) survive a UI edit.
-sourceConfig :: Aeson.Value -> Text -> Bool -> Text -> Text -> Maybe Int -> Text -> Aeson.Value
-sourceConfig base tokenEnv writeBack cmdbSpace jiraProject historyDays scope =
+sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> Text -> Text -> Maybe Int -> Text -> Aeson.Value
+sourceConfig base tokenEnv writeBack jiraWritable cmdbSpace jiraProject historyDays scope =
     Aeson.Object (extra <> managed)
   where
     managed = KeyMap.fromList $
-        [ "writeBack" .= writeBack ]
+        [ "writeBack" .= writeBack
+        , "jiraWritable" .= jiraWritable ]
         ++ [ "tokenEnv" .= tokenEnv | tokenEnv /= "" ]
         ++ [ "cmdbSpace" .= cmdbSpace | cmdbSpace /= "" ]
         ++ [ "jiraProject" .= jiraProject | jiraProject /= "" ]
         ++ [ "initialHistoryDays" .= days | Just days <- [historyDays] ]
         ++ [ "hostGroupScope" .= scope | scope == "teams" ]
-    managedKeys = ["writeBack", "tokenEnv", "cmdbSpace", "jiraProject", "initialHistoryDays", "hostGroupScope"]
+    managedKeys = ["writeBack", "jiraWritable", "tokenEnv", "cmdbSpace", "jiraProject", "initialHistoryDays", "hostGroupScope"]
     extra = case base of
         Aeson.Object o -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) o
         _ -> mempty

@@ -14,7 +14,11 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Text as Text
 import qualified Application.Service.Cmdb as Cmdb
+import qualified Application.Service.Cmdb.DbConfig as CmdbDb
 import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Jira.DbConfig as JiraDb
+import Application.Service.Jira (JiraIssue (..))
+import Application.Service.Cmdb (ConfPage (..))
 import qualified Application.Service.Assets as Assets
 import qualified Application.Service.Assets.Aql as Aql
 import qualified Application.Service.Assets.Cache as AssetsCache
@@ -94,16 +98,20 @@ textArg key raw = do
 cmdbLookup :: (?modelContext :: ModelContext) => Maybe Source -> Text -> IO Text
 cmdbLookup Nothing _ = pure "cmdb unavailable: no source"
 cmdbLookup (Just source) term = do
-    configResult <- Cmdb.cmdbConfigFromEnv source
-    case configResult of
-        Nothing -> pure "cmdb not configured"
-        Just config -> do
-            result <- Cmdb.confluenceSearch config (Cmdb.cqlForSubject config.space term)
-            pure case result of
-                Left err -> "cmdb lookup failed: " <> err
-                Right pages -> renderPages pages
+    configs <- CmdbDb.cmdbConfigsForSource source
+    if null configs
+        then pure "cmdb not configured"
+        else do
+            results <- forM configs \config ->
+                Cmdb.confluenceSearch config (Cmdb.cqlForSubject (Cmdb.spaces config) term)
+            pure case concat [pages | Right pages <- results] of
+                [] | all isLeft results -> "cmdb lookup failed: " <> renderFirstErr results
+                [] -> "no cmdb pages found"
+                pages -> renderPages pages
     where
-        renderPages [] = "no cmdb pages found"
+        isLeft (Left _) = True
+        isLeft _ = False
+        renderFirstErr results = fromMaybe "unknown error" (head [err | Left err <- results])
         renderPages pages = Text.intercalate "\n" (map renderPage (take 3 pages))
         renderPage page = "- " <> page.pageTitle <> ": "
             <> Text.take 200 (Cmdb.excerptFromHtml 200 page.pageBodyHtml)
@@ -111,17 +119,20 @@ cmdbLookup (Just source) term = do
 jiraSearch :: (?modelContext :: ModelContext) => Maybe Source -> Text -> IO Text
 jiraSearch Nothing _ = pure "jira unavailable: no source"
 jiraSearch (Just source) queryText = do
-    configResult <- Jira.jiraConfigFromEnv source
-    case configResult of
-        Nothing -> pure "jira not configured"
-        Just config -> do
-            let jql = "project = " <> config.project <> " AND text ~ \"" <> queryText <> "\""
-            result <- Jira.searchIssues config jql 5
-            pure case result of
-                Left err -> "jira search failed: " <> err
-                Right issues -> renderIssues issues
+    configs <- JiraDb.jiraConfigsForSource source
+    if null configs
+        then pure "jira not configured"
+        else do
+            results <- forM configs \config ->
+                Jira.searchIssues config (Jira.projectClause (Jira.projects config) <> "text ~ \"" <> queryText <> "\"") 5
+            pure case concat [issues | Right issues <- results] of
+                [] | all isLeft results -> "jira search failed: " <> renderFirstErr results
+                [] -> "no jira tickets found"
+                issues -> renderIssues (take 5 issues)
     where
-        renderIssues [] = "no jira tickets found"
+        isLeft (Left _) = True
+        isLeft _ = False
+        renderFirstErr results = fromMaybe "unknown error" (head [err | Left err <- results])
         renderIssues issues = Text.intercalate "\n"
             (map (\issue -> "- " <> issue.issueKey <> " " <> issue.issueSummary <> " [" <> issue.issueStatus <> "]") issues)
 

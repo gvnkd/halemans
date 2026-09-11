@@ -5,12 +5,19 @@ module Application.Service.Cmdb
 , cmdbEnvConfig
 , apiUrl
 , cqlForSubject
+, spaceClause
 , pickBestPage
 , excerptFromHtml
 , excerptBudget
 , isFresh
-, lookupForAlert
-, refreshForAlert
+, positiveTtlSeconds
+, negativeTtlSeconds
+, Subject (..)
+, subjectOf
+, subjectTerm
+, fetchCached
+, upsertEntry
+, sourceConfigText
 , confluenceSearch
 , connectionOk
 ) where
@@ -19,7 +26,7 @@ import IHP.Prelude
 import IHP.ModelSupport
 import IHP.QueryBuilder
 import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types
+import Generated.Types hiding (CmdbConfig)
 import Data.Aeson (Value, (.:), (.:?), (.!=))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
@@ -47,6 +54,7 @@ data CmdbConfig = CmdbConfig
     { baseUrl :: Text
     , token :: Text
     , space :: Text
+    , spaces :: [Text]
     } deriving (Eq, Show)
 
 cmdbConfigFromEnv :: Source -> IO (Maybe CmdbConfig)
@@ -58,7 +66,7 @@ cmdbEnvConfig space = do
     url <- lookupEnv "HALEMANS_CONFLUENCE_URL"
     token <- lookupEnv "CONFLUENCE_TOKEN"
     pure case (url, token) of
-        (Just url, Just token) -> Just CmdbConfig { baseUrl = cs url, token = cs token, space }
+        (Just url, Just token) -> Just CmdbConfig { baseUrl = cs url, token = cs token, space, spaces = [space] }
         _ -> Nothing
 
 apiUrl :: CmdbConfig -> Text -> Text
@@ -66,6 +74,10 @@ apiUrl config path = Text.dropWhileEnd (== '/') config.baseUrl <> path
 
 configText :: Text -> Value -> Maybe Text
 configText key value = parseMaybe (Aeson.withObject "config" (\o -> o .: Key.fromText key)) value
+
+-- Per-source config jsonb string lookup (cmdbSpace, ...).
+sourceConfigText :: Text -> Source -> Maybe Text
+sourceConfigText key source = configText key source.config
 
 data ConfPage = ConfPage
     { pageId :: Text
@@ -107,9 +119,19 @@ confluenceSearch config cql = do
 connectionOk :: CmdbConfig -> IO (Either Text ())
 connectionOk config = either Left (const (Right ())) <$> confluenceSearch config "type = page"
 
-cqlForSubject :: Text -> Text -> Text
-cqlForSubject space term =
-    "space = \"" <> space <> "\" AND text ~ \"" <> term <> "\" AND type = page"
+-- Multi-space CQL (milestone 10): several spaces from cmdb_configs are OR-ed
+-- via `space in (...)`; an empty list drops the space clause entirely.
+cqlForSubject :: [Text] -> Text -> Text
+cqlForSubject spaces term =
+    spaceClause spaces <> "text ~ \"" <> term <> "\" AND type = page"
+
+spaceClause :: [Text] -> Text
+spaceClause [] = ""
+spaceClause [space] = "space = \"" <> space <> "\" AND "
+spaceClause spaces =
+    "space in (" <> Text.intercalate ", " (map quote spaces) <> ") AND "
+    where
+        quote space = "\"" <> space <> "\""
 
 -- Exact title match wins; otherwise the first hit (milestone_3.md §4).
 pickBestPage :: Text -> [ConfPage] -> Maybe ConfPage
@@ -187,37 +209,6 @@ upsertEntry subject page config = do
             SubjectHost hostId _ -> record |> set #hostId (Just hostId)
             SubjectService serviceId _ -> record |> set #serviceId (Just serviceId)
 
--- Cache-first lookup: fresh rows are served directly; missing/stale rows
--- trigger a Confluence search whose outcome (including negatives) is cached.
-lookupForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> IO (Either Text (Maybe CmdbEntry))
-lookupForAlert = resolve False
-
--- Manual refresh: bypasses TTL, still serves the stale row on failure.
-refreshForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> IO (Either Text (Maybe CmdbEntry))
-refreshForAlert = resolve True
-
-resolve :: (?modelContext :: ModelContext) => Bool -> Source -> Alert -> IO (Either Text (Maybe CmdbEntry))
-resolve force source alert = case subjectOf alert of
-    Nothing -> pure (Right Nothing)
-    Just subject -> do
-        configResult <- cmdbConfigFromEnv source
-        case configResult of
-            Nothing -> pure (Left "confluence not configured")
-            Just config -> do
-                now <- getCurrentTime
-                cached <- fetchCached subject
-                let ttl = case cached of
-                        Just entry | isNothing entry.pageId -> negativeTtlSeconds
-                        _ -> positiveTtlSeconds
-                    fresh = case cached of
-                        Just entry -> isFresh now entry.fetchedAt ttl
-                        Nothing -> False
-                if fresh && not force
-                    then pure (Right cached)
-                    else do
-                        result <- confluenceSearch config (cqlForSubject config.space (subjectTerm subject))
-                        case result of
-                            Left err -> pure (Left err) -- stale row still rendered by the card
-                            Right pages -> do
-                                entry <- upsertEntry subject (pickBestPage (subjectTerm subject) pages) config
-                                pure (Right (Just entry))
+-- Cache-first alert lookup (lookupForAlert/refreshForAlert/resolve) lives in
+-- Application.Service.Cmdb.DbConfig — it needs DB config resolution, which
+-- imports this module.

@@ -15,7 +15,7 @@ spec :: Spec
 spec = describe "Application.Service.Provision" do
     describe "parseProvisionConfig" do
         it "parses the empty config" do
-            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing Nothing Nothing)
+            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
             let json = Aeson.encode $ object
@@ -223,6 +223,36 @@ spec = describe "Application.Service.Provision" do
             let json = "{\"dashboards\": {\"items\": [{\"name\": \"d\", \"userEmail\": \"a@b.c\", \"config\": [{\"match\": [{\"facet\": \"bogus:x\", \"op\": \"=\", \"value\": \"y\"}]}]}]}}"
             case parseProvisionConfig json of
                 Left err -> err `shouldSatisfy` ("invalid config for dashboard" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "parses jira and cmdb config sections (milestone 10)" do
+            let json = Aeson.encode $ object
+                    [ "jiraConfigs" .= object ["items" .= [object
+                        [ "name" .= ("jira-prod" :: Text)
+                        , "baseUrl" .= ("https://jira.example" :: Text)
+                        , "tokenEnv" .= ("JIRA_TOKEN" :: Text)
+                        , "projects" .= (["OPS", "SRE"] :: [Text])
+                        ]]]
+                    , "cmdbConfigs" .= object ["items" .= [object
+                        [ "name" .= ("confluence-prod" :: Text)
+                        , "baseUrl" .= ("https://confluence.example" :: Text)
+                        , "tokenEnv" .= ("CONFLUENCE_TOKEN" :: Text)
+                        ]]]
+                    ]
+            case parseProvisionConfig json of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [jira] = maybe [] (.items) config.jiraConfigs
+                    jira.jiraProjects `shouldBe` ["OPS", "SRE"]
+                    jira.jiraApiVersion `shouldBe` "3"
+                    jira.jiraEnabled `shouldBe` True
+                    let [cmdb] = maybe [] (.items) config.cmdbConfigs
+                    cmdb.cmdbSpaces `shouldBe` []
+
+        it "rejects an unknown jira apiVersion" do
+            let json = "{\"jiraConfigs\": {\"items\": [{\"name\": \"j\", \"baseUrl\": \"https://j\", \"tokenEnv\": \"JIRA_TOKEN\", \"apiVersion\": \"4\"}]}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown jira apiVersion" `isInfixOf`)
                 Right _ -> expectationFailure "expected parse failure"
 
     describe "parseHostGroupsFile" do

@@ -427,9 +427,13 @@ class Handler(BaseHTTPRequestHandler):
         if object_id not in self.server.state["objects"]:
             self._send(404, aql_error(f"NotFoundInsightException: Не удалось найти элемент «Объект» с идентификатором «{object_id}»"))
             return
+        # DEV-101 is open (auto-link picks it up too); DEV-100 is Done, so
+        # only the related-tasks path surfaces it.
         self._send(200, {
             "tickets": [{"key": "DEV-101", "summary": "Investigate halemans test trigger on dev-host-01",
-                          "status": {"name": "Open"}}] if object_id == 10001 else [],
+                          "status": {"name": "Open"}},
+                        {"key": "DEV-100", "summary": "Closed old ticket",
+                          "status": {"name": "Done"}}] if object_id == 10001 else [],
             "allTicketsQuery": "object%20in%20objects%20%3D%20" + str(object_id),
         })
 

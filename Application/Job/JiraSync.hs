@@ -6,7 +6,7 @@ import IHP.Job.Types
 import IHP.ModelSupport
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Generated.Types
-import Application.Service.Jira (syncOpenLinks)
+import Application.Service.Jira.DbConfig (syncOpenLinks)
 
 -- Periodic Jira status refresh (design_docs/milestone_3.md §5): every 5 min,
 -- refresh summary/status of links whose alert is not closed.

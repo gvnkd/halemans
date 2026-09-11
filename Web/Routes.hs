@@ -113,6 +113,20 @@ POST /dashboards/{dashboardId}/move           MoveDashboardAction
 GET  /admin/integrations                      IntegrationsAction
 POST /admin/integrations/test-confluence      TestConfluenceAction
 POST /admin/integrations/test-jira            TestJiraAction
+GET  /admin/integrations/jira/new                        NewJiraConfigAction
+POST /admin/integrations/jira                            CreateJiraConfigAction
+GET  /admin/integrations/jira/{jiraConfigId}/edit        EditJiraConfigAction
+POST /admin/integrations/jira/{jiraConfigId}/update      UpdateJiraConfigAction
+POST /admin/integrations/jira/{jiraConfigId}/toggle      ToggleJiraConfigAction
+POST /admin/integrations/jira/{jiraConfigId}/delete      DeleteJiraConfigAction
+POST /admin/integrations/jira/{jiraConfigId}/test        TestJiraConfigAction
+GET  /admin/integrations/cmdb/new                        NewCmdbConfigAction
+POST /admin/integrations/cmdb                            CreateCmdbConfigAction
+GET  /admin/integrations/cmdb/{cmdbConfigId}/edit        EditCmdbConfigAction
+POST /admin/integrations/cmdb/{cmdbConfigId}/update      UpdateCmdbConfigAction
+POST /admin/integrations/cmdb/{cmdbConfigId}/toggle      ToggleCmdbConfigAction
+POST /admin/integrations/cmdb/{cmdbConfigId}/delete      DeleteCmdbConfigAction
+POST /admin/integrations/cmdb/{cmdbConfigId}/test        TestCmdbConfigAction
 |]
 
 [routes|PushSubscriptionsController

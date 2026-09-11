@@ -68,6 +68,20 @@ data IntegrationsController
     = IntegrationsAction
     | TestConfluenceAction
     | TestJiraAction
+    | NewJiraConfigAction
+    | CreateJiraConfigAction
+    | EditJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
+    | UpdateJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
+    | ToggleJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
+    | DeleteJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
+    | TestJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
+    | NewCmdbConfigAction
+    | CreateCmdbConfigAction
+    | EditCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
+    | UpdateCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
+    | ToggleCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
+    | DeleteCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
+    | TestCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
     deriving (Eq, Show)
 
 data LlmAdminController

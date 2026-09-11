@@ -14,6 +14,8 @@ module Web.View.Fragments
 , cmdbPanelDomId
 , assetsPanelHtml
 , assetsPanelDomId
+, alertDetailsCardHtml
+, alertDetailsDomId
 , jiraLinksHtml
 , jiraLinksDomId
 , writeBackChipHtml
@@ -42,6 +44,7 @@ module Web.View.Fragments
 ) where
 
 import Web.View.Prelude
+import Application.Pipeline.Grouping (AlertField (..), alertFieldText, effectiveFieldText)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -265,6 +268,60 @@ groupHeaderHtml group = [hsx|
 -- Context panels on the alert card (milestone_3.md §8), shared by the
 -- initial render and the websocket broadcaster (kinds enriched/writeback).
 
+-- Main alert facts card (milestone 10): the alert's core fields rendered
+-- with the common panel scaffolding — label/value grid, badges for
+-- facet-overridden fields, timestamps via the local-time widget. Rendered by
+-- the alert Show view and re-rendered by the WS broadcaster on alert events.
+alertDetailsDomId :: Text
+alertDetailsDomId = "alert-details-panel"
+
+alertDetailsCardHtml :: Alert -> Html
+alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsDomId) "Alert details" badges body
+    where
+        badges = [hsx|
+            {severityBadgeHtml alert.severity Nothing}
+            {suppressedBadge}
+        |]
+        suppressedBadge = if alert.suppressed
+            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed">suppressed</span>|]
+            else mempty
+        body = [hsx|
+            <dl class="alert-details-grid" data-testid="alert-details">
+                {field "fingerprint" "Fingerprint" fingerprintValue}
+                {field "env" "Env" (fieldCell FieldEnv)}
+                {field "host" "Host" (fieldCell FieldHost)}
+                {field "service" "Service" (fieldCell FieldService)}
+                {field "check" "Check" checkValue}
+                {field "occurrences" "Occurrences" occurrencesBadge}
+                {field "started-at" "Started at" (maybeUtcTimeHtml alert.startedAt)}
+                {field "last-seen" "Last seen" (utcTimeHtml alert.lastSeenAt)}
+                {field "resolved-at" "Resolved at" (maybeUtcTimeHtml alert.resolvedAt)}
+            </dl>
+            {sourceFooter}
+            <h6>Description</h6>
+            <p data-testid="alert-description">{alert.description}</p>
+        |]
+        fingerprintValue = [hsx|<code>{alert.fingerprint}</code>|]
+        checkValue = [hsx|{fromMaybe "-" alert.checkName}|]
+        occurrencesBadge = [hsx|<span class="badge" data-testid="alert-occurrences">{alert.occurrences}</span>|]
+        field :: Text -> Text -> Html -> Html
+        field key label value = [hsx|
+            <div class="alert-details-field" data-testid={"alert-field-" <> key}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+            </div>
+        |]
+        sourceFooter = case alert.sourceUrl of
+            Just url -> [hsx|<p class="source-link mb-2" data-testid="alert-source-link"><a href={url} target="_blank">source: {url}</a></p>|]
+            Nothing -> mempty
+        -- Effective value (facet override wins); the raw column is shown
+        -- alongside when they differ, for provenance.
+        fieldCell :: AlertField -> Html
+        fieldCell alertField = case (effectiveFieldText alertField alert, alertFieldText alertField alert) of
+            (Just eff, Just raw) | eff /= raw -> [hsx|<span class="badge" data-testid="field-override">{eff}</span> <span class="text-muted" data-testid="field-override-raw">(raw: {raw})</span>|]
+            (Just eff, _) -> [hsx|<span class="badge">{eff}</span>|]
+            (Nothing, _) -> [hsx|<span class="text-muted">-</span>|]
+
 cmdbPanelDomId :: Text
 cmdbPanelDomId = "cmdb-panel"
 
@@ -345,12 +402,29 @@ assetEntryHtml (_, object, config) = [hsx|
 -- through the app-side cache route (ShowAssetIconAction), never against the
 -- Jira origin.
 
+-- Jira links (milestone_3.md §5) plus LLM-filtered related tasks
+-- (milestone 10): origin 'related' rows render in their own subsection of
+-- the same WS-replaceable container.
 jiraLinksHtml :: Alert -> [JiraLink] -> Html
 jiraLinksHtml alert links = [hsx|
-    <ul id={jiraLinksDomId} data-testid="jira-links">
-        {forEach links (jiraLinkItem alert)}
-    </ul>
+    <div id={jiraLinksDomId}>
+        <ul data-testid="jira-links">
+            {forEach linked (jiraLinkItem alert)}
+        </ul>
+        {relatedSection}
+    </div>
 |]
+    where
+        linked = filter (\link -> link.origin /= "related") links
+        related = filter (\link -> link.origin == "related") links
+        relatedSection = if null related
+            then mempty
+            else [hsx|
+                <h6 class="mt-2" data-testid="jira-related-heading">Related tasks</h6>
+                <ul data-testid="jira-related">
+                    {forEach related (jiraLinkItem alert)}
+                </ul>
+            |]
 
 jiraLinkItem :: Alert -> JiraLink -> Html
 jiraLinkItem alert link = [hsx|

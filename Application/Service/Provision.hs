@@ -10,6 +10,8 @@ module Application.Service.Provision
 , PromptTemplateItem (..)
 , FieldMappingItem (..)
 , DashboardItem (..)
+, JiraConfigItem (..)
+, CmdbConfigItem (..)
 , ProvisionError (..)
 , parseProvisionConfig
 , parseHostGroupsFile
@@ -63,6 +65,8 @@ data ProvisionConfig = ProvisionConfig
     , llm :: Maybe (Section LlmItem)
     , fieldMappings :: Maybe (Section FieldMappingItem)
     , dashboards :: Maybe (Section DashboardItem)
+    , jiraConfigs :: Maybe (Section JiraConfigItem)
+    , cmdbConfigs :: Maybe (Section CmdbConfigItem)
     } deriving (Eq, Show)
 
 data UserItem = UserItem
@@ -135,6 +139,23 @@ data DashboardItem = DashboardItem
     , config :: Value
     , position :: Int
     , isDefault :: Bool
+    } deriving (Eq, Show)
+
+data JiraConfigItem = JiraConfigItem
+    { jiraConfigName :: Text
+    , jiraBaseUrl :: Text
+    , jiraTokenEnv :: Text
+    , jiraApiVersion :: Text
+    , jiraProjects :: [Text]
+    , jiraEnabled :: Bool
+    } deriving (Eq, Show)
+
+data CmdbConfigItem = CmdbConfigItem
+    { cmdbConfigName :: Text
+    , cmdbBaseUrl :: Text
+    , cmdbTokenEnv :: Text
+    , cmdbSpaces :: [Text]
+    , cmdbEnabled :: Bool
     } deriving (Eq, Show)
 
 -- Parsing (strict: unknown keys rejected at every level, milestone_7.md §2)
@@ -274,14 +295,39 @@ instance FromJSON DashboardItem where
 
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
-        rejectUnknownFields ["users", "sources", "teams", "llm", "fieldMappings", "dashboards"] o
+        rejectUnknownFields ["users", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs"] o
         users <- o .:? "users"
         sources <- o .:? "sources"
         teams <- o .:? "teams"
         llm <- o .:? "llm"
         fieldMappings <- o .:? "fieldMappings"
         dashboards <- o .:? "dashboards"
+        jiraConfigs <- o .:? "jiraConfigs"
+        cmdbConfigs <- o .:? "cmdbConfigs"
         pure ProvisionConfig { .. }
+
+instance FromJSON JiraConfigItem where
+    parseJSON = Aeson.withObject "jiraConfigs item" \o -> do
+        rejectUnknownFields ["name", "baseUrl", "tokenEnv", "apiVersion", "projects", "enabled"] o
+        jiraConfigName <- o .: "name"
+        jiraBaseUrl <- o .: "baseUrl"
+        jiraTokenEnv <- o .: "tokenEnv"
+        jiraApiVersion <- o .:? "apiVersion" .!= "3"
+        jiraProjects <- o .:? "projects" .!= []
+        jiraEnabled <- o .:? "enabled" .!= True
+        unless (jiraApiVersion `elem` ["2", "3"]) do
+            fail ("unknown jira apiVersion \"" <> cs jiraApiVersion <> "\" (valid: 2 3)")
+        pure JiraConfigItem { .. }
+
+instance FromJSON CmdbConfigItem where
+    parseJSON = Aeson.withObject "cmdbConfigs item" \o -> do
+        rejectUnknownFields ["name", "baseUrl", "tokenEnv", "spaces", "enabled"] o
+        cmdbConfigName <- o .: "name"
+        cmdbBaseUrl <- o .: "baseUrl"
+        cmdbTokenEnv <- o .: "tokenEnv"
+        cmdbSpaces <- o .:? "spaces" .!= []
+        cmdbEnabled <- o .:? "enabled" .!= True
+        pure CmdbConfigItem { .. }
 
 parseProvisionConfig :: LByteString -> Either Text ProvisionConfig
 parseProvisionConfig bytes = case Aeson.eitherDecode bytes of
@@ -304,6 +350,8 @@ applyProvisionConfig path = do
     applyLlm config.llm
     applyFieldMappings config.fieldMappings
     applyDashboards config.dashboards
+    applyJiraConfigs config.jiraConfigs
+    applyCmdbConfigs config.cmdbConfigs
     putStrLn ("provision: applied " <> cs path)
 
 -- Category application: one advisory-locked transaction per category
@@ -724,3 +772,79 @@ strictDeleteDashboards items = do
     forM_ allDashboards \dashboard -> do
         owner <- fetch dashboard.userId
         when ((owner.email, dashboard.name) `notElem` keepPairs) (deleteRecord dashboard)
+
+-- Integration configs (milestone 10): jira_configs/cmdb_configs upsert by
+-- name; tokenEnv must resolve to a set env var (secrets stay env
+-- references). Nothing references these tables: strict deletes are safe.
+
+applyJiraConfigs :: (?modelContext :: ModelContext) => Maybe (Section JiraConfigItem) -> IO ()
+applyJiraConfigs Nothing = pure ()
+applyJiraConfigs (Just section) = withProvisionLock "jiraConfigs" do
+    forM_ section.items upsertJiraConfig
+    when section.strict do
+        let keepNames = map (.jiraConfigName) section.items
+        allConfigs <- query @JiraConfig |> fetch
+        forM_ (filter (\row -> row.name `notElem` keepNames) allConfigs) deleteRecord
+
+upsertJiraConfig :: (?modelContext :: ModelContext) => JiraConfigItem -> IO ()
+upsertJiraConfig item = do
+    validateEnvRef "jiraConfigs" item.jiraConfigName item.jiraTokenEnv
+    maybeRow <- query @JiraConfig |> filterWhere (#name, item.jiraConfigName) |> fetchOneOrNothing
+    now <- getCurrentTime
+    let projectsJson = Aeson.toJSON item.jiraProjects
+    _ <- case maybeRow of
+        Nothing -> newRecord @JiraConfig
+            |> set #name item.jiraConfigName
+            |> set #baseUrl item.jiraBaseUrl
+            |> set #tokenEnv item.jiraTokenEnv
+            |> set #apiVersion item.jiraApiVersion
+            |> set #projects projectsJson
+            |> set #enabled item.jiraEnabled
+            |> createRecord
+        Just row -> row
+            |> set #baseUrl item.jiraBaseUrl
+            |> set #tokenEnv item.jiraTokenEnv
+            |> set #apiVersion item.jiraApiVersion
+            |> set #projects projectsJson
+            |> set #enabled item.jiraEnabled
+            |> set #updatedAt now
+            |> updateRecord
+    pure ()
+
+applyCmdbConfigs :: (?modelContext :: ModelContext) => Maybe (Section CmdbConfigItem) -> IO ()
+applyCmdbConfigs Nothing = pure ()
+applyCmdbConfigs (Just section) = withProvisionLock "cmdbConfigs" do
+    forM_ section.items upsertCmdbConfig
+    when section.strict do
+        let keepNames = map (.cmdbConfigName) section.items
+        allConfigs <- query @CmdbConfig |> fetch
+        forM_ (filter (\row -> row.name `notElem` keepNames) allConfigs) deleteRecord
+
+upsertCmdbConfig :: (?modelContext :: ModelContext) => CmdbConfigItem -> IO ()
+upsertCmdbConfig item = do
+    validateEnvRef "cmdbConfigs" item.cmdbConfigName item.cmdbTokenEnv
+    maybeRow <- query @CmdbConfig |> filterWhere (#name, item.cmdbConfigName) |> fetchOneOrNothing
+    now <- getCurrentTime
+    let spacesJson = Aeson.toJSON item.cmdbSpaces
+    _ <- case maybeRow of
+        Nothing -> newRecord @CmdbConfig
+            |> set #name item.cmdbConfigName
+            |> set #baseUrl item.cmdbBaseUrl
+            |> set #tokenEnv item.cmdbTokenEnv
+            |> set #spaces spacesJson
+            |> set #enabled item.cmdbEnabled
+            |> createRecord
+        Just row -> row
+            |> set #baseUrl item.cmdbBaseUrl
+            |> set #tokenEnv item.cmdbTokenEnv
+            |> set #spaces spacesJson
+            |> set #enabled item.cmdbEnabled
+            |> set #updatedAt now
+            |> updateRecord
+    pure ()
+
+validateEnvRef :: (?modelContext :: ModelContext) => Text -> Text -> Text -> IO ()
+validateEnvRef category name envVar = do
+    maybeValue <- lookupEnv (cs envVar)
+    when (isNothing maybeValue) do
+        throwIO $ ProvisionError (category <> "." <> name <> ": tokenEnv \"" <> envVar <> "\" is not set")

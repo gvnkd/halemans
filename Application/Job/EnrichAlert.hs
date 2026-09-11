@@ -6,8 +6,9 @@ import IHP.Job.Types
 import IHP.ModelSupport
 import IHP.Fetch (fetch)
 import Generated.Types
-import qualified Application.Service.Cmdb as Cmdb
-import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Cmdb.DbConfig as Cmdb
+import qualified Application.Service.Jira.DbConfig as Jira
+import qualified Application.Service.Jira.Related as Related
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Facets as Facets
 import qualified Application.Service.Groups as Groups
@@ -51,7 +52,16 @@ instance Job EnrichAlertJob where
                 Right (Left err) -> Just ("assets", err)
                 Right (Right _) -> Nothing
             allFailures = failures ++ maybeToList assetsFailure
-        forM_ allFailures \(subsystem, err) -> void do
+        -- Related Jira tasks (milestone 10): runs AFTER assets so the
+        -- connected tickets of freshly linked objects are visible. Logged as
+        -- an enrichment_failed event on total search failure but does NOT
+        -- re-enqueue the run (advisory data; the next alert's run retries).
+        relatedOutcome <- try (Related.relatedTasksForAlert source alert)
+        let relatedFailure = case relatedOutcome of
+                Left err -> Just ("jira-related", tshow (err :: SomeException))
+                Right (Left err) -> Just ("jira-related", err)
+                Right (Right _) -> Nothing
+        forM_ (allFailures ++ maybeToList relatedFailure) \(subsystem, err) -> void do
             newRecord @AlertEvent
                 |> set #alertId (get #id alert)
                 |> set #userId Nothing

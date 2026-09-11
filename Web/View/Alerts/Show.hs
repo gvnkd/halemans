@@ -1,7 +1,6 @@
 module Web.View.Alerts.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineGroupHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml, severityBadgeHtml, panelHtml, detailsJsonHtml, inlinePostFormHtml)
-import Application.Pipeline.Grouping (AlertField (..), alertFieldText, effectiveFieldText)
+import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineGroupHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml, severityBadgeHtml, panelHtml, detailsJsonHtml, inlinePostFormHtml, alertDetailsCardHtml)
 import Application.Service.Timeline (groupTimeline)
 import qualified Data.Aeson as Aeson
 
@@ -21,6 +20,7 @@ data ShowView = ShowView
     , llmJobErrors :: [(Id LlmAnalysis, Text)]
     , canAck :: Bool
     , canClose :: Bool
+    , jiraWritable :: Bool
     }
 
 instance View ShowView where
@@ -33,20 +33,8 @@ instance View ShowView where
                 {suppressedBadge}
                 {writeBackChipHtml (head writeBackAttempts)}
             </p>
-            <dl>
-                <dt>Fingerprint</dt><dd>{alert.fingerprint}</dd>
-                <dt>Env</dt><dd>{fieldCell FieldEnv}</dd>
-                <dt>Host</dt><dd>{fieldCell FieldHost}</dd>
-                <dt>Service</dt><dd>{fieldCell FieldService}</dd>
-                <dt>Check</dt><dd>{fromMaybe "-" alert.checkName}</dd>
-                <dt>Occurrences</dt><dd>{alert.occurrences}</dd>
-                <dt>Started at</dt><dd>{maybeUtcTimeHtml alert.startedAt}</dd>
-                <dt>Last seen</dt><dd>{utcTimeHtml alert.lastSeenAt}</dd>
-                <dt>Resolved at</dt><dd>{maybeUtcTimeHtml alert.resolvedAt}</dd>
-            </dl>
-            {sourceLink}
-            <h2>Description</h2>
-            <p>{alert.description}</p>
+
+            {alertDetailsCardHtml alert}
 
             {actionBar}
 
@@ -84,21 +72,13 @@ instance View ShowView where
             suppressedBadge = if alert.suppressed
                 then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed">suppressed</span>|]
                 else mempty
-            sourceLink = case alert.sourceUrl of
-                Just url -> [hsx|<p class="source-link" data-testid="alert-source-link"><a href={url} target="_blank">source: {url}</a></p>|]
-                Nothing -> mempty
             actionBar = renderActionBar alert canAck canClose
             jiraPanelBody = [hsx|{jiraLinksHtml alert jiraLinks}{jiraCreateForm}|]
-            jiraCreateForm = if canAck && alert.status /= "closed"
+            -- Ticket creation only when the source opts into writable Jira
+            -- (milestone 10); related/auto links render regardless.
+            jiraCreateForm = if canAck && jiraWritable && alert.status /= "closed"
                 then jiraTicketForm alert
                 else mempty
-            -- Effective value (facet override wins); the raw column is shown
-            -- alongside when they differ, for provenance.
-            fieldCell :: AlertField -> Html
-            fieldCell field = case (effectiveFieldText field alert, alertFieldText field alert) of
-                (Just eff, Just raw) | eff /= raw -> [hsx|{eff} <span class="text-muted" data-testid="field-override-raw">(raw: {raw})</span>|]
-                (Just eff, _) -> [hsx|{eff}|]
-                (Nothing, _) -> [hsx|<span>-</span>|]
 
 renderActionBar :: Alert -> Bool -> Bool -> Html
 renderActionBar alert canAck canClose = [hsx|

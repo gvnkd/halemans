@@ -268,6 +268,22 @@ a:hover { color: var(--accent-hover); }
 .timeline-time { color: var(--text-muted); margin-right: 0.5rem; }
 .timeline-payload { color: var(--text-muted); font-size: 0.85rem; }
 
+/* Alert details card: two-column label/value grid of the core fields. */
+.alert-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.5rem 1.5rem;
+    margin-bottom: 0.75rem;
+}
+.alert-details-field dt {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.1rem;
+}
+.alert-details-field dd { margin-bottom: 0; }
+
 .json-viewer { background: var(--surface); padding: 0.75rem; overflow-x: auto; border: 1px solid var(--border); }
 
 #push-banner { cursor: pointer; }

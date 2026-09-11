@@ -6,7 +6,7 @@
 -- applies the same merge for databases initialized before this changed.
 
 INSERT INTO sources (id, type, name, base_url, env, poll_interval_seconds, enabled, config) VALUES
-    ('a0000000-0000-0000-0000-000000000001', 'zabbix',       'zabbix-dev',       'http://127.0.0.1:10080', 'dev', 5,  true, '{"tokenEnv":"ZABBIX_TOKEN","writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'),
-    ('a0000000-0000-0000-0000-000000000002', 'grafana',      'grafana-dev',      'http://127.0.0.1:3001',  'dev', 30, true, '{"tokenEnv":"GRAFANA_TOKEN","writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'),
-    ('a0000000-0000-0000-0000-000000000003', 'alertmanager', 'alertmanager-dev', 'http://127.0.0.1:9093',  'dev', 30, true, '{"writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}')
+    ('a0000000-0000-0000-0000-000000000001', 'zabbix',       'zabbix-dev',       'http://127.0.0.1:10080', 'dev', 5,  true, '{"tokenEnv":"ZABBIX_TOKEN","writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'),
+    ('a0000000-0000-0000-0000-000000000002', 'grafana',      'grafana-dev',      'http://127.0.0.1:3001',  'dev', 30, true, '{"tokenEnv":"GRAFANA_TOKEN","writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'),
+    ('a0000000-0000-0000-0000-000000000003', 'alertmanager', 'alertmanager-dev', 'http://127.0.0.1:9093',  'dev', 30, true, '{"writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}')
 ON CONFLICT (id) DO NOTHING;

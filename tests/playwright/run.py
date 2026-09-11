@@ -480,6 +480,36 @@ with sync_playwright() as pw:
         page.get_by_test_id("cmdb-refresh").click()
         page.get_by_test_id("cmdb-panel").wait_for()
 
+    @check("alert details card renders fields, badges and description")
+    def _():
+        alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
+        assert alert_id, "no alert from cmdb check"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        page.get_by_test_id("alert-details-panel").wait_for()
+        fp_text = page.get_by_test_id("alert-field-fingerprint").inner_text()
+        assert "pw-cmdb-" in fp_text, f"fingerprint field: {fp_text!r}"
+        assert "dev-host-01" in page.get_by_test_id("alert-field-host").inner_text()
+        page.get_by_test_id("alert-occurrences").wait_for()
+        page.get_by_test_id("alert-description").wait_for(state="attached")
+
+    @check("jira: related tasks surface assets-linked Done ticket (LLM-filtered)")
+    def _():
+        alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
+        assert alert_id, "no alert from cmdb check"
+        # DEV-100 is Done (auto-link ignores it); it reaches the card via the
+        # linked asset's connected tickets + the mock LLM echo verdict.
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            if sql(f"SELECT 1 FROM jira_links WHERE alert_id = '{alert_id}' AND origin = 'related' AND ticket_key = 'DEV-100' LIMIT 1"):
+                break
+            time.sleep(2)
+        related = sql(f"SELECT 1 FROM jira_links WHERE alert_id = '{alert_id}' AND origin = 'related' AND ticket_key = 'DEV-100' LIMIT 1")
+        assert related == "1", "related jira link row missing (DEV-100)"
+        page.goto(f"{APP}/alerts/{alert_id}")
+        related_list = page.get_by_test_id("jira-related")
+        related_list.wait_for()
+        assert "DEV-100" in related_list.inner_text()
+
     @check("jira: create ticket from alert card links with origin manual")
     def _():
         alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
@@ -491,6 +521,18 @@ with sync_playwright() as pw:
         page.get_by_test_id("jira-origin").filter(has_text="manual").first.wait_for()
         link = sql(f"SELECT 1 FROM jira_links WHERE alert_id = '{alert_id}' AND origin = 'manual' LIMIT 1")
         assert link == "1", "manual jira link row missing"
+
+    @check("jira: create form hidden when the source is not jira-writable")
+    def _():
+        alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
+        assert alert_id, "no alert from cmdb check"
+        sql("UPDATE sources SET config = config - 'jiraWritable' WHERE type = 'grafana'")
+        try:
+            page.goto(f"{APP}/alerts/{alert_id}")
+            page.get_by_test_id("jira-panel").wait_for()
+            assert page.get_by_test_id("jira-create-form").count() == 0, "create form visible without jiraWritable"
+        finally:
+            sql("UPDATE sources SET config = config || '{\"jiraWritable\": true}'::jsonb WHERE type = 'grafana'")
 
     @check("dashboard CRUD: create, open, set default, move, delete")
     def _():
@@ -1036,6 +1078,63 @@ with sync_playwright() as pw:
         row.get_by_test_id("assets-config-delete").click()
         admin.get_by_text("Deleted info source pw-assets").wait_for()
         assert admin.get_by_test_id("assets-config").filter(has_text="pw-assets").count() == 0
+        admin.close()
+        login(page, "sre")
+
+    # milestone 10: integration configs CRUD (multi-project/space scopes)
+    @check("integrations admin: jira + cmdb config CRUD, toggle, test, delete")
+    def _():
+        sql("DELETE FROM jira_configs WHERE name = 'pw-jira'")
+        sql("DELETE FROM cmdb_configs WHERE name = 'pw-cmdb'")
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/integrations")
+        admin.get_by_test_id("jira-configs").wait_for()
+        # jira: create with two projects
+        admin.get_by_test_id("new-jira-config").click()
+        admin.get_by_test_id("jira-config-form").wait_for()
+        admin.get_by_test_id("jira-config-name").fill("pw-jira")
+        admin.get_by_test_id("jira-config-base-url").fill("http://127.0.0.1:18083/")
+        admin.get_by_test_id("jira-config-token-env").fill("JIRA_TOKEN")
+        admin.get_by_test_id("jira-config-projects").fill("DEV, OPS")
+        admin.get_by_test_id("jira-config-submit").click()
+        row = admin.get_by_test_id("jira-config").filter(has_text="pw-jira")
+        row.wait_for()
+        assert row.get_by_test_id("jira-config-projects-cell").inner_text() == "DEV, OPS"
+        assert "18083/" not in row.get_by_test_id("jira-config-base-url-cell").inner_text()
+        # connection test against the mock
+        row.get_by_test_id("jira-config-test").click()
+        admin.get_by_text("Jira reachable").wait_for()
+        # edit: drop to a single project
+        row.get_by_test_id("jira-config-edit").click()
+        admin.get_by_test_id("jira-config-edit-form").wait_for()
+        admin.get_by_test_id("jira-config-projects").fill("DEV")
+        admin.get_by_test_id("jira-config-submit").click()
+        row = admin.get_by_test_id("jira-config").filter(has_text="pw-jira")
+        row.wait_for()
+        assert row.get_by_test_id("jira-config-projects-cell").inner_text() == "DEV"
+        # toggle off and back on
+        row.get_by_test_id("jira-config-toggle").click()
+        row.get_by_test_id("jira-config-disabled").wait_for()
+        row.get_by_test_id("jira-config-toggle").click()
+        row.get_by_test_id("jira-config-enabled").wait_for()
+        # cmdb: create + delete
+        admin.get_by_test_id("new-cmdb-config").click()
+        admin.get_by_test_id("cmdb-config-form").wait_for()
+        admin.get_by_test_id("cmdb-config-name").fill("pw-cmdb")
+        admin.get_by_test_id("cmdb-config-base-url").fill("http://127.0.0.1:18082/")
+        admin.get_by_test_id("cmdb-config-token-env").fill("CONFLUENCE_TOKEN")
+        admin.get_by_test_id("cmdb-config-spaces").fill("DEV, OPS")
+        admin.get_by_test_id("cmdb-config-submit").click()
+        cmdb_row = admin.get_by_test_id("cmdb-config").filter(has_text="pw-cmdb")
+        cmdb_row.wait_for()
+        assert cmdb_row.get_by_test_id("cmdb-config-spaces-cell").inner_text() == "DEV, OPS"
+        cmdb_row.get_by_test_id("cmdb-config-delete").click()
+        admin.get_by_text("Deleted CMDB connection pw-cmdb").wait_for()
+        # jira delete (keep the run on the env fallback afterwards)
+        row.get_by_test_id("jira-config-delete").click()
+        admin.get_by_text("Deleted Jira connection pw-jira").wait_for()
+        assert admin.get_by_test_id("jira-config").filter(has_text="pw-jira").count() == 0
         admin.close()
         login(page, "sre")
 

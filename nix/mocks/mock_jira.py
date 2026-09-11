@@ -29,6 +29,12 @@ SEEDED_ISSUES = {
 
 def clause_match(issue, clause):
     clause = clause.strip()
+    # NB: jql_match strips parens before splitting, so `project in (A, B)`
+    # arrives here as `project in A, B`.
+    m = re.fullmatch(r"project\s+in\s+(.+)", clause, re.IGNORECASE)
+    if m:
+        projects = [p.strip().strip('"').lower() for p in m.group(1).split(",") if p.strip()]
+        return issue["project"].lower() in projects
     m = re.fullmatch(r"project\s*=\s*(.+)", clause, re.IGNORECASE)
     if m:
         return issue["project"].lower() == m.group(1).strip().strip('"').lower()
@@ -103,6 +109,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/rest/api/3/search":
             self._search(parse_qs(parsed.query))
+            return
+        if path == "/rest/api/3/myself":
+            self._send(200, {"accountId": "mock-jira", "displayName": "Mock Jira"})
             return
         m = re.fullmatch(r"/rest/api/3/issue/([\w-]+)", path)
         if m:

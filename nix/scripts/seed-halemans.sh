@@ -32,7 +32,7 @@ SQL
 # initialized before the fixtures changed.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
 UPDATE sources
-SET config = config || '{"writeBack":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
+SET config = config || '{"writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
 WHERE type IN ('zabbix', 'grafana', 'alertmanager');
 
 INSERT INTO cmdb_entries (host_id, page_id, title, excerpt, url)
