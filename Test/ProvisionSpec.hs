@@ -15,7 +15,7 @@ spec :: Spec
 spec = describe "Application.Service.Provision" do
     describe "parseProvisionConfig" do
         it "parses the empty config" do
-            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
             let json = Aeson.encode $ object
@@ -253,6 +253,20 @@ spec = describe "Application.Service.Provision" do
             let json = "{\"jiraConfigs\": {\"items\": [{\"name\": \"j\", \"baseUrl\": \"https://j\", \"tokenEnv\": \"JIRA_TOKEN\", \"apiVersion\": \"4\"}]}}"
             case parseProvisionConfig json of
                 Left err -> err `shouldSatisfy` ("unknown jira apiVersion" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "parses the autoAnalyze gate with defaults" do
+            case parseProvisionConfig "{\"autoAnalyze\": {}}" of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let Just gate = config.autoAnalyze
+                    gate.aaItemStatuses `shouldBe` ["firing", "ack"]
+                    gate.aaItemSeverities `shouldBe` ["critical", "high", "warning", "info"]
+                    gate.aaItemEnabled `shouldBe` True
+
+        it "rejects unknown statuses in autoAnalyze" do
+            case parseProvisionConfig "{\"autoAnalyze\": {\"statuses\": [\"firing\", \"bogus\"]}}" of
+                Left err -> err `shouldSatisfy` ("unknown alert status" `isInfixOf`)
                 Right _ -> expectationFailure "expected parse failure"
 
     describe "parseHostGroupsFile" do

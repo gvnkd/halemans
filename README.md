@@ -17,11 +17,14 @@ Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, serve
 - **Grouping & dedup** — DB-backed ordered grouping rules; exact dedupe by source-scoped fingerprint with occurrence counters.
 - **Teams & RBAC** — roles as data (composable privilege sets), team-based notification/escalation routing, blackouts (maintenance windows) per environment/host/service.
 - **Context enrichment** — Confluence CMDB lookup (TTL-cached), Jira issue linking/status sync, Jira Assets object linking with served icon cache, hybrid write-back (ack/close/silence propagated back to Zabbix/Grafana/Alertmanager).
-- **LLM enrichment** — advisory-only analysis (probable cause, suggested actions) via any OpenAI-compatible endpoint; agent roles with tool filtering, prompt-hash dedupe, retry with backoff, per-DB provider config.
+- **Multi-scope integrations** — Jira and Confluence connections are managed in the admin UI (or provisioned) as named configs, each searching **multiple projects/spaces** at once (`project in (...)` / `space in (...)`); the legacy env-var setup remains as fallback when no DB rows exist.
+- **Related Jira tasks** — every alert card surfaces tasks related to the alert, gathered from Jira issue search across all configured projects (including historical/Done tickets) and from Jira Assets "linked tasks", then filtered for relevance by the configured LLM. The filter prompt is an admin-editable template assigned via the `jira-related-filter` agent role, which can call the read-only `jira_issue_details` tool (summary/status/labels/description/comments) before deciding.
+- **Jira ticket creation** — alerts can spawn Jira tickets from the card, but only when the alert's source opts in via `jiraWritable` (read-only by default).
+- **LLM enrichment** — advisory-only analysis (probable cause, suggested actions) via any OpenAI-compatible endpoint; agent roles with tool filtering, prompt-hash dedupe, retry with backoff, per-DB provider config. Automatic analyses are gated by a configurable status/severity rule set (Admin → LLM → Auto-analysis, or the top-level `autoAnalyze` provision key; defaults: firing+ack, all severities — stalled/resolved alerts are not auto-analyzed; manual re-analyze is never gated).
 - **Facets & custom dashboards** — facet extraction from fields/labels/Assets attributes via ranked field mappings, per-user dashboards with match/groupBy/summary/forEach card templates, live-updated over WebSocket.
 - **Live UI** — server-rendered pages with WebSocket fragment updates, per-environment scopes, browser notifications, theme packs.
 - **Public API & metrics** — read-only JSON API (`/api/v1/alerts`, `/api/v1/environments`) with per-token rate limits, `/metrics` Prometheus exporter, audit export (CSV/JSONL).
-- **Provisioning** — declarative JSON config (users/teams/sources/rules) applied idempotently at boot; env-var indirection for secrets.
+- **Provisioning** — declarative JSON config (users/teams/sources/rules/LLM/integration configs) applied idempotently at boot; env-var indirection for secrets.
 - **Source health** — connector failure tracking with exponential backoff, webhook silence detection, reverse state reconciliation (acks, silences, missed resolves), internal health alerts.
 
 Full design: [`design_docs/01_highlevel.md`](design_docs/01_highlevel.md); per-milestone notes in `design_docs/milestone_*.md`.
@@ -121,6 +124,25 @@ Cursor-based polling only ever returns *new* events, so an OK event missed while
 - `reconcileIntervalSeconds` — minimum seconds between reconciles; `0` means every poll cycle.
 - `absentResolveMinAgeSeconds` — a trigger *missing* from `trigger.get` (deleted, or invisible to the token) resolves the local alert only when the alert is older than this; guards against token permission gaps hiding triggers.
 - `eventPageLimit` — `event.get` page size; catch-up after an outage pages until a short page, so no events are skipped.
+
+## Integrations (Jira / Confluence)
+
+Jira and Confluence are context integrations, not alert sources. Connections are managed in **Admin → Integrations** (`jira_configs` / `cmdb_configs` tables) or provisioned via the `jiraConfigs` / `cmdbConfigs` sections of `provision.json`:
+
+```json
+{
+  "jiraConfigs": {"items": [{"name": "jira-prod", "baseUrl": "https://jira.example.com",
+    "tokenEnv": "JIRA_TOKEN", "apiVersion": "3", "projects": ["OPS", "SRE"]}]},
+  "cmdbConfigs": {"items": [{"name": "confluence-prod", "baseUrl": "https://confluence.example.com",
+    "tokenEnv": "CONFLUENCE_TOKEN", "spaces": ["OPS", "INFRA"]}]}
+}
+```
+
+- `tokenEnv` names an environment variable holding the token — secrets never land in the DB. `apiVersion` is `3` (Jira Cloud) or `2` (Server/Data Center).
+- `projects` / `spaces` are search scopes; an empty array means "no scope clause" (search everything the token can see). All enabled connections are searched and their results merged.
+- When **no** config rows exist, the legacy env setup applies unchanged: `HALEMANS_JIRA_URL`/`JIRA_TOKEN` (+ per-source `jiraProject`) and `HALEMANS_CONFLUENCE_URL`/`CONFLUENCE_TOKEN` (+ per-source `cmdbSpace`).
+- Per-source keys (Sources form / source `config`): `jiraProject` picks the ticket-creation target project, `jiraWritable: true` allows creating Jira tickets from the source's alerts (default: read-only), `writeBack: true` mirrors ack/close back to the alert source.
+- The **related-tasks filter** prompt/template lives with the other LLM prompts (Admin → LLM): role `jira-related-filter`, template `jira_related_filter`, tool whitelist seeded with `jira_issue_details`.
 
 ## API
 

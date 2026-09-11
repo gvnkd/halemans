@@ -12,6 +12,7 @@ module Application.Service.Provision
 , DashboardItem (..)
 , JiraConfigItem (..)
 , CmdbConfigItem (..)
+, AutoAnalyzeItem (..)
 , ProvisionError (..)
 , parseProvisionConfig
 , parseHostGroupsFile
@@ -31,6 +32,7 @@ import Application.Connector.Zabbix (ZabbixGroup)
 import Application.Pipeline.Grouping (parseAlertField)
 import Application.Service.HostGroups (replaceHostGroupCache)
 import Application.Service.PollerControl (ensurePollerForSourceType)
+import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import qualified Data.Aeson as Aeson
 import Data.Aeson (Value, FromJSON, parseJSON, (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser, parseEither)
@@ -67,6 +69,7 @@ data ProvisionConfig = ProvisionConfig
     , dashboards :: Maybe (Section DashboardItem)
     , jiraConfigs :: Maybe (Section JiraConfigItem)
     , cmdbConfigs :: Maybe (Section CmdbConfigItem)
+    , autoAnalyze :: Maybe AutoAnalyzeItem
     } deriving (Eq, Show)
 
 data UserItem = UserItem
@@ -156,6 +159,14 @@ data CmdbConfigItem = CmdbConfigItem
     , cmdbTokenEnv :: Text
     , cmdbSpaces :: [Text]
     , cmdbEnabled :: Bool
+    } deriving (Eq, Show)
+
+-- Auto-analysis gate (milestone 10 §5): singleton, not a Section — no
+-- strict-delete semantics; an absent key leaves the row untouched.
+data AutoAnalyzeItem = AutoAnalyzeItem
+    { aaItemStatuses :: [Text]
+    , aaItemSeverities :: [Text]
+    , aaItemEnabled :: Bool
     } deriving (Eq, Show)
 
 -- Parsing (strict: unknown keys rejected at every level, milestone_7.md §2)
@@ -295,7 +306,7 @@ instance FromJSON DashboardItem where
 
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
-        rejectUnknownFields ["users", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs"] o
+        rejectUnknownFields ["users", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "autoAnalyze"] o
         users <- o .:? "users"
         sources <- o .:? "sources"
         teams <- o .:? "teams"
@@ -304,6 +315,7 @@ instance FromJSON ProvisionConfig where
         dashboards <- o .:? "dashboards"
         jiraConfigs <- o .:? "jiraConfigs"
         cmdbConfigs <- o .:? "cmdbConfigs"
+        autoAnalyze <- o .:? "autoAnalyze"
         pure ProvisionConfig { .. }
 
 instance FromJSON JiraConfigItem where
@@ -329,6 +341,20 @@ instance FromJSON CmdbConfigItem where
         cmdbEnabled <- o .:? "enabled" .!= True
         pure CmdbConfigItem { .. }
 
+instance FromJSON AutoAnalyzeItem where
+    parseJSON = Aeson.withObject "autoAnalyze" \o -> do
+        rejectUnknownFields ["statuses", "severities", "enabled"] o
+        aaItemStatuses <- o .:? "statuses" .!= ["firing", "ack"]
+        aaItemSeverities <- o .:? "severities" .!= AutoAnalyze.allSeverities
+        aaItemEnabled <- o .:? "enabled" .!= True
+        forM_ aaItemStatuses \status ->
+            unless (status `elem` AutoAnalyze.allStatuses) do
+                fail ("unknown alert status \"" <> cs status <> "\" (valid: firing ack stalled resolved)")
+        forM_ aaItemSeverities \severity ->
+            unless (severity `elem` AutoAnalyze.allSeverities) do
+                fail ("unknown severity \"" <> cs severity <> "\" (valid: critical high warning info)")
+        pure AutoAnalyzeItem { .. }
+
 parseProvisionConfig :: LByteString -> Either Text ProvisionConfig
 parseProvisionConfig bytes = case Aeson.eitherDecode bytes of
     Left err -> Left ("invalid JSON: " <> cs err)
@@ -352,6 +378,7 @@ applyProvisionConfig path = do
     applyDashboards config.dashboards
     applyJiraConfigs config.jiraConfigs
     applyCmdbConfigs config.cmdbConfigs
+    applyAutoAnalyze config.autoAnalyze
     putStrLn ("provision: applied " <> cs path)
 
 -- Category application: one advisory-locked transaction per category
@@ -848,3 +875,25 @@ validateEnvRef category name envVar = do
     maybeValue <- lookupEnv (cs envVar)
     when (isNothing maybeValue) do
         throwIO $ ProvisionError (category <> "." <> name <> ": tokenEnv \"" <> envVar <> "\" is not set")
+
+-- Auto-analysis gate (milestone 10 §5): upsert the singleton row; an absent
+-- section leaves both the row and the no-row defaults untouched.
+applyAutoAnalyze :: (?modelContext :: ModelContext) => Maybe AutoAnalyzeItem -> IO ()
+applyAutoAnalyze Nothing = pure ()
+applyAutoAnalyze (Just item) = withProvisionLock "autoAnalyze" do
+    existing <- query @LlmAutoAnalyzeConfig |> fetch
+    now <- getCurrentTime
+    let statusesJson = Aeson.toJSON item.aaItemStatuses
+        severitiesJson = Aeson.toJSON item.aaItemSeverities
+    _ <- case existing of
+        (row:_) -> row
+            |> set #statuses statusesJson
+            |> set #severities severitiesJson
+            |> set #enabled item.aaItemEnabled
+            |> set #updatedAt now
+            |> updateRecord
+        [] -> createRecord (newRecord @LlmAutoAnalyzeConfig
+            |> set #statuses statusesJson
+            |> set #severities severitiesJson
+            |> set #enabled item.aaItemEnabled)
+    pure ()
