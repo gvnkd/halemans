@@ -45,12 +45,12 @@ instance View NewView where
                 <label class="form-check-label">Jira writable (alerts of this source may create Jira tickets)</label>
             </div>
             <div class="mb-3">
-                <label class="form-label">CMDB space</label>
-                <input name="cmdbSpace" type="text" class="form-control" data-testid="source-cmdb-space" placeholder="DEV"/>
+                <label class="form-label">CMDB spaces (comma-separated; overrides the connection's scope)</label>
+                <input name="cmdbSpaces" type="text" class="form-control" data-testid="source-cmdb-spaces" placeholder="DEV, OPS"/>
             </div>
             <div class="mb-3">
-                <label class="form-label">Jira project key</label>
-                <input name="jiraProject" type="text" class="form-control" data-testid="source-jira-project" placeholder="DEV"/>
+                <label class="form-label">Jira projects (comma-separated; overrides the connection's scope, first entry is the ticket-creation target)</label>
+                <input name="jiraProjects" type="text" class="form-control" data-testid="source-jira-projects" placeholder="DEV, OPS"/>
             </div>
             <div class="mb-3">
                 <label class="form-label">Initial history (days, zabbix first sync; empty = 1)</label>

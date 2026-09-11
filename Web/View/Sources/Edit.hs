@@ -6,8 +6,8 @@ data EditView = EditView
     , tokenEnv :: Text
     , writeBack :: Bool
     , jiraWritable :: Bool
-    , cmdbSpace :: Text
-    , jiraProject :: Text
+    , cmdbSpaces :: Text
+    , jiraProjects :: Text
     , initialHistoryDays :: Text
     , hostGroupScope :: Text
     }
@@ -51,12 +51,12 @@ instance View EditView where
                 <label class="form-check-label">Jira writable (alerts of this source may create Jira tickets)</label>
             </div>
             <div class="mb-3">
-                <label class="form-label">CMDB space</label>
-                <input name="cmdbSpace" type="text" class="form-control" value={cmdbSpace} data-testid="source-cmdb-space"/>
+                <label class="form-label">CMDB spaces (comma-separated; overrides the connection's scope)</label>
+                <input name="cmdbSpaces" type="text" class="form-control" value={cmdbSpaces} data-testid="source-cmdb-spaces"/>
             </div>
             <div class="mb-3">
-                <label class="form-label">Jira project key</label>
-                <input name="jiraProject" type="text" class="form-control" value={jiraProject} data-testid="source-jira-project"/>
+                <label class="form-label">Jira projects (comma-separated; overrides the connection's scope, first entry is the ticket-creation target)</label>
+                <input name="jiraProjects" type="text" class="form-control" value={jiraProjects} data-testid="source-jira-projects"/>
             </div>
             <div class="mb-3">
                 <label class="form-label">Initial history (days, zabbix first sync; empty = 1)</label>

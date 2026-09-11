@@ -66,8 +66,6 @@ data DashboardsController
 
 data IntegrationsController
     = IntegrationsAction
-    | TestConfluenceAction
-    | TestJiraAction
     | NewJiraConfigAction
     | CreateJiraConfigAction
     | EditJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }

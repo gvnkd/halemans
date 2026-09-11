@@ -65,12 +65,21 @@ INSERT INTO retention_jobs DEFAULT VALUES;
 INSERT INTO source_health_jobs DEFAULT VALUES;
 SQL
 
-# Enrichment/write-back source config + seeded CMDB cache row (milestone 3 D9):
-# same SQL as seed-halemans (keep both in sync per project convention).
+# Enrichment/write-back source config + integration connections + seeded
+# CMDB cache row (milestone 3 D9; connections since 2.0): same SQL as
+# seed-halemans (keep both in sync per project convention).
 psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
 UPDATE sources
-SET config = config || '{"writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
+SET config = config || '{"writeBack":true,"jiraWritable":true,"jiraProjects":["DEV"],"cmdbSpaces":["DEV"]}'::jsonb
 WHERE type IN ('zabbix', 'grafana', 'alertmanager');
+
+INSERT INTO jira_configs (name, base_url, token_env, api_version, projects, enabled)
+SELECT 'mock-jira', 'http://127.0.0.1:18083', 'JIRA_TOKEN', '3', '["DEV"]'::jsonb, true
+WHERE NOT EXISTS (SELECT 1 FROM jira_configs WHERE name = 'mock-jira');
+
+INSERT INTO cmdb_configs (name, base_url, token_env, spaces, enabled)
+SELECT 'mock-confluence', 'http://127.0.0.1:18082', 'CONFLUENCE_TOKEN', '["DEV"]'::jsonb, true
+WHERE NOT EXISTS (SELECT 1 FROM cmdb_configs WHERE name = 'mock-confluence');
 
 INSERT INTO cmdb_entries (host_id, page_id, title, excerpt, url)
 SELECT h.id, '1001', 'dev-host-01',

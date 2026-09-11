@@ -518,10 +518,12 @@ spec = describe "alert pipeline (milestone 1)" do
             length jobsAfterRefire `shouldBe` 1
 
         it "enrich job populates cmdb cache and jira links" do
+            ensureMockJiraConfig
+            ensureMockCmdbConfig
             source <- integrationSource "zabbix" "itest-m3-enrich" "" (object
                 [ "writeBack" .= True
-                , "cmdbSpace" .= ("DEV" :: Text)
-                , "jiraProject" .= ("DEV" :: Text)
+                , "jiraProjects" .= (["DEV"] :: [Text])
+                , "cmdbSpaces" .= (["DEV"] :: [Text])
                 ])
             fp <- freshFingerprint
             Just alertId <- ingest source (testEvent fp Firing)
@@ -560,15 +562,37 @@ spec = describe "alert pipeline (milestone 1)" do
                 |> fetch
             length linksAfter `shouldBe` 1
 
+        it "per-source scope override replaces the connection's jira projects" do
+            ensureMockJiraConfig
+            ensureMockCmdbConfig
+            -- the mock jira holds only DEV tickets, so a NOPE scope (both
+            -- the array key and the legacy scalar) auto-links nothing — a
+            -- legitimate empty result, not an enrichment failure
+            forM_ [ object ["jiraProjects" .= (["NOPE"] :: [Text])]
+                  , object ["jiraProject" .= ("NOPE" :: Text)]
+                  ] \config -> do
+                suffix <- tshow <$> nextRandom
+                source <- integrationSource "zabbix" ("itest-m3-scope-" <> suffix) "" config
+                fp <- freshFingerprint
+                Just alertId <- ingest source (testEvent fp Firing)
+                    { host = Just ("itest-m3-scope-host-" <> suffix), checkName = Just "halemans test trigger" }
+                job <- enrichJobFor alertId
+                perform job
+                links <- query @JiraLink
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+                links `shouldBe` []
+                failures <- query @AlertEvent
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#kind, "enrichment_failed" :: Text)
+                    |> fetch
+                mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` []
+
         it "enrich soft-fails per subsystem (confluence down, jira still runs)" do
-            oldConfluenceUrl <- lookupEnv "HALEMANS_CONFLUENCE_URL"
-            setEnv "HALEMANS_CONFLUENCE_URL" "http://127.0.0.1:9"
-            flip finally (maybe (unsetEnv "HALEMANS_CONFLUENCE_URL") (setEnv "HALEMANS_CONFLUENCE_URL") oldConfluenceUrl) do
+            ensureMockJiraConfig
+            withOnlyCmdbConfig "http://127.0.0.1:9" do
                 source <- integrationSource "zabbix" "itest-m3-softfail" "" (object
-                    [ "writeBack" .= True
-                    , "cmdbSpace" .= ("DEV" :: Text)
-                    , "jiraProject" .= ("DEV" :: Text)
-                    ])
+                    [ "writeBack" .= True ])
                 fp <- freshFingerprint
                 -- unique host (not dev-host-01): that host's cmdb_entries
                 -- row is cached by the previous test and would be served
@@ -591,11 +615,9 @@ spec = describe "alert pipeline (milestone 1)" do
                 length links `shouldBe` 1
 
         it "enrich retry carries attempts forward and stops once resolved" do
-            oldConfluenceUrl <- lookupEnv "HALEMANS_CONFLUENCE_URL"
-            setEnv "HALEMANS_CONFLUENCE_URL" "http://127.0.0.1:9"
-            flip finally (maybe (unsetEnv "HALEMANS_CONFLUENCE_URL") (setEnv "HALEMANS_CONFLUENCE_URL") oldConfluenceUrl) do
-                source <- integrationSource "zabbix" "itest-m3-retry" "" (object
-                    [ "cmdbSpace" .= ("DEV" :: Text) ])
+            ensureMockJiraConfig
+            withOnlyCmdbConfig "http://127.0.0.1:9" do
+                source <- integrationSource "zabbix" "itest-m3-retry" "" (object [])
                 fp <- freshFingerprint
                 Just alertId <- ingest source (testEvent fp Firing)
                     { host = Just "itest-m3-retry-host", checkName = Just "halemans test trigger" }
@@ -616,27 +638,23 @@ spec = describe "alert pipeline (milestone 1)" do
                 length retriesAfter `shouldBe` 2
 
         it "enrich does not re-enqueue on deterministic client errors (401)" do
-            oldConfluenceUrl <- lookupEnv "HALEMANS_CONFLUENCE_URL"
             oldConfluenceToken <- lookupEnv "CONFLUENCE_TOKEN"
-            setEnv "HALEMANS_CONFLUENCE_URL" "http://127.0.0.1:18082"
             setEnv "CONFLUENCE_TOKEN" "wrong-token"
-            flip finally (do
-                maybe (unsetEnv "HALEMANS_CONFLUENCE_URL") (setEnv "HALEMANS_CONFLUENCE_URL") oldConfluenceUrl
-                maybe (unsetEnv "CONFLUENCE_TOKEN") (setEnv "CONFLUENCE_TOKEN") oldConfluenceToken) do
-                source <- integrationSource "zabbix" "itest-m3-4xx" "" (object
-                    [ "cmdbSpace" .= ("DEV" :: Text) ])
-                fp <- freshFingerprint
-                Just alertId <- ingest source (testEvent fp Firing)
-                    { host = Just "itest-m3-4xx-host", checkName = Just "halemans test trigger" }
-                job <- freshEnrichJob alertId
-                perform job
-                -- deterministic client error (401): no re-enqueue, whatever
-                -- the other subsystems did (the dev worker may have raced us
-                -- to a cached cmdb row, so event contents are not asserted)
-                retries <- query @EnrichAlertJob
-                    |> filterWhere (#alertId, alertId)
-                    |> fetch
-                length retries `shouldBe` 1
+            flip finally (maybe (unsetEnv "CONFLUENCE_TOKEN") (setEnv "CONFLUENCE_TOKEN") oldConfluenceToken) do
+                withOnlyCmdbConfig "http://127.0.0.1:18082" do
+                    source <- integrationSource "zabbix" "itest-m3-4xx" "" (object [])
+                    fp <- freshFingerprint
+                    Just alertId <- ingest source (testEvent fp Firing)
+                        { host = Just "itest-m3-4xx-host", checkName = Just "halemans test trigger" }
+                    job <- freshEnrichJob alertId
+                    perform job
+                    -- deterministic client error (401): no re-enqueue, whatever
+                    -- the other subsystems did (the dev worker may have raced us
+                    -- to a cached cmdb row, so event contents are not asserted)
+                    retries <- query @EnrichAlertJob
+                        |> filterWhere (#alertId, alertId)
+                        |> fetch
+                    length retries `shouldBe` 1
 
         it "ack enqueues write-back; webhook sources record unsupported" do
             user <- testUser
@@ -720,7 +738,8 @@ spec = describe "alert pipeline (milestone 1)" do
             unacked.status `shouldBe` "firing"
 
         it "JiraSyncJob reflects status drift from jira" do
-            source <- integrationSource "zabbix" "itest-m3-jirasync" "" (object ["jiraProject" .= ("DEV" :: Text)])
+            ensureMockJiraConfig
+            source <- integrationSource "zabbix" "itest-m3-jirasync" "" (object [])
             fp <- freshFingerprint
             Just alertId <- ingest source (testEvent fp Firing)
             now <- getCurrentTime
@@ -2078,6 +2097,63 @@ ensureAssetsConfig = do
             |> set #attributeNames itestAttrNames
             |> set #enabled True
             |> createRecord
+
+ensureMockJiraConfig :: (?modelContext :: ModelContext) => IO ()
+ensureMockJiraConfig = do
+    existing <- query @JiraConfig
+        |> filterWhere (#name, "itest-jira" :: Text)
+        |> fetchOneOrNothing
+    case existing of
+        Just config -> unless config.enabled
+            (void (config |> set #enabled True |> updateRecord))
+        Nothing -> void $ newRecord @JiraConfig
+            |> set #name "itest-jira"
+            |> set #baseUrl "http://127.0.0.1:18083"
+            |> set #tokenEnv "JIRA_TOKEN"
+            |> set #apiVersion "3"
+            |> set #projects (Aeson.toJSON ["DEV" :: Text])
+            |> set #enabled True
+            |> createRecord
+
+ensureMockCmdbConfig :: (?modelContext :: ModelContext) => IO ()
+ensureMockCmdbConfig = do
+    existing <- query @CmdbConfig
+        |> filterWhere (#name, "itest-confluence" :: Text)
+        |> fetchOneOrNothing
+    case existing of
+        Just config -> unless config.enabled
+            (void (config |> set #enabled True |> updateRecord))
+        Nothing -> void $ newRecord @CmdbConfig
+            |> set #name "itest-confluence"
+            |> set #baseUrl "http://127.0.0.1:18082"
+            |> set #tokenEnv "CONFLUENCE_TOKEN"
+            |> set #spaces (Aeson.toJSON ["DEV" :: Text])
+            |> set #enabled True
+            |> createRecord
+
+-- Runs the action with the ONLY enabled CMDB connection pointing at
+-- baseUrl (dead port, wrong token, ...), restoring the previous rows
+-- afterwards. Config resolution is global (all enabled rows), so a failure
+-- probe must exclude the healthy mock connection.
+withOnlyCmdbConfig :: (?modelContext :: ModelContext) => Text -> IO a -> IO a
+withOnlyCmdbConfig baseUrl action = do
+    suffix <- tshow <$> nextRandom
+    previous <- query @CmdbConfig |> fetch
+    forM_ (filter (.enabled) previous) \row ->
+        void (row |> set #enabled False |> updateRecord)
+    probe <- newRecord @CmdbConfig
+        |> set #name ("itest-cmdb-probe-" <> suffix)
+        |> set #baseUrl baseUrl
+        |> set #tokenEnv "CONFLUENCE_TOKEN"
+        |> set #enabled True
+        |> createRecord
+    flip finally (restore previous probe) action
+    where
+        restore previous probe = do
+            deleteRecord probe
+            forM_ (filter (.enabled) previous) \row -> do
+                current <- fetch (get #id row)
+                void (current |> set #enabled True |> updateRecord)
 
 enrichJobFor :: (?modelContext :: ModelContext) => Id Alert -> IO EnrichAlertJob
 enrichJobFor alertId = query @EnrichAlertJob

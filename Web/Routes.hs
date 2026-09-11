@@ -113,8 +113,6 @@ POST /dashboards/{dashboardId}/move           MoveDashboardAction
 
 [routes|IntegrationsController
 GET  /admin/integrations                      IntegrationsAction
-POST /admin/integrations/test-confluence      TestConfluenceAction
-POST /admin/integrations/test-jira            TestJiraAction
 GET  /admin/integrations/jira/new                        NewJiraConfigAction
 POST /admin/integrations/jira                            CreateJiraConfigAction
 GET  /admin/integrations/jira/{jiraConfigId}/edit        EditJiraConfigAction

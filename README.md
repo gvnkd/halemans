@@ -140,8 +140,8 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 
 - `tokenEnv` names an environment variable holding the token — secrets never land in the DB. `apiVersion` is `3` (Jira Cloud) or `2` (Server/Data Center).
 - `projects` / `spaces` are search scopes; an empty array means "no scope clause" (search everything the token can see). All enabled connections are searched and their results merged.
-- When **no** config rows exist, the legacy env setup applies unchanged: `HALEMANS_JIRA_URL`/`JIRA_TOKEN` (+ per-source `jiraProject`) and `HALEMANS_CONFLUENCE_URL`/`CONFLUENCE_TOKEN` (+ per-source `cmdbSpace`).
-- Per-source keys (Sources form / source `config`): `jiraProject` picks the ticket-creation target project, `jiraWritable: true` allows creating Jira tickets from the source's alerts (default: read-only), `writeBack: true` mirrors ack/close back to the alert source.
+- Since 2.0 these DB rows are the ONLY way to configure Jira/Confluence — the legacy `HALEMANS_JIRA_URL` / `HALEMANS_CONFLUENCE_URL` env fallback was removed (the token env vars referenced by `tokenEnv` are still required).
+- Per-source keys (Sources form / source `config`): `jiraProjects` / `cmdbSpaces` (JSON arrays, or comma-separated in the form) REPLACE the connection's search scope for that source's alerts — precedence is source > connection; the first `jiraProjects` entry is the ticket-creation target. The legacy scalar keys `jiraProject` / `cmdbSpace` are still read when the array key is absent. `jiraWritable: true` allows creating Jira tickets from the source's alerts (default: read-only), `writeBack: true` mirrors ack/close back to the alert source.
 - The **related-tasks filter** prompt/template lives with the other LLM prompts (Admin → LLM): role `jira-related-filter`, template `jira_related_filter`, tool whitelist seeded with `jira_issue_details`.
 
 ## API

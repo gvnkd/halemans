@@ -1,8 +1,6 @@
 module Application.Service.Cmdb
 ( ConfPage (..)
 , CmdbConfig (..)
-, cmdbConfigFromEnv
-, cmdbEnvConfig
 , apiUrl
 , cqlForSubject
 , spaceClause
@@ -17,7 +15,7 @@ module Application.Service.Cmdb
 , subjectTerm
 , fetchCached
 , upsertEntry
-, sourceConfigText
+, sourceSpaceOverride
 , confluenceSearch
 , connectionOk
 ) where
@@ -31,13 +29,13 @@ import Data.Aeson (Value, (.:), (.:?), (.!=))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Text as Text
 import qualified Network.Wreq as Wreq
 import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 import Control.Exception (try, SomeException)
 import Data.Functor ((<&>))
-import System.Environment (lookupEnv)
 
 -- Read-only Confluence CMDB client + TTL cache (design_docs/milestone_3.md
 -- §4). Positive cache TTL 6h, negative 30m; stale rows are served while a
@@ -57,27 +55,21 @@ data CmdbConfig = CmdbConfig
     , spaces :: [Text]
     } deriving (Eq, Show)
 
-cmdbConfigFromEnv :: Source -> IO (Maybe CmdbConfig)
-cmdbConfigFromEnv source =
-    cmdbEnvConfig (configText "cmdbSpace" source.config |> fromMaybe "DEV")
-
-cmdbEnvConfig :: Text -> IO (Maybe CmdbConfig)
-cmdbEnvConfig space = do
-    url <- lookupEnv "HALEMANS_CONFLUENCE_URL"
-    token <- lookupEnv "CONFLUENCE_TOKEN"
-    pure case (url, token) of
-        (Just url, Just token) -> Just CmdbConfig { baseUrl = cs url, token = cs token, space, spaces = [space] }
-        _ -> Nothing
-
 apiUrl :: CmdbConfig -> Text -> Text
 apiUrl config path = Text.dropWhileEnd (== '/') config.baseUrl <> path
 
-configText :: Text -> Value -> Maybe Text
-configText key value = parseMaybe (Aeson.withObject "config" (\o -> o .: Key.fromText key)) value
+-- Per-source scope override: a "cmdbSpaces" array on source.config REPLACES
+-- the connection's space list for that source's alerts. The legacy scalar
+-- "cmdbSpace" key is honoured when the array is absent.
+sourceSpaceOverride :: Source -> [Text]
+sourceSpaceOverride source = configStrings "cmdbSpaces" "cmdbSpace" source.config
 
--- Per-source config jsonb string lookup (cmdbSpace, ...).
-sourceConfigText :: Text -> Source -> Maybe Text
-sourceConfigText key source = configText key source.config
+configStrings :: Text -> Text -> Value -> [Text]
+configStrings key legacyKey value = case value of
+    Aeson.Object o -> case KeyMap.lookup (Key.fromText key) o of
+        Just raw -> fromMaybe [] (parseMaybe Aeson.parseJSON raw)
+        Nothing -> maybe [] pure (parseMaybe Aeson.parseJSON =<< KeyMap.lookup (Key.fromText legacyKey) o)
+    _ -> []
 
 data ConfPage = ConfPage
     { pageId :: Text

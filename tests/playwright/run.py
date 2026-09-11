@@ -1131,7 +1131,7 @@ with sync_playwright() as pw:
         assert cmdb_row.get_by_test_id("cmdb-config-spaces-cell").inner_text() == "DEV, OPS"
         cmdb_row.get_by_test_id("cmdb-config-delete").click()
         admin.get_by_text("Deleted CMDB connection pw-cmdb").wait_for()
-        # jira delete (keep the run on the env fallback afterwards)
+        # jira delete (the seeded mock-jira connection keeps jira working afterwards)
         row.get_by_test_id("jira-config-delete").click()
         admin.get_by_text("Deleted Jira connection pw-jira").wait_for()
         assert admin.get_by_test_id("jira-config").filter(has_text="pw-jira").count() == 0

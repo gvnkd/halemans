@@ -17,11 +17,9 @@ import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import System.Environment (lookupEnv)
 
--- DB-first CMDB config resolution (milestone 10), same shape as
--- Application.Service.Llm.DbConfig — separate module because the generated
--- CmdbConfig record shares field names with the service one. DB enabled rows
--- win; the env-based per-source fallback keeps pre-milestone-10 installs
--- working unchanged.
+-- DB-only CMDB config resolution (milestone 10; env fallback removed in
+-- 2.0) — separate module because the generated CmdbConfig record shares
+-- field names with the service one.
 
 -- Enabled cmdb_configs rows with their token resolved (token_env holds the
 -- env var NAME, never the secret). Rows whose env var is unset are skipped.
@@ -47,32 +45,30 @@ cmdbConfigsFromDb = do
 stringList :: Value -> [Text]
 stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)
 
--- All usable configs: enabled DB rows, else the legacy env config taken from
--- the first source that has credentials (pre-milestone-10 behaviour).
+-- All usable configs: the enabled DB rows.
 currentCmdbConfigs :: (?modelContext :: ModelContext) => IO [Cmdb.CmdbConfig]
-currentCmdbConfigs = do
-    dbConfigs <- cmdbConfigsFromDb
-    if null dbConfigs
-        then do
-            sources <- query @Source |> fetch
-            envConfigs <- forM sources Cmdb.cmdbConfigFromEnv
-            pure (maybeToList (foldr (<|>) Nothing envConfigs))
-        else pure dbConfigs
+currentCmdbConfigs = cmdbConfigsFromDb
 
--- Alert-scoped resolution: DB rows when present, otherwise the source's own
--- env-based config (per-source cmdbSpace honoured by the fallback).
+-- Alert-scoped resolution: the enabled DB rows, with the source's own scope
+-- override (cmdbSpaces) replacing every connection's space list when set.
 cmdbConfigsForSource :: (?modelContext :: ModelContext) => Source -> IO [Cmdb.CmdbConfig]
 cmdbConfigsForSource source = do
     dbConfigs <- cmdbConfigsFromDb
-    if null dbConfigs
-        then maybeToList <$> Cmdb.cmdbConfigFromEnv source
-        else pure dbConfigs
+    pure case Cmdb.sourceSpaceOverride source of
+        [] -> dbConfigs
+        spaces -> map (applyScope spaces) dbConfigs
+    where
+        applyScope spaces config = config
+            { Cmdb.spaces = spaces
+            , Cmdb.space = fromMaybe "" (head spaces)
+            }
 
 -- Cache-first lookup: fresh rows are served directly; missing/stale rows
 -- trigger a Confluence search whose outcome (including negatives) is cached.
 -- Every configured connection is searched across ALL its spaces (milestone
--- 10); results merge before the best page is picked. Only a total failure
--- (every config errors) yields Left — the stale row is still rendered then.
+-- 10); results merge before the best page is picked. Nothing configured is
+-- a silent skip, not a failure; only a total search failure (every config
+-- errors) yields Left — the stale row is still rendered then.
 lookupForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> IO (Either Text (Maybe CmdbEntry))
 lookupForAlert = resolve False
 
@@ -86,7 +82,7 @@ resolve force source alert = case Cmdb.subjectOf alert of
     Just subject -> do
         configs <- cmdbConfigsForSource source
         if null configs
-            then pure (Left "confluence not configured")
+            then pure (Right Nothing)
             else do
                 now <- getCurrentTime
                 cached <- Cmdb.fetchCached subject

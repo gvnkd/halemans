@@ -27,13 +27,24 @@ SELECT id, :'generic_token' FROM sources WHERE type = 'grafana'
 ON CONFLICT (token) DO NOTHING;
 SQL
 
-# Enrichment/write-back source config (milestone 3 D9). Fixtures.sql carries
-# the same values declaratively; this idempotent jsonb merge fixes databases
-# initialized before the fixtures changed.
+# Enrichment/write-back source config (milestone 3 D9) + integration
+# connections (2.0: the env-var fallback is gone — jira_configs/cmdb_configs
+# rows are the ONLY way to configure Jira/Confluence). Fixtures.sql carries
+# the same source values declaratively; this idempotent jsonb merge fixes
+# databases initialized before the fixtures changed. Keep in sync with the
+# inline seeding in nix/scripts/smoke-check.sh.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
 UPDATE sources
-SET config = config || '{"writeBack":true,"jiraWritable":true,"cmdbSpace":"DEV","jiraProject":"DEV"}'::jsonb
+SET config = config || '{"writeBack":true,"jiraWritable":true,"jiraProjects":["DEV"],"cmdbSpaces":["DEV"]}'::jsonb
 WHERE type IN ('zabbix', 'grafana', 'alertmanager');
+
+INSERT INTO jira_configs (name, base_url, token_env, api_version, projects, enabled)
+SELECT 'mock-jira', 'http://127.0.0.1:18083', 'JIRA_TOKEN', '3', '["DEV"]'::jsonb, true
+WHERE NOT EXISTS (SELECT 1 FROM jira_configs WHERE name = 'mock-jira');
+
+INSERT INTO cmdb_configs (name, base_url, token_env, spaces, enabled)
+SELECT 'mock-confluence', 'http://127.0.0.1:18082', 'CONFLUENCE_TOKEN', '["DEV"]'::jsonb, true
+WHERE NOT EXISTS (SELECT 1 FROM cmdb_configs WHERE name = 'mock-confluence');
 
 INSERT INTO cmdb_entries (host_id, page_id, title, excerpt, url)
 SELECT h.id, '1001', 'dev-host-01',

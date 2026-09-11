@@ -2,8 +2,6 @@ module Application.Service.Jira
 ( JiraIssue (..)
 , JiraComment (..)
 , JiraConfig (..)
-, jiraConfigFromEnv
-, jiraEnvConfig
 , apiUrl
 , jqlForAlert
 , jqlSubjectTerms
@@ -16,7 +14,7 @@ module Application.Service.Jira
 , upsertLink
 , issueUrl
 , createTicketWithConfig
-, sourceConfigText
+, sourceProjectOverride
 , connectionOk
 ) where
 
@@ -37,7 +35,6 @@ import qualified Application.Service.Http as Http
 import Control.Lens ((&), (^.), (.~))
 import Control.Exception (try, SomeException)
 import Data.Functor ((<&>))
-import System.Environment (lookupEnv)
 
 -- Jira REST v3 client (design_docs/milestone_3.md §5). Auto-link on alert
 -- creation, 5-min status sync, manual ticket creation; never auto-creates.
@@ -50,34 +47,23 @@ data JiraConfig = JiraConfig
     , apiVersion :: Text
     } deriving (Eq, Show)
 
-jiraConfigFromEnv :: Source -> IO (Maybe JiraConfig)
-jiraConfigFromEnv source =
-    jiraEnvConfig (configText "jiraProject" source.config |> fromMaybe "DEV")
-
-jiraEnvConfig :: Text -> IO (Maybe JiraConfig)
-jiraEnvConfig project = do
-    url <- lookupEnv "HALEMANS_JIRA_URL"
-    token <- lookupEnv "JIRA_TOKEN"
-    version <- lookupEnv "HALEMANS_JIRA_API_VERSION"
-    pure case (url, token) of
-        (Just url, Just token) -> Just JiraConfig { baseUrl = cs url, token = cs token, project, projects = [project], apiVersion = maybe defaultApiVersion cs version }
-        _ -> Nothing
-
--- Jira Cloud serves REST v3; Server/Data Center only has v2
--- (HALEMANS_JIRA_API_VERSION=2 there).
-defaultApiVersion :: Text
-defaultApiVersion = "3"
-
 apiUrl :: JiraConfig -> Text -> Text
 apiUrl config path =
     Text.dropWhileEnd (== '/') config.baseUrl <> "/rest/api/" <> config.apiVersion <> path
 
-configText :: Text -> Value -> Maybe Text
-configText key value = parseMaybe (Aeson.withObject "config" (\o -> o .: Key.fromText key)) value
+-- Per-source scope override: a "jiraProjects" array on source.config
+-- REPLACES the connection's project list for that source's alerts (search
+-- scope + ticket-creation target = first entry). The legacy scalar
+-- "jiraProject" key is honoured when the array is absent.
+sourceProjectOverride :: Source -> [Text]
+sourceProjectOverride source = configStrings "jiraProjects" "jiraProject" source.config
 
--- Per-source config jsonb string lookup (jiraProject, jiraWritable, ...).
-sourceConfigText :: Text -> Source -> Maybe Text
-sourceConfigText key source = configText key source.config
+configStrings :: Text -> Text -> Value -> [Text]
+configStrings key legacyKey value = case value of
+    Aeson.Object o -> case KeyMap.lookup (Key.fromText key) o of
+        Just raw -> fromMaybe [] (parseMaybe Aeson.parseJSON raw)
+        Nothing -> maybe [] pure (parseMaybe Aeson.parseJSON =<< KeyMap.lookup (Key.fromText legacyKey) o)
+    _ -> []
 
 data JiraIssue = JiraIssue
     { issueKey :: Text

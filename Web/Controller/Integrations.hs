@@ -18,47 +18,22 @@ import Data.Time.Clock (getCurrentTime)
 
 -- Admin → integrations (design_docs/milestone_3.md §8, milestone 10):
 -- DB-resident Jira/Confluence connections (jira_configs/cmdb_configs, each
--- carrying MULTIPLE search projects/spaces) with connection tests, plus the
--- legacy env-var presence checks and CMDB cache stats.
+-- carrying MULTIPLE search projects/spaces) with connection tests, plus
+-- CMDB/Jira cache stats. The legacy env-var fallback was removed in 2.0.
 instance Controller IntegrationsController where
     beforeAction = ensureIsUser
 
     action IntegrationsAction = do
         requirePrivilege "manage_sources"
-        confluenceConfigured <- bothSet "HALEMANS_CONFLUENCE_URL" "CONFLUENCE_TOKEN"
-        jiraConfigured <- bothSet "HALEMANS_JIRA_URL" "JIRA_TOKEN"
         jiraConfigs <- query @JiraConfig
             |> orderByAsc #name
             |> fetch
         cmdbConfigs <- query @CmdbConfig
             |> orderByAsc #name
             |> fetch
-        cacheTotal <- countCmdbEntries
+        cmdbCache <- cmdbCacheStats
+        jiraCache <- jiraCacheStats
         render IndexView { .. }
-
-    action TestConfluenceAction = do
-        requirePrivilege "manage_sources"
-        result <- Cmdb.cmdbEnvConfig "DEV"
-            >>= maybe (pure (Left "HALEMANS_CONFLUENCE_URL / CONFLUENCE_TOKEN not set")) Cmdb.connectionOk
-        case result of
-            Right () -> setSuccessMessage "Confluence reachable"
-            Left err -> do
-                let ?context = ?context.frameworkConfig
-                Log.logWarn ("confluence connection test failed: " <> err)
-                setErrorMessage ("Confluence unreachable: " <> err)
-        redirectTo IntegrationsAction
-
-    action TestJiraAction = do
-        requirePrivilege "manage_sources"
-        result <- Jira.jiraEnvConfig "DEV"
-            >>= maybe (pure (Left "HALEMANS_JIRA_URL / JIRA_TOKEN not set")) Jira.connectionOk
-        case result of
-            Right () -> setSuccessMessage "Jira reachable"
-            Left err -> do
-                let ?context = ?context.frameworkConfig
-                Log.logWarn ("jira connection test failed: " <> err)
-                setErrorMessage ("Jira unreachable: " <> err)
-        redirectTo IntegrationsAction
 
     action NewJiraConfigAction = do
         requirePrivilege "manage_sources"
@@ -323,15 +298,44 @@ applyCmdbForm form record = record
 csvList :: Text -> [Text]
 csvList input = [item | item <- map Text.strip (Text.splitOn "," input), not (Text.null item)]
 
-countCmdbEntries :: (?modelContext :: ModelContext) => IO Int64
-countCmdbEntries = do
-    rows <- sqlQueryTyped [typedSql| SELECT count(*) FROM cmdb_entries |]
-    pure (fromMaybe 0 (head rows))
+-- CMDB cache stats. The freshness TTLs are the service-layer constants
+-- (Cmdb.positiveTtlSeconds/negativeTtlSeconds), passed as params so this
+-- query cannot drift from them.
+cmdbCacheStats :: (?modelContext :: ModelContext) => IO CmdbCacheStats
+cmdbCacheStats = do
+    let positiveSecs = tshow (round Cmdb.positiveTtlSeconds :: Int)
+        negativeSecs = tshow (round Cmdb.negativeTtlSeconds :: Int)
+    rows <- sqlQueryTyped [typedSql|
+        SELECT count(*) AS total,
+               count(*) FILTER (WHERE page_id IS NULL) AS negatives,
+               count(*) FILTER (WHERE (page_id IS NOT NULL AND fetched_at > now() - (${positiveSecs} || ' seconds')::interval)
+                                   OR (page_id IS NULL AND fetched_at > now() - (${negativeSecs} || ' seconds')::interval)) AS fresh,
+               max(fetched_at) AS last_fetched
+        FROM cmdb_entries
+    |]
+    pure case head rows of
+        Nothing -> CmdbCacheStats 0 0 0 Nothing
+        Just row -> CmdbCacheStats
+            { cmdbTotal = get #total row
+            , cmdbFresh = get #fresh row
+            , cmdbNegative = get #negatives row
+            , cmdbLastFetch = get #last_fetched row
+            }
 
--- An integration counts as configured only when BOTH the URL and the token
--- are set — the connection test fails otherwise.
-bothSet :: Text -> Text -> IO Bool
-bothSet urlVar tokenVar = do
-    url <- lookupEnv (cs urlVar)
-    token <- lookupEnv (cs tokenVar)
-    pure (isJust url && isJust token)
+-- Jira link cache stats. Stale = not synced within 3× the JiraSyncJob
+-- cadence (5 min).
+jiraCacheStats :: (?modelContext :: ModelContext) => IO JiraCacheStats
+jiraCacheStats = do
+    rows <- sqlQueryTyped [typedSql|
+        SELECT count(*) AS total,
+               count(*) FILTER (WHERE synced_at < now() - interval '15 minutes') AS stale,
+               max(synced_at) AS last_synced
+        FROM jira_links
+    |]
+    pure case head rows of
+        Nothing -> JiraCacheStats 0 0 Nothing
+        Just row -> JiraCacheStats
+            { jiraTotal = get #total row
+            , jiraStale = get #stale row
+            , jiraLastSync = get #last_synced row
+            }

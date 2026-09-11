@@ -21,11 +21,9 @@ import qualified Data.Aeson as Aeson
 import Data.Functor ((<&>))
 import System.Environment (lookupEnv)
 
--- DB-first Jira config resolution (milestone 10), same shape as
--- Application.Service.Llm.DbConfig — separate module because the generated
--- JiraConfig record shares field names with the service one. DB enabled rows
--- win; the env-based per-source fallback keeps pre-milestone-10 installs
--- working unchanged.
+-- DB-only Jira config resolution (milestone 10; env fallback removed in
+-- 2.0) — separate module because the generated JiraConfig record shares
+-- field names with the service one.
 
 -- Enabled jira_configs rows with their token resolved (token_env holds the
 -- env var NAME, never the secret). Rows whose env var is unset are skipped.
@@ -52,37 +50,36 @@ jiraConfigsFromDb = do
 stringList :: Value -> [Text]
 stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)
 
--- All usable configs: enabled DB rows, else the legacy env config taken from
--- the first source that has credentials (pre-milestone-10 behaviour).
+-- All usable configs: the enabled DB rows.
 currentJiraConfigs :: (?modelContext :: ModelContext) => IO [Jira.JiraConfig]
-currentJiraConfigs = do
-    dbConfigs <- jiraConfigsFromDb
-    if null dbConfigs
-        then do
-            sources <- query @Source |> fetch
-            envConfigs <- forM sources Jira.jiraConfigFromEnv
-            pure (maybeToList (foldr (<|>) Nothing envConfigs))
-        else pure dbConfigs
+currentJiraConfigs = jiraConfigsFromDb
 
--- Alert-scoped resolution (enrichment, ticket creation): DB rows when
--- present, otherwise the source's own env-based config (per-source
--- jiraProject honoured by the fallback).
+-- Alert-scoped resolution (enrichment, ticket creation): the enabled DB
+-- rows, with the source's own scope override (jiraProjects) replacing every
+-- connection's project list when set.
 jiraConfigsForSource :: (?modelContext :: ModelContext) => Source -> IO [Jira.JiraConfig]
 jiraConfigsForSource source = do
     dbConfigs <- jiraConfigsFromDb
-    if null dbConfigs
-        then maybeToList <$> Jira.jiraConfigFromEnv source
-        else pure dbConfigs
+    pure case Jira.sourceProjectOverride source of
+        [] -> dbConfigs
+        projects -> map (applyScope projects) dbConfigs
+    where
+        applyScope projects config = config
+            { Jira.projects = projects
+            , Jira.project = fromMaybe "" (head projects)
+            }
 
 -- Auto-link (milestone_3.md §5): top 5 open tickets matching the alert
 -- subject become jira_links rows with origin 'auto'. Every configured Jira
--- connection is searched across ALL its projects (milestone 10). Only a
--- total failure (every config errors, or nothing configured) yields Left.
+-- connection is searched across ALL its projects (milestone 10). Nothing
+-- configured is a silent skip, not a failure (unconfigured installs must
+-- not spam enrichment_failed + retries); a total search failure (every
+-- config errors) yields Left.
 autoLinkForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> IO (Either Text [JiraLink])
 autoLinkForAlert source alert = do
     configs <- jiraConfigsForSource source
     if null configs
-        then pure (Left "jira not configured")
+        then pure (Right [])
         else do
             results <- forM configs \config -> do
                 result <- Jira.searchIssues config (Jira.jqlForAlert (Jira.projects config) alert) 5
@@ -94,17 +91,17 @@ autoLinkForAlert source alert = do
                     Right <$> forM found \(config, issue) ->
                         Jira.upsertLink config (get #id alert) "auto" issue
 
--- Manual creation (milestone_3.md §5): the source's own jiraProject is the
--- creation target when set, else the first configured project.
+-- Manual creation (milestone_3.md §5): the target project is the first of
+-- the resolved scope — the source's jiraProjects override when set, else
+-- the connection's first configured project (jiraConfigsForSource already
+-- applied the override).
 createTicketForAlert :: (?modelContext :: ModelContext) => Source -> Alert -> Text -> Text -> Text -> IO (Either Text JiraLink)
 createTicketForAlert source alert issueType summary body = do
     configs <- jiraConfigsForSource source
     case configs of
         [] -> pure (Left "jira not configured")
-        (config:_) -> do
-            let targetProject = fromMaybe (Jira.project config) (Jira.sourceConfigText "jiraProject" source)
-                createConfig = config { Jira.project = targetProject }
-            Jira.createTicketWithConfig createConfig (get #id alert) issueType summary body
+        (config:_) ->
+            Jira.createTicketWithConfig config (get #id alert) issueType summary body
 
 -- JiraSyncJob body (milestone_3.md §5): refresh status/summary of every link
 -- whose alert is not closed. Returns the number of links refreshed. Each

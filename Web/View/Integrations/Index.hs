@@ -6,11 +6,23 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 
 data IndexView = IndexView
-    { confluenceConfigured :: Bool
-    , jiraConfigured :: Bool
-    , jiraConfigs :: [JiraConfig]
+    { jiraConfigs :: [JiraConfig]
     , cmdbConfigs :: [CmdbConfig]
-    , cacheTotal :: Int64
+    , cmdbCache :: CmdbCacheStats
+    , jiraCache :: JiraCacheStats
+    }
+
+data CmdbCacheStats = CmdbCacheStats
+    { cmdbTotal :: Int64
+    , cmdbFresh :: Int64
+    , cmdbNegative :: Int64
+    , cmdbLastFetch :: Maybe UTCTime
+    }
+
+data JiraCacheStats = JiraCacheStats
+    { jiraTotal :: Int64
+    , jiraStale :: Int64
+    , jiraLastSync :: Maybe UTCTime
     }
 
 instance View IndexView where
@@ -37,31 +49,27 @@ instance View IndexView where
             </tbody>
         </table>
 
-        <h2 class="mt-4">Legacy env-var fallback</h2>
-        <table class="table maxw-700" data-testid="integrations-table">
-            <thead>
-                <tr><th>Integration</th><th>Configured</th><th></th></tr>
-            </thead>
-            <tbody>
-                <tr data-testid="integration-confluence">
-                    <td>Confluence (CMDB)</td>
-                    <td>{configuredBadge confluenceConfigured}</td>
-                    <td>{testButton confluenceConfigured TestConfluenceAction "test-confluence" "HALEMANS_CONFLUENCE_URL / CONFLUENCE_TOKEN"}</td>
-                </tr>
-                <tr data-testid="integration-jira">
-                    <td>Jira</td>
-                    <td>{configuredBadge jiraConfigured}</td>
-                    <td>{testButton jiraConfigured TestJiraAction "test-jira" "HALEMANS_JIRA_URL / JIRA_TOKEN"}</td>
-                </tr>
-            </tbody>
-        </table>
+        <h2 class="mt-4">CMDB cache</h2>
+        <p data-testid="cmdb-cache-stats">
+            {cmdbCache.cmdbTotal} cached entries ({cmdbCache.cmdbFresh} fresh, {cmdbCache.cmdbNegative} negative lookups)
+            {cmdbLastFetch}
+        </p>
 
-        <h2>CMDB cache</h2>
-        <p data-testid="cmdb-cache-stats">{cacheTotal} cached entries</p>
+        <h2>Jira cache</h2>
+        <p data-testid="jira-cache-stats">
+            {jiraCache.jiraTotal} tracked tickets ({jiraCache.jiraStale} awaiting sync)
+            {jiraLastSync}
+        </p>
     |]
         where
             newJiraButton = [hsx|<a href={NewJiraConfigAction} class="btn btn-sm btn-primary" data-testid="new-jira-config">New Jira connection</a>|]
             newCmdbButton = [hsx|<a href={NewCmdbConfigAction} class="btn btn-sm btn-primary" data-testid="new-cmdb-config">New CMDB connection</a>|]
+            cmdbLastFetch = case cmdbCache.cmdbLastFetch of
+                Nothing -> mempty
+                Just fetchedAt -> [hsx| — last fetch {utcTimeHtml fetchedAt}|]
+            jiraLastSync = case jiraCache.jiraLastSync of
+                Nothing -> mempty
+                Just syncedAt -> [hsx| — last sync {utcTimeHtml syncedAt}|]
 
 jiraConfigRowHtml :: JiraConfig -> Html
 jiraConfigRowHtml config = [hsx|
@@ -110,19 +118,3 @@ scopeText :: Aeson.Value -> Text
 scopeText value = case fromMaybe [] (parseMaybe Aeson.parseJSON value) of
     [] -> "all"
     scopes -> Text.intercalate ", " scopes
-
-configuredBadge :: Bool -> Html
-configuredBadge True = [hsx|<span class="badge status-resolved">yes</span>|]
-configuredBadge False = [hsx|<span class="badge status-firing">no</span>|]
-
--- Connection test only makes sense with both env vars present; otherwise
--- render an inert button that names the missing configuration.
-testButton :: Bool -> IntegrationsController -> Text -> Text -> Html
-testButton configured action testId envNames
-    | configured = inlinePostFormHtml (pathTo action) "Test connection" "btn btn-sm btn-outline-primary" (Just testId) False
-    | otherwise = [hsx|
-        <button class="btn btn-sm btn-outline-secondary" disabled={True} data-testid={testId} title={hint}>Test connection</button>
-    |]
-    where
-        hint :: Text
-        hint = "not configured — set " <> envNames <> " and restart"

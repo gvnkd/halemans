@@ -51,6 +51,9 @@ let
                 printf 'export CONFLUENCE_TOKEN="%s"\n'            "$(cat "$state/confluence-token")"
                 printf 'export JIRA_TOKEN="%s"\n'                  "$(cat "$state/jira-token")"
                 printf 'export ASSETS_TOKEN="%s"\n'                "$(cat "$state/assets-token")"
+                # Mock addresses for scripts/health checks only — since 2.0 the
+                # app reads Jira/Confluence URLs from jira_configs/cmdb_configs
+                # rows (seeded), never from these vars.
                 printf 'export HALEMANS_CONFLUENCE_URL="%s"\n'     "http://127.0.0.1:18082"
                 printf 'export HALEMANS_JIRA_URL="%s"\n'           "http://127.0.0.1:18083"
                 printf 'export HALEMANS_ASSETS_URL="%s"\n'         "http://127.0.0.1:18085/rest/assets/latest"

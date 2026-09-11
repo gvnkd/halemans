@@ -35,8 +35,8 @@
           "expectedIntervalSeconds": 120,
           "writeBack": true,
           "jiraWritable": true,
-          "cmdbSpace": "OPS",
-          "jiraProject": "OPS"
+          "jiraProjects": ["OPS"],
+          "cmdbSpaces": ["OPS"]
         }
       },
 
@@ -51,8 +51,8 @@
           "tokenEnv": "GRAFANA_TOKEN",
           "writeBack": true,
           "jiraWritable": true,
-          "cmdbSpace": "OPS",
-          "jiraProject": "OPS"
+          "jiraProjects": ["OPS"],
+          "cmdbSpaces": ["OPS"]
         }
       },
 

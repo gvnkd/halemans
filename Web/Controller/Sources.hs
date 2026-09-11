@@ -9,6 +9,7 @@ import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Text as Text
 import Text.Read (readMaybe)
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Service.HostGroups (replaceHostGroupCache)
@@ -39,7 +40,7 @@ instance Controller SourcesController where
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
             |> set #enabled True
-            |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
+            |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
             |> createRecord
         ensurePollerForSourceType (param @Text "type")
         setSuccessMessage "Source created"
@@ -53,8 +54,8 @@ instance Controller SourcesController where
             , tokenEnv = tokenEnvOf source
             , writeBack = configBool "writeBack" source
             , jiraWritable = configBool "jiraWritable" source
-            , cmdbSpace = configValue "cmdbSpace" source
-            , jiraProject = configValue "jiraProject" source
+            , cmdbSpaces = configScope "cmdbSpaces" "cmdbSpace" source
+            , jiraProjects = configScope "jiraProjects" "jiraProject" source
             , initialHistoryDays = maybe "" tshow (configInt "initialHistoryDays" source)
             , hostGroupScope = configValue "hostGroupScope" source
             }
@@ -68,7 +69,7 @@ instance Controller SourcesController where
             |> set #baseUrl (param @Text "baseUrl")
             |> set #env (param @Text "env")
             |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-            |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (param @Text "cmdbSpace") (param @Text "jiraProject") historyDaysParam (param @Text "hostGroupScope"))
+            |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
             |> updateRecord
         when source.enabled (ensurePollerForSourceType (param @Text "type"))
         setSuccessMessage "Source updated"
@@ -101,27 +102,45 @@ instance Controller SourcesController where
 
 -- | Credentials stay env-var references ({"tokenEnv":"GRAFANA_TOKEN"}), never
 -- raw tokens in the row. Integration toggles (milestone_3.md §8): writeBack,
--- cmdbSpace, jiraProject. Form-managed keys are overlaid on the EXISTING
--- config: keys the form doesn't know (provisioned or hand-set, e.g.
--- reconcileGraceSeconds / reconcileIntervalSeconds /
--- absentResolveMinAgeSeconds / eventPageLimit / reconcileResolved /
--- expectedIntervalSeconds / hostGroupsFile) survive a UI edit.
-sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> Text -> Text -> Maybe Int -> Text -> Aeson.Value
-sourceConfig base tokenEnv writeBack jiraWritable cmdbSpace jiraProject historyDays scope =
+-- cmdbSpaces, jiraProjects (multi-value scope overrides replacing the
+-- connection's spaces/projects for this source's alerts; the legacy scalar
+-- cmdbSpace/jiraProject keys are managed too, so an edit drops them).
+-- Form-managed keys are overlaid on the EXISTING config: keys the form
+-- doesn't know (provisioned or hand-set, e.g. reconcileGraceSeconds /
+-- reconcileIntervalSeconds / absentResolveMinAgeSeconds / eventPageLimit /
+-- reconcileResolved / expectedIntervalSeconds / hostGroupsFile) survive a
+-- UI edit.
+sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> [Text] -> [Text] -> Maybe Int -> Text -> Aeson.Value
+sourceConfig base tokenEnv writeBack jiraWritable cmdbSpaces jiraProjects historyDays scope =
     Aeson.Object (extra <> managed)
   where
     managed = KeyMap.fromList $
         [ "writeBack" .= writeBack
         , "jiraWritable" .= jiraWritable ]
         ++ [ "tokenEnv" .= tokenEnv | tokenEnv /= "" ]
-        ++ [ "cmdbSpace" .= cmdbSpace | cmdbSpace /= "" ]
-        ++ [ "jiraProject" .= jiraProject | jiraProject /= "" ]
+        ++ [ "cmdbSpaces" .= cmdbSpaces | not (null cmdbSpaces) ]
+        ++ [ "jiraProjects" .= jiraProjects | not (null jiraProjects) ]
         ++ [ "initialHistoryDays" .= days | Just days <- [historyDays] ]
         ++ [ "hostGroupScope" .= scope | scope == "teams" ]
-    managedKeys = ["writeBack", "jiraWritable", "tokenEnv", "cmdbSpace", "jiraProject", "initialHistoryDays", "hostGroupScope"]
+    managedKeys = ["writeBack", "jiraWritable", "tokenEnv", "cmdbSpaces", "cmdbSpace", "jiraProjects", "jiraProject", "initialHistoryDays", "hostGroupScope"]
     extra = case base of
         Aeson.Object o -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) o
         _ -> mempty
+
+-- | Comma-separated scope list (CMDB spaces / Jira projects); empty input =
+-- no override, the connection's own scope applies.
+csvParam :: (?request :: Request, ?respond :: Respond) => ByteString -> [Text]
+csvParam name = [item | item <- map Text.strip (Text.splitOn "," (param @Text name)), not (Text.null item)]
+
+-- | Edit-form value: the multi-value key as CSV, falling back to the legacy
+-- scalar key so pre-2.0 configs still display their scope.
+configScope :: Text -> Text -> Source -> Text
+configScope key legacyKey source = case configList key source of
+    [] -> configValue legacyKey source
+    items -> Text.intercalate ", " items
+
+configList :: Text -> Source -> [Text]
+configList key source = fromMaybe [] (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? Key.fromText key Aeson..!= [])) source.config)
 
 -- | Empty/unparseable input omits the key (poller default applies).
 historyDaysParam :: (?request :: Request, ?respond :: Respond) => Maybe Int
