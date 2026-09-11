@@ -128,10 +128,16 @@ pollSource source = do
                             when (reconcileResolvedEnabled source && reconcileDue now source) do
                                 reconcileProblemStates source token now
                                 void (source |> set #lastReconcileAt (Just now) |> updateRecord)
+                            -- +1s: event.get's time_from is INCLUSIVE, so a
+                            -- cursor at maxClock re-ingests the boundary event
+                            -- every cycle (resolved→resolved no-op flood, and
+                            -- occurrences inflation when the boundary event is
+                            -- a problem). Same-second events are all in this
+                            -- paged fetch, so nothing is skipped.
                             case maximumMaybe (map (.clock) events) of
                                 Just maxClock -> do
                                     _ <- source
-                                        |> set #lastSyncCursor (Just (posixSecondsToUTCTime (fromIntegral maxClock)))
+                                        |> set #lastSyncCursor (Just (posixSecondsToUTCTime (fromIntegral (maxClock + 1))))
                                         |> updateRecord
                                     pure ()
                                 Nothing -> pure ()
