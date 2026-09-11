@@ -1,6 +1,9 @@
 module Application.Service.Jira.Related
 ( relatedTasksForAlert
 , relevancePrompt
+, relevanceContract
+, relatedRoleName
+, relatedTemplateName
 , parseRelevantKeys
 , maxCandidates
 ) where
@@ -17,9 +20,13 @@ import qualified Application.Service.Jira.DbConfig as JiraDb
 import qualified Application.Service.Assets as Assets
 import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Types (Ticket (..))
-import Application.Service.Llm (OpenAiCompat (..), LlmProvider (..), Prompt (..), userMessage, Completion (..))
+import Application.Service.Llm (Prompt (..), userMessage, Completion (..), LlmProviderConfig (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Output (parseCompletionOutput, ParsedOutput (..))
+import Application.Service.Llm.Prompt (PromptInputs (..), emptyInputs, bindingsFor, renderTemplate)
+import Application.Service.Llm.Roles (resolveAgentRoleByName, toolsForRole)
+import Application.Service.Llm.Tools (runWithToolLoop)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Data.Aeson ((.:))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
@@ -33,9 +40,21 @@ import Data.Functor ((<&>))
 -- jira_links rows with origin 'related' and shown in the Jira card's
 -- "Related tasks" section. Re-runs converge: related rows the LLM no longer
 -- selects are deleted.
+--
+-- The filter prompt is template-driven like alert enrichment: the agent role
+-- named relatedRoleName points at an active llm_prompt_templates row
+-- (default relatedTemplateName) and carries the tool whitelist (seeded with
+-- jira_issue_details so the model can fetch full task cards on demand). No
+-- role/template → the built-in relevancePrompt fallback.
 
 maxCandidates :: Int
 maxCandidates = 15
+
+relatedRoleName :: Text
+relatedRoleName = "jira-related-filter"
+
+relatedTemplateName :: Text
+relatedTemplateName = "jira_related_filter"
 
 data RelatedCandidate = RelatedCandidate
     { candidateKey :: Text
@@ -63,10 +82,11 @@ relatedTasksForAlert maybeSource alert = do
         |> fetch
     let linkedKeys = [link.ticketKey | link <- existing, link.origin /= "related"]
         fresh = filter (\candidate -> candidate.candidateKey `notElem` linkedKeys) (take maxCandidates candidates)
-    llmVerdict <- filterWithLlm alert fresh
+    enriched <- enrichCandidates configs fresh
+    llmVerdict <- filterWithLlm alert maybeSource enriched
     let kept = case llmVerdict of
-            Just keys -> filter (\candidate -> candidate.candidateKey `elem` keys) fresh
-            Nothing -> fresh -- no LLM configured or call failed: keep candidates unfiltered
+            Just keys -> filter (\candidate -> candidate.candidateKey `elem` keys) enriched
+            Nothing -> enriched -- no LLM configured or call failed: keep candidates unfiltered
     now <- getCurrentTime
     forM_ kept \candidate -> do
         existingLink <- query @JiraLink
@@ -134,6 +154,27 @@ assetsTicketCandidates jiraConfigs alert = do
             , candidateUrl = base <> "/browse/" <> ticket.ticketKey
             }
 
+-- Candidates from Assets connected tickets can arrive without a summary
+-- (title) — fill those from the Jira issue endpoint so the LLM filter and
+-- the card always have a title to work with.
+enrichCandidates :: [Jira.JiraConfig] -> [RelatedCandidate] -> IO [RelatedCandidate]
+enrichCandidates configs = mapM enrich
+    where
+        enrich candidate
+            | not (Text.null candidate.candidateSummary) = pure candidate
+            | otherwise = go configs
+            where
+                go [] = pure candidate
+                go (config:rest) = do
+                    result <- Jira.getIssue config candidate.candidateKey
+                    case result of
+                        Left _ -> go rest
+                        Right issue -> pure candidate
+                            { candidateSummary = issue.issueSummary
+                            , candidateStatus = if Text.null candidate.candidateStatus then issue.issueStatus else candidate.candidateStatus
+                            , candidateUrl = Jira.issueUrl config issue.issueKey
+                            }
+
 dedupeOn :: Eq b => (a -> b) -> [a] -> [a]
 dedupeOn key = go []
     where
@@ -145,18 +186,62 @@ dedupeOn key = go []
 -- LLM relevance filter: returns Just keys-to-keep when the configured LLM
 -- answered with a parseable verdict (an empty list is a valid "none
 -- relevant" verdict), Nothing when no LLM is configured or the call/parse
--- failed (caller keeps candidates unfiltered — soft-fail).
-filterWithLlm :: (?modelContext :: ModelContext) => Alert -> [RelatedCandidate] -> IO (Maybe [Text])
-filterWithLlm _ [] = pure (Just [])
-filterWithLlm alert candidates = do
+-- failed (caller keeps candidates unfiltered — soft-fail). The prompt comes
+-- from the relatedRoleName agent role's active template when present
+-- (admin-editable, milestone 10), else the built-in fallback; the role's
+-- tool whitelist lets the model fetch full task details on demand.
+filterWithLlm :: (?modelContext :: ModelContext) => Alert -> Maybe Source -> [RelatedCandidate] -> IO (Maybe [Text])
+filterWithLlm _ _ [] = pure (Just [])
+filterWithLlm alert maybeSource candidates = do
     maybeConfig <- currentLlmConfig
     case maybeConfig of
         Nothing -> pure Nothing
         Just config -> do
-            result <- complete (OpenAiCompat config) (Prompt [userMessage (relevancePrompt alert candidates)] [])
-            pure case result of
+            role <- resolveAgentRoleByName relatedRoleName
+            rendered <- renderFilterPrompt alert candidates role
+            let tools = if config.toolsEnabled then toolsForRole role else []
+            outcome <- runWithToolLoop config maybeSource 3 [userMessage rendered] tools []
+            pure case outcome of
                 Left _ -> Nothing
-                Right completion -> parseRelevantKeys (map (.candidateKey) candidates) completion.content
+                Right (completion, _) -> parseRelevantKeys (map (.candidateKey) candidates) completion.content
+
+renderFilterPrompt :: (?modelContext :: ModelContext) => Alert -> [RelatedCandidate] -> Maybe LlmAgentRole -> IO Text
+renderFilterPrompt alert candidates role = do
+    let templateName = maybe relatedTemplateName (.promptTemplateName) role
+    template <- query @LlmPromptTemplate
+        |> filterWhere (#name, templateName)
+        |> filterWhere (#active, True)
+        |> fetchOneOrNothing
+    pure case template of
+        Just row -> renderTemplate row.body (filterBindings alert candidates) <> relevanceContract
+        Nothing -> relevancePrompt alert candidates
+
+filterBindings :: Alert -> [RelatedCandidate] -> [(Text, Text)]
+filterBindings alert candidates =
+    bindingsFor emptyInputs
+        { piTitle = alert.title
+        , piSeverity = alert.severity
+        , piEnv = fromMaybe "unknown" (effectiveFieldText FieldEnv alert)
+        , piHost = fromMaybe "unknown" (effectiveFieldText FieldHost alert)
+        , piService = fromMaybe "unknown" (effectiveFieldText FieldService alert)
+        , piCheckName = fromMaybe "unknown" alert.checkName
+        , piDescription = Text.take 500 alert.description
+        }
+    ++ [("candidates", Text.intercalate "\n" (map candidateLine candidates))]
+
+candidateLine :: RelatedCandidate -> Text
+candidateLine candidate = "- " <> candidate.candidateKey <> ": " <> candidate.candidateSummary <> " [" <> candidate.candidateStatus <> "]"
+
+-- Appended after the rendered admin template (mirrors outputContract for
+-- alert enrichment): the verdict format is a code-level contract, not
+-- template content.
+relevanceContract :: Text
+relevanceContract = Text.intercalate "\n"
+    [ ""
+    , "Keep only tasks plausibly related to this alert (same host, service or failure mode)."
+    , "Respond with exactly one ```json fenced block of the shape {\"relevant\": [\"KEY-1\", ...]}."
+    , "Use only keys from the candidate list; an empty list means none are relevant."
+    ]
 
 relevancePrompt :: Alert -> [RelatedCandidate] -> Text
 relevancePrompt alert candidates = Text.intercalate "\n"
@@ -169,13 +254,9 @@ relevancePrompt alert candidates = Text.intercalate "\n"
     , ""
     , "## Candidate Jira tasks"
     , Text.intercalate "\n" (map candidateLine candidates)
-    , ""
-    , "Keep only tasks plausibly related to this alert (same host, service or failure mode)."
-    , "Respond with exactly one ```json fenced block of the shape {\"relevant\": [\"KEY-1\", ...]}."
-    , "Use only keys from the candidate list; an empty list means none are relevant."
+    , "You may call jira_issue_details with a task key to inspect its description and comments before deciding."
+    , relevanceContract
     ]
-    where
-        candidateLine candidate = "- " <> candidate.candidateKey <> ": " <> candidate.candidateSummary <> " [" <> candidate.candidateStatus <> "]"
 
 -- Extracts the {"relevant": [...]} verdict from the fenced json block,
 -- intersected with the actual candidate keys so hallucinated keys drop out.

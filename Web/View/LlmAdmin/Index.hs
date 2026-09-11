@@ -1,6 +1,7 @@
 module Web.View.LlmAdmin.Index where
 import Web.View.Prelude
 import Web.View.Fragments (sectionHeaderHtml, inlinePostFormHtml, stateBadgeHtml)
+import Application.Service.Llm.AutoAnalyze (AutoAnalyzeRules (..), allStatuses, allSeverities)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 
@@ -32,6 +33,7 @@ data IndexView = IndexView
     , toolsEnabled :: Bool
     , dailyBudget :: Int
     , rateLimit :: Int
+    , autoAnalyze :: AutoAnalyzeRules
     }
 
 instance View IndexView where
@@ -49,6 +51,26 @@ instance View IndexView where
             </tbody>
         </table>
         {inlinePostFormHtml (pathTo TestLlmConnectionAction) "Test connection" "btn btn-sm btn-outline-primary" (Just "test-llm") False}
+
+        {sectionHeaderHtml "Auto-analysis" mempty}
+        <p class="text-muted">New alerts (and enrichment re-triggers) get an LLM analysis only when the alert matches the selected statuses and severities. Manual re-analyze from the alert card is never gated.</p>
+        <form method="POST" action={UpdateAutoAnalyzeAction} class="maxw-700" data-testid="auto-analyze-form">
+            <div class="form-check mb-2">
+                <input name="enabled" type="checkbox" class="form-check-input" checked={autoAnalyze.aaEnabled} data-testid="auto-analyze-enabled"/>
+                <label class="form-check-label">Enabled</label>
+            </div>
+            <div class="row mb-2">
+                <div class="col">
+                    <div class="form-label">Statuses</div>
+                    {forEach allStatuses (flagCheckbox "statuses" autoAnalyze.aaStatuses "auto-analyze-status")}
+                </div>
+                <div class="col">
+                    <div class="form-label">Severities</div>
+                    {forEach allSeverities (flagCheckbox "severities" autoAnalyze.aaSeverities "auto-analyze-severity")}
+                </div>
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary" data-testid="auto-analyze-submit">Save</button>
+        </form>
 
         {sectionHeaderHtml "Providers" newProviderButton}
         <table class="table" data-testid="llm-providers">
@@ -190,7 +212,6 @@ templateRowHtml row = [hsx|
         deleteForm = if row.active
             then mempty
             else inlinePostFormHtml (pathTo (DeleteLlmTemplateAction row.templateId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-template-delete") False
-
 counterRowHtml :: CounterRow -> Html
 counterRowHtml row = [hsx|
     <tr data-testid="llm-counter">
@@ -200,4 +221,13 @@ counterRowHtml row = [hsx|
         <td>{row.tokensOut}</td>
         <td>{row.requests}</td>
     </tr>
+|]
+
+-- One labelled checkbox per status/severity flag in the auto-analysis form.
+flagCheckbox :: Text -> [Text] -> Text -> Text -> Html
+flagCheckbox fieldName selected testIdBase value = [hsx|
+    <div class="form-check">
+        <input name={fieldName} value={value} type="checkbox" class="form-check-input" checked={value `elem` selected} data-testid={testIdBase <> "-" <> value}/>
+        <label class="form-check-label">{value}</label>
+    </div>
 |]

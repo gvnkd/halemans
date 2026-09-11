@@ -115,9 +115,12 @@ spec = describe "Milestone 8 assets subsystem" do
     describe "Roles.toolsForRole (milestone_8.md §7)" do
         let roleWith tools = newRecord @LlmAgentRole |> set #tools tools
         it "no role yields the full built-in tool set" do
-            length (toolsForRole Nothing) `shouldBe` 3
+            length (toolsForRole Nothing) `shouldBe` 4
         it "a role filters tool definitions by name" do
             let role = roleWith (Aeson.toJSON ["cmdb_lookup" :: Text])
+            length (toolsForRole (Just role)) `shouldBe` 1
+        it "the jira_issue_details tool is registered" do
+            let role = roleWith (Aeson.toJSON ["jira_issue_details" :: Text])
             length (toolsForRole (Just role)) `shouldBe` 1
         it "an empty tools array yields no tools" do
             let role = roleWith (Aeson.toJSON ([] :: [Text]))

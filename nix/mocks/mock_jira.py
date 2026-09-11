@@ -113,6 +113,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/rest/api/3/myself":
             self._send(200, {"accountId": "mock-jira", "displayName": "Mock Jira"})
             return
+        m = re.fullmatch(r"/rest/api/3/issue/([\w-]+)/comment", path)
+        if m:
+            self._comments(m.group(1))
+            return
         m = re.fullmatch(r"/rest/api/3/issue/([\w-]+)", path)
         if m:
             self._issue(m.group(1))
@@ -165,6 +169,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, issue_view(issue))
 
+    def _comments(self, key):
+        if key not in self.server.issues:
+            self._send(404, {"errorMessages": [f"Issue {key} does not exist"]})
+            return
+        self._send(200, {"comments": self.server.comments.get(key, [])})
+
     def _create(self):
         length = int(self.headers.get("Content-Length", 0))
         try:
@@ -208,6 +218,12 @@ def main():
     server.issues = {}
     for key, issue in SEEDED_ISSUES.items():
         server.issues[key] = dict(issue, key=key)
+    server.comments = {
+        "DEV-100": [
+            {"author": {"displayName": "Ops Bot"}, "created": "2026-09-01T10:00:00.000+0000",
+             "body": "Resolved by rotating the PostgreSQL service after the config push."},
+        ],
+    }
     server.next_nums = {"DEV": 102}
     server.next_id = 10002
     print(f"mock-jira listening on 127.0.0.1:{port}", file=sys.stderr)

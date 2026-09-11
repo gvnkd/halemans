@@ -13,6 +13,7 @@ import Application.Job.LlmAnalysis (failAnalysis)
 import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Roles (roleToolNames)
+import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import qualified Application.Service.Llm.Budget as Budget
 import qualified Application.Service.Log as Log
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
@@ -72,8 +73,9 @@ instance Controller LlmAdminController where
         roles <- query @LlmAgentRole
             |> orderByAsc #name
             |> fetch
+        autoAnalyze <- AutoAnalyze.currentRules
         render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
-                         , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
+                          , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
 
     action LlmQueueAction = do
         requirePrivilege "manage_rules"
@@ -488,6 +490,29 @@ instance Controller LlmAdminController where
                     setSuccessMessage ("Deleted role " <> role.name)
         redirectTo LlmAdminAction
 
+    -- Auto-analysis gate (milestone 10 §5): singleton row upsert; only known
+    -- statuses/severities are stored, empty selection = nothing triggers.
+    action UpdateAutoAnalyzeAction = do
+        requirePrivilege "manage_rules"
+        let enabled = isJust (paramOrNothing @Text "enabled")
+            statuses = [s | s <- paramList @Text "statuses", s `elem` AutoAnalyze.allStatuses]
+            severities = [s | s <- paramList @Text "severities", s `elem` AutoAnalyze.allSeverities]
+        existing <- query @LlmAutoAnalyzeConfig |> fetch
+        now <- getCurrentTime
+        _ <- case existing of
+            (row:_) -> row
+                |> set #enabled enabled
+                |> set #statuses (Aeson.toJSON statuses)
+                |> set #severities (Aeson.toJSON severities)
+                |> set #updatedAt now
+                |> updateRecord
+            [] -> createRecord (newRecord @LlmAutoAnalyzeConfig
+                |> set #enabled enabled
+                |> set #statuses (Aeson.toJSON statuses)
+                |> set #severities (Aeson.toJSON severities))
+        setSuccessMessage "Auto-analysis rules updated"
+        redirectTo LlmAdminAction
+
 -- Tools field: comma-separated whitelist of known tool names; empty = no
 -- tools for the role (milestone_8.md §2).
 parseTools :: Text -> Value
@@ -498,4 +523,4 @@ parseTools raw = Aeson.toJSON
     ]
 
 knownToolNames :: [Text]
-knownToolNames = ["cmdb_lookup", "jira_search", "assets_lookup"]
+knownToolNames = ["cmdb_lookup", "jira_search", "jira_issue_details", "assets_lookup"]

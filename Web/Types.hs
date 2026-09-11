@@ -109,6 +109,7 @@ data LlmAdminController
     | ToggleLlmRoleAction { roleId :: !(Id LlmAgentRole) }
     | SetDefaultLlmRoleAction { roleId :: !(Id LlmAgentRole) }
     | DeleteLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    | UpdateAutoAnalyzeAction
     deriving (Eq, Show)
 
 data AssetsAdminController

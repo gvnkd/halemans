@@ -12,6 +12,7 @@ import Application.Service.Llm
 import Application.Service.Llm.Output
 import Application.Service.Llm.Prompt
 import Application.Service.Llm.Budget
+import Application.Service.Llm.AutoAnalyze
 
 atTime :: Text -> UTCTime
 atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
@@ -149,6 +150,22 @@ spec = describe "Milestone 4 LLM services" do
             withinDedupeWindow 3600 now (addUTCTime (-3599) now) `shouldBe` True
         it "is outside the window" do
             withinDedupeWindow 3600 now (addUTCTime (-3601) now) `shouldBe` False
+
+    describe "AutoAnalyze.allowedByRules (milestone 10 §5)" do
+        it "defaults allow firing/ack of any severity" do
+            allowedByRules defaultRules "firing" "info" `shouldBe` True
+            allowedByRules defaultRules "ack" "critical" `shouldBe` True
+        it "defaults exclude stalled, resolved and closed" do
+            allowedByRules defaultRules "stalled" "critical" `shouldBe` False
+            allowedByRules defaultRules "resolved" "critical" `shouldBe` False
+            allowedByRules defaultRules "closed" "critical" `shouldBe` False
+        it "a disabled gate allows nothing" do
+            allowedByRules defaultRules { aaEnabled = False } "firing" "critical" `shouldBe` False
+        it "custom severity/status lists are honoured" do
+            let rules = AutoAnalyzeRules True ["firing", "resolved"] ["critical", "high"]
+            allowedByRules rules "resolved" "high" `shouldBe` True
+            allowedByRules rules "resolved" "info" `shouldBe` False
+            allowedByRules rules "ack" "critical" `shouldBe` False
 
 fieldOf :: Text -> ParsedOutput -> Maybe Text
 fieldOf key parsed = do

@@ -5,6 +5,7 @@ import IHP.Prelude
 import IHP.ModelSupport (newRecord)
 import Generated.Types hiding (JiraConfig)
 import Application.Service.Jira
+import qualified Data.Aeson as Aeson
 import Application.Service.Jira.Related (parseRelevantKeys)
 
 spec :: Spec
@@ -48,3 +49,19 @@ spec = describe "Application.Service.Jira" do
             parseRelevantKeys ["DEV-1"] "```json\n{\"relevant\": []}\n```" `shouldBe` Just []
         it "returns Nothing without a parseable verdict" do
             parseRelevantKeys ["DEV-1"] "no json here" `shouldBe` Nothing
+
+    describe "JiraIssue decoding" do
+        it "reads a plain-text description (v2 / Server)" do
+            let raw = "{\"key\": \"DEV-1\", \"fields\": {\"summary\": \"s\", \"labels\": [], \"description\": \"plain body\"}}"
+            fmap issueDescription (Aeson.decode raw) `shouldBe` Just "plain body"
+        it "extracts text from an ADF description (v3 / Cloud)" do
+            let raw = "{\"key\": \"DEV-1\", \"fields\": {\"summary\": \"s\", \"description\": {\"type\": \"doc\", \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"hello \"}, {\"type\": \"text\", \"text\": \"world\"}]}]}}}"
+            fmap issueDescription (Aeson.decode raw) `shouldBe` Just "hello world"
+        it "defaults to an empty description" do
+            let raw = "{\"key\": \"DEV-1\", \"fields\": {\"summary\": \"s\"}}"
+            fmap issueDescription (Aeson.decode raw) `shouldBe` Just ""
+
+    describe "JiraComment decoding" do
+        it "reads author, created and plain-text body" do
+            let raw = "{\"author\": {\"displayName\": \"Ops Bot\"}, \"created\": \"2026-09-01\", \"body\": \"did the thing\"}"
+            Aeson.decode raw `shouldBe` Just (JiraComment "Ops Bot" "2026-09-01" "did the thing")

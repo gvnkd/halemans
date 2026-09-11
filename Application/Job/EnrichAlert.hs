@@ -9,6 +9,7 @@ import Generated.Types
 import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import qualified Application.Service.Jira.DbConfig as Jira
 import qualified Application.Service.Jira.Related as Related
+import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Facets as Facets
 import qualified Application.Service.Groups as Groups
@@ -113,15 +114,20 @@ maybeRetriggerAnalysis alert startedAt = do
         |> limit 1
         |> fetchOneOrNothing
     when (isJust doneBefore && isNothing alreadyRetriggered) do
-        void do
-            analysis <- newRecord @LlmAnalysis
-                |> set #alertId (get #id alert)
-                |> set #errorMessage (Just retriggerMarker)
-                |> createRecord
+        -- Auto-analysis gate (milestone 10 §5): the alert may have resolved
+        -- or stalled between ingest and this enrichment run — re-analysis
+        -- follows the same status/severity rules as the initial enqueue.
+        autoAnalyze <- AutoAnalyze.autoAnalyzeAllowed alert
+        when autoAnalyze do
             void do
-                newRecord @LlmAnalysisJob
-                    |> set #analysisId (get #id analysis)
+                analysis <- newRecord @LlmAnalysis
+                    |> set #alertId (get #id alert)
+                    |> set #errorMessage (Just retriggerMarker)
                     |> createRecord
+                void do
+                    newRecord @LlmAnalysisJob
+                        |> set #analysisId (get #id analysis)
+                        |> createRecord
 
 sqlQuote :: UTCTime -> Text
 sqlQuote time = "'" <> tshow time <> "'"

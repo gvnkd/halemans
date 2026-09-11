@@ -1,6 +1,7 @@
 module Application.Service.Llm.Tools
 ( toolDefinitions
 , executeToolCall
+, runWithToolLoop
 ) where
 
 import IHP.Prelude
@@ -17,13 +18,14 @@ import qualified Application.Service.Cmdb as Cmdb
 import qualified Application.Service.Cmdb.DbConfig as CmdbDb
 import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Jira.DbConfig as JiraDb
-import Application.Service.Jira (JiraIssue (..))
+import Application.Service.Jira (JiraIssue (..), JiraComment (..))
 import Application.Service.Cmdb (ConfPage (..))
 import qualified Application.Service.Assets as Assets
 import qualified Application.Service.Assets.Aql as Aql
 import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Types (ObjectListResult (..), AssetObject (..), ObjectAttribute (..), ObjectAttributeValue (..))
-import Application.Service.Llm (ToolCall (..))
+import Data.Either (fromRight)
+import Application.Service.Llm (ToolCall (..), LlmProvider (..), OpenAiCompat (..), Prompt (..), LlmMessage, assistantMessage, toolResultMessage, Completion (..), LlmError (..), LlmProviderConfig)
 
 -- Optional read-only tool access for the model (design_docs/milestone_4.md
 -- D4a), exposed via OpenAI-style tool calling. Tools only ever READ from the
@@ -74,6 +76,20 @@ toolDefinitions =
                 ]
             ]
         ]
+    , object
+        [ "type" .= ("function" :: Text)
+        , "function" .= object
+            [ "name" .= ("jira_issue_details" :: Text)
+            , "description" .= ("Fetch full details of one Jira task by key: summary, status, labels, description and recent comments" :: Text)
+            , "parameters" .= object
+                [ "type" .= ("object" :: Text)
+                , "properties" .= object
+                    [ "key" .= object ["type" .= ("string" :: Text), "description" .= ("issue key, e.g. OPS-123" :: Text)]
+                    ]
+                , "required" .= (["key"] :: [Text])
+                ]
+            ]
+        ]
     ]
 
 -- Executes one model-requested tool call; result is returned as the text
@@ -83,6 +99,7 @@ executeToolCall :: (?modelContext :: ModelContext) => Maybe Source -> ToolCall -
 executeToolCall source call = case call.callName of
     "cmdb_lookup" -> withTextArg "term" (cmdbLookup source)
     "jira_search" -> withTextArg "query" (jiraSearch source)
+    "jira_issue_details" -> withTextArg "key" (jiraIssueDetails source)
     "assets_lookup" -> withTextArg "term" assetsLookup
     other -> pure ("unknown tool: " <> other)
     where
@@ -169,3 +186,62 @@ assetsLookup term = do
             [] -> ""
             values -> " | " <> attribute.attrName <> ": "
                 <> Text.intercalate ", " (map (.valueDisplay) values)
+
+-- jira_issue_details (milestone 10): full task card for one issue key —
+-- summary/status/labels/description plus the 5 most recent comments. Every
+-- configured connection is tried in turn (links may live in different
+-- instances). Works source-less via the global config set.
+jiraIssueDetails :: (?modelContext :: ModelContext) => Maybe Source -> Text -> IO Text
+jiraIssueDetails maybeSource key = do
+    configs <- case maybeSource of
+        Just source -> JiraDb.jiraConfigsForSource source
+        Nothing -> JiraDb.currentJiraConfigs
+    if null configs
+        then pure "jira not configured"
+        else tryConfigs configs
+    where
+        tryConfigs [] = pure ("jira issue not found: " <> key)
+        tryConfigs (config:rest) = do
+            result <- Jira.getIssue config key
+            case result of
+                Left _ -> tryConfigs rest
+                Right issue -> do
+                    comments <- Jira.getIssueComments config key
+                    pure (renderDetails issue (fromRight [] comments))
+        renderDetails issue comments = Text.intercalate "\n"
+            ([ issue.issueKey <> ": " <> issue.issueSummary
+             , "status: " <> issue.issueStatus
+             , "labels: " <> Text.intercalate ", " issue.issueLabels
+             , "description: " <> Text.take 800 issue.issueDescription
+             ] ++ map renderComment (take 5 (reverse comments)))
+        renderComment comment =
+            "- " <> comment.commentAuthor <> " (" <> comment.commentCreated <> "): "
+                <> Text.take 300 comment.commentBody
+
+-- Optional tool loop (milestone_4.md D4a): with tools enabled, model-requested
+-- read-only tool calls are executed and their results fed back, up to the
+-- given rounds. Every call is logged. Shared by LlmAnalysisJob (alert
+-- enrichment) and the related-tasks relevance filter (milestone 10).
+runWithToolLoop
+    :: (?modelContext :: ModelContext)
+    => LlmProviderConfig -> Maybe Source -> Int -> [LlmMessage] -> [Value] -> [Value]
+    -> IO (Either LlmError (Completion, [Value]))
+runWithToolLoop _ _ 0 _ _ toolLog = pure (Left (Terminal ("tool loop exhausted; calls: " <> tshow (length toolLog))))
+runWithToolLoop config source roundsLeft messages tools toolLog = do
+    result <- complete (OpenAiCompat config) (Prompt messages tools)
+    case result of
+        Left err -> pure (Left err)
+        Right completion
+            | null completion.toolCalls -> pure (Right (completion, toolLog))
+            | otherwise -> do
+                results <- forM completion.toolCalls \call -> do
+                    output <- executeToolCall source call
+                    pure (toolResultMessage call.callId output, object
+                        [ "name" .= call.callName
+                        , "arguments" .= call.callArguments
+                        , "result" .= output
+                        ])
+                let messages' = messages
+                        ++ [assistantMessage completion.toolCalls]
+                        ++ map fst results
+                runWithToolLoop config source (roundsLeft - 1) messages' tools (toolLog ++ map snd results)

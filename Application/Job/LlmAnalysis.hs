@@ -15,7 +15,7 @@ import Application.Service.Llm
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Prompt (buildPromptForAlert, BuiltPrompt (..))
 import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
-import Application.Service.Llm.Tools (toolDefinitions, executeToolCall)
+import Application.Service.Llm.Tools (toolDefinitions, executeToolCall, runWithToolLoop)
 import Application.Service.Llm.Roles (resolveAgentRole, templateNameForRole, toolsForRole)
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Helper.Ingest (publishAlertUpdate)
@@ -188,32 +188,8 @@ callProvider job analysis alert config role built = do
             recordUsage config.providerName completion
             publishAlertUpdate alert "enriched"
 
--- Optional tool loop (D4a): with tools enabled, model-requested read-only
--- tool calls are executed and their results fed back, up to 3 rounds. Every
--- call is logged for the analysis row.
-runWithToolLoop
-    :: (?modelContext :: ModelContext)
-    => LlmProviderConfig -> Maybe Source -> Int -> [LlmMessage] -> [Value] -> [Value]
-    -> IO (Either LlmError (Completion, [Value]))
-runWithToolLoop _ _ 0 _ _ toolLog = pure (Left (Terminal ("tool loop exhausted; calls: " <> tshow (length toolLog))))
-runWithToolLoop config source roundsLeft messages tools toolLog = do
-    result <- complete (OpenAiCompat config) (Prompt messages tools)
-    case result of
-        Left err -> pure (Left err)
-        Right completion
-            | null completion.toolCalls -> pure (Right (completion, toolLog))
-            | otherwise -> do
-                results <- forM completion.toolCalls \call -> do
-                    output <- executeToolCall source call
-                    pure (toolResultMessage call.callId output, object
-                        [ "name" .= call.callName
-                        , "arguments" .= call.callArguments
-                        , "result" .= output
-                        ])
-                let messages' = messages
-                        ++ [assistantMessage completion.toolCalls]
-                        ++ map fst results
-                runWithToolLoop config source (roundsLeft - 1) messages' tools (toolLog ++ map snd results)
+-- The tool loop lives in Application.Service.Llm.Tools (shared with the
+-- related-tasks relevance filter, milestone 10).
 
 recordUsage :: (?modelContext :: ModelContext) => Text -> Completion -> IO ()
 recordUsage provider completion = do

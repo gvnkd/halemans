@@ -1,5 +1,6 @@
 module Application.Service.Jira
 ( JiraIssue (..)
+, JiraComment (..)
 , JiraConfig (..)
 , jiraConfigFromEnv
 , jiraEnvConfig
@@ -9,6 +10,7 @@ module Application.Service.Jira
 , projectClause
 , searchIssues
 , getIssue
+, getIssueComments
 , createIssue
 , upsertLink
 , issueUrl
@@ -26,6 +28,8 @@ import Data.Aeson (Value, object, (.=), (.:), (.:?), (.!=))
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Vector as Vector
 import qualified Data.Text as Text
 import qualified Network.Wreq as Wreq
 import qualified Application.Service.Http as Http
@@ -80,6 +84,7 @@ data JiraIssue = JiraIssue
     , issueStatus :: Text
     , issueStatusCategory :: Text
     , issueLabels :: [Text]
+    , issueDescription :: Text
     } deriving (Eq, Show)
 
 instance Aeson.FromJSON JiraIssue where
@@ -88,6 +93,8 @@ instance Aeson.FromJSON JiraIssue where
         fields <- o .: "fields"
         issueSummary <- fields .:? "summary" .!= ""
         issueLabels <- fields .:? "labels" .!= []
+        rawDescription <- fields .:? "description"
+        let issueDescription = maybe "" descriptionText rawDescription
         status <- fields .:? "status"
         (issueStatus, issueStatusCategory) <- case status of
             Just s -> do
@@ -99,6 +106,39 @@ instance Aeson.FromJSON JiraIssue where
                 pure (name, categoryKey)
             Nothing -> pure ("", "")
         pure JiraIssue { .. }
+
+-- Description bodies are plain text on v2/Server (and our mock) but ADF
+-- documents on v3/Cloud; extract the text nodes in document order.
+descriptionText :: Value -> Text
+descriptionText (Aeson.String text) = text
+descriptionText (Aeson.Object o) =
+    let own = case KeyMap.lookup "text" o of
+            Just (Aeson.String text) -> text
+            _ -> ""
+        children = case KeyMap.lookup "content" o of
+            Just (Aeson.Array arr) -> Text.concat (map descriptionText (Vector.toList arr))
+            _ -> ""
+    in own <> children
+descriptionText _ = ""
+
+-- One issue comment (GET /issue/{key}/comment); body goes through the same
+-- plain-text/ADF extraction as descriptions.
+data JiraComment = JiraComment
+    { commentAuthor :: Text
+    , commentCreated :: Text
+    , commentBody :: Text
+    } deriving (Eq, Show)
+
+instance Aeson.FromJSON JiraComment where
+    parseJSON = Aeson.withObject "JiraComment" \o -> do
+        author <- o .:? "author"
+        commentAuthor <- case author of
+            Just a -> a .:? "displayName" .!= ""
+            Nothing -> pure ""
+        commentCreated <- o .:? "created" .!= ""
+        rawBody <- o .:? "body"
+        let commentBody = maybe "" descriptionText rawBody
+        pure JiraComment { .. }
 
 -- Multi-project JQL (milestone 10): several projects from jira_configs are
 -- OR-ed via `project in (...)`; an empty list drops the project clause
@@ -148,6 +188,17 @@ getIssue config key = do
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
             Left err -> pure (Left (cs err))
             Right issue -> pure (Right issue)
+
+getIssueComments :: JiraConfig -> Text -> IO (Either Text [JiraComment])
+getIssueComments config key = do
+    result <- try (Http.getFollowing (authOpts config) (cs (apiUrl config ("/issue/" <> key <> "/comment"))))
+    case result of
+        Left err -> pure (Left (tshow (err :: SomeException)))
+        Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of
+            Left err -> pure (Left (cs err))
+            Right decoded -> do
+                let comments = parseMaybe (Aeson.withObject "comments" (.: "comments")) decoded
+                pure (maybe (Left "jira comments: no comments field") Right comments)
 
 createIssue :: JiraConfig -> Text -> Text -> Text -> IO (Either Text Text)
 createIssue config issueType summary description = do

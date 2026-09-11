@@ -1155,6 +1155,43 @@ with sync_playwright() as pw:
             f"SELECT 1 FROM llm_analyses WHERE alert_id = '{alert_id}' AND agent_role_id = '{role_id}' AND created_at > '{marker}' LIMIT 1", 60)
         assert done, "no analysis with the chosen role recorded"
 
+    # milestone 10 §5: auto-analysis gate admin form
+    @check("llm admin: auto-analysis gate form saves and persists")
+    def _():
+        sql("DELETE FROM llm_auto_analyze_configs")
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin/llm")
+        admin.get_by_test_id("auto-analyze-form").wait_for()
+        # sane defaults: firing+ack, all severities, enabled
+        assert admin.get_by_test_id("auto-analyze-enabled").is_checked()
+        assert admin.get_by_test_id("auto-analyze-status-firing").is_checked()
+        assert admin.get_by_test_id("auto-analyze-status-ack").is_checked()
+        assert not admin.get_by_test_id("auto-analyze-status-stalled").is_checked()
+        assert not admin.get_by_test_id("auto-analyze-status-resolved").is_checked()
+        # restrict to critical-only firing, save, verify persistence
+        admin.get_by_test_id("auto-analyze-status-ack").uncheck()
+        for sev in ["high", "warning", "info"]:
+            admin.get_by_test_id(f"auto-analyze-severity-{sev}").uncheck()
+        admin.get_by_test_id("auto-analyze-submit").click()
+        admin.get_by_text("Auto-analysis rules updated").wait_for()
+        admin.goto(f"{APP}/admin/llm")
+        admin.get_by_test_id("auto-analyze-form").wait_for()
+        assert admin.get_by_test_id("auto-analyze-status-firing").is_checked()
+        assert not admin.get_by_test_id("auto-analyze-status-ack").is_checked()
+        assert admin.get_by_test_id("auto-analyze-severity-critical").is_checked()
+        assert not admin.get_by_test_id("auto-analyze-severity-warning").is_checked()
+        stored = sql("SELECT statuses::text, severities::text FROM llm_auto_analyze_configs")
+        assert stored == '["firing"]|["critical"]', f"stored rules: {stored!r}"
+        # restore defaults so later analysis-dependent checks keep working
+        admin.get_by_test_id("auto-analyze-status-ack").check()
+        for sev in ["high", "warning", "info"]:
+            admin.get_by_test_id(f"auto-analyze-severity-{sev}").check()
+        admin.get_by_test_id("auto-analyze-submit").click()
+        admin.get_by_text("Auto-analysis rules updated").wait_for()
+        admin.close()
+        login(page, "sre")
+
     browser.close()
 
 print()

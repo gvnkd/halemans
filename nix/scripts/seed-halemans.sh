@@ -168,6 +168,33 @@ SELECT 'default-enricher', 'Default enrichment role', 'alert_enrichment',
        '["cmdb_lookup", "jira_search", "assets_lookup"]'::jsonb, true, true
 WHERE NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE name = 'default-enricher')
   AND NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE is_default);
+
+-- Related Jira tasks filter (milestone 10 §2): admin-editable template +
+-- role; the verdict contract is appended by the code, not the template.
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'jira_related_filter', 1, $tpl$You are triaging Jira tasks related to a monitoring alert.
+
+## Alert
+- Title: {{alert.title}}
+- Severity: {{alert.severity}}
+- Environment: {{alert.env}}
+- Host: {{alert.host}}
+- Service: {{alert.service}}
+- Check: {{alert.check_name}}
+
+{{alert.description}}
+
+## Candidate Jira tasks
+{{candidates}}
+
+You may call jira_issue_details with a task key to inspect its description and comments before deciding.
+$tpl$, true, 'milestone 10: related tasks filter'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'jira_related_filter' AND version = 1);
+
+INSERT INTO llm_agent_roles (name, description, prompt_template_name, tools, enabled, is_default)
+SELECT 'jira-related-filter', 'Related Jira tasks relevance filter', 'jira_related_filter',
+       '["jira_issue_details"]'::jsonb, true, false
+WHERE NOT EXISTS (SELECT 1 FROM llm_agent_roles WHERE name = 'jira-related-filter');
 SQL
 
 # Default retention config (milestone 5 D10): 30 days raw_events, enabled.

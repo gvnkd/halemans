@@ -33,7 +33,20 @@ EnrichAlertJob AFTER the assets step:
 3. The configured LLM (`currentLlmConfig`) gets the alert plus the candidate
    list and answers with a fenced ```json {"relevant": [keys]}``` verdict;
    only those keys survive. No LLM configured or call/parse failure →
-   candidates are kept unfiltered (soft-fail).
+   candidates are kept unfiltered (soft-fail). Candidates lacking a summary
+   (Assets connected tickets may carry none) are first enriched via
+   `GET /issue/{key}`.
+
+   The filter prompt is admin-editable like alert enrichment: the agent role
+   `jira-related-filter` (seeded) points at the active
+   `jira_related_filter` prompt template (slots: the usual `{{alert.*}}`
+   bindings plus `{{candidates}}`) and carries the tool whitelist — seeded
+   with `jira_issue_details`, the read-only tool fetching a task's summary,
+   status, labels, description (plain text, ADF-extracted on v3) and recent
+   comments. The verdict format contract is appended by the code, not stored
+   in the template. No role/template → built-in fallback prompt; LLM call
+   runs through the shared tool loop (`runWithToolLoop`, now in
+   `Application.Service.Llm.Tools`).
 4. Survivors are upserted as `jira_links` rows with `origin = 'related'` and
    render in the Jira card's "Related tasks" section (WS-live like the other
    panels). Related rows the LLM no longer selects are deleted on the next
@@ -42,6 +55,16 @@ EnrichAlertJob AFTER the assets step:
 Failures of the whole related step are logged as
 `AlertEvent(enrichment_failed, subsystem=jira-related)` but never re-enqueue
 the enrichment run (advisory data).
+
+## 5. Auto-analysis gate
+
+Automatic LLM analyses (new-alert enqueue at ingest, enrichment retrigger)
+pass through `Application.Service.Llm.AutoAnalyze.autoAnalyzeAllowed`: the
+singleton `llm_auto_analyze_configs` row (Admin → LLM → "Auto-analysis")
+whitelists statuses and severities. Defaults when no row exists: enabled,
+statuses `firing`+`ack`, all severities — i.e. stalled/resolved alerts are
+not auto-analyzed out of the box. Manual re-analyze from the alert card is
+never gated.
 
 ## 3. Writable Jira gating
 
