@@ -39,10 +39,11 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager/generic we
 - Self-rescheduling jobs: override `queuePollInterval` (default 60s) for sub-minute loops.
 - Retry/backoff overrides: HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0" + HALEMANS_WRITEBACK_MAX_ATTEMPTS; HALEMANS_LLM_BACKOFF_SECONDS (used in checks).
 - LlmAnalysisJob retries count `llm_analysis_jobs` ROWS per analysis (fresh requeued rows reset attempts_count).
+- LlmAnalysisJob's perform guard accepts status queued AND running (2.1.3): IHP stale recovery (staleJobTimeout 600s) revives the JOB row of a worker that crashed mid-analysis while the analysis stays 'running' — a queued-only guard no-ops the revived job and orphans the analysis forever (panel shows "re-analysis pending…" permanently). No startup sweep needed: a crash always strands the job row in job_status_running, so recovery + the widened guard converges every orphan.
 
 ## Source health & write-back
 - Fingerprint `halemans:source-health:<source_id>`; warning → high at 5 failures (severity_upgraded event); recordSuccess posts Resolved + resets backoff. Backoff: `interval × 2^failures` cap 30min, deterministic ±10% jitter from fingerprint hash. Pollers skip sources with next_poll_at > now. Reconcile-path failures (e.g. token role missing trigger.get) get a SEPARATE fingerprint `halemans:source-reconcile:<source_id>` via recordReconcileFailure/Success — internal alert with NO backoff (polling is healthy, only the state-sync safety net is down).
-- Webhook silence: SourceHealthJob checks sources with config.expectedIntervalSeconds; baseline = max(raw_events.received_at) or sources.created_at.
+- Webhook silence: SourceHealthJob checks PUSH sources (alertmanager/webhook only — poll sources never write raw_events and would false-fire off sources.created_at) with config.expectedIntervalSeconds; baseline = max(raw_events.received_at) or sources.created_at.
 - Pure alertmanager sources have NO reverse silence reconcile (no poller); only grafana (PollGrafana) and zabbix (PollZabbix) mirror source acks.
 - Generic-hook alerts get fingerprint prefix `grafana:` (quirk, not `generic:`) → PollGrafana's absence-reconcile can resolve them mid-scenario: smoke/Playwright must NOT assert dedupe copies for them.
 - Connection tests (`connectionOk`) return `Either Text ()`; controllers log the reason via Log.logWarn (Request has NO `logger` field — shadow `?context = ?context.frameworkConfig` first).

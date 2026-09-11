@@ -13,8 +13,11 @@ import Control.Monad (void)
 
 -- Webhook silence detection (design_docs/milestone_5.md §4): a push source
 -- with an expectedIntervalSeconds config that saw no raw event for 3x that
--- interval is treated as failed. Lightweight periodic check, self-rescheduling
--- like the pollers. Poll-based backoff lives in the pollers themselves.
+-- interval is treated as failed. Push source types only: raw_events rows are
+-- written exclusively by the webhook controller, so a poll source (zabbix,
+-- grafana) with the key set would fall back to sources.created_at and
+-- false-fire forever. Lightweight periodic check, self-rescheduling like the
+-- pollers. Poll-based backoff lives in the pollers themselves.
 instance Job SourceHealthJob where
     perform _job = do
         checkSilence
@@ -33,10 +36,16 @@ instance Job SourceHealthJob where
     queuePollInterval = 5 * 1000000
     maxAttempts = 3
 
+-- | Source types that receive inbound pushes and therefore produce
+-- raw_events rows; silence detection is meaningless for poll sources.
+pushSourceTypes :: [Text]
+pushSourceTypes = ["alertmanager", "webhook"]
+
 checkSilence :: (?modelContext :: ModelContext) => IO ()
 checkSilence = do
     sources <- query @Source
         |> filterWhere (#enabled, True)
+        |> filterWhereIn (#type_, pushSourceTypes)
         |> fetch
     now <- getCurrentTime
     forM_ sources \source -> forM_ (expectedIntervalSeconds source) \expected -> do

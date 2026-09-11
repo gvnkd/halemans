@@ -832,6 +832,21 @@ llmSpec = describe "llm enrichment (milestone 4)" do
         requestsAfter <- counterRequestsAfter "default"
         requestsAfter `shouldBe` requestsBefore
 
+    it "a stale-recovered job re-runs an analysis left running by a crashed worker" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        -- simulate the crash window: worker set running, then died before done
+        crashed <- analysis
+            |> set #status "running"
+            |> updateRecord
+        performLatestJob (get #id crashed)
+        recovered <- fetch (get #id analysis)
+        recovered.status `shouldBe` "done"
+        recovered.resultMd `shouldSatisfy` maybe False (not . Text.null)
+
     it "daily budget cap soft-skips with an llm_skipped event" do
         _ <- ensureTemplate
         oldBudget <- lookupEnv "LLM_DAILY_TOKEN_BUDGET"
@@ -1030,6 +1045,16 @@ m5Spec = describe "milestone 5 hardening" do
             |> filterWhere (#fingerprint, healthFingerprint sourceId)
             |> fetchOneOrNothing
         isJust alert `shouldBe` True
+
+    it "webhook silence check ignores poll sources with expectedIntervalSeconds set" do
+        source <- integrationSource "zabbix" "itest-silent-poll" "" (object ["expectedIntervalSeconds" .= (10 :: Int)])
+        let sourceId = get #id source
+        _ <- sqlExecTyped [typedSql| UPDATE sources SET created_at = NOW() - INTERVAL '1 hour' WHERE id = ${sourceId} |]
+        checkSilence
+        alert <- query @Alert
+            |> filterWhere (#fingerprint, healthFingerprint sourceId)
+            |> fetchOneOrNothing
+        isJust alert `shouldBe` False
 
     it "enrichment completion re-analyzes an alert analyzed before enrichment landed, exactly once" do
         _ <- ensureTemplate

@@ -31,7 +31,14 @@ import Application.Helper.Ingest (publishAlertUpdate)
 instance Job LlmAnalysisJob where
     perform job = do
         analysis <- fetch job.analysisId
-        when (analysis.status == "queued") do
+        -- "running" is reachable here only via IHP stale-job recovery: the
+        -- worker that set it died mid-analysis (locked_at older than
+        -- staleJobTimeout), so no live process will finish the row. A
+        -- "queued"-only guard would no-op the recovered job and orphan the
+        -- analysis in "running" forever; re-running from the top is the
+        -- correct continuation (worst case a duplicate provider call, the
+        -- same risk class as any stale-recovered job).
+        when (analysis.status `elem` ["queued", "running"]) do
             alert <- fetch analysis.alertId
             maybeConfig <- currentLlmConfig
             case maybeConfig of

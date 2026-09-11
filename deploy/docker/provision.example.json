@@ -17,7 +17,10 @@
         "name": "generic-webhook",
         "env": "prod",
         "enabled": true,
-        "webhookTokens": [{"tokenEnv": "HALEMANS_GENERIC_HOOK_TOKEN"}]
+        "webhookTokens": [{"tokenEnv": "HALEMANS_GENERIC_HOOK_TOKEN"}],
+        "config": {
+          "expectedIntervalSeconds": 120
+        }
       },
 
       {
@@ -32,7 +35,6 @@
           "tokenEnv": "ZABBIX_TOKEN",
           "hostGroupScope": "teams",
           "initialHistoryDays": 1,
-          "expectedIntervalSeconds": 120,
           "writeBack": true,
           "jiraWritable": true,
           "jiraProjects": ["OPS"],

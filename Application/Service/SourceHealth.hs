@@ -51,7 +51,9 @@ pollDue :: UTCTime -> Source -> Bool
 pollDue now source = maybe True (<= now) source.nextPollAt
 
 -- | Per-source expected inbound interval for push sources (webhook silence
--- detection); unset disables silence detection for that source.
+-- detection); unset disables silence detection for that source. Ignored on
+-- poll sources (zabbix/grafana): SourceHealthJob only scans push types
+-- because poll connectors never write raw_events rows.
 expectedIntervalSeconds :: Source -> Maybe Int
 expectedIntervalSeconds source =
     parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText "expectedIntervalSeconds")) source.config
