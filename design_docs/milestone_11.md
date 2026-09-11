@@ -98,9 +98,19 @@ conventions (`Web/Controller/…`, Fragments widgets, `pageHeaderHtml`):
 - Params form: window (select 6h/24h/7d/30d), `minFlaps`, `maxGapSeconds`
   (number inputs, defaults per §1).
 - Results table: fingerprint, title (link to latest alert), severity/env/
-  host badges (existing Fragments helpers), source, flap count, rate/h,
-  median/p90 gap, MTTR, last flap (`utcTimeHtml` — all display timestamps
-  go through the Helper.View time helpers).
+  host badges (existing Fragments helpers), source, plus the flap metrics
+  below (`utcTimeHtml` for timestamps — all display timestamps go through
+  the Helper.View time helpers). Each metric column header carries a
+  `title` tooltip with this description:
+
+  | Column | Meaning |
+  | --- | --- |
+  | Flaps | Fire/resolve/refire cycles in qualifying episodes (resolve → refire gap ≤ max gap) |
+  | Rate/h | Flaps per hour over the analysis window |
+  | Median gap | Median time between a resolve and the following refire — the usual flapping period |
+  | P90 gap | 90th percentile of resolve → refire gaps — worst-case flapping period, outliers excluded |
+  | MTTR | Mean time from firing to resolved (mean time to resolve) across flapping episodes |
+  | Last flap | Most recent refire of a flapping episode |
 - Empty state text when nothing flaps.
 
 Report table mirrors the /alerts sortable table style; sorting is

@@ -47,12 +47,12 @@ resultsTable reports = [hsx|
                 <th>Env</th>
                 <th>Host</th>
                 <th>Source</th>
-                <th>Flaps</th>
-                <th>Rate/h</th>
-                <th>Median gap</th>
-                <th>P90 gap</th>
-                <th>MTTR</th>
-                <th>Last flap</th>
+                <th title="Fire/resolve/refire cycles in qualifying episodes (resolve -> refire gap <= max gap)">Flaps</th>
+                <th title="Flaps per hour over the analysis window">Rate/h</th>
+                <th title="Median time between a resolve and the following refire — the usual flapping period">Median gap</th>
+                <th title="90th percentile of resolve -> refire gaps — worst-case flapping period, outliers excluded">P90 gap</th>
+                <th title="Mean time from firing to resolved (mean time to resolve) across flapping episodes">MTTR</th>
+                <th title="Most recent refire of a flapping episode">Last flap</th>
             </tr>
         </thead>
         <tbody>
