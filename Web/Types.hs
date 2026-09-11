@@ -137,6 +137,10 @@ data AuditController
     | ExportAuditAction
     deriving (Eq, Show, Data)
 
+data FlappingController
+    = FlappingAction
+    deriving (Eq, Show, Data)
+
 data PushSubscriptionsController
     = SubscribePushAction
     | UnsubscribePushAction

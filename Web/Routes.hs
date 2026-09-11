@@ -211,3 +211,7 @@ POST /admin/purge-alerts    AdminPurgeAlertsAction
 GET  /admin/audit           AuditExportsAction
 GET  /admin/audit/export    ExportAuditAction
 |]
+
+[routes|FlappingController
+GET  /admin/flapping    FlappingAction
+|]

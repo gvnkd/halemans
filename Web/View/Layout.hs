@@ -68,6 +68,7 @@ navigation = [hsx|
                     <li><a class="dropdown-item" href={LlmQueueAction}>LLM queue</a></li>
                     <li><a class="dropdown-item" href={AdminAction}>Jobs</a></li>
                     <li><a class="dropdown-item" href={AuditExportsAction}>Audit exports</a></li>
+                    <li><a class="dropdown-item" href={FlappingAction}>Flapping</a></li>
                 </ul>
             </li>
         </ul>
