@@ -825,8 +825,10 @@ with sync_playwright() as pw:
             assert status == "failed", f"analysis status: {status!r}"
             page.goto(f"{APP}/alerts/{alert_id}")
             page.get_by_test_id("llm-unavailable").wait_for(timeout=30000)
+            # internal errors are recorded but hidden from the timeline
+            assert sql(f"SELECT kind FROM alert_events WHERE alert_id = '{alert_id}' AND kind = 'llm_failed'") == "llm_failed"
             kinds = page.get_by_test_id("alert-timeline").inner_text()
-            assert "llm_failed" in kinds, kinds
+            assert "llm_failed" not in kinds, kinds
         finally:
             urllib.request.urlopen(urllib.request.Request(
                 "http://127.0.0.1:18084/debug/reset", data=b"{}",

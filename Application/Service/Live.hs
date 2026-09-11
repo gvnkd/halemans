@@ -7,7 +7,7 @@ module Application.Service.Live
 
 import IHP.Prelude
 import IHP.ModelSupport
-import IHP.Fetch (fetch, fetchOne, fetchOneOrNothing)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.QueryBuilder (query, filterWhere, orderByAsc, orderByDesc, limit)
 import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.RequestVault ()
@@ -37,6 +37,7 @@ import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFil
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Data.Text as Text
 import Application.Service.Llm.Queue (latestJobErrors)
+import Application.Service.Timeline (timelineHiddenKind, headTimelineGroup)
 import qualified Application.Service.Assets.Cache as AssetsCache
 
 -- Websocket fan-out (milestone_1.md §7): one PG LISTEN subscription per
@@ -234,11 +235,11 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeAlert alertUuid, Just alertId, _)
         | alertId == alertUuid -> do
             alert <- fetch (Id alertId)
-            latestEvent <- query @AlertEvent
+            latestEvents <- query @AlertEvent
                 |> filterWhere (#alertId, Id alertId)
                 |> orderByDesc #createdAt
-                |> limit 1
-                |> fetchOne
+                |> limit 50
+                |> fetch
             -- Panel-only kinds (milestone_8.md §4: "assets" refreshes the
             -- context panels without touching status badge or timeline).
             if event.leKind == "assets"
@@ -247,10 +248,18 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                     panelUpdates <- if event.leKind `elem` ["enriched", "writeback", "writeback_failed"]
                         then contextPanelUpdates alert
                         else pure []
+                    -- Internal-error events (enrichment_failed etc.) never
+                    -- reach the timeline; visible kinds update the leading
+                    -- aggregated group in place via its stable dom id.
+                    let timelineUpdates = case latestEvents of
+                            (latest : _) | not (timelineHiddenKind (get #kind latest)) ->
+                                case headTimelineGroup latestEvents of
+                                    Just group -> [fragment (timelineGroupDomId group) (timelineGroupHtml group) "replaceOrPrepend" timelineDomId]
+                                    Nothing -> []
+                            _ -> []
                     pure
                         ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
-                          , fragment timelineDomId (timelineEventHtml latestEvent) "prepend" ""
-                          ] ++ panelUpdates )
+                          ] ++ timelineUpdates ++ panelUpdates )
         | otherwise -> pure []
     -- Group events (kind "group", milestone_2.md §9): the group card header
     -- for group-scoped connections, the env page group row for env scopes

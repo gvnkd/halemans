@@ -1,7 +1,8 @@
 module Web.View.Alerts.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineEventHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml, severityBadgeHtml, panelHtml, detailsJsonHtml, inlinePostFormHtml)
+import Web.View.Fragments (alertStatusBadgeHtml, timelineDomId, timelineGroupHtml, cmdbPanelHtml, assetsPanelHtml, jiraLinksHtml, writeBackChipHtml, llmPanelHtml, severityBadgeHtml, panelHtml, detailsJsonHtml, inlinePostFormHtml)
 import Application.Pipeline.Grouping (AlertField (..), alertFieldText, effectiveFieldText)
+import Application.Service.Timeline (groupTimeline)
 import qualified Data.Aeson as Aeson
 
 data ShowView = ShowView
@@ -59,7 +60,7 @@ instance View ShowView where
 
             <h2>Timeline</h2>
             <ul class="timeline" id={timelineDomId} data-testid="alert-timeline">
-                {forEach events timelineEventHtml}
+                {forEach (groupTimeline events) timelineGroupHtml}
             </ul>
 
             <h2>Comments</h2>

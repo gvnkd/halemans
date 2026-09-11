@@ -3,7 +3,8 @@ module Web.View.Fragments
 , alertRowDomId
 , alertStatusBadgeHtml
 , alertStatusDomId
-, timelineEventHtml
+, timelineGroupHtml
+, timelineGroupDomId
 , timelineDomId
 , groupRowHtml
 , groupRowDomId
@@ -49,6 +50,7 @@ import qualified Data.Text as Text
 import Application.Service.Assets.Attrs (objectAttributes, configuredAttrNames)
 import Application.Helper.DashboardConfig (CardSize (..), alertSortNaturalDir)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import Application.Service.Timeline (TimelineGroup (..))
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
 -- websocket broadcaster (milestone_1.md §7: no client-side rendering).
@@ -146,15 +148,30 @@ alertStatusBadgeHtml alert = [hsx|
 timelineDomId :: Text
 timelineDomId = "alert-timeline"
 
-timelineEventHtml :: AlertEvent -> Html
-timelineEventHtml event = [hsx|
-    <li class="timeline-event" data-kind={event.kind}>
+-- Stable per aggregated run (anchor = oldest event of the run): the live
+-- broadcaster replaceOrPrepend's the leading group by this id.
+timelineGroupDomId :: TimelineGroup -> Text
+timelineGroupDomId group = "timeline-group-" <> tshow (get #id group.tgAnchor)
+
+timelineGroupHtml :: TimelineGroup -> Html
+timelineGroupHtml group = [hsx|
+    <li class="timeline-event" id={domId} data-kind={event.kind}>
         <span class="timeline-kind">{event.kind}</span>
         <span class="timeline-time">{utcTimeHtml event.createdAt}</span>
         <span class="timeline-summary">{eventSummary event}</span>
+        {countBadge}
         {payloadDetails event}
     </li>
 |]
+    where
+        event = group.tgLatest
+        domId :: Text
+        domId = timelineGroupDomId group
+        countBadge = if group.tgCount > 1
+            then [hsx|<span class="badge text-bg-secondary timeline-count" data-testid="timeline-count">{countText}</span>|]
+            else mempty
+        countText :: Text
+        countText = "×" <> tshow group.tgCount
 
 -- Human-readable summary for the kind-aware timeline (milestone_3.md §8):
 -- external actions render with source-side attribution ("acked in zabbix by
