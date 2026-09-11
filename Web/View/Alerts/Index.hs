@@ -1,6 +1,6 @@
 module Web.View.Alerts.Index where
 import Web.View.Prelude
-import Web.View.Fragments (AlertsTable (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
+import Web.View.Fragments (AlertsTable (..), AlertsTableSorting (..), AlertsTableContent (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
 import Application.Service.AlertList (AlertListFilters (..), alertFiltersToValue)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Network.HTTP.Types.URI (renderQuery)
@@ -34,7 +34,7 @@ instance View IndexView where
     |]
         where
             table = alertsTableHtml AlertsTable
-                { atTestId = "alerts-table"
+                { atTestId = Just "alerts-table"
                 , atTbodyId = "alerts-tbody"
                 , atLiveScope = Just "alerts"
                 -- Canonical filter state for the WS subscription: the URL can
@@ -42,10 +42,13 @@ instance View IndexView where
                 -- without a pushState, so the client reads THESE, not
                 -- location.search.
                 , atLiveFilters = Just liveFilters
-                , atSort = filters.alfSort
-                , atDir = filters.alfDir
-                , atSortUrl = sortUrl
-                , atAlerts = alerts
+                , atTableClass = "table"
+                , atSorting = Just AlertsTableSorting
+                    { atsSort = filters.alfSort
+                    , atsDir = filters.alfDir
+                    , atsUrl = sortUrl
+                    }
+                , atContent = FlatAlerts alerts
                 }
             liveFilters :: Text
             liveFilters = cs (Aeson.encode (alertFiltersToValue filters))

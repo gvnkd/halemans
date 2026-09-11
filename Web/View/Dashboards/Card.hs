@@ -1,6 +1,6 @@
 module Web.View.Dashboards.Card where
 import Web.View.Prelude
-import Web.View.Fragments (AlertsTable (..), alertsTableHtml, nextSortDir)
+import Web.View.Fragments (AlertsTable (..), AlertsTableSorting (..), AlertsTableContent (..), alertsTableHtml, nextSortDir)
 import Web.View.Dashboards.Show (cardTitleText)
 import Application.Service.DashboardCards (ExpandedCard (..))
 import Network.HTTP.Types.URI (renderQuery)
@@ -25,14 +25,17 @@ instance View CardView where
     |]
         where
             table = alertsTableHtml AlertsTable
-                { atTestId = "dashboard-card-alerts"
+                { atTestId = Just "dashboard-card-alerts"
                 , atTbodyId = "dashboard-card-alerts-tbody"
                 , atLiveScope = Nothing
                 , atLiveFilters = Nothing
-                , atSort = sortColumn
-                , atDir = sortDir
-                , atSortUrl = sortUrl
-                , atAlerts = alerts
+                , atTableClass = "table"
+                , atSorting = Just AlertsTableSorting
+                    { atsSort = sortColumn
+                    , atsDir = sortDir
+                    , atsUrl = sortUrl
+                    }
+                , atContent = FlatAlerts alerts
                 }
             emptyNote = if null alerts
                 then [hsx|<p class="text-secondary" data-testid="dashboard-card-empty">No matching alerts.</p>|]

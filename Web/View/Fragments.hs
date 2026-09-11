@@ -39,6 +39,8 @@ module Web.View.Fragments
 , RollupCard (..)
 , rollupCardHtml
 , AlertsTable (..)
+, AlertsTableSorting (..)
+, AlertsTableContent (..)
 , alertsTableHtml
 , nextSortDir
 ) where
@@ -86,52 +88,82 @@ alertRowHtml alert = [hsx|
             Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">group</a>|]
             Nothing -> mempty
 
--- | Sortable alerts table shared by /alerts and the dashboard card detail
--- page. atSortUrl builds the href for a header click (page-specific query
--- params, e.g. via nextSortDir); atSort/atDir drive the ▲/▼ indicator.
--- RecordWildCards pattern-match: the function field breaks HasField
--- selector magic.
+-- | Alerts list table shared by every page that lists alerts: /alerts, the
+-- env page (flat and grouped views), the group card and the dashboard card
+-- detail page. atSorting = Nothing renders plain headers for pages without a
+-- sort query param. RecordWildCards pattern-match: the function field breaks
+-- HasField selector magic.
 data AlertsTable = AlertsTable
-    { atTestId :: Text
+    { atTestId :: Maybe Text
     , atTbodyId :: Text
     , atLiveScope :: Maybe Text
     , atLiveFilters :: Maybe Text
-    , atSort :: Text
-    , atDir :: Text
-    , atSortUrl :: Text -> Text
-    , atAlerts :: [Alert]
+    , atTableClass :: Text
+    , atSorting :: Maybe AlertsTableSorting
+    , atContent :: AlertsTableContent
     }
+
+data AlertsTableSorting = AlertsTableSorting
+    { atsSort :: Text
+    , atsDir :: Text
+    , atsUrl :: Text -> Text
+    }
+
+data AlertsTableContent
+    = FlatAlerts [Alert]
+    | GroupedAlerts [(AlertGroup, [Alert])]
 
 alertsTableHtml :: AlertsTable -> Html
 alertsTableHtml AlertsTable { .. } = [hsx|
-    <table class="table" data-testid={atTestId} data-live-scope={atLiveScope} data-live-filters={atLiveFilters}>
-        <thead>
-            <tr>
-                {sortableTh "status" "Status"}
-                {sortableTh "severity" "Severity"}
-                {sortableTh "title" "Title"}
-                {sortableTh "env" "Env"}
-                {sortableTh "host" "Host"}
-                {sortableTh "occurrences" "Occurrences"}
-                {sortableTh "last_seen_at" "Last seen"}
-            </tr>
-        </thead>
+    <table class={atTableClass} data-testid={atTestId} data-live-scope={atLiveScope} data-live-filters={atLiveFilters}>
+        {tableHead}
         <tbody id={atTbodyId}>
-            {forEach atAlerts alertRowHtml}
+            {tableRows}
         </tbody>
     </table>
 |]
     where
-        sortableTh :: Text -> Text -> Html
-        sortableTh column label = [hsx|
-            <th><a href={atSortUrl column} class="text-decoration-none" data-testid={"sort-" <> column}>{label}{indicator}</a></th>
+        tableHead = case atContent of
+            FlatAlerts _ -> [hsx|
+                <thead>
+                    <tr>
+                        {headerCell "status" "Status"}
+                        {headerCell "severity" "Severity"}
+                        {headerCell "title" "Title"}
+                        {headerCell "env" "Env"}
+                        {headerCell "host" "Host"}
+                        {headerCell "occurrences" "Occurrences"}
+                        {headerCell "last_seen_at" "Last seen"}
+                    </tr>
+                </thead>
+            |]
+            GroupedAlerts _ -> [hsx|
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Worst severity</th>
+                        <th>Group</th>
+                        <th></th>
+                    </tr>
+                </thead>
+            |]
+        tableRows = case atContent of
+            FlatAlerts alerts -> forEach alerts alertRowHtml
+            GroupedAlerts groups -> forEach groups groupRowHtml
+        headerCell :: Text -> Text -> Html
+        headerCell column label = case atSorting of
+            Nothing -> [hsx|<th>{label}</th>|]
+            Just sorting -> sortableTh sorting column label
+        sortableTh :: AlertsTableSorting -> Text -> Text -> Html
+        sortableTh AlertsTableSorting { .. } column label = [hsx|
+            <th><a href={atsUrl column} class="text-decoration-none" data-testid={"sort-" <> column}>{label}{indicator}</a></th>
         |]
             where
-                indicator = if atSort == column
+                indicator = if atsSort == column
                     then [hsx|<span class="sort-indicator">{arrow}</span>|]
                     else mempty
                 arrow :: Text
-                arrow = if atDir == "asc" then " ▲" else " ▼"
+                arrow = if atsDir == "asc" then " ▲" else " ▼"
 
 -- | Direction for a header click: toggles on the active column, otherwise
 -- the column's natural direction (matches /alerts).

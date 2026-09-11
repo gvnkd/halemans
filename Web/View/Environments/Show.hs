@@ -1,6 +1,6 @@
 module Web.View.Environments.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml, groupRowHtml, filterMultiSelect, filterTextInput)
+import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), alertsTableHtml, filterMultiSelect, filterTextInput)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Data.List as List
 import qualified Data.Aeson as Aeson
@@ -126,36 +126,22 @@ instance View ShowView where
             content = if viewMode == "grouped"
                 then groupedTable
                 else flatTable
-            flatTable = [hsx|
-                <table class="table" data-testid="env-alerts-table">
-                    <thead>
-                        <tr>
-                            <th>Status</th>
-                            <th>Severity</th>
-                            <th>Title</th>
-                            <th>Host</th>
-                            <th>Service</th>
-                            <th>Occurrences</th>
-                            <th>Last seen</th>
-                        </tr>
-                    </thead>
-                    <tbody id="env-alerts-tbody">
-                        {forEach alerts alertRowHtml}
-                    </tbody>
-                </table>
-            |]
-            groupedTable = [hsx|
-                <table class="table" data-testid="env-groups-table">
-                    <thead>
-                        <tr>
-                            <th>Status</th>
-                            <th>Worst severity</th>
-                            <th>Group</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody id="env-groups-tbody">
-                        {forEach groups groupRowHtml}
-                    </tbody>
-                </table>
-            |]
+            flatTable = alertsTableHtml AlertsTable
+                { atTestId = Just "env-alerts-table"
+                , atTbodyId = "env-alerts-tbody"
+                -- The wrapper div carries the live scope/filters.
+                , atLiveScope = Nothing
+                , atLiveFilters = Nothing
+                , atTableClass = "table"
+                , atSorting = Nothing
+                , atContent = FlatAlerts alerts
+                }
+            groupedTable = alertsTableHtml AlertsTable
+                { atTestId = Just "env-groups-table"
+                , atTbodyId = "env-groups-tbody"
+                , atLiveScope = Nothing
+                , atLiveFilters = Nothing
+                , atTableClass = "table"
+                , atSorting = Nothing
+                , atContent = GroupedAlerts groups
+                }

@@ -1,6 +1,6 @@
 module Web.View.Dashboards.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml, RollupCard (..), rollupCardHtml, statusBadgeHtml, severityBadgeHtml)
+import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), alertsTableHtml, RollupCard (..), rollupCardHtml, statusBadgeHtml, severityBadgeHtml)
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
@@ -65,13 +65,15 @@ renderCardSection dashboardId (expanded, result) = case result of
             (True, Just size) -> Just ("flex: 0 0 " <> tshow size.csWidth <> "px")
             _ -> Nothing
         cardBody = case result of
-            FlatCard alerts -> [hsx|
-                <table class="table table-sm">
-                    <tbody id={tbodyId}>
-                        {forEach alerts alertRowHtml}
-                    </tbody>
-                </table>
-            |]
+            FlatCard alerts -> alertsTableHtml AlertsTable
+                { atTestId = Nothing
+                , atTbodyId = tbodyId
+                , atLiveScope = Nothing
+                , atLiveFilters = Nothing
+                , atTableClass = "table table-sm"
+                , atSorting = Nothing
+                , atContent = FlatAlerts alerts
+                }
             GroupedCard groups -> [hsx|
                 {forEach groups (renderGroup domId)}
             |]
@@ -136,15 +138,20 @@ renderGroup cardId group = [hsx|
             {severityBadgeHtml group.cgWorstSeverity Nothing}
             <span class="badge bg-secondary" data-testid="dashboard-group-count">{group.cgTotal}</span>
         </h3>
-        <table class="table table-sm">
-            <tbody>
-                {forEach group.cgAlerts alertRowHtml}
-            </tbody>
-        </table>
+        {membersTable}
     </div>
 |]
     where
         groupId = cardId <> "-group-" <> Text.replace " " "_" group.cgValue
+        membersTable = alertsTableHtml AlertsTable
+            { atTestId = Nothing
+            , atTbodyId = groupId <> "-tbody"
+            , atLiveScope = Nothing
+            , atLiveFilters = Nothing
+            , atTableClass = "table table-sm"
+            , atSorting = Nothing
+            , atContent = FlatAlerts group.cgAlerts
+            }
 
 severityChip :: Text -> Html
 severityChip severity = severityBadgeHtml severity Nothing

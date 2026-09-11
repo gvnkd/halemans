@@ -1,6 +1,6 @@
 module Web.View.Groups.Show where
 import Web.View.Prelude
-import Web.View.Fragments (alertRowHtml, groupHeaderHtml)
+import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), alertsTableHtml, groupHeaderHtml)
 
 data ShowView = ShowView
     { group :: AlertGroup
@@ -13,25 +13,19 @@ instance View ShowView where
         <div data-live-scope={"group:" <> tshow group.id}>
             {groupHeaderHtml group}
             {ackButton}
-            <table class="table" data-testid="group-members-table">
-                <thead>
-                    <tr>
-                        <th>Status</th>
-                        <th>Severity</th>
-                        <th>Title</th>
-                        <th>Env</th>
-                        <th>Host</th>
-                        <th>Occurrences</th>
-                        <th>Last seen</th>
-                    </tr>
-                </thead>
-                <tbody id="group-members-tbody">
-                    {forEach members alertRowHtml}
-                </tbody>
-            </table>
+            {membersTable}
         </div>
     |]
         where
+            membersTable = alertsTableHtml AlertsTable
+                { atTestId = Just "group-members-table"
+                , atTbodyId = "group-members-tbody"
+                , atLiveScope = Nothing
+                , atLiveFilters = Nothing
+                , atTableClass = "table"
+                , atSorting = Nothing
+                , atContent = FlatAlerts members
+                }
             hasFiring = any (\alert -> alert.status == "firing") members
             ackButton = if canAck && hasFiring
                 then [hsx|
