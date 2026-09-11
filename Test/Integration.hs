@@ -47,6 +47,8 @@ import Application.Service.Provision (applyProvisionConfig, ProvisionError (..))
 import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Tools (executeToolCall)
+import Application.Service.Llm.ToolCache (cachedToolCall)
+import Data.IORef (newIORef, readIORef, modifyIORef')
 import Application.Service.Assets.Attrs (objectAttributes)
 import Application.Pipeline.Grouping (AlertField (..), facetValue)
 import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..), decodeDashboardConfig)
@@ -82,7 +84,7 @@ main = do
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
         let ?context = frameworkConfig
-        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec >> m8Spec >> m9Spec)
+        hspec (spec >> llmSpec >> m5Spec >> pollerLifecycleSpec >> m6Spec >> m7Spec >> m8Spec >> m9Spec >> toolCacheSpec)
 
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 spec = describe "alert pipeline (milestone 1)" do
@@ -2352,5 +2354,50 @@ ensureMapping facet rank kind key = do
 
 cleanupMappings :: (?modelContext :: ModelContext) => [(FieldMapping, Bool)] -> IO ()
 cleanupMappings = mapM_ \(row, created) -> when created (deleteRecord row)
+
+toolCacheSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
+    it "serves repeat calls from the cache within the TTL" do
+        resetToolCache
+        counter <- newIORef (0 :: Int)
+        let action = modifyIORef' counter (+1) >> pure "cached-result"
+        first <- cachedToolCall "itest_tool" "{}" action
+        second <- cachedToolCall "itest_tool" "{}" action
+        first `shouldBe` "cached-result"
+        second `shouldBe` "cached-result"
+        readIORef counter `shouldReturn` 1
+    it "keys on tool and arguments separately" do
+        resetToolCache
+        counter <- newIORef (0 :: Int)
+        let action = modifyIORef' counter (+1) >> pure "x"
+        _ <- cachedToolCall "itest_tool" "{\"a\":1}" action
+        _ <- cachedToolCall "itest_tool" "{\"a\":2}" action
+        _ <- cachedToolCall "itest_tool_2" "{\"a\":1}" action
+        readIORef counter `shouldReturn` 3
+    it "never caches failure texts" do
+        resetToolCache
+        counter <- newIORef (0 :: Int)
+        let action = modifyIORef' counter (+1) >> pure "jira search failed: boom"
+        _ <- cachedToolCall "itest_tool" "{}" action
+        _ <- cachedToolCall "itest_tool" "{}" action
+        readIORef counter `shouldReturn` 2
+    it "a disabled config bypasses the cache" do
+        resetToolCache
+        _ <- createRecord (newRecord @LlmToolCacheConfig |> set #enabled False |> set #ttlSeconds 300)
+        flip finally resetToolCacheConfig do
+            counter <- newIORef (0 :: Int)
+            let action = modifyIORef' counter (+1) >> pure "y"
+            _ <- cachedToolCall "itest_tool" "{}" action
+            _ <- cachedToolCall "itest_tool" "{}" action
+            readIORef counter `shouldReturn` 2
+
+resetToolCache :: (?modelContext :: ModelContext) => IO ()
+resetToolCache = do
+    void (sqlExecTyped [typedSql| DELETE FROM llm_tool_cache WHERE tool LIKE 'itest_tool%' |])
+    resetToolCacheConfig
+
+resetToolCacheConfig :: (?modelContext :: ModelContext) => IO ()
+resetToolCacheConfig =
+    void (sqlExecTyped [typedSql| DELETE FROM llm_tool_cache_configs |])
 
 

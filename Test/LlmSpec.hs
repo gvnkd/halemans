@@ -13,6 +13,7 @@ import Application.Service.Llm.Output
 import Application.Service.Llm.Prompt
 import Application.Service.Llm.Budget
 import Application.Service.Llm.AutoAnalyze
+import Application.Service.Llm.ToolCache (isFailureText, freshEnough)
 
 atTime :: Text -> UTCTime
 atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
@@ -166,6 +167,20 @@ spec = describe "Milestone 4 LLM services" do
             allowedByRules rules "resolved" "high" `shouldBe` True
             allowedByRules rules "resolved" "info" `shouldBe` False
             allowedByRules rules "ack" "critical" `shouldBe` False
+
+    describe "ToolCache (milestone 10 §6)" do
+        let now = atTime "2026-09-05 12:00:00 UTC"
+        it "freshEnough within and past the ttl" do
+            freshEnough 300 now (addUTCTime (-299) now) `shouldBe` True
+            freshEnough 300 now (addUTCTime (-301) now) `shouldBe` False
+        it "failure texts are not cacheable" do
+            isFailureText "jira search failed: timeout" `shouldBe` True
+            isFailureText "cmdb not configured" `shouldBe` True
+            isFailureText "assets lookup failed: boom" `shouldBe` True
+        it "legitimate results and empty negatives are cacheable" do
+            isFailureText "- DEV-1 something [Open]" `shouldBe` False
+            isFailureText "no jira tickets found" `shouldBe` False
+            isFailureText "no cmdb pages found" `shouldBe` False
 
 fieldOf :: Text -> ParsedOutput -> Maybe Text
 fieldOf key parsed = do

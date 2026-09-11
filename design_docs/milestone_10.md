@@ -80,3 +80,13 @@ badges, check, occurrences, timestamps, source link, description) render as
 a card via `alertDetailsCardHtml` (Web.View.Fragments), reusing `panelHtml`
 scaffolding + `.alert-details-grid` CSS. The WS broadcaster re-renders it on
 alert events (`alertDetailsDomId`) so resolved_at and co. update live.
+
+## 6. LLM tool cache
+
+Every agent tool call (`executeToolCall`) goes through
+`Application.Service.Llm.ToolCache.cachedToolCall`, memoized in
+`llm_tool_cache` keyed by (tool, raw arguments). TTL and on/off live in the
+singleton `llm_tool_cache_configs` (Admin → LLM → Tool cache); no row =
+enabled with 300s, ttl 0 or disabled = bypass. Failure texts
+(`isFailureText` prefixes) are never cached so a recovering integration is
+seen immediately; rows past the TTL are evicted on write.

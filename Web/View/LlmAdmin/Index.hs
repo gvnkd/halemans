@@ -34,6 +34,8 @@ data IndexView = IndexView
     , dailyBudget :: Int
     , rateLimit :: Int
     , autoAnalyze :: AutoAnalyzeRules
+    , toolCacheTtl :: Maybe Int
+    , toolCacheSize :: Int
     }
 
 instance View IndexView where
@@ -70,6 +72,20 @@ instance View IndexView where
                 </div>
             </div>
             <button type="submit" class="btn btn-sm btn-primary" data-testid="auto-analyze-submit">Save</button>
+        </form>
+
+        {sectionHeaderHtml "Tool cache" mempty}
+        <p class="text-muted">Short-lived memoization of agent tool calls (cmdb_lookup, jira_search, jira_issue_details, assets_lookup), keyed by tool + arguments. Failures are never cached. {toolCacheSize} entries cached.</p>
+        <form method="POST" action={UpdateToolCacheAction} class="maxw-700" data-testid="tool-cache-form">
+            <div class="form-check mb-2">
+                <input name="enabled" type="checkbox" class="form-check-input" checked={isJust toolCacheTtl} data-testid="tool-cache-enabled"/>
+                <label class="form-check-label">Enabled</label>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">TTL (seconds)</label>
+                <input name="ttlSeconds" type="number" class="form-control" value={ttlValue} data-testid="tool-cache-ttl"/>
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary" data-testid="tool-cache-submit">Save</button>
         </form>
 
         {sectionHeaderHtml "Providers" newProviderButton}
@@ -114,6 +130,8 @@ instance View IndexView where
     |]
         where
             newProviderButton = [hsx|<a href={NewLlmProviderAction} class="btn btn-sm btn-primary" data-testid="new-llm-provider">New provider</a>|]
+            ttlValue :: Text
+            ttlValue = maybe "300" tshow toolCacheTtl
             newRoleButton = [hsx|<a href={NewLlmRoleAction} class="btn btn-sm btn-primary" data-testid="new-llm-role">New role</a>|]
             templateActions = [hsx|
                 <div>

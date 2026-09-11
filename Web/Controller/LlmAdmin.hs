@@ -14,6 +14,7 @@ import Application.Service.Llm (LlmProviderConfig (..), connectionOk, apiUrl)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.Roles (roleToolNames)
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
+import qualified Application.Service.Llm.ToolCache as ToolCache
 import qualified Application.Service.Llm.Budget as Budget
 import qualified Application.Service.Log as Log
 import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
@@ -74,6 +75,8 @@ instance Controller LlmAdminController where
             |> orderByAsc #name
             |> fetch
         autoAnalyze <- AutoAnalyze.currentRules
+        toolCacheTtl <- ToolCache.currentToolCacheTtl
+        toolCacheSize <- query @LlmToolCache |> fetchCount
         render IndexView { endpoint = (.endpoint) <$> maybeConfig, model = (.model) <$> maybeConfig
                           , toolsEnabled = maybe False (.toolsEnabled) maybeConfig, .. }
 
@@ -511,6 +514,26 @@ instance Controller LlmAdminController where
                 |> set #statuses (Aeson.toJSON statuses)
                 |> set #severities (Aeson.toJSON severities))
         setSuccessMessage "Auto-analysis rules updated"
+        redirectTo LlmAdminAction
+
+    -- Tool cache (milestone 10 §6): singleton row upsert; ttl 0 or disabled
+    -- switches the cache off entirely.
+    action UpdateToolCacheAction = do
+        requirePrivilege "manage_rules"
+        let enabled = isJust (paramOrNothing @Text "enabled")
+            ttlSeconds = max 0 (param @Int "ttlSeconds")
+        existing <- query @LlmToolCacheConfig |> fetch
+        now <- getCurrentTime
+        _ <- case existing of
+            (row:_) -> row
+                |> set #enabled enabled
+                |> set #ttlSeconds ttlSeconds
+                |> set #updatedAt now
+                |> updateRecord
+            [] -> createRecord (newRecord @LlmToolCacheConfig
+                |> set #enabled enabled
+                |> set #ttlSeconds ttlSeconds)
+        setSuccessMessage "Tool cache settings updated"
         redirectTo LlmAdminAction
 
 -- Tools field: comma-separated whitelist of known tool names; empty = no

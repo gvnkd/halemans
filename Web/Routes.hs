@@ -54,6 +54,7 @@ POST /admin/llm/roles/{roleId}/toggle        ToggleLlmRoleAction
 POST /admin/llm/roles/{roleId}/default       SetDefaultLlmRoleAction
 POST /admin/llm/roles/{roleId}/delete        DeleteLlmRoleAction
 POST /admin/llm/auto-analyze                 UpdateAutoAnalyzeAction
+POST /admin/llm/tool-cache                   UpdateToolCacheAction
 |]
 
 [routes|AssetsAdminController

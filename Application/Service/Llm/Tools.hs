@@ -26,6 +26,7 @@ import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Types (ObjectListResult (..), AssetObject (..), ObjectAttribute (..), ObjectAttributeValue (..))
 import Data.Either (fromRight)
 import Application.Service.Llm (ToolCall (..), LlmProvider (..), OpenAiCompat (..), Prompt (..), LlmMessage, assistantMessage, toolResultMessage, Completion (..), LlmError (..), LlmProviderConfig)
+import qualified Application.Service.Llm.ToolCache as ToolCache
 
 -- Optional read-only tool access for the model (design_docs/milestone_4.md
 -- D4a), exposed via OpenAI-style tool calling. Tools only ever READ from the
@@ -94,15 +95,18 @@ toolDefinitions =
 
 -- Executes one model-requested tool call; result is returned as the text
 -- content of a role=tool message. Failures are reported in-band as text so a
--- broken CMDB/Jira never fails the analysis (soft-fail, D8).
+-- broken CMDB/Jira never fails the analysis (soft-fail, D8). Every call goes
+-- through the short-lived tool cache (milestone 10 §6) — repeat lookups with
+-- identical arguments within the TTL don't hit the external systems.
 executeToolCall :: (?modelContext :: ModelContext) => Maybe Source -> ToolCall -> IO Text
-executeToolCall source call = case call.callName of
-    "cmdb_lookup" -> withTextArg "term" (cmdbLookup source)
-    "jira_search" -> withTextArg "query" (jiraSearch source)
-    "jira_issue_details" -> withTextArg "key" (jiraIssueDetails source)
-    "assets_lookup" -> withTextArg "term" assetsLookup
-    other -> pure ("unknown tool: " <> other)
+executeToolCall source call = ToolCache.cachedToolCall call.callName call.callArguments dispatch
     where
+        dispatch = case call.callName of
+            "cmdb_lookup" -> withTextArg "term" (cmdbLookup source)
+            "jira_search" -> withTextArg "query" (jiraSearch source)
+            "jira_issue_details" -> withTextArg "key" (jiraIssueDetails source)
+            "assets_lookup" -> withTextArg "term" assetsLookup
+            other -> pure ("unknown tool: " <> other)
         withTextArg key run = case textArg key call.callArguments of
             Nothing -> pure ("invalid arguments for " <> call.callName)
             Just value -> run value
