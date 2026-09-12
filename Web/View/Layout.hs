@@ -52,7 +52,7 @@ navigation =
 <nav class="navbar navbar-expand-lg" data-testid="nav">
     <div class="container-fluid">
         <div class="d-flex flex-column">
-            <a class="navbar-brand" href={DashboardAction}><img src={assetPath "/halemans-glyph.png"} alt="" class="navbar-glyph"/>Halemans</a>
+            <a class="navbar-brand" href={DashboardAction}><img src={assetPath "/halemans-app-icon-192.png"} alt="" class="navbar-glyph"/>Halemans</a>
             <span class="badge app-version-badge" data-testid="app-version">v{appVersion}</span>
         </div>
         <ul class="navbar-nav me-auto">
