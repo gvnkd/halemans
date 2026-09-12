@@ -8,14 +8,17 @@
 --
 
 name:                Halemans
-version:             2.3.0
--- synopsis:
--- description:
-license:             AllRightsReserved
+version:             2.3.1
+synopsis:            Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks
+description:         Halemans collects alerts from Zabbix, Grafana, Alertmanager and
+                     generic webhooks into a single dashboard, enriches them with CMDB
+                     (Confluence, Jira Assets), Jira and LLM context, and provides
+                     facets, custom dashboards, reports and a read-only JSON API.
+license:             MIT
 license-file:        LICENSE
-author:              Developers
-maintainer:          developers@example.com
--- copyright:
+author:              Sergey Bubnov
+maintainer:          omgbebebe@gmail.com
+copyright:           (c) 2026 Sergey Bubnov
 -- category:
 build-type:          Simple
 cabal-version:       >=1.10

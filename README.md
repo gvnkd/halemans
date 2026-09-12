@@ -167,3 +167,9 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 ## CI
 
 `.github/workflows/nix-flake-check.yml` runs `nix flake check --impure -L` on every push/PR to `master`, using the digitallyinduced Cachix cache and Magic Nix Cache.
+
+## License
+
+The Halemans application source is released under the MIT License (see `LICENSE`).
+
+The prebuilt Docker image additionally bundles third-party software under its own licenses — mere aggregation that does not change the license of Halemans itself. Notably: PostgreSQL (PostgreSQL License), busybox (GPL-2.0), and the vendored JavaScript libraries in `static/vendor/` (MIT). If you redistribute the image, those licenses apply to their respective components.
