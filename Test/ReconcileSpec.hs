@@ -2,11 +2,8 @@ module Test.ReconcileSpec where
 
 import Test.Hspec
 import IHP.Prelude
-import Text.Read (readMaybe)
 import Application.Service.Reconcile
-
-atTime :: Text -> UTCTime
-atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
+import Test.Helpers (atTime)
 
 spec :: Spec
 spec = describe "Application.Service.Reconcile" do

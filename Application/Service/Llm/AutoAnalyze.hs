@@ -15,9 +15,7 @@ import IHP.QueryBuilder (query)
 import IHP.Fetch (fetch)
 import Generated.Types (Alert, Alert' (..), LlmAutoAnalyzeConfig, LlmAutoAnalyzeConfig' (..))
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
-import Data.Aeson (Value)
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
+import Application.Helper.Json (stringList)
 
 -- Auto-analysis gate (milestone 10 §5): which alert statuses/severities/envs
 -- get an LLM analysis enqueued automatically (ingest of new alerts + the
@@ -54,9 +52,6 @@ rulesFromRow row = AutoAnalyzeRules
     , aaSeverities = stringList row.severities
     , aaEnvironments = stringList row.environments
     }
-
-stringList :: Value -> [Text]
-stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)
 
 currentRules :: (?modelContext :: ModelContext) => IO AutoAnalyzeRules
 currentRules = do

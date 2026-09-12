@@ -178,3 +178,73 @@
         });
     });
 })();
+
+// Blackout form scope filtering: the scope-id select carries options for all
+// three scope kinds with "type:" prefixed values; show only the selected
+// kind and auto-select the first visible option on a type change.
+(function () {
+    document.addEventListener('DOMContentLoaded', function () {
+        var typeSelect = document.querySelector('[data-testid="blackout-scope-type"]');
+        var idSelect = document.querySelector('[data-testid="blackout-scope-id"]');
+        if (!typeSelect || !idSelect) return;
+        var applyFilter = function () {
+            var prefix = typeSelect.value + ':';
+            Array.prototype.forEach.call(idSelect.options, function (option) {
+                var visible = option.value.indexOf(prefix) === 0;
+                option.hidden = !visible;
+                option.disabled = !visible;
+            });
+            var selected = idSelect.options[idSelect.selectedIndex];
+            if (!selected || selected.disabled) {
+                var first = Array.prototype.find.call(idSelect.options, function (o) { return !o.disabled; });
+                if (first) idSelect.value = first.value;
+            }
+        };
+        typeSelect.addEventListener('change', applyFilter);
+        applyFilter();
+    });
+})();
+
+// Team form pickers (moved from inline scripts in Web/View/Teams): a
+// filterable host-group multi-select plus a member list showing only current
+// members, with filter-to-add and a remove button. Keyed on the
+// data-hg-filter / data-hg-select / data-member-* hooks.
+(function () {
+    var init = function () {
+        var hgFilter = document.querySelector('[data-hg-filter]');
+        var hgSelect = document.querySelector('[data-hg-select]');
+        if (hgFilter && hgSelect && !hgFilter.dataset.init) {
+            hgFilter.dataset.init = '1';
+            hgFilter.addEventListener('input', function () {
+                var q = hgFilter.value.toLowerCase();
+                Array.prototype.forEach.call(hgSelect.options, function (option) {
+                    option.hidden = option.text.toLowerCase().indexOf(q) === -1;
+                });
+            });
+        }
+
+        var membersFilter = document.querySelector('[data-member-filter]');
+        if (!membersFilter || membersFilter.dataset.init) return;
+        membersFilter.dataset.init = '1';
+        var rows = document.querySelectorAll('[data-member-row]');
+        var applyVisibility = function () {
+            var q = membersFilter.value.toLowerCase();
+            Array.prototype.forEach.call(rows, function (row) {
+                var isMember = row.querySelector('select').value !== '';
+                var matches = row.getAttribute('data-email').toLowerCase().indexOf(q) !== -1;
+                row.style.display = (isMember || (q !== '' && matches)) ? '' : 'none';
+            });
+        };
+        membersFilter.addEventListener('input', applyVisibility);
+        Array.prototype.forEach.call(rows, function (row) {
+            row.querySelector('select').addEventListener('change', applyVisibility);
+            row.querySelector('[data-member-remove]').addEventListener('click', function () {
+                row.querySelector('select').value = '';
+                applyVisibility();
+            });
+        });
+        applyVisibility();
+    };
+    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('turbolinks:load', init);
+})();

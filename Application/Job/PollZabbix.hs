@@ -335,8 +335,11 @@ absentResolveMinAgeSeconds = configInt 86400 "absentResolveMinAgeSeconds"
 eventPageLimit :: Source -> Int
 eventPageLimit source = max 1 (configInt 1000 "eventPageLimit" source)
 
+configVal :: Aeson.FromJSON a => a -> Text -> Source -> a
+configVal def key source = fromMaybe def (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText key)) source.config)
+
 configInt :: Int -> Text -> Source -> Int
-configInt def key source = fromMaybe def (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText key)) source.config)
+configInt = configVal
 
 configBool :: Bool -> Text -> Source -> Bool
-configBool def key source = fromMaybe def (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText key)) source.config)
+configBool = configVal

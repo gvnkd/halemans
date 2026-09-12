@@ -8,11 +8,8 @@ import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Vector as Vector
 import qualified Data.Text as Text
-import Text.Read (readMaybe)
 import Application.Service.WriteBack
-
-atTime :: Text -> UTCTime
-atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
+import Test.Helpers (atTime)
 
 spec :: Spec
 spec = describe "Application.Service.WriteBack" do

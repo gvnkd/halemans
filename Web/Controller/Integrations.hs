@@ -11,7 +11,7 @@ import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Log as Log
 import System.Environment (lookupEnv)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Data.Aeson.Types (parseMaybe)
+import Application.Helper.Json (stringList)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 import Data.Time.Clock (getCurrentTime)
@@ -227,9 +227,6 @@ cmdbServiceConfig row = do
                 , Cmdb.space = fromMaybe "" (head spaces)
                 , Cmdb.spaces = spaces
                 }
-
-stringList :: Aeson.Value -> [Text]
-stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)
 
 data JiraConfigForm = JiraConfigForm
     { jiraName :: Text

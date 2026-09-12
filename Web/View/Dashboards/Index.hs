@@ -26,7 +26,7 @@ renderRow dashboard = [hsx|
         <td>{defaultBadge}</td>
         <td>
             <form method="POST" action={MoveDashboardAction dashboard.id} class="d-inline" data-testid="dashboard-move-form">
-                <input type="number" name="position" value={dashboard.position} class="form-control form-control-sm d-inline-block" style="width: 5rem" data-testid="dashboard-position"/>
+                <input type="number" name="position" value={dashboard.position} class="form-control form-control-sm d-inline-block w-5rem" data-testid="dashboard-position"/>
                 <button type="submit" class="btn btn-sm btn-outline-secondary">Move</button>
             </form>
         </td>

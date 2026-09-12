@@ -2,12 +2,9 @@ module Test.CmdbSpec where
 
 import Test.Hspec
 import IHP.Prelude
-import Text.Read (readMaybe)
 import qualified Data.Text as Text
 import Application.Service.Cmdb
-
-atTime :: Text -> UTCTime
-atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
+import Test.Helpers (atTime)
 
 spec :: Spec
 spec = describe "Application.Service.Cmdb" do

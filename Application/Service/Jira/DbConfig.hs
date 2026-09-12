@@ -15,9 +15,7 @@ import IHP.Fetch (fetch)
 import Generated.Types (Source, Alert, Alert' (..), JiraLink, JiraLink' (..), JiraConfig, JiraConfig' (..))
 import qualified Application.Service.Jira as Jira
 import Application.Service.Jira (JiraIssue (..))
-import Data.Aeson (Value)
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
+import Application.Helper.Json (stringList)
 import Data.Functor ((<&>))
 import System.Environment (lookupEnv)
 
@@ -46,9 +44,6 @@ jiraConfigsFromDb = do
                     , Jira.projects = projects
                     , Jira.apiVersion = get #apiVersion row
                     }
-
-stringList :: Value -> [Text]
-stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)
 
 -- All usable configs: the enabled DB rows.
 currentJiraConfigs :: (?modelContext :: ModelContext) => IO [Jira.JiraConfig]

@@ -12,9 +12,7 @@ import IHP.QueryBuilder (query, filterWhere, orderByAsc)
 import IHP.Fetch (fetch)
 import Generated.Types (Source, Alert, CmdbEntry, CmdbEntry' (..), CmdbConfig, CmdbConfig' (..))
 import qualified Application.Service.Cmdb as Cmdb
-import Data.Aeson (Value)
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
+import Application.Helper.Json (stringList)
 import System.Environment (lookupEnv)
 
 -- DB-only CMDB config resolution (milestone 10; env fallback removed in
@@ -41,9 +39,6 @@ cmdbConfigsFromDb = do
                     , Cmdb.space = fromMaybe "" (head spaces)
                     , Cmdb.spaces = spaces
                     }
-
-stringList :: Value -> [Text]
-stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)
 
 -- All usable configs: the enabled DB rows.
 currentCmdbConfigs :: (?modelContext :: ModelContext) => IO [Cmdb.CmdbConfig]

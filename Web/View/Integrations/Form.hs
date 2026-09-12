@@ -1,7 +1,6 @@
 module Web.View.Integrations.Form (jiraConfigFormFields, cmdbConfigFormFields) where
 import Web.View.Prelude
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
+import Application.Helper.Json (stringList)
 import qualified Data.Text as Text
 
 -- Shared new/edit fields for jira_configs/cmdb_configs (milestone 10).
@@ -66,6 +65,3 @@ cmdbConfigFormFields config = [hsx|
         field getter = maybe "" getter config
         spacesText :: Text
         spacesText = maybe "" (Text.intercalate ", " . stringList . (.spaces)) config
-
-stringList :: Aeson.Value -> [Text]
-stringList value = fromMaybe [] (parseMaybe Aeson.parseJSON value)

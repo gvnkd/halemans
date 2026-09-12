@@ -25,6 +25,9 @@ import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 import qualified Data.ByteString.Lazy as BL
+-- wreq is used DIRECTLY here (not via Application.Service.Http): Assets 302s
+-- unauth/unknown paths to a login page, and following redirects would hide
+-- auth failures — this client runs with redirects=0 instead.
 import qualified Network.Wreq as Wreq
 import Network.Wreq.Lens (checkResponse)
 import Control.Lens ((&), (^.), (.~))

@@ -307,3 +307,8 @@ a:hover { color: var(--accent-hover); }
 .maxw-500 { max-width: 500px; }
 .maxw-600 { max-width: 600px; }
 .maxw-700 { max-width: 700px; }
+
+/* utility classes replacing residual inline style attributes */
+.member-email { min-width: 220px; }
+.resize-vertical { resize: vertical; }
+.w-5rem { width: 5rem; }

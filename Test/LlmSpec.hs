@@ -2,7 +2,6 @@ module Test.LlmSpec where
 
 import Test.Hspec
 import IHP.Prelude
-import Text.Read (readMaybe)
 import qualified Data.Text as Text
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.:))
@@ -14,9 +13,7 @@ import Application.Service.Llm.Prompt
 import Application.Service.Llm.Budget
 import Application.Service.Llm.AutoAnalyze
 import Application.Service.Llm.ToolCache (isFailureText, freshEnough)
-
-atTime :: Text -> UTCTime
-atTime raw = fromMaybe (error "bad utc literal") (readMaybe (cs raw))
+import Test.Helpers (atTime)
 
 spec :: Spec
 spec = describe "Milestone 4 LLM services" do
