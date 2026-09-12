@@ -1195,21 +1195,25 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
-    @check("reports: /reports renders all four SVG chart panels and re-renders on window change")
+    @check("reports: /reports renders all four SVG chart panels, window and env selectors filter")
     def _():
         page.goto(f"{APP}/reports")
         for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
             panel = page.get_by_test_id(test_id)
             panel.wait_for()
             assert panel.locator("svg").count() > 0, f"no <svg> in {test_id}"
-        page.get_by_test_id("reports-window").select_option("24")
-        page.get_by_test_id("reports-submit").click()
-        # turbolinks morphdom swaps the body without a URL change; wait for the
-        # server-rendered select to reflect the submitted window
-        page.wait_for_function(
-            "document.querySelector('[data-testid=reports-window]').value === '24'")
+        # real navigations: server-rendered state is what we're asserting
+        page.goto(f"{APP}/reports?windowHours=24")
+        page.get_by_test_id("report-volume").wait_for()
+        assert page.get_by_test_id("reports-window").input_value() == "24"
         for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
             assert page.get_by_test_id(test_id).locator("svg").count() > 0, f"no <svg> in {test_id} after re-render"
+        # env selector: one env turns the env card into a per-host breakdown
+        page.goto(f"{APP}/reports?windowHours=24&env=dev")
+        page.get_by_test_id("report-env").wait_for()
+        assert page.get_by_test_id("reports-env").input_value() == "dev"
+        env_card = page.get_by_test_id("report-env")
+        assert "Alerts by host" in env_card.inner_text(), env_card.inner_text()
 
     browser.close()
 

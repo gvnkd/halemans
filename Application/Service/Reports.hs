@@ -10,9 +10,7 @@ module Application.Service.Reports
 
 import IHP.Prelude
 import Data.Int (Int64)
-import Data.Time (Day)
 import qualified Data.Text as Text
-import qualified Data.Time.Format as TimeFormat
 import qualified Diagrams.Prelude as D
 import qualified Diagrams.Backend.SVG as DS
 import qualified Graphics.Svg as SvgBuilder
@@ -35,7 +33,7 @@ fontSizePx :: Double
 fontSizePx = 12
 
 severityChartSvg :: [(Text, Int64)] -> Text
-severityChartSvg rows = hbarChartSvg 640 (map mk rows)
+severityChartSvg rows = hbarChartSvg 900 (map mk rows)
   where
     mk (severity, n) = BarDatum
         { barLabel = severity
@@ -45,7 +43,7 @@ severityChartSvg rows = hbarChartSvg 640 (map mk rows)
         }
 
 envChartSvg :: [(Text, Int64)] -> Text
-envChartSvg rows = hbarChartSvg 640 (map mk rows)
+envChartSvg rows = hbarChartSvg 900 (map mk rows)
   where
     mk (env, n) = BarDatum
         { barLabel = truncateLabel 20 env
@@ -54,18 +52,18 @@ envChartSvg rows = hbarChartSvg 640 (map mk rows)
         , barClass = "chart-bar-accent"
         }
 
-volumeChartSvg :: [(Day, Int64)] -> Text
-volumeChartSvg rows = vbarChartSvg 1600 (map mk rows)
+volumeChartSvg :: [(Text, Int64)] -> Text
+volumeChartSvg rows = vbarChartSvg 1800 (map mk rows)
   where
-    mk (day, n) = BarDatum
-        { barLabel = cs (TimeFormat.formatTime TimeFormat.defaultTimeLocale "%m-%d" day)
+    mk (bucket, n) = BarDatum
+        { barLabel = bucket
         , barValue = fromIntegral n
         , barValueText = show n
         , barClass = "chart-bar-accent"
         }
 
 mttrChartSvg :: [(Text, Double)] -> Text
-mttrChartSvg rows = hbarChartSvg 640 (map mk rows)
+mttrChartSvg rows = hbarChartSvg 900 (map mk rows)
   where
     mk (severity, seconds) = BarDatum
         { barLabel = severity
@@ -108,10 +106,9 @@ vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> day
   where
     padding = 8
     plotH = 180
-    rotated = length rows > 14
     bottomGap = 6
     topMargin = 24
-    bottomMargin = if rotated then 56 else 28
+    bottomMargin = 28
     h = topMargin + plotH + bottomMargin
     plotW = w - 2 * padding
     n = length rows
@@ -120,14 +117,17 @@ vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> day
     maxVal = maximum (map barValue rows)
     colH value = if maxVal <= 0 then 0 else max 2 (value / maxVal * plotH)
     xCenter i = padding + slot * (fromIntegral i + 0.5)
-    bars = zipWith mkBar [0 ..] rows
-    mkBar i datum = (D.p2 (xCenter i, 0), D.alignB (bar barW (colH datum.barValue) datum.barClass))
-    valueLabels = zipWith mkValue [0 ..] rows
-    mkValue i datum = (D.p2 (xCenter i, colH datum.barValue + 4), chartText "chart-text-muted" 0.5 0 datum.barValueText)
+    -- horizontal labels only: shrink the font until the longest label fits
+    -- its slot (avg glyph width ≈ 0.55 em), never rotate
+    maxLabelChars = maximum (map (Text.length . barLabel) rows)
+    dayFontSize = max 7 (min fontSizePx (slot * 0.9 / (0.55 * fromIntegral maxLabelChars)))
+    indexed = zip [0 ..] rows
+    bars = [ (D.p2 (xCenter i, 0), D.alignB (bar barW (colH datum.barValue) datum.barClass))
+           | (i, datum) <- indexed, datum.barValue > 0 ]
+    valueLabels = [ (D.p2 (xCenter i, colH datum.barValue + 4), chartText "chart-text-muted" 0.5 0 datum.barValueText)
+                  | (i, datum) <- indexed, datum.barValue > 0 ]
     dayLabels = zipWith mkDay [0 ..] rows
-    mkDay i datum
-        | rotated = (D.p2 (xCenter i, negate bottomGap), chartText "chart-text-muted" 1 1 datum.barLabel D.# D.rotate ((negate 45) D.@@ D.deg))
-        | otherwise = (D.p2 (xCenter i, negate bottomGap), chartText "chart-text-muted" 0.5 1 datum.barLabel)
+    mkDay i datum = (D.p2 (xCenter i, negate bottomGap), chartTextSized dayFontSize "chart-text-muted" 0.5 1 datum.barLabel)
     baseline = (D.p2 (padding, 0), D.alignL (D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid"))
 
 emptyChart :: Double -> Chart
@@ -152,8 +152,11 @@ bar len h cls = D.rect len h
     D.# DS.svgClass (cs cls)
 
 chartText :: Text -> Double -> Double -> Text -> Chart
-chartText cls ax ay content = D.alignedText ax ay (cs content)
-    D.# D.fontSizeL fontSizePx
+chartText = chartTextSized fontSizePx
+
+chartTextSized :: Double -> Text -> Double -> Double -> Text -> Chart
+chartTextSized sizePx cls ax ay content = D.alignedText ax ay (cs content)
+    D.# D.fontSizeL sizePx
     D.# DS.svgClass (cs cls)
 
 severityCssClass :: Text -> Text

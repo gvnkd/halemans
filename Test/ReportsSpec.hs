@@ -2,7 +2,6 @@ module Test.ReportsSpec where
 
 import Test.Hspec
 import IHP.Prelude
-import Data.Time (fromGregorian)
 import qualified Data.Text as Text
 import Application.Service.Reports
 
@@ -21,7 +20,7 @@ spec = describe "Application.Service.Reports" do
             svg `shouldSatisfy` Text.isInfixOf "prod"
 
         it "renders the volume chart as inline SVG" do
-            let svg = volumeChartSvg [(fromGregorian 2026 9 10, 3), (fromGregorian 2026 9 11, 9)]
+            let svg = volumeChartSvg [("09-10", 3), ("09-11", 9)]
             svg `shouldSatisfy` Text.isInfixOf "<svg"
             svg `shouldSatisfy` Text.isInfixOf "09-11"
 

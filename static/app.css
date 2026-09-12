@@ -291,7 +291,7 @@ a:hover { color: var(--accent-hover); }
 /* Report charts (/reports): inline SVGs from diagrams-svg carry baked fill
    attributes; class rules below re-map them onto the active theme pack's
    tokens, so charts follow data-theme like the rest of the UI. */
-.report-chart svg { display: block; max-width: 100%; height: auto; }
+.report-chart svg { display: block; width: 100%; height: auto; }
 .report-chart .chart-text { fill: var(--text); }
 .report-chart .chart-text-muted { fill: var(--text-muted); }
 .report-chart .chart-grid { stroke: var(--border); fill: none; }

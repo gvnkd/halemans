@@ -3,9 +3,13 @@ import Web.View.Prelude
 
 data IndexView = IndexView
     { windowHours :: Int
+    , envs :: [Text]
+    , selectedEnv :: Maybe Text
     , severitySvg :: Text
-    , envSvg :: Text
+    , breakdownSvg :: Text
+    , breakdownTitle :: Text
     , volumeSvg :: Text
+    , volumeTitle :: Text
     , mttrSvg :: Text
     }
 
@@ -20,16 +24,23 @@ instance View IndexView where
                 </select>
             </div>
             <div class="col-auto">
+                <label class="form-label">Environment</label>
+                <select name="env" class="form-select" data-testid="reports-env">
+                    {envOption selectedEnv ""}
+                    {forEach envs (envOption selectedEnv)}
+                </select>
+            </div>
+            <div class="col-auto">
                 <button type="submit" class="btn btn-primary" data-testid="reports-submit">Render</button>
             </div>
         </form>
-        {chartPanel "report-volume" "Alert volume per day" volumeSvg}
+        {chartPanel "report-volume" volumeTitle volumeSvg}
         <div class="row">
             <div class="col-lg-6">
                 {chartPanel "report-severity" "Alerts by severity" severitySvg}
                 {chartPanel "report-mttr" "Mean time to resolve by severity" mttrSvg}
             </div>
-            <div class="col-lg-6">{chartPanel "report-env" "Alerts by environment" envSvg}</div>
+            <div class="col-lg-6">{chartPanel "report-env" breakdownTitle breakdownSvg}</div>
         </div>
     |]
 
@@ -54,3 +65,10 @@ windowOption selected value =
     in if value == selected
         then [hsx|<option value={valueText} selected="selected">{label}</option>|]
         else [hsx|<option value={valueText}>{label}</option>|]
+
+envOption :: Maybe Text -> Text -> Html
+envOption selected value =
+    let label = if value == "" then "All environments" else value
+    in if Just value == selected || (value == "" && isNothing selected)
+        then [hsx|<option value={value} selected="selected">{label}</option>|]
+        else [hsx|<option value={value}>{label}</option>|]
