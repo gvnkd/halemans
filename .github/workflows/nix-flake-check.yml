@@ -1,8 +1,18 @@
 name: Test
-# Disabled on push/PR: the suite runs locally via `nix flake check --impure`.
-# Trigger manually from the Actions tab when needed.
+# Canonical gate (milestone 12 §2): the full suite runs on every push/PR to
+# master and dev. Doc-only commits stay cheap via paths-ignore.
 on:
   workflow_dispatch:
+  push:
+    branches: [master, dev]
+    paths-ignore:
+      - 'design_docs/**'
+      - '**.md'
+  pull_request:
+    branches: [master, dev]
+    paths-ignore:
+      - 'design_docs/**'
+      - '**.md'
 jobs:
   test:
     runs-on: ubuntu-latest
