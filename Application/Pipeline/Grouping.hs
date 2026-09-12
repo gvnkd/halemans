@@ -179,7 +179,7 @@ ruleReferencesFacets rule =
 
 -- | Shell-style glob: `*` any run, `?` single char, everything else literal.
 globMatch :: Text -> Text -> Bool
-globMatch pattern value = go (Text.unpack pattern) (Text.unpack value)
+globMatch pat value = go (Text.unpack pat) (Text.unpack value)
   where
     go [] [] = True
     go ('*' : rest) chars = any (go rest) (dropNTails chars)

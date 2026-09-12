@@ -162,11 +162,11 @@ matchesFilters :: (?modelContext :: ModelContext) => AlertListFilters -> Alert -
 matchesFilters filters alert = do
     groupOk <- case filters.alfGroup of
         Nothing -> pure True
-        Just pattern -> case alert.groupId of
+        Just pat -> case alert.groupId of
             Nothing -> pure False
             Just groupId -> do
                 group <- fetch groupId
-                pure (Text.isInfixOf (Text.toLower pattern) (Text.toLower group.groupKey))
+                pure (Text.isInfixOf (Text.toLower pat) (Text.toLower group.groupKey))
     pure
         ( and
             [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
@@ -174,7 +174,7 @@ matchesFilters filters alert = do
             , null filters.alfEnvs || maybe False (`elem` filters.alfEnvs) (effectiveFieldText FieldEnv alert)
             , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
             , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
-            , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
+            , maybe True (\pat -> Text.isInfixOf (Text.toLower pat) (Text.toLower alert.title)) filters.alfTitle
             , groupOk
             ]
         )

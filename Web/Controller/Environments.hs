@@ -44,10 +44,10 @@ renderEnv environmentName filters viewMode = do
             |> fetchOneOrNothing
     groupFilterIds <- case filters.filterGroup of
         Nothing -> pure Nothing
-        Just pattern -> do
+        Just pat -> do
             matchingGroups <-
                 query @AlertGroup
-                    |> filterWhereILike (#groupKey, "%" <> pattern <> "%")
+                    |> filterWhereILike (#groupKey, "%" <> pat <> "%")
                     |> fetch
             pure (Just (map (Just . get #id) matchingGroups))
     -- Membership and host/service filters match on the EFFECTIVE value:
