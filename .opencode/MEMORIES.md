@@ -114,6 +114,13 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager/generic we
 ## Logging
 - HALEMANS_LOG_LEVEL=debug|info|warn|error (default info, validated at boot in Config.hs, read per call in Application/Service/Log.hs); HALEMANS_ACCESS_LOG=0 disables wai request logging (RequestLoggerMiddleware override — `option` is first-wins vs ihpDefaultConfig).
 
+## Reports (diagrams-svg charts)
+- New controllers need THREE registrations: Web/Types.hs (data), Web/Routes.hs (routes), Web/FrontController.hs (import + parseRoute) — missing the last 404s silently, unit tests stay green; only smoke/Playwright catches it.
+- diagrams' DEFAULT FILL IS TRANSPARENT (fill-opacity=0): `rect` without `fc` renders invisible; always set `fc` explicitly. Text defaults opaque.
+- diagrams text envelopes underestimate glyph extents — edge labels get clipped by the viewBox; frame every chart with an invisible `rect w h # fcA transparent` backdrop (renderChartSvg) sized with explicit margins.
+- Chart theming: never bake colors. Attach `DS.svgClass "chart-*"` and let static/app.css map classes onto theme tokens (var(--severity-*) etc). svgClass lands on a wrapping <g>; fill/stroke inherit to child path/text (they carry no own fill attr), and CSS rules beat the g's presentation attributes. Verified live via data-theme switch.
+- New haskellPackages need a FULL stack restart (down + devenv-flake-up) before the dev server/ghci sees them; iterate fast via `nix develop .#default --impure -c ghci -v0 file.hs -e main` (remember `import Prelude` — NoImplicitPrelude is a default extension).
+
 ## Commands
 - Full stack: `nix develop .#default --impure -c devenv-flake-up -D` (detached). Attach: `process-compose -u /run/user/1000/devenv-*/pc.sock process list`.
 - **Do NOT use the `devenv` CLI wrapper from a direnv-loaded shell** — it reuses the stale in-shell `devenv-flake-up` after nix/*.nix changes. Use the `nix develop` form above (or reload direnv).
