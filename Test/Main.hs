@@ -20,10 +20,12 @@ import qualified Test.GroupingSpec
 import qualified Test.HostGroupsSpec
 import qualified Test.HttpSpec
 import qualified Test.JiraSpec
+import qualified Test.LiveSpec
 import qualified Test.LlmSpec
 import qualified Test.LogSpec
 import qualified Test.MarkdownSpec
 import qualified Test.PollZabbixSpec
+import qualified Test.PrivilegeSpec
 import qualified Test.ProvisionSpec
 import qualified Test.PushSpec
 import qualified Test.ReconcileSpec
@@ -66,3 +68,5 @@ main = hspec do
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec
     Test.ReportsSpec.spec
+    Test.PrivilegeSpec.spec
+    Test.LiveSpec.spec

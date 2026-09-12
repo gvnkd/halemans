@@ -3,6 +3,10 @@ module Application.Service.Live (
     liveBroadcastLoop,
     ensureBroadcaster,
     liveConnectionCount,
+    -- exposed for Test.LiveSpec (milestone 12 §7)
+    isResetFrame,
+    parseScope,
+    registry,
 ) where
 
 import Application.Helper.DashboardConfig (DashboardCard (..), clauseValue, decodeDashboardConfig, matchCardAlert)

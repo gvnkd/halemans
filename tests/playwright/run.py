@@ -117,9 +117,32 @@ with sync_playwright() as pw:
         text = card.get_by_test_id("count-firing").inner_text()
         assert text.endswith("firing"), f"unexpected count text: {text!r} in card {card.inner_text()!r}"
 
-    @check("environment page renders alerts and accepts filters")
+    @check("env card content is not vertically clipped at any viewport width")
     def _():
-        page.goto(f"{APP}/env/dev")
+        # regression (milestone 12 §6): .env-card was height:168px + overflow
+        # hidden, which clipped the hourly row at high browser zoom; now
+        # min-height + content-sized rows.
+        for width in (480, 900, 1600):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto(APP + "/")
+            page.get_by_test_id("env-cards").wait_for()
+            card = page.get_by_test_id("env-card").filter(has_text="dev").first
+            card.wait_for()
+            overflow = card.evaluate("""el => {
+                const cardBox = el.getBoundingClientRect();
+                for (const child of el.querySelectorAll('*')) {
+                    const box = child.getBoundingClientRect();
+                    if (box.height === 0) continue;
+                    if (box.bottom > cardBox.bottom + 1) {
+                        return { tag: child.tagName, cls: child.className, childBottom: box.bottom, cardBottom: cardBox.bottom };
+                    }
+                }
+                return null;
+            }""")
+            assert overflow is None, f"env card clips content at {width}px viewport: {overflow}"
+
+    @check("environment page renders alerts and accepts filters")
+    def _():        page.goto(f"{APP}/env/dev")
         page.get_by_test_id("env-alerts-table").wait_for()
         severity_filter = page.get_by_test_id("filter-severity")
         severity_filter.get_by_role("button").click()
