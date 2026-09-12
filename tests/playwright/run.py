@@ -1195,6 +1195,22 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
+    @check("reports: /reports renders all four SVG chart panels and re-renders on window change")
+    def _():
+        page.goto(f"{APP}/reports")
+        for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
+            panel = page.get_by_test_id(test_id)
+            panel.wait_for()
+            assert panel.locator("svg").count() > 0, f"no <svg> in {test_id}"
+        page.get_by_test_id("reports-window").select_option("24")
+        page.get_by_test_id("reports-submit").click()
+        # turbolinks morphdom swaps the body without a URL change; wait for the
+        # server-rendered select to reflect the submitted window
+        page.wait_for_function(
+            "document.querySelector('[data-testid=reports-window]').value === '24'")
+        for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
+            assert page.get_by_test_id(test_id).locator("svg").count() > 0, f"no <svg> in {test_id} after re-render"
+
     browser.close()
 
 print()
