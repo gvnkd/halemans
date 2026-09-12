@@ -29,6 +29,7 @@ import Web.Controller.AssetsIcons
 import Web.Controller.Admin
 import Web.Controller.Audit
 import Web.Controller.Flapping
+import Web.Controller.Reports
 import Web.Controller.Api
 import Web.Controller.Metrics
 
@@ -60,6 +61,7 @@ instance FrontController WebApplication where
         , parseRoute @AdminController
         , parseRoute @AuditController
         , parseRoute @FlappingController
+        , parseRoute @ReportsController
         , parseRoute @ApiController
         , parseRoute @MetricsController
         ]
