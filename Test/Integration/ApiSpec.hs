@@ -1,6 +1,5 @@
 module Test.Integration.ApiSpec (spec) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -60,8 +59,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
-import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 import Test.Integration.Setup
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 m6Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 m6Spec = describe "public API (milestone 6)" do
@@ -229,7 +228,6 @@ m6Spec = describe "public API (milestone 6)" do
   where
     denyStatus (Deny status _ _) = Just status
     denyStatus Allow{} = Nothing
-
 
 -- | Public read-only API (m6).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec

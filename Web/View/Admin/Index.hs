@@ -60,7 +60,7 @@ instance View IndexView where
             </tbody>
         </table>
         <h2>Danger zone</h2>
-        <form method="POST" action={AdminPurgeAlertsAction} onsubmit="return confirm('Delete ALL alerts, groups, events, comments and analyses? This cannot be undone.')">
+        <form method="POST" action={AdminPurgeAlertsAction} data-confirm="Delete ALL alerts, groups, events, comments and analyses? This cannot be undone.">
             <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">Purge all alerts</button>
         </form>
     |]

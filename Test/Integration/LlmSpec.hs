@@ -1,6 +1,5 @@
 module Test.Integration.LlmSpec (spec) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -60,8 +59,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
-import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 import Test.Integration.Setup
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 -- LLM enrichment (design_docs/milestone_4.md §10): against the mock
 -- OpenAI-compatible server on 18084 (launched by the check; deterministic
@@ -254,7 +253,6 @@ llmSpec = describe "llm enrichment (milestone 4)" do
                 |> fetch
         map (get #score) votes `shouldBe` [-1]
 
-
 toolCacheSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
     it "serves repeat calls from the cache within the TTL" do
@@ -290,7 +288,6 @@ toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
             _ <- cachedToolCall "itest_tool" "{}" action
             _ <- cachedToolCall "itest_tool" "{}" action
             readIORef counter `shouldReturn` 2
-
 
 -- | LLM enrichment (m4) and the tool cache (m10 §6).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec

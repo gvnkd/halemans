@@ -1,6 +1,5 @@
 module Test.Integration.PipelineSpec (spec) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -60,8 +59,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
-import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 import Test.Integration.Setup
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 m1Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 m1Spec = describe "alert pipeline (milestone 1)" do
@@ -873,7 +872,6 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                 Left _ -> pure ()
                 Right _ -> expectationFailure "second default dashboard should violate the partial unique index"
 
-
 m5Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 m5Spec = describe "milestone 5 hardening" do
     it "retention prunes rows older than the configured window, keeps newer, idempotent" do
@@ -1026,7 +1024,6 @@ m5Spec = describe "milestone 5 hardening" do
                 |> fetch
         length analysesAgain `shouldBe` 2
 
-
 pollerLifecycleSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 pollerLifecycleSpec = describe "poll loop lifecycle" do
     -- Poll loops stop rescheduling when no enabled sources of their type
@@ -1075,7 +1072,6 @@ pollerLifecycleSpec = describe "poll loop lifecycle" do
         pending <- pendingZabbixJobs
         void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_running' |]
         pending `shouldBe` 0
-
 
 -- | Pipeline suites: ingest/state machine (m1), correlation & teams (m2),
 -- context layer (m3), hardening (m5) and the poll loop lifecycle.

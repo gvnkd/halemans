@@ -38,7 +38,7 @@ Requires Nix with flakes.
 nix develop .#default --impure -c devenv-flake-up -D
 
 # Status / logs
-process-compose -u /run/user/1000/devenv-*/pc.sock process list
+process-compose -u /run/user/$(id -u)/devenv-*/pc.sock process list
 ```
 
 The dev stack seeds demo users, sources and a random API token (into `.devenv/state/halemans/api-token`). Tokens for the bundled Zabbix/Grafana/Alertmanager live in `.devenv/state/` (gitignored).

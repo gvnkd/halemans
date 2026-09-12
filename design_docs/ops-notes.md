@@ -1,4 +1,12 @@
+# Operator notes (formerly .opencode/MEMORIES.md)
+
+Durable operational knowledge for the Halemans stack: git workflow, jobs, integrations, testing and debugging pitfalls. Kept in-repo since milestone 12 §8; the agent-local .opencode/ directory is no longer committed.
+
 # Halemans project memories
+
+## Git workflow (MANDATORY)
+- All new changes are pushed to the `dev` branch, NEVER tagged there. Releases: merge `dev` → `master`; only when the FULL suite (`nix flake check --impure`) is green on master may the merge be tagged `vX.Y.Z` as a release. No tags on unverified code, no direct pushes of features to master.
+- CI (`nix-flake-check.yml`) runs the canonical suite on push/PR; before this gate is trusted, the whole suite must be flap-free — any flaky check (smoke/Playwright/integration timing races) is a bug to fix, not to retry. Never disable or skip a flapping check to make CI green.
 
 ## Versioning
 - ANY code change bumps the version per semver (patch: fixes/internal, minor: features/compatible, major: breaking). Version lives in Halemans.cabal (`version:` field) AND in Application/Version.hs (`appVersion` — runtime copy, cabal not readable in nix build; Test/VersionSpec fails the suite when they drift); releases are git tags `vX.Y.Z` pushed to both remotes (origin=gitea, github). When several version bumps accumulate in one uncommitted session, commit them together but tag ONLY the latest version.

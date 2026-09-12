@@ -1,6 +1,7 @@
 module Application.Helper.Ingest (
     NormalizedEvent (..),
     SourceStatus (..),
+    IngestError (..),
     ingestEvents,
     ingest,
     transitionAlert,
@@ -238,6 +239,13 @@ recordEvent alertId kind payload = do
             |> createRecord
     pure ()
 
+-- | Ingestion failures (milestone 12 §8): thrown as a typed exception
+-- instead of 'error' so callers can match on them.
+data IngestError = EnvironmentUpsertFailed Text
+    deriving (Show)
+
+instance Exception IngestError
+
 -- | Subject resolution (milestone_1.md §3 step 3): upsert inventory rows by
 -- name; unknown host/service become auto_created stubs.
 upsertEnvironment :: (?modelContext :: ModelContext) => Text -> IO (Id Environment)
@@ -251,7 +259,7 @@ upsertEnvironment name = do
     |]
     case rows of
         (rawId : _) -> pure rawId
-        [] -> error "upsertEnvironment: INSERT RETURNING gave no row"
+        [] -> throwIO (EnvironmentUpsertFailed name)
 
 upsertHost :: (?modelContext :: ModelContext) => Text -> Maybe (Id Environment) -> IO (Id Host)
 upsertHost fqdn environmentRef = do

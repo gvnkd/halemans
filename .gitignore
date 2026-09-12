@@ -34,3 +34,5 @@ deploy/docker/provision.json
 # stale nix result symlink from local builds
 /deploy/db-init
 .playwright-mcp/
+.opencode/
+.claude/

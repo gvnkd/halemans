@@ -3,6 +3,7 @@ module Config (config) where
 import Application.Helper.Controller ()
 import Application.Service.Log (LogLevel (..))
 import Application.Service.Provision (applyProvisionConfig)
+import Application.Service.SecurityHeaders (securityHeaders)
 import Control.Monad.IO.Class (liftIO)
 import Generated.Types (User)
 import IHP.EnvVar (envOrDefault)
@@ -18,6 +19,7 @@ config = do
     -- See https://ihp.digitallyinduced.com/Guide/config.html
     -- for what you can do here
     option $ AuthMiddleware (authMiddleware @User)
+    option $ CustomMiddleware securityHeaders
     configIO provisionAtBoot
 
     -- App log verbosity (Application.Service.Log): HALEMANS_LOG_LEVEL is

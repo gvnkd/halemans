@@ -98,7 +98,7 @@ instance View ShowView where
                 {filterTextInput "host" "host" filters.filterHost hostSuggestions}
                 {filterTextInput "service" "service" filters.filterService serviceSuggestions}
                 {filterTextInput "q" "title contains" filters.filterText titleSuggestions}
-                <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.filterGroup} data-testid="env-filter-group" onchange="this.form.submit()"/></div>
+                <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.filterGroup} data-testid="env-filter-group" data-autosubmit=""/></div>
                 <input type="hidden" name="view" value={viewMode}/>
                 <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="env-filters-reset">Reset</a></div>
             </form>

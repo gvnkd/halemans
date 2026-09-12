@@ -559,7 +559,9 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
     -- one. Exception: a pending row whose JOB failed (internal error)
     -- surfaces its error instead of the stale result.
     shownAnalysis = case analyses of
-        [] -> headEx []
+        -- Unreachable: llmPanelHtml is only rendered when at least one
+        -- analysis row exists (the call site guards on non-empty).
+        [] -> error "llmPanelHtml: no analyses"
         allRows@(newest : _)
             | newest.status `elem` ["done", "failed"] -> newest
             | isJust (lookup (get #id newest) jobErrors) -> newest
@@ -581,10 +583,6 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
                 </details>
             |]
     olderAnalysis analysis = llmAnalysisHtml alert analysis feedback (lookup (get #id analysis) jobErrors)
-
-headEx :: [a] -> a
-headEx (x : _) = x
-headEx [] = error "headEx: empty list"
 
 llmAnalysisHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Maybe Text -> Html
 llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
@@ -734,7 +732,7 @@ filterTextInput :: Text -> Text -> Maybe Text -> [Text] -> Html
 filterTextInput name placeholder value suggestions =
     [hsx|
     <div class="col-auto">
-        <input name={name} class="form-control form-control-sm" placeholder={placeholder} value={fromMaybe "" value} list={listId} autocomplete="off" onchange="this.form.submit()"/>
+        <input name={name} class="form-control form-control-sm" placeholder={placeholder} value={fromMaybe "" value} list={listId} autocomplete="off" data-autosubmit=""/>
         <datalist id={listId}>
             {forEach suggestions suggestionOption}
         </datalist>

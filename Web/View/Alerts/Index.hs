@@ -27,7 +27,7 @@ instance View IndexView where
             {filterTextInput "host" "host" filters.alfHost hostSuggestions}
             {filterTextInput "service" "service" filters.alfService serviceSuggestions}
             {filterTextInput "q" "title contains" filters.alfTitle titleSuggestions}
-            <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.alfGroup} data-testid="alerts-filter-group" onchange="this.form.submit()"/></div>
+            <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.alfGroup} data-testid="alerts-filter-group" data-autosubmit=""/></div>
             <input type="hidden" name="sort" value={filters.alfSort}/>
             <input type="hidden" name="dir" value={filters.alfDir}/>
             <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="alerts-filters-reset">Reset</a></div>

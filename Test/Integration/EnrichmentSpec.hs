@@ -1,6 +1,5 @@
 module Test.Integration.EnrichmentSpec (spec) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -60,8 +59,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
-import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 import Test.Integration.Setup
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 -- Milestone 8: assets enrichment + agent roles against the mock Assets
 -- server on 18085 (launched by the check; seeded Capacity CMDB dataset with
@@ -259,7 +258,6 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         done <- fetch (get #id analysis)
         done.status `shouldBe` "done"
         done.agentRoleId `shouldBe` Just (get #id role)
-
 
 -- | Enrichment phase 0 (m8).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec

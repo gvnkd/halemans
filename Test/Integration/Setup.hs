@@ -1,6 +1,5 @@
 module Test.Integration.Setup (schemaPresent, testSource, integrationSource, payloadText, retryWriteBack, fetchEnvironment, testUser, freshFingerprint, testEvent, testEventIn, eventKinds, notifiedEvents, groupingRule, notificationRule, m6User, mockFail, m7Apply, m7User, m7UserKeepItems, m7SourceKeepItems, m7TeamKeepItems, m7LlmKeepItems, restoreEnv, itestAttrNames, ensureAssetsConfig, ensureMockJiraConfig, ensureMockCmdbConfig, withOnlyCmdbConfig, enrichJobFor, freshEnrichJob, assetAttr, assetsMockReset, assetsMockFail, ensureMapping, cleanupMappings, ensureTemplate, latestAnalysis, enqueueAnalysis, performLatestJob, counterRequestsAfter, pendingZabbixJobs, resetToolCache, resetToolCacheConfig, integrationMain) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -61,6 +60,7 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
 import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
+
 ensureTemplate :: (?modelContext :: ModelContext) => IO LlmPromptTemplate
 ensureTemplate = do
     existing <-
@@ -78,7 +78,6 @@ ensureTemplate = do
                 |> set #active True
                 |> createRecord
 
-
 latestAnalysis :: (?modelContext :: ModelContext) => Id Alert -> IO LlmAnalysis
 latestAnalysis alertId =
     query @LlmAnalysis
@@ -87,7 +86,6 @@ latestAnalysis alertId =
         |> limit 1
         |> fetchOneOrNothing
         >>= maybe (error "llm analysis missing") pure
-
 
 enqueueAnalysis :: (?modelContext :: ModelContext) => Id Alert -> IO LlmAnalysis
 enqueueAnalysis alertId = do
@@ -101,7 +99,6 @@ enqueueAnalysis alertId = do
             |> createRecord
     pure analysis
 
-
 performLatestJob :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Id LlmAnalysis -> IO ()
 performLatestJob analysisId = do
     job <-
@@ -113,7 +110,6 @@ performLatestJob analysisId = do
             >>= maybe (error "llm job missing") pure
     perform job
 
-
 counterRequestsAfter :: (?modelContext :: ModelContext) => Text -> IO Int
 counterRequestsAfter provider = do
     rows <-
@@ -124,7 +120,6 @@ counterRequestsAfter provider = do
     |]
     pure (fromMaybe 0 (head rows))
 
-
 pendingZabbixJobs :: (?modelContext :: ModelContext) => IO Int64
 pendingZabbixJobs = do
     rows <-
@@ -133,7 +128,6 @@ pendingZabbixJobs = do
         SELECT count(*) FROM poll_zabbix_jobs WHERE status = 'job_status_not_started'
     |]
     pure (fromMaybe 0 (head rows))
-
 
 m6User :: (?modelContext :: ModelContext) => [Text] -> IO User
 m6User privileges = do
@@ -155,16 +149,13 @@ m6User privileges = do
             |> createRecord
     pure user
 
-
 mockFail :: Text -> Int -> IO ()
 mockFail kind times = void (Wreq.post ("http://127.0.0.1:18084/debug/fail/" <> cs kind) (object ["times" .= times]))
-
 
 schemaPresent :: String -> IO Bool
 schemaPresent databaseUrl = do
     output <- readProcess "psql" [databaseUrl, "-tA", "-c", "SELECT to_regclass('public.alerts') IS NOT NULL"] ""
     pure (output == "t\n")
-
 
 testSource :: (?modelContext :: ModelContext) => IO Source
 testSource =
@@ -172,7 +163,6 @@ testSource =
         |> filterWhere (#type_, "alertmanager" :: Text)
         |> fetchOneOrNothing
         >>= maybe (error "alertmanager source fixture missing") pure
-
 
 integrationSource :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO Source
 integrationSource sourceType name baseUrl config =
@@ -183,14 +173,11 @@ integrationSource sourceType name baseUrl config =
         |> set #config config
         |> createRecord
 
-
 payloadText :: Text -> Aeson.Value -> Maybe Text
 payloadText key = parseMaybe (Aeson.withObject "payload" (\o -> o Aeson..: Key.fromText key))
 
-
 retryWriteBack :: (?modelContext :: ModelContext) => Int -> WriteBackAttempt -> IO WriteBackAttempt
 retryWriteBack 0 attempt = pure attempt
-
 retryWriteBack n attempt
     | attempt.status == "failed" || attempt.status == "done" = pure attempt
     | otherwise = do
@@ -198,14 +185,12 @@ retryWriteBack n attempt
         updated <- fetch (get #id attempt)
         retryWriteBack (n - 1) updated
 
-
 fetchEnvironment :: (?modelContext :: ModelContext) => Text -> IO Environment
 fetchEnvironment name =
     query @Environment
         |> filterWhere (#name, name)
         |> fetchOneOrNothing
         >>= maybe (error "environment missing") pure
-
 
 testUser :: (?modelContext :: ModelContext) => IO User
 testUser = do
@@ -221,14 +206,11 @@ testUser = do
                 |> set #passwordHash "unused"
                 |> createRecord
 
-
 freshFingerprint :: IO Text
 freshFingerprint = ("itest:" <>) . tshow <$> nextRandom
 
-
 testEvent :: Text -> SourceStatus -> NormalizedEvent
 testEvent = testEventIn "itest-env"
-
 
 testEventIn :: Text -> Text -> SourceStatus -> NormalizedEvent
 testEventIn envName fp status =
@@ -249,7 +231,6 @@ testEventIn envName fp status =
         , sourceUrl = Nothing
         }
 
-
 eventKinds :: (?modelContext :: ModelContext) => Id Alert -> IO [Text]
 eventKinds alertId =
     map (get #kind)
@@ -259,14 +240,12 @@ eventKinds alertId =
                 |> fetch
             )
 
-
 notifiedEvents :: (?modelContext :: ModelContext) => Id Alert -> IO [AlertEvent]
 notifiedEvents alertId =
     query @AlertEvent
         |> filterWhere (#alertId, alertId)
         |> filterWhere (#kind, "notified" :: Text)
         |> fetch
-
 
 groupingRule :: (?modelContext :: ModelContext) => Text -> Text -> IO GroupingRule
 groupingRule name template =
@@ -277,7 +256,6 @@ groupingRule name template =
         |> set #match (object [])
         |> set #groupKeyTemplate template
         |> createRecord
-
 
 notificationRule :: (?modelContext :: ModelContext) => Text -> Maybe (Id User) -> Maybe (Id EscalationPolicy) -> IO NotificationRule
 notificationRule name userRef policyRef =
@@ -293,7 +271,6 @@ notificationRule name userRef policyRef =
         |> set #escalationPolicyId policyRef
         |> createRecord
 
-
 m7Apply :: (?modelContext :: ModelContext) => Aeson.Value -> IO ()
 m7Apply config = do
     suffix <- tshow <$> nextRandom
@@ -301,14 +278,12 @@ m7Apply config = do
     LBS.writeFile path (Aeson.encode config)
     applyProvisionConfig path
 
-
 m7User :: (?modelContext :: ModelContext) => Text -> IO User
 m7User email =
     newRecord @User
         |> set #email email
         |> set #passwordHash "unused"
         |> createRecord
-
 
 -- Rows currently in the DB rendered back as config items (minus the excluded
 -- natural keys), so strict applies keep them untouched.
@@ -324,7 +299,6 @@ m7UserKeepItems exclude = do
         | user <- users
         , get #email user `notElem` exclude
         ]
-
 
 m7SourceKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
 m7SourceKeepItems exclude = do
@@ -342,7 +316,6 @@ m7SourceKeepItems exclude = do
         | source <- sources
         , get #name source `notElem` exclude
         ]
-
 
 m7TeamKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
 m7TeamKeepItems exclude = do
@@ -364,7 +337,6 @@ m7TeamKeepItems exclude = do
                 , "members" .= map (\row -> object ["email" .= get #email row, "role" .= get #team_role row]) members
                 ]
 
-
 m7LlmKeepItems :: (?modelContext :: ModelContext) => IO [Aeson.Value]
 m7LlmKeepItems = do
     rows <- query @LlmConfig |> fetch
@@ -380,14 +352,11 @@ m7LlmKeepItems = do
         | row <- rows
         ]
 
-
 restoreEnv :: String -> Maybe String -> IO ()
 restoreEnv name = maybe (unsetEnv name) (setEnv name)
 
-
 itestAttrNames :: Text
 itestAttrNames = "Owner,Cluster,Database,IP,Datacenter,Service,DB Cluster,Environments,Team,Location"
-
 
 ensureAssetsConfig :: (?modelContext :: ModelContext) => IO AssetsConfig
 ensureAssetsConfig = do
@@ -415,7 +384,6 @@ ensureAssetsConfig = do
                 |> set #enabled True
                 |> createRecord
 
-
 ensureMockJiraConfig :: (?modelContext :: ModelContext) => IO ()
 ensureMockJiraConfig = do
     existing <-
@@ -438,7 +406,6 @@ ensureMockJiraConfig = do
                     |> set #enabled True
                     |> createRecord
 
-
 ensureMockCmdbConfig :: (?modelContext :: ModelContext) => IO ()
 ensureMockCmdbConfig = do
     existing <-
@@ -459,7 +426,6 @@ ensureMockCmdbConfig = do
                     |> set #spaces (Aeson.toJSON ["DEV" :: Text])
                     |> set #enabled True
                     |> createRecord
-
 
 -- Runs the action with the ONLY enabled CMDB connection pointing at
 -- baseUrl (dead port, wrong token, ...), restoring the previous rows
@@ -486,14 +452,12 @@ withOnlyCmdbConfig baseUrl action = do
             current <- fetch (get #id row)
             void (current |> set #enabled True |> updateRecord)
 
-
 enrichJobFor :: (?modelContext :: ModelContext) => Id Alert -> IO EnrichAlertJob
 enrichJobFor alertId =
     query @EnrichAlertJob
         |> filterWhere (#alertId, alertId)
         |> fetchOneOrNothing
         >>= maybe (error "enrich job missing") pure
-
 
 -- Replaces the ingest-created row (which the dev worker races us for) with
 -- a manually inserted one whose run_at is in the future, so only the test
@@ -507,18 +471,14 @@ freshEnrichJob alertId = do
         |> set #runAt (addUTCTime 86400 now)
         |> createRecord
 
-
 assetAttr :: Text -> AssetsObject -> Maybe Text
 assetAttr name object = lookup name (objectAttributes object)
-
 
 assetsMockReset :: IO ()
 assetsMockReset = void (Wreq.post "http://127.0.0.1:18085/debug/reset" (object ["reset" .= True]))
 
-
 assetsMockFail :: Int -> IO ()
 assetsMockFail times = void (Wreq.post "http://127.0.0.1:18085/debug/fail/500" (object ["times" .= times]))
-
 
 -- | Reuse an existing mapping row (dev DBs carry the seeded passthrough
 -- mappings); the Bool marks rows this run created and must delete.
@@ -542,16 +502,13 @@ ensureMapping facet rank kind key = do
                     |> createRecord
             pure (row, True)
 
-
 cleanupMappings :: (?modelContext :: ModelContext) => [(FieldMapping, Bool)] -> IO ()
 cleanupMappings = mapM_ \(row, created) -> when created (deleteRecord row)
-
 
 resetToolCache :: (?modelContext :: ModelContext) => IO ()
 resetToolCache = do
     void (sqlExecTyped [typedSql| DELETE FROM llm_tool_cache WHERE tool LIKE 'itest_tool%' |])
     resetToolCacheConfig
-
 
 resetToolCacheConfig :: (?modelContext :: ModelContext) => IO ()
 resetToolCacheConfig =

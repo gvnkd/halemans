@@ -1,6 +1,5 @@
 module Test.Integration.ProvisioningSpec (spec) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -60,8 +59,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
-import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 import Test.Integration.Setup
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 -- Milestone 7: declarative provisioning (design_docs/milestone_7.md §9).
 -- Keep-lists for strict tests are built from current DB rows so the specs are
@@ -660,7 +659,6 @@ m7Spec = describe "provisioning (milestone 7)" do
         length remainingMappings `shouldBe` length keepMappings
         remainingDashboards <- query @Dashboard |> fetch
         length remainingDashboards `shouldBe` length keepDashboards
-
 
 -- | Provisioning (m7).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec

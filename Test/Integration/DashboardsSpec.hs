@@ -1,6 +1,5 @@
 module Test.Integration.DashboardsSpec (spec) where
 
-
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -60,8 +59,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
-import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 import Test.Integration.Setup
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 -- Milestone 9: resolved facets, facet dashboards, grouping over facets
 -- (design_docs/milestone_9.md §9). Field mappings are global state, so each
@@ -397,7 +396,6 @@ m9Spec = describe "resolved facets (milestone 9)" do
         queryWith (["severity"] :: [Text]) `shouldReturn` ["critical", "warning", "info", "info"]
         -- flipped: info first
         queryWith (["-severity"] :: [Text]) `shouldReturn` ["info", "info", "warning", "critical"]
-
 
 -- | Resolved facets (m9).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec

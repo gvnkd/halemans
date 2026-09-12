@@ -248,3 +248,17 @@
     document.addEventListener('DOMContentLoaded', init);
     document.addEventListener('turbolinks:load', init);
 })();
+
+// CSP-friendly replacements for inline handlers (milestone 12 §8):
+// [data-autosubmit] inputs submit their form on change; forms with
+// [data-confirm] ask before submitting.
+(function () {
+    document.addEventListener('change', function (event) {
+        var el = event.target.closest && event.target.closest('[data-autosubmit]');
+        if (el && el.form) el.form.submit();
+    });
+    document.addEventListener('submit', function (event) {
+        var message = event.target.getAttribute && event.target.getAttribute('data-confirm');
+        if (message && !window.confirm(message)) event.preventDefault();
+    });
+})();
