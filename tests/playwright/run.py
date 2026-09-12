@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 import urllib.request
 
 os.environ.setdefault("DEBUG", "pw:browser")  # surface chromium stderr in check logs
@@ -26,7 +27,9 @@ def check(name):
             fn()
             print(f"  PASS {name}", flush=True)
         except Exception as e:
-            print(f"  FAIL {name}: {type(e).__name__} {e}", flush=True)
+            tb = traceback.extract_tb(sys.exc_info()[2])
+            loc = f" ({tb[-1].filename}:{tb[-1].lineno})" if tb else ""
+            print(f"  FAIL {name}: {type(e).__name__} {e}{loc}", flush=True)
             failures.append(name)
     return deco
 
@@ -1243,6 +1246,8 @@ with sync_playwright() as pw:
 
 print()
 if failures:
-    print(f"playwright: {len(failures)} failure(s)")
+    print(f"playwright: {len(failures)} failure(s):")
+    for name in failures:
+        print(f"  FAILED {name}")
     sys.exit(1)
 print("playwright: all scenarios passed")

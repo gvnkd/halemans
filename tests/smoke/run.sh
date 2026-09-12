@@ -11,8 +11,9 @@ MOCK_JIRA_URL="${HALEMANS_JIRA_URL:-http://127.0.0.1:18083}"
 STATE="${DEVENV_STATE:?}"
 
 failures=0
+failed_tests=()
 pass() { printf '  PASS %s\n' "$1"; }
-fail() { printf '  FAIL %s\n' "$1"; failures=$((failures + 1)); }
+fail() { printf '  FAIL %s\n' "$1"; failures=$((failures + 1)); failed_tests+=("$1"); }
 
 # wait_sql <description> <timeout-seconds> <sql-returning-nonempty-when-done>
 wait_sql() {
@@ -687,6 +688,7 @@ echo
 if [ "$failures" = 0 ]; then
     echo "smoke: all scenarios passed"
 else
-    echo "smoke: $failures failure(s)"
+    echo "smoke: $failures failure(s):"
+    printf '  FAILED %s\n' "${failed_tests[@]}"
 fi
 exit "$failures"

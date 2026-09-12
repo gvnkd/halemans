@@ -10,6 +10,25 @@ mkdir -p "$DEVENV_STATE" "$DEVENV_ROOT"
 export PATH="$HALEMANS_PROFILE/bin:$PATH"
 
 pids=""
+# Print the ACTUAL failures last (GitHub shows the tail of the log): the
+# scenario FAIL lines from the smoke suite and playwright, plus the last
+# python traceback if the playwright runner crashed outright.
+failure_summary() {
+    echo >&2
+    echo "================ FAILURE SUMMARY ================" >&2
+    if [ -f "$T/smoke.log" ]; then
+        awk '/^scenario:/ { scen=$0 } /^  FAIL / { if (scen != "") print scen; print }' "$T/smoke.log" >&2 || true
+        grep -E '^smoke: [0-9]+ failure' "$T/smoke.log" >&2 || true
+    fi
+    if [ -f "$T/playwright.log" ]; then
+        grep -E '^  FAIL ' "$T/playwright.log" >&2 || true
+        if grep -q 'Traceback' "$T/playwright.log"; then
+            echo "--- last playwright traceback ---" >&2
+            awk '/Traceback/ { buf=""; seen=1 } seen { buf = buf $0 "\n" } END { printf "%s", buf }' "$T/playwright.log" >&2
+        fi
+    fi
+    echo "=================================================" >&2
+}
 cleanup() {
     rc=$?
     for p in $pids; do kill "$p" 2>/dev/null || true; done
@@ -28,6 +47,7 @@ cleanup() {
                 tail -20 "$T/$f.log" >&2
             fi
         done
+        failure_summary
     fi
 }
 trap cleanup EXIT
@@ -445,7 +465,7 @@ curl -sf "$HALEMANS_APP_URL/alerts" > /dev/null || {
 }
 
 # --- smoke ----------------------------------------------------------------------
-bash "$SMOKE_RUN"
+bash "$SMOKE_RUN" 2>&1 | tee "$T/smoke.log"
 
 # Zabbix RPC failures on the reconcile path are warn-logged and otherwise
 # invisible (non-fatal by design); the scenarios above always leave tracked
@@ -459,6 +479,6 @@ fi
 # --- playwright (milestone 1 §10) -------------------------------------------------
 export HOME="$T/home" # chromium wants a writable home in the sandbox
 mkdir -p "$HOME"
-python3 "$PLAYWRIGHT_SUITE"
+python3 "$PLAYWRIGHT_SUITE" 2>&1 | tee "$T/playwright.log"
 
 echo "smoke check: OK" > "$out"
