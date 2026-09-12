@@ -25,11 +25,11 @@ instance View IndexView where
         </form>
         {chartPanel "report-volume" "Alert volume per day" volumeSvg}
         <div class="row">
-            <div class="col-lg-6">{chartPanel "report-severity" "Alerts by severity" severitySvg}</div>
+            <div class="col-lg-6">
+                {chartPanel "report-severity" "Alerts by severity" severitySvg}
+                {chartPanel "report-mttr" "Mean time to resolve by severity" mttrSvg}
+            </div>
             <div class="col-lg-6">{chartPanel "report-env" "Alerts by environment" envSvg}</div>
-        </div>
-        <div class="row">
-            <div class="col-lg-6">{chartPanel "report-mttr" "Mean time to resolve by severity" mttrSvg}</div>
         </div>
     |]
 
