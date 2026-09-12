@@ -39,6 +39,7 @@ instance Controller ReportsController where
             SELECT a.severity, avg(extract(epoch from (a.resolved_at - a.started_at)))::float8 AS avg_seconds
             FROM alerts a
             WHERE a.resolved_at IS NOT NULL AND a.started_at IS NOT NULL
+                AND a.resolved_at >= a.started_at
                 AND coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
             GROUP BY a.severity
             ORDER BY avg_seconds DESC |]

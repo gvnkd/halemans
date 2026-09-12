@@ -4,6 +4,8 @@ module Application.Service.Reports
     , volumeChartSvg
     , mttrChartSvg
     , formatDuration
+    , severityCssClass
+    , truncateLabel
     ) where
 
 import IHP.Prelude
@@ -15,81 +17,160 @@ import qualified Diagrams.Prelude as D
 import qualified Diagrams.Backend.SVG as DS
 import qualified Graphics.Svg as SvgBuilder
 
-chartSvg :: Double -> D.QDiagram DS.SVG D.V2 Double D.Any -> Text
-chartSvg width dia = cs (SvgBuilder.renderBS (D.renderDia DS.SVG opts dia))
-  where
-    opts = DS.SVGOptions (D.mkWidth width) Nothing "" [] False
+-- Static report charts (/reports). Charts are drawn on a pixel grid (1 unit =
+-- 1 px at the design width) and rendered to inline SVG. NO colors are baked
+-- in: every painted element carries a CSS class (chart-*) and app.css maps
+-- those onto the active theme pack's tokens, so charts follow data-theme.
+
+type Chart = D.QDiagram DS.SVG D.V2 Double D.Any
+
+data BarDatum = BarDatum
+    { barLabel :: Text
+    , barValue :: Double
+    , barValueText :: Text
+    , barClass :: Text
+    }
+
+fontSizePx :: Double
+fontSizePx = 12
 
 severityChartSvg :: [(Text, Int64)] -> Text
-severityChartSvg rows = chartSvg 900 (hbarChart severityColor (map (second fromIntegral) rows))
+severityChartSvg rows = hbarChartSvg 640 (map mk rows)
+  where
+    mk (severity, n) = BarDatum
+        { barLabel = severity
+        , barValue = fromIntegral n
+        , barValueText = show n
+        , barClass = severityCssClass severity
+        }
 
 envChartSvg :: [(Text, Int64)] -> Text
-envChartSvg rows = chartSvg 900 (hbarChart (const envColor) (map (second fromIntegral) rows))
+envChartSvg rows = hbarChartSvg 640 (map mk rows)
+  where
+    mk (env, n) = BarDatum
+        { barLabel = truncateLabel 20 env
+        , barValue = fromIntegral n
+        , barValueText = show n
+        , barClass = "chart-bar-accent"
+        }
 
 volumeChartSvg :: [(Day, Int64)] -> Text
-volumeChartSvg rows = chartSvg 1200 (vbarChart (map (\(day, n) -> (dayLabel day, fromIntegral n)) rows))
+volumeChartSvg rows = vbarChartSvg 1600 (map mk rows)
   where
-    dayLabel = cs . TimeFormat.formatTime TimeFormat.defaultTimeLocale "%m-%d"
+    mk (day, n) = BarDatum
+        { barLabel = cs (TimeFormat.formatTime TimeFormat.defaultTimeLocale "%m-%d" day)
+        , barValue = fromIntegral n
+        , barValueText = show n
+        , barClass = "chart-bar-accent"
+        }
 
 mttrChartSvg :: [(Text, Double)] -> Text
-mttrChartSvg rows = chartSvg 900 (hbarChart severityColor (map (second toMinutes) rows))
+mttrChartSvg rows = hbarChartSvg 640 (map mk rows)
   where
-    toMinutes seconds = seconds / 60
+    mk (severity, seconds) = BarDatum
+        { barLabel = severity
+        , barValue = seconds
+        , barValueText = formatDuration seconds
+        , barClass = severityCssClass severity
+        }
 
-emptyChart :: D.QDiagram DS.SVG D.V2 Double D.Any
-emptyChart = D.alignedText 0 0.5 "no data" D.# D.fontSizeL 1.2
-
-hbarChart :: (Text -> D.Colour Double) -> [(Text, Double)] -> D.QDiagram DS.SVG D.V2 Double D.Any
-hbarChart _ [] = emptyChart
-hbarChart colorOf rows = D.vsep 0.7 (map (barRow maxVal) rows) D.# D.font "sans-serif"
+hbarChartSvg :: Double -> [BarDatum] -> Text
+hbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
+hbarChartSvg w rows = renderChartSvg w h (D.vsep rowGap (map row rows))
   where
-    maxVal = maximum (map snd rows)
-    barLen = 40
-    barRow maxValue (label, value) = D.hcat
-        [ labelArea label
-        , D.strutX 1
-        , D.rect (len value) 1.8 D.# D.fc (colorOf label) D.# D.lw D.none D.# D.alignL
-        , D.strutX 1
-        , D.alignedText 0 0.5 (cs (valueLabel value)) D.# D.fontSizeL 1.1
+    maxVal = maximum (map barValue rows)
+    padding = 4
+    labelCol = 150
+    valueCol = 64
+    gap = 12
+    barH = 18
+    rowGap = 10
+    marginV = 8
+    h = fromIntegral (length rows) * (barH + rowGap) - rowGap + 2 * marginV
+    barArea = w - 2 * padding - labelCol - valueCol - 2 * gap
+    row datum = D.hcat
+        [ D.strutX padding
+        , labelBox datum
+        , D.strutX gap
+        , barBox datum
+        , D.strutX gap
+        , valueBox datum
+        , D.strutX padding
         ]
-      where
-        len v = if maxValue <= 0 then 0 else max 0.15 (v / maxValue * barLen)
-    labelArea label = D.alignedText 1 0.5 (cs label) D.# D.fontSizeL 1.1 D.<> D.strutX 14
-    valueLabel value
-        | value >= 90 = show (round value :: Int)
-        | otherwise = show (fromIntegral (round (value * 10) :: Int) / (10 :: Double))
+    labelBox datum = D.alignR (chartText "chart-text" 1 0.5 datum.barLabel) D.<> D.alignR (D.strutX labelCol)
+    barBox datum = D.alignL (bar (scaled datum) barH datum.barClass) D.<> D.alignL (D.strutX barArea)
+    valueBox datum = D.alignL (chartText "chart-text-muted" 0 0.5 datum.barValueText) D.<> D.alignL (D.strutX valueCol)
+    scaled datum = if maxVal <= 0 then 0 else max 2 (datum.barValue / maxVal * barArea)
 
-vbarChart :: [(Text, Double)] -> D.QDiagram DS.SVG D.V2 Double D.Any
-vbarChart [] = emptyChart
-vbarChart rows = D.hsep 0.4 (map (column maxVal) rows) D.# D.font "sans-serif"
+vbarChartSvg :: Double -> [BarDatum] -> Text
+vbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
+vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> dayLabels <> [baseline]))
   where
-    maxVal = maximum (map snd rows)
-    barHeight = 25
-    column maxValue (label, value) = D.vcat
-        [ D.alignedText 0.5 0 (cs (show (round value :: Int))) D.# D.fontSizeL 1
-        , D.strutY 0.3
-        , D.rect 1.6 (len value) D.# D.fc envColor D.# D.lw D.none
-        , D.strutY 0.3
-        , D.alignedText 0.5 1 (cs label) D.# D.fontSizeL 1
-        ]
-      where
-        len v = if maxValue <= 0 then 0 else max 0.1 (v / maxValue * barHeight)
+    padding = 8
+    plotH = 180
+    rotated = length rows > 14
+    bottomGap = 6
+    topMargin = 24
+    bottomMargin = if rotated then 56 else 28
+    h = topMargin + plotH + bottomMargin
+    plotW = w - 2 * padding
+    n = length rows
+    slot = plotW / fromIntegral n
+    barW = min 60 (slot * 0.7)
+    maxVal = maximum (map barValue rows)
+    colH value = if maxVal <= 0 then 0 else max 2 (value / maxVal * plotH)
+    xCenter i = padding + slot * (fromIntegral i + 0.5)
+    bars = zipWith mkBar [0 ..] rows
+    mkBar i datum = (D.p2 (xCenter i, 0), D.alignB (bar barW (colH datum.barValue) datum.barClass))
+    valueLabels = zipWith mkValue [0 ..] rows
+    mkValue i datum = (D.p2 (xCenter i, colH datum.barValue + 4), chartText "chart-text-muted" 0.5 0 datum.barValueText)
+    dayLabels = zipWith mkDay [0 ..] rows
+    mkDay i datum
+        | rotated = (D.p2 (xCenter i, negate bottomGap), chartText "chart-text-muted" 1 1 datum.barLabel D.# D.rotate ((negate 45) D.@@ D.deg))
+        | otherwise = (D.p2 (xCenter i, negate bottomGap), chartText "chart-text-muted" 0.5 1 datum.barLabel)
+    baseline = (D.p2 (padding, 0), D.alignL (D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid"))
 
-severityColor :: Text -> D.Colour Double
-severityColor severity = D.sRGB24read (cs color)
+emptyChart :: Double -> Chart
+emptyChart w = chartText "chart-text-muted" 0.5 0.5 "no data"
+
+renderChartSvg :: Double -> Double -> Chart -> Text
+renderChartSvg w h dia = cs (SvgBuilder.renderBS (D.renderDia DS.SVG opts framed))
   where
-    color = case Text.toLower severity of
-        "critical" -> "#dc3545" :: Text
-        "disaster" -> "#dc3545"
-        "high"     -> "#fd7e14"
-        "average"  -> "#fd7e14"
-        "warning"  -> "#ffc107"
-        "info"     -> "#0dcaf0"
-        "information" -> "#0dcaf0"
-        _          -> "#6c757d"
+    opts = DS.SVGOptions (D.mkWidth w) Nothing "" [] False
+    -- invisible backdrop fixes the viewport: diagrams' text envelopes
+    -- underestimate real glyph extents, so without an explicit frame the
+    -- viewBox clips edge labels
+    framed = D.centerXY dia D.<> (D.rect w h D.# D.fcA D.transparent D.# D.lw D.none)
 
-envColor :: D.Colour Double
-envColor = D.sRGB24read "#4c6ef5"
+bar :: Double -> Double -> Text -> Chart
+bar len h cls = D.rect len h
+    -- explicit fill: diagrams' default fill is fully transparent
+    -- (fill-opacity=0); the neutral gray is only a fallback — app.css
+    -- re-colors via the chart-* class
+    D.# D.fc (D.sRGB24read "#6c757d")
+    D.# D.lw D.none
+    D.# DS.svgClass (cs cls)
+
+chartText :: Text -> Double -> Double -> Text -> Chart
+chartText cls ax ay content = D.alignedText ax ay (cs content)
+    D.# D.fontSizeL fontSizePx
+    D.# DS.svgClass (cs cls)
+
+severityCssClass :: Text -> Text
+severityCssClass severity = case Text.toLower severity of
+    "critical"    -> "chart-sev-critical"
+    "disaster"    -> "chart-sev-critical"
+    "high"        -> "chart-sev-high"
+    "average"     -> "chart-sev-high"
+    "warning"     -> "chart-sev-warning"
+    "info"        -> "chart-sev-info"
+    "information" -> "chart-sev-info"
+    _             -> "chart-sev-other"
+
+truncateLabel :: Int -> Text -> Text
+truncateLabel maxChars label
+    | Text.length label <= maxChars = label
+    | otherwise = Text.take (maxChars - 1) label <> "…"
 
 formatDuration :: Double -> Text
 formatDuration seconds

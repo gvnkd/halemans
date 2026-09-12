@@ -43,3 +43,21 @@ spec = describe "Application.Service.Reports" do
 
         it "formats hours" do
             formatDuration 7200 `shouldBe` "2h"
+
+    describe "severityCssClass" do
+        it "maps known severities to their theme classes" do
+            severityCssClass "critical" `shouldBe` "chart-sev-critical"
+            severityCssClass "Warning" `shouldBe` "chart-sev-warning"
+            severityCssClass "disaster" `shouldBe` "chart-sev-critical"
+            severityCssClass "average" `shouldBe` "chart-sev-high"
+            severityCssClass "information" `shouldBe` "chart-sev-info"
+
+        it "falls back to the neutral class for unknown severities" do
+            severityCssClass "notice" `shouldBe` "chart-sev-other"
+
+    describe "truncateLabel" do
+        it "keeps short labels" do
+            truncateLabel 10 "prod" `shouldBe` "prod"
+
+        it "truncates long labels with an ellipsis" do
+            truncateLabel 10 "production-eu-west" `shouldBe` "productio…"

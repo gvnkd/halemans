@@ -28,13 +28,15 @@ instance View IndexView where
             <div class="col-lg-6">{chartPanel "report-severity" "Alerts by severity" severitySvg}</div>
             <div class="col-lg-6">{chartPanel "report-env" "Alerts by environment" envSvg}</div>
         </div>
-        {chartPanel "report-mttr" "Mean time to resolve by severity (minutes)" mttrSvg}
+        <div class="row">
+            <div class="col-lg-6">{chartPanel "report-mttr" "Mean time to resolve by severity" mttrSvg}</div>
+        </div>
     |]
 
 chartPanel :: Text -> Text -> Text -> Html
 chartPanel testId title svg = [hsx|
     <div class="card mb-4" data-testid={testId}>
-        <div class="card-body">
+        <div class="card-body report-chart">
             <h5 class="card-title">{title}</h5>
             {preEscapedToHtml svg}
         </div>
