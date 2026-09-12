@@ -26,11 +26,14 @@ defaultLayout inner =
         <title>{pageTitleOrDefault "Halemans"}</title>
     </head>
     <body>
+        <a href="#content" class="skip-to-content">Skip to content</a>
         {navigation}
         <div class="container-fluid mt-4 px-4">
             {renderFlashMessages}
             <div id="push-banner" class="alert alert-warning d-none" data-testid="push-banner"></div>
-            {inner}
+            <main id="content">
+                {inner}
+            </main>
         </div>
     </body>
 </html>

@@ -2,11 +2,8 @@ module Application.Helper.Controller where
 
 import Generated.Types
 import IHP.ControllerPrelude
-import IHP.ControllerSupport (respondAndExit)
 import IHP.LoginSupport.Helper.Controller
 import IHP.LoginSupport.Types (HasNewSessionUrl (..))
-import Network.HTTP.Types (status403)
-import Network.Wai (responseLBS)
 
 -- Auth identity lives here (not Web.Types) so Config.hs can see the
 -- instances for the AuthMiddleware without importing the Web layer.
@@ -54,16 +51,3 @@ nonEmptyParam :: (?request :: Request) => ByteString -> Maybe Text
 nonEmptyParam name =
     paramOrNothing @Text name >>= \value ->
         if value == "" then Nothing else Just value
-
--- | Guard for mutating endpoints: renders a 403 page and aborts the action
--- when the current user lacks the privilege.
-requirePrivilege :: (CurrentUserRecord ~ User, ?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> IO ()
-requirePrivilege privilege = do
-    allowed <- currentUserHasPrivilege privilege
-    unless allowed do
-        respondAndExit $
-            responseLBS status403 [("Content-Type", "text/html; charset=utf-8")] $
-                cs $
-                    "<div class=\"container mt-5\" data-testid=\"forbidden\"><h1>403 — Forbidden</h1><p>Your account lacks the <code>"
-                        <> privilege
-                        <> "</code> privilege.</p></div>"
