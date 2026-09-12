@@ -1,0 +1,44 @@
+# hlint baseline (milestone 12 §4): the gate must pass from introduction,
+# so hint groups firing on the current tree are tuned out here. Re-enable
+# incrementally in follow-ups.
+#
+# -XQuasiQuotes is required: Application code uses IHP's typedSql
+# quasi-quoter with ${...} antiquotation, which hlint only parses when the
+# extension is on.
+- arguments:
+    - -XQuasiQuotes
+
+- ignore: { name: Use newtype instead of data }
+- ignore: { name: Avoid lambda }
+- ignore: { name: "Avoid lambda using `infix`" }
+- ignore: { name: Use let }
+- ignore: { name: Replace case with maybe }
+- ignore: { name: Use maybe }
+- ignore: { name: Use =<< }
+- ignore: { name: Use <$> }
+- ignore: { name: Redundant <$> }
+- ignore: { name: Use || }
+- ignore: { name: Use guards }
+- ignore: { name: Eta reduce }
+- ignore: { name: Use first }
+- ignore: { name: Use second }
+# IHP.Prelude's head returns Maybe — the "Use head" hint assumes partial
+# Prelude.head and would introduce crashes.
+- ignore: { name: Use head }
+- ignore: { name: Use map once }
+- ignore: { name: Redundant map }
+- ignore: { name: Use mapMaybe }
+- ignore: { name: Use catMaybes }
+- ignore: { name: Use lefts }
+- ignore: { name: Use rights }
+- ignore: { name: Parenthesize unary negation }
+- ignore: { name: Use ?~ }
+- ignore: { name: Use unless }
+- ignore: { name: Use forM_ }
+- ignore: { name: Use id }
+- ignore: { name: Redundant id }
+- ignore: { name: Redundant flip }
+- ignore: { name: Redundant bracket }
+- ignore: { name: Redundant void }
+- ignore: { name: Use fewer imports }
+- ignore: { name: Unused LANGUAGE pragma }

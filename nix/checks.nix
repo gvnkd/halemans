@@ -131,6 +131,24 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
         installPhase = "true";
     });
 
+    # Style gate (milestone 12 §4): fourmolu formatting + hlint over the
+    # tracked tree. The -XOverloadedRecordDot/-XOverloadedLabels flags are
+    # REQUIRED: without them fourmolu parses `record.field` as composition
+    # and `#label` as an operator application and "reformats" both into
+    # broken code.
+    style = pkgs.stdenvNoCC.mkDerivation {
+        name = "halemans-style";
+        src = builtins.path { path = config.ihp.projectPath; name = "source"; };
+        dontInstall = true;
+        nativeBuildInputs = [ pkgs.fourmolu pkgs.hlint pkgs.findutils pkgs.coreutils pkgs.gnugrep ];
+        buildPhase = ''
+            files=$(find Application Web Config Test -name '*.hs' -not -path '*/build/*'; ls *.hs 2>/dev/null || true)
+            fourmolu -o -XOverloadedRecordDot -o -XOverloadedLabels --mode check $files
+            hlint $files
+            touch $out
+        '';
+    };
+
     smoke = pkgs.stdenvNoCC.mkDerivation {
         name = "halemans-smoke";
 

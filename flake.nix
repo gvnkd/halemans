@@ -103,6 +103,9 @@
                     projectPath = ./.;
                     packages = with pkgs; [
                         # Native dependencies, e.g. imagemagick
+                        # Style gate tools (milestone 12 §4; see nix/checks.nix style)
+                        fourmolu
+                        hlint
                     ];
                     haskellPackages = p: with p; [
                         # Haskell dependencies go here
