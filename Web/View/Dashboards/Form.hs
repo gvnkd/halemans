@@ -1,8 +1,10 @@
 module Web.View.Dashboards.Form (dashboardFormFields) where
+
 import Web.View.Prelude
 
 dashboardFormFields :: Text -> Text -> Bool -> Html
-dashboardFormFields name config isDefault = [hsx|
+dashboardFormFields name config isDefault =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Name</label>
         <input name="name" type="text" class="form-control" value={name} data-testid="dashboard-name" required="required"/>
@@ -17,6 +19,6 @@ dashboardFormFields name config isDefault = [hsx|
         <label class="form-check-label">Default dashboard (landing page)</label>
     </div>
 |]
-    where
-        exampleConfig :: Text
-        exampleConfig = "[{\"env\": \"dev\", \"filters\": {\"status\": [\"firing\"], \"severity\": [\"critical\"]}}]"
+  where
+    exampleConfig :: Text
+    exampleConfig = "[{\"env\": \"dev\", \"filters\": {\"status\": [\"firing\"], \"severity\": [\"critical\"]}}]"

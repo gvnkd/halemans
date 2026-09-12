@@ -1,16 +1,16 @@
 module Web.Controller.Audit where
 
-import Web.Controller.Prelude
-import Web.View.Audit.Index
-import Application.Service.AuditExport (ExportRow (..), renderCsv, renderJsonl, iso8601)
-import IHP.TypedSql (sqlQueryTyped, typedSql)
+import Application.Service.AuditExport (ExportRow (..), iso8601, renderCsv, renderJsonl)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
+import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
+import qualified Data.UUID as UUID
+import IHP.ControllerSupport (respondAndExit)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Network.HTTP.Types (status200, status400)
 import Network.Wai (responseLBS)
-import IHP.ControllerSupport (respondAndExit)
-import Data.Time.Format (formatTime, defaultTimeLocale, parseTimeM)
-import qualified Data.UUID as UUID
+import Web.Controller.Prelude
+import Web.View.Audit.Index
 
 -- Audit export (design_docs/milestone_5.md §5): admin-gated download of
 -- alert_events as CSV/JSONL. Every request lands an audit_exports row before
@@ -20,13 +20,13 @@ instance Controller AuditController where
 
     action AuditExportsAction = do
         requirePrivilege "admin"
-        exports <- query @AuditExport
-            |> orderByDesc #createdAt
-            |> limit 50
-            |> fetch
+        exports <-
+            query @AuditExport
+                |> orderByDesc #createdAt
+                |> limit 50
+                |> fetch
         users <- query @User |> fetch
-        render IndexView { .. }
-
+        render IndexView{..}
     action ExportAuditAction = do
         requirePrivilege "admin"
         now <- getCurrentTime
@@ -45,61 +45,73 @@ instance Controller AuditController where
                 let fromText = iso8601 from
                     toText = iso8601 to
                 rows <- case (envParam, alertParam) of
-                    (Just env, Nothing) -> sqlQueryTyped [typedSql|
+                    (Just env, Nothing) ->
+                        sqlQueryTyped
+                            [typedSql|
                         SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                             AND coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${env}
                         ORDER BY e.created_at |]
-                    (Nothing, Just alertId) -> sqlQueryTyped [typedSql|
+                    (Nothing, Just alertId) ->
+                        sqlQueryTyped
+                            [typedSql|
                         SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                             AND e.alert_id = ${alertId}
                         ORDER BY e.created_at |]
-                    _ -> sqlQueryTyped [typedSql|
+                    _ ->
+                        sqlQueryTyped
+                            [typedSql|
                         SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                         ORDER BY e.created_at |]
                 let exportRows = map toExportRow rows
-                let scope = object
-                        [ "from" .= fromText
-                        , "to" .= toText
-                        , "environment" .= envParam
-                        , "alert" .= alertParam
-                        ]
-                export <- newRecord @AuditExport
-                    |> set #userId (Just currentUserId)
-                    |> set #scope scope
-                    |> set #format formatParam
-                    |> createRecord
+                let scope =
+                        object
+                            [ "from" .= fromText
+                            , "to" .= toText
+                            , "environment" .= envParam
+                            , "alert" .= alertParam
+                            ]
+                export <-
+                    newRecord @AuditExport
+                        |> set #userId (Just currentUserId)
+                        |> set #scope scope
+                        |> set #format formatParam
+                        |> createRecord
                 let body = if formatParam == "csv" then renderCsv exportRows else renderJsonl exportRows
-                _ <- export
-                    |> set #rowCount (length exportRows)
-                    |> updateRecord
+                _ <-
+                    export
+                        |> set #rowCount (length exportRows)
+                        |> updateRecord
                 let extension :: Text
                     extension = if formatParam == "csv" then "csv" else "jsonl"
                     contentType :: Text
                     contentType = if formatParam == "csv" then "text/csv; charset=utf-8" else "application/x-ndjson; charset=utf-8"
                     filename :: Text
                     filename = "halemans-audit-" <> cs (formatTime defaultTimeLocale "%Y%m%dT%H%M%SZ" now) <> "." <> extension
-                respondAndExit $ responseLBS status200
-                    [ ("Content-Type", cs contentType)
-                    , ("Content-Disposition", cs ("attachment; filename=\"" <> filename <> "\""))
-                    ]
-                    (cs body)
+                respondAndExit $
+                    responseLBS
+                        status200
+                        [ ("Content-Type", cs contentType)
+                        , ("Content-Disposition", cs ("attachment; filename=\"" <> filename <> "\""))
+                        ]
+                        (cs body)
       where
-        toExportRow row = ExportRow
-            { eventId = tshow (get #id row)
-            , eventCreatedAt = get #created_at row
-            , alertId = tshow (get #alert_id row)
-            , alertTitle = get #title row
-            , alertEnv = get #env row
-            , kind = get #kind row
-            , userId = tshow <$> get #user_id row
-            , payload = get #payload row
-            }
+        toExportRow row =
+            ExportRow
+                { eventId = tshow (get #id row)
+                , eventCreatedAt = get #created_at row
+                , alertId = tshow (get #alert_id row)
+                , alertTitle = get #title row
+                , alertEnv = get #env row
+                , kind = get #kind row
+                , userId = tshow <$> get #user_id row
+                , payload = get #payload row
+                }
 
 nonEmptyText :: Maybe Text -> Maybe Text
 nonEmptyText = maybe Nothing (\value -> if value == "" then Nothing else Just value)

@@ -1,13 +1,13 @@
 module Web.Controller.Reports where
 
-import Web.Controller.Prelude
-import Web.View.Reports.Index
+import qualified Application.Service.Reports as Reports
+import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime (..))
+import qualified Data.Time.Format as TimeFormat
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Text.Read (readMaybe)
-import qualified Data.Time.Format as TimeFormat
-import Data.Time (UTCTime (..))
-import qualified Data.Map.Strict as Map
-import qualified Application.Service.Reports as Reports
+import Web.Controller.Prelude
+import Web.View.Reports.Index
 
 -- Static SVG reports (charts rendered server-side with diagrams, embedded
 -- inline). On-demand only; no live updates by design.
@@ -21,12 +21,16 @@ instance Controller ReportsController where
             envFilter = fromMaybe "" (paramOrNothing @Text "env")
             selectedEnv = if envFilter == "" then Nothing else Just envFilter
         -- Selector options: every effective env ever seen (unbounded by window)
-        envRows <- sqlQueryTyped [typedSql|
+        envRows <-
+            sqlQueryTyped
+                [typedSql|
             SELECT DISTINCT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
             FROM alerts a
             WHERE coalesce(nullif(a.facets ->> 'env', ''), a.env) IS NOT NULL
             ORDER BY 1 |]
-        severityRows <- sqlQueryTyped [typedSql|
+        severityRows <-
+            sqlQueryTyped
+                [typedSql|
             SELECT a.severity, count(*) AS n
             FROM alerts a
             WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
@@ -36,7 +40,9 @@ instance Controller ReportsController where
         -- No env selected: breakdown by environment. One env selected:
         -- breakdown by host inside that environment.
         breakdownRows <- case selectedEnv of
-            Nothing -> sqlQueryTyped [typedSql|
+            Nothing ->
+                sqlQueryTyped
+                    [typedSql|
                 SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS label, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
@@ -44,7 +50,9 @@ instance Controller ReportsController where
                 GROUP BY 1
                 ORDER BY n DESC
                 LIMIT 12 |]
-            Just _ -> sqlQueryTyped [typedSql|
+            Just _ ->
+                sqlQueryTyped
+                    [typedSql|
                 SELECT a.host AS label, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
@@ -54,22 +62,29 @@ instance Controller ReportsController where
                 ORDER BY n DESC
                 LIMIT 12 |]
         -- 24h window buckets per hour; longer windows per day
-        volumeRows <- if windowHours == 24
-            then sqlQueryTyped [typedSql|
+        volumeRows <-
+            if windowHours == 24
+                then
+                    sqlQueryTyped
+                        [typedSql|
                 SELECT date_trunc('hour', coalesce(a.started_at, a.first_seen_at)) AS bucket, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 GROUP BY 1
                 ORDER BY 1 |]
-            else sqlQueryTyped [typedSql|
+                else
+                    sqlQueryTyped
+                        [typedSql|
                 SELECT date_trunc('day', coalesce(a.started_at, a.first_seen_at)) AS bucket, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 GROUP BY 1
                 ORDER BY 1 |]
-        mttrRows <- sqlQueryTyped [typedSql|
+        mttrRows <-
+            sqlQueryTyped
+                [typedSql|
             SELECT a.severity, avg(extract(epoch from (a.resolved_at - a.started_at)))::float8 AS avg_seconds
             FROM alerts a
             WHERE a.resolved_at IS NOT NULL AND a.started_at IS NOT NULL
@@ -87,18 +102,18 @@ instance Controller ReportsController where
             breakdownSvg = Reports.envChartSvg (map (\row -> (fromMaybe "unknown" (get #label row), get #n row)) breakdownRows)
             breakdownTitle = if isJust selectedEnv then "Alerts by host" else "Alerts by environment"
             bucketLabel = cs . TimeFormat.formatTime TimeFormat.defaultTimeLocale (if windowHours == 24 then "%H:%M" else "%m-%d")
-            counts = Map.fromList (mapMaybe (\row -> (, get #n row) <$> get #bucket row) volumeRows)
+            counts = Map.fromList (mapMaybe (\row -> (,get #n row) <$> get #bucket row) volumeRows)
             stepSeconds = if windowHours == 24 then 3600 else 86400
             buckets = takeWhile (< now) (iterate (addUTCTime stepSeconds) (truncateBucket stepSeconds from))
             volumeSvg = Reports.volumeChartSvg [(bucketLabel bucket, Map.findWithDefault 0 bucket counts) | bucket <- buckets]
             volumeTitle = if windowHours == 24 then "Alert volume per hour" else "Alert volume per day"
             mttrSvg = Reports.mttrChartSvg (map (\row -> (get #severity row, fromMaybe 0 (get #avg_seconds row))) mttrRows)
-        render IndexView { .. }
+        render IndexView{..}
 
 -- Align a timestamp down to its bucket boundary (hour for the 24h window,
 -- day otherwise) so chart slots are positional in time, not in row order.
 truncateBucket :: NominalDiffTime -> UTCTime -> UTCTime
-truncateBucket step t = t { utctDayTime = fromIntegral (seconds `div` stepSeconds * stepSeconds) }
+truncateBucket step t = t{utctDayTime = fromIntegral (seconds `div` stepSeconds * stepSeconds)}
   where
     seconds = floor (utctDayTime t) :: Integer
     stepSeconds = floor step :: Integer

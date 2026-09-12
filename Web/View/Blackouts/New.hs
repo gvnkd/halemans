@@ -1,6 +1,7 @@
 module Web.View.Blackouts.New where
-import Web.View.Prelude
+
 import Web.View.Blackouts.Form (blackoutFormFields)
+import Web.View.Prelude
 
 data NewView = NewView
     { environments :: [Environment]
@@ -9,7 +10,8 @@ data NewView = NewView
     }
 
 instance View NewView where
-    html NewView { .. } = [hsx|
+    html NewView{..} =
+        [hsx|
         <h1>New blackout</h1>
         <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form" class="maxw-500">
             {blackoutFormFields Nothing environments hosts services}

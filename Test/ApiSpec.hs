@@ -1,20 +1,20 @@
 module Test.ApiSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
-import Application.Service.Api.Cursor (Cursor (..), encodeCursor, decodeCursor)
-import Application.Service.Api.Token (hashToken)
-import Application.Service.Api.RateLimit (Bucket (..), emptyBucket, allowRequest)
-import Application.Service.Api.Metrics (MetricSample (..), renderMetrics, renderFamily, escapeLabel)
+import Application.Service.Api.Cursor (Cursor (..), decodeCursor, encodeCursor)
 import Application.Service.Api.Encode (encodeAlertSummary, encodeEnvCard)
-import Web.View.Dashboard.Index (EnvCard (..))
-import qualified Data.UUID as UUID
+import Application.Service.Api.Metrics (MetricSample (..), escapeLabel, renderFamily, renderMetrics)
+import Application.Service.Api.RateLimit (Bucket (..), allowRequest, emptyBucket)
+import Application.Service.Api.Token (hashToken)
 import Data.Aeson (Value (..), object, (.=))
-import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Maybe (fromJust)
+import qualified Data.UUID as UUID
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
+import Web.View.Dashboard.Index (EnvCard (..))
 
 spec :: Spec
 spec = describe "Milestone 6 API" do
@@ -27,7 +27,7 @@ spec = describe "Milestone 6 API" do
             decodeCursor "" `shouldBe` Nothing
         it "produces url-safe opaque output" do
             let encoded = encodeCursor (Cursor (UTCTime (fromGregorian 2026 1 2) 0) testUuid)
-            encoded `shouldSatisfy` (\t -> all (`elem` (['A'..'Z'] <> ['a'..'z'] <> ['0'..'9'] <> "-_")) (cs t :: String))
+            encoded `shouldSatisfy` (\t -> all (`elem` (['A' .. 'Z'] <> ['a' .. 'z'] <> ['0' .. '9'] <> "-_")) (cs t :: String))
 
     describe "hashToken" do
         it "matches the reference sha256 hex" do
@@ -80,29 +80,32 @@ spec = describe "Milestone 6 API" do
             lookupKey "group_id" json `shouldBe` Just Null
             lookupKey "host" json `shouldBe` Just Null
         it "env card rollup matches the dashboard shape" do
-            let json = encodeEnvCard EnvCard
-                    { cardEnvName = Nothing
-                    , cardEnvironment = Nothing
-                    , cardFiring = 2
-                    , cardAcked = 1
-                    , cardResolved = 3
-                    , cardStalled = 1
-                    , cardSuppressed = 1
-                    , cardWorstSeverity = Just "critical"
-                    , cardHourly = []
-                    }
+            let json =
+                    encodeEnvCard
+                        EnvCard
+                            { cardEnvName = Nothing
+                            , cardEnvironment = Nothing
+                            , cardFiring = 2
+                            , cardAcked = 1
+                            , cardResolved = 3
+                            , cardStalled = 1
+                            , cardSuppressed = 1
+                            , cardWorstSeverity = Just "critical"
+                            , cardHourly = []
+                            }
             lookupKey "worst_severity" json `shouldBe` Just (String "critical")
             lookupKey "environment" json `shouldBe` Just Null
             lookupKey "counts" json `shouldBe` Just (object ["firing" .= (2 :: Int), "ack" .= (1 :: Int), "resolved" .= (3 :: Int), "stalled" .= (1 :: Int)])
   where
     t0 = UTCTime (fromGregorian 2026 1 1) 0
     testUuid = fromJust (UUID.fromText "12345678-1234-1234-1234-1234567890ab")
-    testAlert = newRecord @Alert
-        |> set #fingerprint "test:fingerprint"
-        |> set #title "disk full"
-        |> set #severity "critical"
-        |> set #status "firing"
-        |> set #lastSeenAt (UTCTime (fromGregorian 2026 1 2) 11045)
+    testAlert =
+        newRecord @Alert
+            |> set #fingerprint "test:fingerprint"
+            |> set #title "disk full"
+            |> set #severity "critical"
+            |> set #status "firing"
+            |> set #lastSeenAt (UTCTime (fromGregorian 2026 1 2) 11045)
     keys :: Value -> [Text]
     keys (Object o) = map Key.toText (KeyMap.keys o)
     keys _ = []

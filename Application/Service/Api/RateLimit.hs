@@ -1,18 +1,18 @@
-module Application.Service.Api.RateLimit
-    ( Bucket (..)
-    , emptyBucket
-    , allowRequest
-    , checkLimit
-    , LimitClass (..)
-    , limitPerMinute
-    ) where
+module Application.Service.Api.RateLimit (
+    Bucket (..),
+    emptyBucket,
+    allowRequest,
+    checkLimit,
+    LimitClass (..),
+    limitPerMinute,
+) where
 
-import IHP.Prelude
 import Data.IORef
 import qualified Data.Map.Strict as Map
-import System.IO.Unsafe (unsafePerformIO)
-import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
+import IHP.Prelude
 import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 import Text.Read (readMaybe)
 
 -- Per-token token bucket, in-memory (design_docs/milestone_6.md §6): state
@@ -20,7 +20,8 @@ import Text.Read (readMaybe)
 data Bucket = Bucket
     { bucketTokens :: !Double
     , bucketUpdatedAt :: !UTCTime
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 emptyBucket :: UTCTime -> Bucket
 emptyBucket = Bucket 0
@@ -37,9 +38,9 @@ allowRequest perMinute now previous =
         capacity = fromIntegral perMinute
         elapsed = max 0 (realToFrac (diffUTCTime now previous.bucketUpdatedAt))
         available = min capacity (previous.bucketTokens + elapsed * rate)
-    in if available >= 1
-        then (True, 0, Bucket (available - 1) now)
-        else (False, ceiling ((1 - available) / rate), Bucket available now)
+     in if available >= 1
+            then (True, 0, Bucket (available - 1) now)
+            else (False, ceiling ((1 - available) / rate), Bucket available now)
 
 -- Returns Just retryAfterSeconds when the request must be rejected.
 checkLimit :: Text -> Int -> IO (Maybe Int)
@@ -48,7 +49,7 @@ checkLimit key perMinute = do
     atomicModifyIORef' buckets \state ->
         let previous = Map.findWithDefault (Bucket (fromIntegral perMinute) now) key state
             (allowed, retryAfter, bucket) = allowRequest perMinute now previous
-        in (Map.insert key bucket state, if allowed then Nothing else Just retryAfter)
+         in (Map.insert key bucket state, if allowed then Nothing else Just retryAfter)
 
 data LimitClass = LimitApi | LimitMetrics deriving (Eq, Show)
 

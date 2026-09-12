@@ -1,31 +1,29 @@
 module Web.Controller.Dashboards where
 
-import Web.Controller.Prelude
-import Web.View.Dashboards.Index
-import Web.View.Dashboards.New
-import Web.View.Dashboards.Edit
-import Web.View.Dashboards.Show
-import Web.View.Dashboards.Card
 import Application.Helper.DashboardConfig
-import Application.Service.DashboardCards (runCardQuery, expandDashboardCards, expandedDomId, pinCard, ExpandedCard (..))
+import Application.Service.DashboardCards (ExpandedCard (..), expandDashboardCards, expandedDomId, pinCard, runCardQuery)
+import Control.Monad (guard, void)
 import qualified Data.Aeson as Aeson
 import Data.Either (fromRight)
-import Control.Monad (void, guard)
-import IHP.ModelSupport (withTransaction)
 import IHP.ControllerSupport (respondAndExit)
+import IHP.ModelSupport (withTransaction)
 import Network.HTTP.Types (status404)
-import Network.Wai (responseLBS, ResponseReceived)
+import Network.Wai (ResponseReceived, responseLBS)
+import Web.Controller.Prelude
+import Web.View.Dashboards.Card
+import Web.View.Dashboards.Edit
+import Web.View.Dashboards.Index
+import Web.View.Dashboards.New
+import Web.View.Dashboards.Show
 
 instance Controller DashboardsController where
     beforeAction = ensureIsUser
 
     action DashboardsAction = do
         dashboards <- ownDashboards
-        render IndexView { .. }
-
+        render IndexView{..}
     action NewDashboardAction = do
         render NewView
-
     action CreateDashboardAction = do
         let name = param @Text "name"
             configText = param @Text "config"
@@ -47,17 +45,15 @@ instance Controller DashboardsController where
                         |> createRecord
                 setSuccessMessage "Dashboard created"
                 redirectTo DashboardsAction
-
-    action ShowDashboardAction { dashboardId } = do
+    action ShowDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
         expanded <- expandDashboardCards cards
         cardSections <- forM expanded \expandedCard -> do
             result <- fetchCardData expandedCard
             pure (expandedCard, result)
-        render ShowView { dashboard, cardSections }
-
-    action ShowDashboardCardAction { dashboardId, cardIndex } = do
+        render ShowView{dashboard, cardSections}
+    action ShowDashboardCardAction{dashboardId, cardIndex} = do
         dashboard <- fetchOwn dashboardId
         let valueFilter = paramOrNothing @Text "value"
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
@@ -68,13 +64,11 @@ instance Controller DashboardsController where
             [] -> case fallbackExpandedCard valueFilter cards cardIndex of
                 Just expandedCard -> renderCardDetail dashboard expandedCard
                 Nothing -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "card not found"
-
-    action EditDashboardAction { dashboardId } = do
+    action EditDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
-        render EditView { dashboard, configText = renderDashboardConfig cards }
-
-    action UpdateDashboardAction { dashboardId } = do
+        render EditView{dashboard, configText = renderDashboardConfig cards}
+    action UpdateDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         let name = param @Text "name"
             configText = param @Text "config"
@@ -82,7 +76,7 @@ instance Controller DashboardsController where
         case decodeDashboardConfigText configText of
             Left err -> do
                 setErrorMessage ("Invalid dashboard config: " <> err)
-                redirectTo EditDashboardAction { dashboardId }
+                redirectTo EditDashboardAction{dashboardId}
             Right cards -> do
                 _ <- withTransaction do
                     when isDefault unsetDefaults
@@ -93,14 +87,12 @@ instance Controller DashboardsController where
                         |> updateRecord
                 setSuccessMessage "Dashboard updated"
                 redirectTo DashboardsAction
-
-    action DeleteDashboardAction { dashboardId } = do
+    action DeleteDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         deleteRecord dashboard
         setSuccessMessage "Dashboard deleted"
         redirectTo DashboardsAction
-
-    action SetDefaultDashboardAction { dashboardId } = do
+    action SetDefaultDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         _ <- withTransaction do
             unsetDefaults
@@ -109,13 +101,13 @@ instance Controller DashboardsController where
                 |> updateRecord
         setSuccessMessage "Default dashboard set"
         redirectTo DashboardsAction
-
-    action MoveDashboardAction { dashboardId } = do
+    action MoveDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         let position = param @Int "position"
-        _ <- dashboard
-            |> set #position position
-            |> updateRecord
+        _ <-
+            dashboard
+                |> set #position position
+                |> updateRecord
         renormalizePositions
         redirectTo DashboardsAction
 
@@ -130,13 +122,14 @@ fallbackExpandedCard valueFilter cards cardIndex = do
     let card = case (valueFilter, template.cardForEach) of
             (Just value, Just facetRef) -> pinCard template facetRef value
             _ -> template
-    pure ExpandedCard
-        { ecDomId = expandedDomId cardIndex template valueFilter
-        , ecCard = card
-        , ecHidden = False
-        , ecIndex = cardIndex
-        , ecValue = valueFilter
-        }
+    pure
+        ExpandedCard
+            { ecDomId = expandedDomId cardIndex template valueFilter
+            , ecCard = card
+            , ecHidden = False
+            , ecIndex = cardIndex
+            , ecValue = valueFilter
+            }
 
 -- | Card detail table: transient ?sort/?dir params (never persisted to
 -- users.settings, unlike /alerts) override the card's alertSortBy for this
@@ -151,7 +144,7 @@ renderCardDetail dashboard expandedCard = do
             let dir = if dirParam == Just "asc" then "asc" else "desc"
             pure (AlertSortKey (dir /= alertSortNaturalDir column) column, dir)
         effectiveCard = case override of
-            Just (key, _) -> expandedCard.ecCard { cardAlertSortBy = [key] }
+            Just (key, _) -> expandedCard.ecCard{cardAlertSortBy = [key]}
             Nothing -> expandedCard.ecCard
         (sortColumn, sortDir) = case override of
             Just (key, dir) -> (key.askColumn, dir)
@@ -159,14 +152,14 @@ renderCardDetail dashboard expandedCard = do
                 (key : _) -> (key.askColumn, alertSortDisplayDir key)
                 [] -> ("last_seen_at", "desc")
     alerts <- runCardQuery effectiveCard
-    render CardView { dashboard, expandedCard, alerts, sortColumn, sortDir }
-
+    render CardView{dashboard, expandedCard, alerts, sortColumn, sortDir}
 
 ownDashboards :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => IO [Dashboard]
-ownDashboards = query @Dashboard
-    |> filterWhere (#userId, currentUserId)
-    |> orderByAsc #position
-    |> fetch
+ownDashboards =
+    query @Dashboard
+        |> filterWhere (#userId, currentUserId)
+        |> orderByAsc #position
+        |> fetch
 
 fetchOwn :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => Id Dashboard -> IO Dashboard
 fetchOwn dashboardId = do
@@ -181,10 +174,11 @@ decodeDashboardConfigText raw =
 
 unsetDefaults :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => IO ()
 unsetDefaults = do
-    defaults <- query @Dashboard
-        |> filterWhere (#userId, currentUserId)
-        |> filterWhere (#isDefault, True)
-        |> fetch
+    defaults <-
+        query @Dashboard
+            |> filterWhere (#userId, currentUserId)
+            |> filterWhere (#isDefault, True)
+            |> fetch
     forM_ defaults \dashboard -> void do
         dashboard
             |> set #isDefault False
@@ -204,4 +198,3 @@ renormalizePositions = do
                 dashboard
                     |> set #position position
                     |> updateRecord
-

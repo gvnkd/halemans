@@ -1,47 +1,47 @@
-module Application.Helper.DashboardConfig
-( FacetRef (..)
-, MatchOp (..)
-, MatchClause (..)
-, HideWhen (..)
-, SortKey (..)
-, SortTarget (..)
-, AlertSortKey (..)
-, validAlertSortColumns
-, parseAlertSortKey
-, alertSortKeyText
-, alertSortNaturalDir
-, alertSortDisplayDir
-, CardSize (..)
-, defaultCardSize
-, DashboardCard (..)
-, decodeDashboardConfig
-, encodeDashboardConfig
-, renderDashboardConfig
-, parseFacetRef
-, parseSortKey
-, sortKeyText
-, facetRefText
-, clauseValue
-, matchClauseAlert
-, matchCardAlert
-, globToLike
-, quoteSqlText
+module Application.Helper.DashboardConfig (
+    FacetRef (..),
+    MatchOp (..),
+    MatchClause (..),
+    HideWhen (..),
+    SortKey (..),
+    SortTarget (..),
+    AlertSortKey (..),
+    validAlertSortColumns,
+    parseAlertSortKey,
+    alertSortKeyText,
+    alertSortNaturalDir,
+    alertSortDisplayDir,
+    CardSize (..),
+    defaultCardSize,
+    DashboardCard (..),
+    decodeDashboardConfig,
+    encodeDashboardConfig,
+    renderDashboardConfig,
+    parseFacetRef,
+    parseSortKey,
+    sortKeyText,
+    facetRefText,
+    clauseValue,
+    matchClauseAlert,
+    matchCardAlert,
+    globToLike,
+    quoteSqlText,
 ) where
 
-import IHP.Prelude
-import Generated.Types (Alert)
-import Application.Pipeline.Grouping (AlertField (..), alertFieldName, effectiveFieldText, parseAlertField, labelValue, globMatch)
+import Application.Pipeline.Grouping (AlertField (..), alertFieldName, effectiveFieldText, globMatch, labelValue, parseAlertField)
 import Application.Service.Facets (facetValue)
-import Data.Aeson (Value (..), object, (.=), (.:), (.:?), (.!=))
+import Control.Monad (guard)
+import Data.Aeson (Value (..), object, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Pretty
 import qualified Data.Aeson.Key as Key
-import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.KeyMap (KeyMap)
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseEither)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
-import Control.Monad (guard)
+import Generated.Types (Alert)
+import IHP.Prelude
 
 -- Dashboard card JSON schema v2 (design_docs/milestone_9.md §4). JSON is the
 -- only dashboard definition format; decoders are forward-tolerant (unknown
@@ -60,14 +60,16 @@ data MatchClause = MatchClause
     , mcOp :: MatchOp
     , mcValue :: Text
     , mcValues :: [Text]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | Conditional visibility: hide the card when the number of (non-closed)
 -- alerts matching hwMatch ON TOP of the card's own match is <= hwMaxCount.
 data HideWhen = HideWhen
     { hwMatch :: [MatchClause]
     , hwMaxCount :: Int
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | Summary-card dimensions in px. A card without "size" keeps the CSS
 -- defaults (defaultCardSize); "size" overrides per card and may itself omit
@@ -75,7 +77,8 @@ data HideWhen = HideWhen
 data CardSize = CardSize
     { csWidth :: Int
     , csHeight :: Int
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | Sane defaults, mirroring the CSS (.env-card height, summary flex-basis).
 defaultCardSize :: CardSize
@@ -87,7 +90,7 @@ instance Aeson.FromJSON CardSize where
         csHeight <- o .:? "height" .!= csHeight defaultCardSize
         when (csWidth < 80) (fail "size.width must be >= 80")
         when (csHeight < 60) (fail "size.height must be >= 60")
-        pure CardSize { .. }
+        pure CardSize{..}
 
 instance Aeson.ToJSON CardSize where
     toJSON size = object ["width" .= size.csWidth, "height" .= size.csHeight]
@@ -105,7 +108,8 @@ data DashboardCard = DashboardCard
     , cardAlertSortBy :: [AlertSortKey]
     , cardSize :: Maybe CardSize
     , cardExtras :: KeyMap Value
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | Ordering of the cards a template expands into. Builtins are "key:"
 -- prefixed (severity = worst severity of the card's alerts, count = matching
@@ -115,7 +119,8 @@ data DashboardCard = DashboardCard
 data SortKey = SortKey
     { skDesc :: Bool
     , skTarget :: SortTarget
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data SortTarget = SortBuiltin Text | SortFacet FacetRef
     deriving (Eq, Show)
@@ -130,14 +135,14 @@ parseSortKey raw = do
             | name `elem` ["severity", "count", "title"] -> Just (SortBuiltin name)
             | otherwise -> Nothing
         Nothing -> SortFacet <$> parseFacetRef body
-    pure SortKey { .. }
+    pure SortKey{..}
 
 sortKeyText :: SortKey -> Text
 sortKeyText key = (if key.skDesc then "-" else "") <> targetText
-    where
-        targetText = case key.skTarget of
-            SortBuiltin name -> "key:" <> name
-            SortFacet ref -> facetRefText ref
+  where
+    targetText = case key.skTarget of
+        SortBuiltin name -> "key:" <> name
+        SortFacet ref -> facetRefText ref
 
 instance Aeson.FromJSON SortKey where
     parseJSON = Aeson.withText "SortKey" \text ->
@@ -153,7 +158,8 @@ instance Aeson.ToJSON SortKey where
 data AlertSortKey = AlertSortKey
     { askDesc :: Bool
     , askColumn :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | Canonical list of alert-sortable columns; Application.Service.AlertList
 -- re-exports it as validSortColumns so the widget, the list query and the
@@ -167,7 +173,7 @@ parseAlertSortKey raw = do
             Just ('-', rest) -> (True, rest)
             _ -> (False, raw)
     guard (body `elem` validAlertSortColumns)
-    pure AlertSortKey { askColumn = body, .. }
+    pure AlertSortKey{askColumn = body, ..}
 
 alertSortKeyText :: AlertSortKey -> Text
 alertSortKeyText key = (if key.askDesc then "-" else "") <> key.askColumn
@@ -198,10 +204,10 @@ parseFacetRef raw
     | Just name <- Text.stripPrefix "label:" raw = nonEmpty FacetLabel name
     | Just name <- Text.stripPrefix "attr:" raw = nonEmpty FacetAttr name
     | otherwise = Nothing
-    where
-        nonEmpty f name
-            | Text.null name = Nothing
-            | otherwise = Just (f name)
+  where
+    nonEmpty f name
+        | Text.null name = Nothing
+        | otherwise = Just (f name)
 
 facetRefText :: FacetRef -> Text
 facetRefText = \case
@@ -228,15 +234,17 @@ instance Aeson.FromJSON MatchClause where
             _ -> do
                 value <- o .: "value"
                 pure (value, [])
-        pure MatchClause { .. }
+        pure MatchClause{..}
 
 instance Aeson.ToJSON MatchClause where
-    toJSON clause = object $
-        [ "facet" .= facetRefText clause.mcFacet
-        , "op" .= opText clause.mcOp
-        ] ++ case clause.mcOp of
-            OpIn -> [ "values" .= clause.mcValues ]
-            _ -> [ "value" .= clause.mcValue ]
+    toJSON clause =
+        object $
+            [ "facet" .= facetRefText clause.mcFacet
+            , "op" .= opText clause.mcOp
+            ]
+                ++ case clause.mcOp of
+                    OpIn -> ["values" .= clause.mcValues]
+                    _ -> ["value" .= clause.mcValue]
 
 opText :: MatchOp -> Text
 opText = \case
@@ -250,7 +258,7 @@ instance Aeson.FromJSON HideWhen where
         hwMatch <- o .:? "match" .!= []
         hwMaxCount <- o .:? "maxCount" .!= 0
         when (hwMaxCount < 0) (fail "maxCount must be >= 0")
-        pure HideWhen { .. }
+        pure HideWhen{..}
 
 instance Aeson.ToJSON HideWhen where
     toJSON hw = object ["match" .= hw.hwMatch, "maxCount" .= hw.hwMaxCount]
@@ -265,24 +273,26 @@ instance Aeson.FromJSON DashboardCard where
                         _ -> KeyMap.empty
                 statuses <- filters .:? "status" .!= []
                 severities <- filters .:? "severity" .!= []
-                let cardMatch = [MatchClause (FacetField FieldEnv) OpEq envValue []]
-                        ++ [MatchClause (FacetField FieldStatus) OpIn "" statuses | not (null statuses)]
-                        ++ [MatchClause (FacetField FieldSeverity) OpIn "" severities | not (null severities)]
+                let cardMatch =
+                        [MatchClause (FacetField FieldEnv) OpEq envValue []]
+                            ++ [MatchClause (FacetField FieldStatus) OpIn "" statuses | not (null statuses)]
+                            ++ [MatchClause (FacetField FieldSeverity) OpIn "" severities | not (null severities)]
                     cardExtras = KeyMap.delete "filters" (KeyMap.delete "env" o)
-                pure DashboardCard
-                    { cardTitle = Nothing
-                    , cardMatch
-                    , cardGroupBy = Nothing
-                    , cardLimit = 100
-                    , cardLegacy = True
-                    , cardForEach = Nothing
-                    , cardHideWhen = Nothing
-                    , cardSummary = False
-                    , cardSortBy = []
-                    , cardAlertSortBy = []
-                    , cardSize = Nothing
-                    , cardExtras
-                    }
+                pure
+                    DashboardCard
+                        { cardTitle = Nothing
+                        , cardMatch
+                        , cardGroupBy = Nothing
+                        , cardLimit = 100
+                        , cardLegacy = True
+                        , cardForEach = Nothing
+                        , cardHideWhen = Nothing
+                        , cardSummary = False
+                        , cardSortBy = []
+                        , cardAlertSortBy = []
+                        , cardSize = Nothing
+                        , cardExtras
+                        }
             _ -> do
                 cardTitle <- o .:? "title"
                 cardMatch <- o .:? "match" .!= []
@@ -302,24 +312,26 @@ instance Aeson.FromJSON DashboardCard where
                 cardAlertSortBy <- o .:? "alertSortBy" .!= []
                 cardSize <- o .:? "size"
                 let cardExtras = foldr KeyMap.delete o ["title", "match", "groupBy", "limit", "forEach", "hideWhen", "summary", "sortBy", "alertSortBy", "size"]
-                pure DashboardCard { cardLegacy = False, .. }
+                pure DashboardCard{cardLegacy = False, ..}
 
 instance Aeson.ToJSON DashboardCard where
     toJSON card = case legacyCardValue card of
         Just value -> value
         Nothing -> Aeson.Object (KeyMap.union known card.cardExtras)
-            where
-                known = KeyMap.fromList $
+          where
+            known =
+                KeyMap.fromList $
                     [ "match" .= card.cardMatch
                     , "limit" .= card.cardLimit
-                    ] ++ [ "title" .= title | Just title <- [card.cardTitle] ]
-                    ++ [ "groupBy" .= facetRefText groupBy | Just groupBy <- [card.cardGroupBy] ]
-                    ++ [ "forEach" .= facetRefText forEach | Just forEach <- [card.cardForEach] ]
-                    ++ [ "hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen] ]
-                    ++ [ "summary" .= True | card.cardSummary ]
-                    ++ [ "sortBy" .= card.cardSortBy | not (null card.cardSortBy) ]
-                    ++ [ "alertSortBy" .= card.cardAlertSortBy | not (null card.cardAlertSortBy) ]
-                    ++ [ "size" .= size | Just size <- [card.cardSize] ]
+                    ]
+                        ++ ["title" .= title | Just title <- [card.cardTitle]]
+                        ++ ["groupBy" .= facetRefText groupBy | Just groupBy <- [card.cardGroupBy]]
+                        ++ ["forEach" .= facetRefText forEach | Just forEach <- [card.cardForEach]]
+                        ++ ["hideWhen" .= hideWhen | Just hideWhen <- [card.cardHideWhen]]
+                        ++ ["summary" .= True | card.cardSummary]
+                        ++ ["sortBy" .= card.cardSortBy | not (null card.cardSortBy)]
+                        ++ ["alertSortBy" .= card.cardAlertSortBy | not (null card.cardAlertSortBy)]
+                        ++ ["size" .= size | Just size <- [card.cardSize]]
 
 -- | Legacy {env, filters} re-encode (milestone_9.md §4): only cards decoded
 -- from the legacy shape whose clauses still fit it encode this way, so old
@@ -338,14 +350,16 @@ legacyCardValue card = do
             , length statuses <= 1
             , length severities <= 1 ->
                 Just (Aeson.Object (KeyMap.union known card.cardExtras))
-                where
-                    known = KeyMap.fromList
-                        [ "env" .= envValue
-                        , "filters" .= object
+          where
+            known =
+                KeyMap.fromList
+                    [ "env" .= envValue
+                    , "filters"
+                        .= object
                             [ "status" .= fromMaybe [] (head statuses)
                             , "severity" .= fromMaybe [] (head severities)
                             ]
-                        ]
+                    ]
         _ -> Nothing
 
 decodeDashboardConfig :: Value -> Either Text [DashboardCard]
@@ -391,12 +405,12 @@ matchCardAlert card alert = all (`matchClauseAlert` alert) card.cardMatch
 -- default LIKE escape in Postgres).
 globToLike :: Text -> Text
 globToLike = Text.concatMap translate
-    where
-        translate '*' = "%"
-        translate '?' = "_"
-        translate c
-            | c `elem` ("%_\\" :: String) = Text.pack ['\\', c]
-            | otherwise = Text.singleton c
+  where
+    translate '*' = "%"
+    translate '?' = "_"
+    translate c
+        | c `elem` ("%_\\" :: String) = Text.pack ['\\', c]
+        | otherwise = Text.singleton c
 
 -- | SQL string literal quoting (standard_conforming_strings=on: only single
 -- quotes need doubling). Dashboard configs are user-authored JSON, so facet

@@ -1,17 +1,17 @@
 module Config (config) where
 
-import IHP.Prelude
+import Application.Helper.Controller ()
+import Application.Service.Log (LogLevel (..))
+import Application.Service.Provision (applyProvisionConfig)
+import Control.Monad.IO.Class (liftIO)
+import Generated.Types (User)
+import IHP.EnvVar (envOrDefault)
 import IHP.Environment
 import IHP.FrameworkConfig
-import IHP.EnvVar (envOrDefault)
 import IHP.LoginSupport.Middleware
-import IHP.ModelSupport (withModelContext, noopLogger)
-import Control.Monad.IO.Class (liftIO)
+import IHP.ModelSupport (noopLogger, withModelContext)
+import IHP.Prelude
 import System.Environment (lookupEnv)
-import Generated.Types (User)
-import Application.Helper.Controller ()
-import Application.Service.Provision (applyProvisionConfig)
-import Application.Service.Log (LogLevel (..))
 
 config :: ConfigBuilder
 config = do

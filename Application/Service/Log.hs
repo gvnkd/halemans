@@ -1,17 +1,17 @@
-module Application.Service.Log
-( LogLevel (..)
-, parseLogLevel
-, logDebug
-, logInfo
-, logWarn
-, logError
+module Application.Service.Log (
+    LogLevel (..),
+    parseLogLevel,
+    logDebug,
+    logInfo,
+    logWarn,
+    logError,
 ) where
 
-import IHP.Prelude
-import IHP.EnvVar (EnvVarReader (..))
-import System.Log.FastLogger (FastLogger, toLogStr)
-import System.Environment (lookupEnv)
 import qualified Data.Text as Text
+import IHP.EnvVar (EnvVarReader (..))
+import IHP.Prelude
+import System.Environment (lookupEnv)
+import System.Log.FastLogger (FastLogger, toLogStr)
 
 -- App log levels for HALEMANS_LOG_LEVEL (debug|info|warn|error, default
 -- info). The level is read per call (like the API rate limits) so web,

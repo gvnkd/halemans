@@ -1,13 +1,14 @@
 module Web.View.Dashboard.Index where
-import Web.View.Prelude
-import Web.View.Fragments (RollupCard (..), rollupCardHtml)
-import IHP.TypedSql (sqlQueryTyped, typedSql)
-import IHP.TypedSql.RowType (SqlRow)
-import IHP.QueryBuilder (orderByAsc)
-import qualified IHP.QueryBuilder as QB (query)
-import qualified IHP.Fetch as Fetch (fetch)
+
 import qualified Data.Aeson as Aeson
 import qualified Data.List as List
+import qualified IHP.Fetch as Fetch (fetch)
+import IHP.QueryBuilder (orderByAsc)
+import qualified IHP.QueryBuilder as QB (query)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
+import IHP.TypedSql.RowType (SqlRow)
+import Web.View.Fragments (RollupCard (..), rollupCardHtml)
+import Web.View.Prelude
 
 data EnvCard = EnvCard
     { cardEnvName :: Maybe Text
@@ -28,13 +29,17 @@ data EnvCard = EnvCard
 -- is attached only when an environment with that name exists.
 computeEnvCards :: (?modelContext :: ModelContext) => IO ([EnvCard], Maybe EnvCard)
 computeEnvCards = do
-    counts <- sqlQueryTyped [typedSql|
+    counts <-
+        sqlQueryTyped
+            [typedSql|
         SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env_name, a.status, a.severity, count(*), a.suppressed
         FROM alerts a
         WHERE a.status <> 'closed'
         GROUP BY coalesce(nullif(a.facets ->> 'env', ''), a.env), a.status, a.severity, a.suppressed
     |]
-    hourly <- sqlQueryTyped [typedSql|
+    hourly <-
+        sqlQueryTyped
+            [typedSql|
         SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env_name, date_trunc('hour', a.created_at) AS hour, count(*)
         FROM alerts a
         WHERE a.created_at > now() - interval '24 hours'
@@ -58,17 +63,17 @@ buildCard counts hourly envName environment =
         suppressedCount = sum [get #count row | row <- relevant, get #suppressed row]
         severities = nub (map (get #severity) relevant)
         hourlyBuckets = [(hour, get #count row) | row <- hourly, get #env_name row == envName, Just hour <- [get #hour row]]
-    in EnvCard
-        { cardEnvName = envName
-        , cardEnvironment = environment
-        , cardFiring = countFor "firing"
-        , cardAcked = countFor "ack"
-        , cardResolved = countFor "resolved"
-        , cardStalled = countFor "stalled"
-        , cardSuppressed = suppressedCount
-        , cardWorstSeverity = cardWorst severities
-        , cardHourly = hourlyBuckets
-        }
+     in EnvCard
+            { cardEnvName = envName
+            , cardEnvironment = environment
+            , cardFiring = countFor "firing"
+            , cardAcked = countFor "ack"
+            , cardResolved = countFor "resolved"
+            , cardStalled = countFor "stalled"
+            , cardSuppressed = suppressedCount
+            , cardWorstSeverity = cardWorst severities
+            , cardHourly = hourlyBuckets
+            }
 
 cardTotal :: EnvCard -> Int64
 cardTotal card = card.cardFiring + card.cardAcked + card.cardResolved + card.cardStalled
@@ -92,7 +97,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Overview</h1>
         {teamDefaultBanner}
         <div id="env-cards" data-testid="env-cards" data-live-scope="dashboard">
@@ -100,15 +106,16 @@ instance View IndexView where
             {forEach unassigned renderCard}
         </div>
     |]
-        where
-            teamDefaultBanner = case teamDefault of
-                Nothing -> mempty
-                Just config -> teamBanner config
+      where
+        teamDefaultBanner = case teamDefault of
+            Nothing -> mempty
+            Just config -> teamBanner config
 
 -- Team default fallback (milestone_3.md §7): a user with no dashboards sees
 -- the team's default_dashboard_config offer and can copy it in one click.
 teamBanner :: Aeson.Value -> Html
-teamBanner config = [hsx|
+teamBanner config =
+    [hsx|
     <div class="alert alert-info d-flex justify-content-between align-items-center" data-testid="team-default-banner">
         <span>Your team has a default dashboard template.</span>
         <form method="POST" action={CreateDashboardAction}>
@@ -120,13 +127,15 @@ teamBanner config = [hsx|
 |]
 
 renderCard :: EnvCard -> Html
-renderCard card = [hsx|
+renderCard card =
+    [hsx|
     <div class="env-card-tile mb-3" id={cardDomId card} data-testid="env-card">
         {rollupCardHtml rollup}
     </div>
 |]
-    where
-        rollup = RollupCard
+  where
+    rollup =
+        RollupCard
             { rcTitle = cardLink card
             , rcWorstSeverity = card.cardWorstSeverity
             , rcFiring = fromIntegral card.cardFiring

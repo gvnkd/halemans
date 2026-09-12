@@ -1,10 +1,10 @@
 module Test.TimelineSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
 import Application.Service.Timeline
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
 
 event :: Text -> AlertEvent
 event kind = newRecord @AlertEvent |> set #kind kind

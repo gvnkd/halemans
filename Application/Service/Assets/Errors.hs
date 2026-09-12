@@ -1,16 +1,16 @@
-module Application.Service.Assets.Errors
-( AssetsError (..)
-, describeError
-, notFoundPrefix
-, classifyResponse
+module Application.Service.Assets.Errors (
+    AssetsError (..),
+    describeError,
+    notFoundPrefix,
+    classifyResponse,
 ) where
 
-import IHP.Prelude
 import Data.Aeson (Value)
-import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as Text
+import IHP.Prelude
 
 -- Error model + classification per design_docs/assets-api.md §3: the plugin
 -- answers business errors as JSON (shape A, Russian text), unregistered
@@ -47,10 +47,10 @@ classifyResponse requestObjectId code body
     | code >= 300 && code < 400 = Redirected
     | code == 404 && hasNotFoundMarker = NotFound (fromMaybe 0 requestObjectId)
     | otherwise = Upstream code (cs (BL.take 200 body))
-    where
-        hasNotFoundMarker = case Aeson.decode body of
-            Nothing -> False
-            Just value -> fromMaybe False (parseMaybe parser value)
-        parser = Aeson.withObject "error" \o -> do
-            messages <- o Aeson..: "errorMessages" :: Parser [Text]
-            pure (any (notFoundPrefix `Text.isPrefixOf`) messages)
+  where
+    hasNotFoundMarker = case Aeson.decode body of
+        Nothing -> False
+        Just value -> fromMaybe False (parseMaybe parser value)
+    parser = Aeson.withObject "error" \o -> do
+        messages <- o Aeson..: "errorMessages" :: Parser [Text]
+        pure (any (notFoundPrefix `Text.isPrefixOf`) messages)

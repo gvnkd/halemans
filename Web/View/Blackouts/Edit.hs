@@ -1,6 +1,7 @@
 module Web.View.Blackouts.Edit where
-import Web.View.Prelude
+
 import Web.View.Blackouts.Form (blackoutFormFields)
+import Web.View.Prelude
 
 data EditView = EditView
     { blackout :: Blackout
@@ -10,7 +11,8 @@ data EditView = EditView
     }
 
 instance View EditView where
-    html EditView { .. } = [hsx|
+    html EditView{..} =
+        [hsx|
         <h1>Edit blackout</h1>
         <form method="POST" action={UpdateBlackoutAction blackout.id} data-testid="blackout-edit-form" class="maxw-500">
             {blackoutFormFields (Just blackout) environments hosts services}

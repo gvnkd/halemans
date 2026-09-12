@@ -1,21 +1,21 @@
-module Application.Service.Api.Alerts
-    ( AlertFilters (..)
-    , AlertDetail (..)
-    , defaultFilters
-    , listAlertsPage
-    , alertDetail
-    ) where
+module Application.Service.Api.Alerts (
+    AlertFilters (..),
+    AlertDetail (..),
+    defaultFilters,
+    listAlertsPage,
+    alertDetail,
+) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder (query, filterWhere, orderByAsc, orderByDesc, limit)
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Generated.Types
+import Application.Service.Api.Cursor (Cursor (..), encodeCursor)
+import Data.Time.Calendar (fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import Data.Time.Calendar (fromGregorian)
-import Application.Service.Api.Cursor (Cursor (..), encodeCursor)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 
 -- Filter set for GET /api/v1/alerts (design_docs/milestone_6.md §3): empty
 -- text means "no filter"; keyset pagination on (last_seen_at desc, id desc).
@@ -33,27 +33,30 @@ data AlertFilters = AlertFilters
     }
 
 defaultFilters :: AlertFilters
-defaultFilters = AlertFilters
-    { afEnvironment = ""
-    , afStatus = ""
-    , afSeverity = ""
-    , afFingerprint = ""
-    , afHost = ""
-    , afService = ""
-    , afSince = UTCTime (fromGregorian 1970 1 1) 0
-    , afUntil = UTCTime (fromGregorian 9999 12 31) 0
-    , afCursor = Nothing
-    , afLimit = 100
-    }
+defaultFilters =
+    AlertFilters
+        { afEnvironment = ""
+        , afStatus = ""
+        , afSeverity = ""
+        , afFingerprint = ""
+        , afHost = ""
+        , afService = ""
+        , afSince = UTCTime (fromGregorian 1970 1 1) 0
+        , afUntil = UTCTime (fromGregorian 9999 12 31) 0
+        , afCursor = Nothing
+        , afLimit = 100
+        }
 
 -- One page of matching alerts plus the cursor for the next page (Nothing
 -- when the page was not full). Fetches limit+1 keys to detect the last page.
 listAlertsPage :: (?modelContext :: ModelContext) => AlertFilters -> IO ([Alert], Maybe Text)
-listAlertsPage AlertFilters { .. } = do
+listAlertsPage AlertFilters{..} = do
     let (cursorSeenAt, cursorId) = case afCursor of
-            Just Cursor { .. } -> (cursorLastSeenAt, cursorAlertId)
+            Just Cursor{..} -> (cursorLastSeenAt, cursorAlertId)
             Nothing -> (UTCTime (fromGregorian 9999 12 31) 0, maxUuid)
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT a.id, a.last_seen_at
         FROM alerts a
         WHERE ('' = ${afEnvironment} OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${afEnvironment})
@@ -71,8 +74,9 @@ listAlertsPage AlertFilters { .. } = do
     let page = take afLimit rows
     alerts <- mapM (\row -> fetch (get #id row)) page
     let nextCursor = case reverse page of
-            lastRow : _ | length rows > afLimit ->
-                Just (encodeCursor (Cursor (get #last_seen_at lastRow) (unwrapId (get #id lastRow))))
+            lastRow : _
+                | length rows > afLimit ->
+                    Just (encodeCursor (Cursor (get #last_seen_at lastRow) (unwrapId (get #id lastRow))))
             _ -> Nothing
     pure (alerts, nextCursor)
 
@@ -98,9 +102,10 @@ data AlertDetail = AlertDetail
 -- the alert_events timeline ordered by created_at. No live upstream calls.
 alertDetail :: (?modelContext :: ModelContext) => Id Alert -> IO (Maybe AlertDetail)
 alertDetail alertId = do
-    alertOrNothing <- query @Alert
-        |> filterWhere (#id, alertId)
-        |> fetchOneOrNothing
+    alertOrNothing <-
+        query @Alert
+            |> filterWhere (#id, alertId)
+            |> fetchOneOrNothing
     case alertOrNothing of
         Nothing -> pure Nothing
         Just alert -> do
@@ -108,37 +113,44 @@ alertDetail alertId = do
             host <- mapM fetch alert.hostId
             service <- mapM fetch alert.serviceId
             group <- mapM fetch alert.groupId
-            jiraLinks <- query @JiraLink
-                |> filterWhere (#alertId, alertId)
-                |> orderByAsc #createdAt
-                |> fetch
+            jiraLinks <-
+                query @JiraLink
+                    |> filterWhere (#alertId, alertId)
+                    |> orderByAsc #createdAt
+                    |> fetch
             cmdbEntry <- case (alert.hostId, alert.serviceId) of
-                (Just hostId, _) -> query @CmdbEntry
-                    |> filterWhere (#hostId, Just hostId)
-                    |> fetchOneOrNothing
-                (Nothing, Just serviceId) -> query @CmdbEntry
-                    |> filterWhere (#serviceId, Just serviceId)
-                    |> fetchOneOrNothing
+                (Just hostId, _) ->
+                    query @CmdbEntry
+                        |> filterWhere (#hostId, Just hostId)
+                        |> fetchOneOrNothing
+                (Nothing, Just serviceId) ->
+                    query @CmdbEntry
+                        |> filterWhere (#serviceId, Just serviceId)
+                        |> fetchOneOrNothing
                 (Nothing, Nothing) -> pure Nothing
-            analysis <- query @LlmAnalysis
-                |> filterWhere (#alertId, alertId)
-                |> filterWhere (#status, "done" :: Text)
-                |> orderByDesc #createdAt
-                |> limit 1
-                |> fetchOneOrNothing
-            events <- query @AlertEvent
-                |> filterWhere (#alertId, alertId)
-                |> orderByAsc #createdAt
-                |> fetch
+            analysis <-
+                query @LlmAnalysis
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#status, "done" :: Text)
+                    |> orderByDesc #createdAt
+                    |> limit 1
+                    |> fetchOneOrNothing
+            events <-
+                query @AlertEvent
+                    |> filterWhere (#alertId, alertId)
+                    |> orderByAsc #createdAt
+                    |> fetch
             emails <- mapM (\event -> fmap (fmap (get #email)) (mapM fetch event.userId)) events
-            pure $ Just AlertDetail
-                { adAlert = alert
-                , adEnvironment = environment
-                , adHost = host
-                , adService = service
-                , adGroup = group
-                , adJiraLinks = jiraLinks
-                , adCmdb = cmdbEntry
-                , adAnalysis = analysis
-                , adTimeline = zip events emails
-                }
+            pure $
+                Just
+                    AlertDetail
+                        { adAlert = alert
+                        , adEnvironment = environment
+                        , adHost = host
+                        , adService = service
+                        , adGroup = group
+                        , adJiraLinks = jiraLinks
+                        , adCmdb = cmdbEntry
+                        , adAnalysis = analysis
+                        , adTimeline = zip events emails
+                        }

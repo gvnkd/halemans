@@ -1,28 +1,28 @@
 module Test.AssetsSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import qualified Data.Text as Text
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as BL
-import Data.Aeson.Types (parseMaybe)
+import Application.Service.Assets (AssetsAuth (..), AssetsClient (..), fetchBinary)
+import Application.Service.Assets.Aql
+import Application.Service.Assets.Errors
+import Application.Service.Assets.Icons (absoluteIconUrl)
+import Application.Service.Assets.Types
+import Application.Service.Llm.Prompt
+import Application.Service.Llm.Roles (roleToolNames, templateNameForRole, toolsForRole)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.ByteString.Lazy as BL
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Maybe (fromJust)
+import qualified Data.Text as Text
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import IHP.Record (set)
 import Network.HTTP.Types (hAccept, hContentType, hLocation, status200, status302, status404, status406)
 import qualified Network.Socket as Socket
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
-import Application.Service.Assets (AssetsClient (..), AssetsAuth (..), fetchBinary)
-import Application.Service.Assets.Icons (absoluteIconUrl)
-import Application.Service.Assets.Types
-import Application.Service.Assets.Aql
-import Application.Service.Assets.Errors
-import Application.Service.Llm.Prompt
-import Application.Service.Llm.Roles (toolsForRole, roleToolNames, templateNameForRole)
-import Generated.Types
-import IHP.ModelSupport (newRecord)
-import IHP.Record (set)
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Milestone 8 assets subsystem" do
@@ -46,20 +46,24 @@ spec = describe "Milestone 8 assets subsystem" do
 
     describe "Types.flattenAttributes" do
         it "maps attribute names to display values incl. status" do
-            let raw = Aeson.object
-                    [ "id" Aeson..= (5 :: Int)
-                    , "objectTypeAttribute" Aeson..= Aeson.object ["id" Aeson..= (5 :: Int), "name" Aeson..= ("Status" :: Text)]
-                    , "objectAttributeValues" Aeson..= [Aeson.object
-                        [ "status" Aeson..= Aeson.object ["id" Aeson..= (1 :: Int), "name" Aeson..= ("Active" :: Text)]
-                        , "displayValue" Aeson..= ("Active" :: Text)]]
-                    ]
+            let raw =
+                    Aeson.object
+                        [ "id" Aeson..= (5 :: Int)
+                        , "objectTypeAttribute" Aeson..= Aeson.object ["id" Aeson..= (5 :: Int), "name" Aeson..= ("Status" :: Text)]
+                        , "objectAttributeValues"
+                            Aeson..= [ Aeson.object
+                                        [ "status" Aeson..= Aeson.object ["id" Aeson..= (1 :: Int), "name" Aeson..= ("Active" :: Text)]
+                                        , "displayValue" Aeson..= ("Active" :: Text)
+                                        ]
+                                     ]
+                        ]
                 parsed = Aeson.fromJSON raw :: Aeson.Result ObjectAttribute
             case parsed of
                 Aeson.Error err -> expectationFailure err
                 Aeson.Success attribute -> do
                     flattenAttributes [attribute] `shouldBe` [("Status", "Active")]
                     case attribute.attrValues of
-                        (firstValue:_) -> firstValue.valueStatusId `shouldBe` Just (1 :: Int64)
+                        (firstValue : _) -> firstValue.valueStatusId `shouldBe` Just (1 :: Int64)
                         [] -> expectationFailure "no attribute values parsed"
 
     describe "Aql escaper (§5.4)" do
@@ -131,22 +135,25 @@ spec = describe "Milestone 8 assets subsystem" do
             templateNameForRole Nothing `shouldBe` "alert_enrichment"
 
     describe "Prompt assets excerpt (milestone_8.md §6)" do
-        let template = Text.intercalate "\n"
-                [ "Title: {{alert.title}}"
-                , "Events: {{events}}"
-                , "Assets: {{assets_excerpt}}"
-                , "CMDB: {{cmdb_excerpt}}"
-                ]
+        let template =
+                Text.intercalate
+                    "\n"
+                    [ "Title: {{alert.title}}"
+                    , "Events: {{events}}"
+                    , "Assets: {{assets_excerpt}}"
+                    , "CMDB: {{cmdb_excerpt}}"
+                    ]
         it "renders the assets_excerpt binding" do
-            let inputs = emptyInputs { piTitle = "t", piAssetsExcerpt = "host-1 [Host] | Owner: team-sre" }
+            let inputs = emptyInputs{piTitle = "t", piAssetsExcerpt = "host-1 [Host] | Owner: team-sre"}
             "host-1 [Host] | Owner: team-sre" `Text.isInfixOf` fitPrompt 100 template inputs `shouldBe` True
         it "truncates assets after events but before cmdb" do
-            let inputs = emptyInputs
-                    { piTitle = "t"
-                    , piEvents = Text.replicate 100 "e"
-                    , piAssetsExcerpt = Text.replicate 100 "a"
-                    , piCmdbExcerpt = Text.replicate 100 "c"
-                    }
+            let inputs =
+                    emptyInputs
+                        { piTitle = "t"
+                        , piEvents = Text.replicate 100 "e"
+                        , piAssetsExcerpt = Text.replicate 100 "a"
+                        , piCmdbExcerpt = Text.replicate 100 "c"
+                        }
                 rendered = fitPrompt 90 template inputs
             -- events survive, assets and cmdb are shrunk away first
             "ee" `Text.isInfixOf` rendered `shouldBe` True
@@ -154,28 +161,30 @@ spec = describe "Milestone 8 assets subsystem" do
 
     describe "Prompt granular asset slots" do
         it "renders assets.count/labels/types bindings" do
-            let inputs = emptyInputs
-                    { piAssetsCount = "2"
-                    , piAssetsLabels = "host-1, host-2"
-                    , piAssetsTypes = "Host"
-                    }
+            let inputs =
+                    emptyInputs
+                        { piAssetsCount = "2"
+                        , piAssetsLabels = "host-1, host-2"
+                        , piAssetsTypes = "Host"
+                        }
             renderTemplate "n={{assets.count}} l={{assets.labels}} t={{assets.types}}" (bindingsFor inputs)
                 `shouldBe` "n=2 l=host-1, host-2 t=Host"
         it "renders per-attribute slots" do
-            let inputs = emptyInputs { piAssetsAttrs = [("Owner", "team-sre"), ("Cluster", "eu-1")] }
+            let inputs = emptyInputs{piAssetsAttrs = [("Owner", "team-sre"), ("Cluster", "eu-1")]}
             renderTemplate "owner={{assets.attr.Owner}} on {{assets.attr.Cluster}}" (bindingsFor inputs)
                 `shouldBe` "owner=team-sre on eu-1"
         it "templateSlotNames lists the static slots and the attr pattern" do
             let expected = ["alert.title", "assets_excerpt", "assets.count", "assets.labels", "assets.types", "assets.attr.<AttributeName>"]
             templateSlotNames `shouldSatisfy` \names -> all (`elem` names) expected
         it "granular asset fields shrink under budget pressure" do
-            let inputs = emptyInputs
-                    { piTitle = "t"
-                    , piAssetsExcerpt = Text.replicate 50 "a"
-                    , piAssetsLabels = Text.replicate 50 "l"
-                    , piAssetsTypes = Text.replicate 50 "y"
-                    , piCmdbExcerpt = Text.replicate 50 "c"
-                    }
+            let inputs =
+                    emptyInputs
+                        { piTitle = "t"
+                        , piAssetsExcerpt = Text.replicate 50 "a"
+                        , piAssetsLabels = Text.replicate 50 "l"
+                        , piAssetsTypes = Text.replicate 50 "y"
+                        , piCmdbExcerpt = Text.replicate 50 "c"
+                        }
                 rendered = fitPrompt 30 "T: {{alert.title}} A: {{assets_excerpt}} L: {{assets.labels}} Y: {{assets.types}} C: {{cmdb_excerpt}}" inputs
             Text.length rendered `shouldSatisfy` (<= charBudgetForTokens 30)
 
@@ -205,20 +214,20 @@ spec = describe "Milestone 8 assets subsystem" do
     describe "Assets.fetchBinary" do
         around withIconServer do
             it "fetches bytes with the configured auth header" \(baseUrl, seen) -> do
-                let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
+                let client = AssetsClient{clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret"}
                 result <- fetchBinary client (cs baseUrl <> "/icon.png")
                 fmap fst result `shouldBe` Right "image/png"
                 fmap (BL.toStrict . snd) result `shouldBe` Right "PNG-BYTES"
                 requests <- readIORef seen
                 lookup "Authorization" (Wai.requestHeaders (fromJust (head requests))) `shouldBe` Just "Bearer sekret"
             it "sends an Accept the icon route honors (Jira 406s application/json)" \(baseUrl, seen) -> do
-                let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
+                let client = AssetsClient{clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret"}
                 result <- fetchBinary client (cs baseUrl <> "/icon.png")
                 fmap fst result `shouldBe` Right "image/png"
                 requests <- readIORef seen
                 lookup hAccept (Wai.requestHeaders (fromJust (head requests))) `shouldBe` Just "image/*, */*"
             it "does not follow redirects to the login page" \(baseUrl, _) -> do
-                let client = AssetsClient { clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret" }
+                let client = AssetsClient{clientBaseUrl = cs baseUrl, clientAuth = BearerAuth "sekret"}
                 result <- fetchBinary client (cs baseUrl <> "/redirect")
                 result `shouldSatisfy` \case
                     Left _ -> True
@@ -243,10 +252,10 @@ iconApp seen request respond = do
     case Wai.pathInfo request of
         ["icon.png"]
             -- Jira's icon routes answer 406 to Accept: application/json
-            | lookup hAccept (Wai.requestHeaders request) == Just "application/json"
-                -> respond (Wai.responseLBS status406 [(hContentType, "application/json")] "\"content type not accepted\"")
-            | otherwise
-                -> respond (Wai.responseLBS status200 [(hContentType, "image/png")] (BL.fromStrict iconPng))
+            | lookup hAccept (Wai.requestHeaders request) == Just "application/json" ->
+                respond (Wai.responseLBS status406 [(hContentType, "application/json")] "\"content type not accepted\"")
+            | otherwise ->
+                respond (Wai.responseLBS status200 [(hContentType, "image/png")] (BL.fromStrict iconPng))
         ["redirect"] -> respond (Wai.responseLBS status302 [(hLocation, "/login.jsp")] "")
         _ -> respond (Wai.responseLBS status404 [] "")
 

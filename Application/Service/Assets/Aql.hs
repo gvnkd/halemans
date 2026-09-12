@@ -1,23 +1,23 @@
-module Application.Service.Assets.Aql
-( Aql (..)
-, escapeAql
-, quoteAql
-, schemaEq
-, attrLike
-, attrEq
-, andAql
-, typeAndChildren
-, fillHostTemplate
+module Application.Service.Assets.Aql (
+    Aql (..),
+    escapeAql,
+    quoteAql,
+    schemaEq,
+    attrLike,
+    attrEq,
+    andAql,
+    typeAndChildren,
+    fillHostTemplate,
 ) where
 
-import IHP.Prelude
 import qualified Data.Text as Text
+import IHP.Prelude
 
 -- Opaque AQL builder (design_docs/assets-api.md §5.4): user input only ever
 -- enters queries through escapeAql/quoteAql; no raw string concatenation of
 -- unescaped values into queries.
 
-newtype Aql = Aql { aqlText :: Text } deriving (Eq, Show)
+newtype Aql = Aql {aqlText :: Text} deriving (Eq, Show)
 
 -- \ and " escaping inside double-quoted AQL string literals (§5.4).
 escapeAql :: Text -> Text

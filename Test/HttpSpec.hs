@@ -1,19 +1,19 @@
 module Test.HttpSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import Application.Service.Http (HttpStatusError (..), isDeterministicClientError, getFollowing, postFollowing)
+import Application.Service.Http (HttpStatusError (..), getFollowing, isDeterministicClientError, postFollowing)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Lens ((&), (.~), (^.))
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as BC
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Maybe (fromJust)
+import IHP.Prelude
 import Network.HTTP.Types (status200, status302, status403, statusCode)
 import qualified Network.Socket as Socket
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
 import qualified Network.Wreq as Wreq
+import Test.Hspec
 
 -- Redirect-following HTTP wrapper: a local warp server 302s /start (absolute,
 -- different host spelling), /rel (relative) and /loop (self); /real records
@@ -22,8 +22,11 @@ spec :: Spec
 spec = describe "Application.Service.Http" do
     around withServer do
         it "follows a cross-host 302 on POST, re-sending Authorization" \(baseUrl, seen) -> do
-            response <- postFollowing (Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer sekret"])
-                (baseUrl <> "/start") (Aeson.object ["ping" Aeson..= True])
+            response <-
+                postFollowing
+                    (Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer sekret"])
+                    (baseUrl <> "/start")
+                    (Aeson.object ["ping" Aeson..= True])
             statusCodeOf response `shouldBe` 200
             requests <- readIORef seen
             let real = fromJust (find (\req -> Wai.pathInfo req == ["real"]) requests)
@@ -81,8 +84,8 @@ serverApp seen port req respond = do
         ["loop"] -> redirect "/loop"
         ["forbidden"] -> Wai.responseLBS status403 [] "denied"
         _ -> Wai.responseLBS status200 [("Content-Type", "application/json")] "{\"ok\":true}"
-    where
-        redirect location = Wai.responseLBS status302 [("Location", BC.pack location)] ""
+  where
+    redirect location = Wai.responseLBS status302 [("Location", BC.pack location)] ""
 
 freePort :: IO Int
 freePort = do

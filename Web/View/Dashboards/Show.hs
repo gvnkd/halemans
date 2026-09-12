@@ -1,11 +1,12 @@
 module Web.View.Dashboards.Show where
-import Web.View.Prelude
-import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), alertsTableHtml, RollupCard (..), rollupCardHtml, statusBadgeHtml, severityBadgeHtml)
+
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
-import Network.HTTP.Types (urlEncode)
 import qualified Data.Text as Text
+import Network.HTTP.Types (urlEncode)
+import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), RollupCard (..), alertsTableHtml, rollupCardHtml, severityBadgeHtml, statusBadgeHtml)
+import Web.View.Prelude
 
 data ShowView = ShowView
     { dashboard :: Dashboard
@@ -25,7 +26,8 @@ fetchCardData expandedCard
         Just groupBy -> GroupedCard <$> runCardQueryGroups expandedCard.ecCard groupBy
 
 instance View ShowView where
-    html ShowView { .. } = [hsx|
+    html ShowView{..} =
+        [hsx|
         <div data-live-scope={liveScope}>
             <h1 data-testid="dashboard-title">{dashboard.name}</h1>
             <p>
@@ -37,14 +39,15 @@ instance View ShowView where
             </div>
         </div>
     |]
-        where
-            liveScope :: Text
-            liveScope = "dash:" <> tshow dashboard.id
+      where
+        liveScope :: Text
+        liveScope = "dash:" <> tshow dashboard.id
 
 renderCardSection :: Id Dashboard -> (ExpandedCard, CardData) -> Html
 renderCardSection dashboardId (expanded, result) = case result of
     HiddenCard -> [hsx|<section class={sectionClass <> " d-none"} id={domId} data-testid={domId} style={widthStyle}></section>|]
-    _ -> [hsx|
+    _ ->
+        [hsx|
         <section class={sectionClass} id={domId} data-testid={domId} style={widthStyle}>
             <h2>
                 {cardTitleText expanded.ecCard}
@@ -53,53 +56,57 @@ renderCardSection dashboardId (expanded, result) = case result of
             {cardBody}
         </section>
     |]
-    where
-        card = expanded.ecCard
-        domId = expanded.ecDomId
-        sectionClass :: Text
-        sectionClass = "dashboard-card" <> if card.cardSummary then " dashboard-card-summary mb-3" else " mb-4"
-        -- Summary cards are fixed-width flex items; "size".width overrides
-        -- the CSS flex-basis, flat/grouped cards always span full width.
-        widthStyle :: Maybe Text
-        widthStyle = case (card.cardSummary, card.cardSize) of
-            (True, Just size) -> Just ("flex: 0 0 " <> tshow size.csWidth <> "px")
-            _ -> Nothing
-        cardBody = case result of
-            FlatCard alerts -> alertsTableHtml AlertsTable
-                { atTestId = Nothing
-                , atTbodyId = tbodyId
-                , atLiveScope = Nothing
-                , atLiveFilters = Nothing
-                , atTableClass = "table table-sm"
-                , atSorting = Nothing
-                , atContent = FlatAlerts alerts
-                }
-            GroupedCard groups -> [hsx|
+  where
+    card = expanded.ecCard
+    domId = expanded.ecDomId
+    sectionClass :: Text
+    sectionClass = "dashboard-card" <> if card.cardSummary then " dashboard-card-summary mb-3" else " mb-4"
+    -- Summary cards are fixed-width flex items; "size".width overrides
+    -- the CSS flex-basis, flat/grouped cards always span full width.
+    widthStyle :: Maybe Text
+    widthStyle = case (card.cardSummary, card.cardSize) of
+        (True, Just size) -> Just ("flex: 0 0 " <> tshow size.csWidth <> "px")
+        _ -> Nothing
+    cardBody = case result of
+        FlatCard alerts ->
+            alertsTableHtml
+                AlertsTable
+                    { atTestId = Nothing
+                    , atTbodyId = tbodyId
+                    , atLiveScope = Nothing
+                    , atLiveFilters = Nothing
+                    , atTableClass = "table table-sm"
+                    , atSorting = Nothing
+                    , atContent = FlatAlerts alerts
+                    }
+        GroupedCard groups ->
+            [hsx|
                 {forEach groups (renderGroup domId)}
             |]
-            SummaryCard summary -> renderSummary dashboardId expanded summary
-            HiddenCard -> [hsx||]
-        tbodyId :: Text
-        tbodyId = domId <> "-tbody"
-        filterChips = [hsx|
+        SummaryCard summary -> renderSummary dashboardId expanded summary
+        HiddenCard -> [hsx||]
+    tbodyId :: Text
+    tbodyId = domId <> "-tbody"
+    filterChips =
+        [hsx|
             <span>
                 {forEach (legacyList FieldStatus) statusBadgeHtml}
                 {forEach (legacyList FieldSeverity) severityChip}
             </span>
         |]
-        legacyList field
-            | card.cardLegacy = concat [values | MatchClause (FacetField f) OpIn _ values <- card.cardMatch, f == field]
-            | otherwise = []
+    legacyList field
+        | card.cardLegacy = concat [values | MatchClause (FacetField f) OpIn _ values <- card.cardMatch, f == field]
+        | otherwise = []
 
 -- | Link to the card-alerts detail page; forEach expansions pass their value
 -- as a query param.
 cardAlertsLink :: Id Dashboard -> ExpandedCard -> Text
 cardAlertsLink dashboardId expanded =
     pathTo (ShowDashboardCardAction dashboardId expanded.ecIndex) <> valueQuery
-    where
-        valueQuery = case expanded.ecValue of
-            Nothing -> ""
-            Just value -> "?value=" <> cs (urlEncode True (cs value))
+  where
+    valueQuery = case expanded.ecValue of
+        Nothing -> ""
+        Just value -> "?value=" <> cs (urlEncode True (cs value))
 
 cardTitleText :: DashboardCard -> Text
 cardTitleText card = case (card.cardTitle, legacyEnv card, card.cardGroupBy) of
@@ -117,21 +124,24 @@ legacyEnv card
 -- tooltips as the overview env cards); the whole card links to the
 -- card-alerts detail page.
 renderSummary :: Id Dashboard -> ExpandedCard -> CardSummary -> Html
-renderSummary dashboardId expanded summary = rollupCardHtml RollupCard
-    { rcTitle = mempty
-    , rcWorstSeverity = summary.csWorstSeverity
-    , rcFiring = summary.csFiring
-    , rcAcked = summary.csAcked
-    , rcResolved = summary.csResolved
-    , rcStalled = summary.csStalled
-    , rcSuppressed = summary.csSuppressed
-    , rcHourly = summary.csHourly
-    , rcLink = Just (cardAlertsLink dashboardId expanded)
-    , rcSize = expanded.ecCard.cardSize
-    }
+renderSummary dashboardId expanded summary =
+    rollupCardHtml
+        RollupCard
+            { rcTitle = mempty
+            , rcWorstSeverity = summary.csWorstSeverity
+            , rcFiring = summary.csFiring
+            , rcAcked = summary.csAcked
+            , rcResolved = summary.csResolved
+            , rcStalled = summary.csStalled
+            , rcSuppressed = summary.csSuppressed
+            , rcHourly = summary.csHourly
+            , rcLink = Just (cardAlertsLink dashboardId expanded)
+            , rcSize = expanded.ecCard.cardSize
+            }
 
 renderGroup :: Text -> CardGroup -> Html
-renderGroup cardId group = [hsx|
+renderGroup cardId group =
+    [hsx|
     <div class="dashboard-group mb-3" id={groupId} data-testid={groupId}>
         <h3>
             {group.cgValue}
@@ -141,17 +151,19 @@ renderGroup cardId group = [hsx|
         {membersTable}
     </div>
 |]
-    where
-        groupId = cardId <> "-group-" <> Text.replace " " "_" group.cgValue
-        membersTable = alertsTableHtml AlertsTable
-            { atTestId = Nothing
-            , atTbodyId = groupId <> "-tbody"
-            , atLiveScope = Nothing
-            , atLiveFilters = Nothing
-            , atTableClass = "table table-sm"
-            , atSorting = Nothing
-            , atContent = FlatAlerts group.cgAlerts
-            }
+  where
+    groupId = cardId <> "-group-" <> Text.replace " " "_" group.cgValue
+    membersTable =
+        alertsTableHtml
+            AlertsTable
+                { atTestId = Nothing
+                , atTbodyId = groupId <> "-tbody"
+                , atLiveScope = Nothing
+                , atLiveFilters = Nothing
+                , atTableClass = "table table-sm"
+                , atSorting = Nothing
+                , atContent = FlatAlerts group.cgAlerts
+                }
 
 severityChip :: Text -> Html
 severityChip severity = severityBadgeHtml severity Nothing

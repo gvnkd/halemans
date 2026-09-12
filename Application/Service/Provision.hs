@@ -1,48 +1,48 @@
-module Application.Service.Provision
-( ProvisionConfig (..)
-, Section (..)
-, UserItem (..)
-, SourceItem (..)
-, WebhookTokenItem (..)
-, TeamItem (..)
-, MemberItem (..)
-, LlmItem (..)
-, PromptTemplateItem (..)
-, FieldMappingItem (..)
-, DashboardItem (..)
-, JiraConfigItem (..)
-, CmdbConfigItem (..)
-, AutoAnalyzeItem (..)
-, ProvisionError (..)
-, parseProvisionConfig
-, parseHostGroupsFile
-, applyProvisionConfig
+module Application.Service.Provision (
+    ProvisionConfig (..),
+    Section (..),
+    UserItem (..),
+    SourceItem (..),
+    WebhookTokenItem (..),
+    TeamItem (..),
+    MemberItem (..),
+    LlmItem (..),
+    PromptTemplateItem (..),
+    FieldMappingItem (..),
+    DashboardItem (..),
+    JiraConfigItem (..),
+    CmdbConfigItem (..),
+    AutoAnalyzeItem (..),
+    ProvisionError (..),
+    parseProvisionConfig,
+    parseHostGroupsFile,
+    applyProvisionConfig,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport (ModelContext, withTransaction, Id' (..), newRecord, createRecord, updateRecord, deleteRecord)
-import IHP.HaskellSupport (set)
-import IHP.QueryBuilder (query, filterWhere)
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
-import Generated.Types
-import Application.Helper.Theme (isValidTheme)
-import Application.Helper.DashboardConfig (decodeDashboardConfig)
 import Application.Connector.Zabbix (ZabbixGroup)
+import Application.Helper.DashboardConfig (decodeDashboardConfig)
+import Application.Helper.Theme (isValidTheme)
 import Application.Pipeline.Grouping (parseAlertField)
 import Application.Service.HostGroups (replaceHostGroupCache)
-import Application.Service.PollerControl (ensurePollerForSourceType)
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
+import Application.Service.PollerControl (ensurePollerForSourceType)
+import Control.Exception (Exception, SomeException, try)
+import Control.Monad (void)
+import Data.Aeson (FromJSON, Value, parseJSON, (.!=), (.:), (.:?))
 import qualified Data.Aeson as Aeson
-import Data.Aeson (Value, FromJSON, parseJSON, (.:), (.:?), (.!=))
-import Data.Aeson.Types (Parser, parseEither)
-import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.Types (Parser, parseEither)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List as List
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.HaskellSupport (set)
+import IHP.ModelSupport (Id' (..), ModelContext, createRecord, deleteRecord, newRecord, updateRecord, withTransaction)
+import IHP.Prelude
+import IHP.QueryBuilder (filterWhere, query)
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv)
-import Control.Exception (Exception, try, SomeException)
-import Control.Monad (void)
 
 -- Declarative bootstrap provisioning (design_docs/milestone_7.md). At process
 -- start (hooked from Config.hs) the JSON file named by
@@ -58,7 +58,8 @@ instance Exception ProvisionError
 data Section a = Section
     { strict :: Bool
     , items :: [a]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data ProvisionConfig = ProvisionConfig
     { users :: Maybe (Section UserItem)
@@ -70,7 +71,8 @@ data ProvisionConfig = ProvisionConfig
     , jiraConfigs :: Maybe (Section JiraConfigItem)
     , cmdbConfigs :: Maybe (Section CmdbConfigItem)
     , autoAnalyze :: Maybe AutoAnalyzeItem
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data UserItem = UserItem
     { email :: Text
@@ -78,7 +80,8 @@ data UserItem = UserItem
     , passwordHash :: Text
     , roles :: [Text]
     , settings :: Value
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data SourceItem = SourceItem
     { sourceType :: Text
@@ -90,11 +93,13 @@ data SourceItem = SourceItem
     , config :: Value
     , webhookTokens :: [WebhookTokenItem]
     , hostGroupsFile :: Maybe Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 newtype WebhookTokenItem = WebhookTokenItem
     { tokenEnv :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data TeamItem = TeamItem
     { name :: Text
@@ -103,12 +108,14 @@ data TeamItem = TeamItem
     , defaults :: Maybe Value
     , members :: [MemberItem]
     , defaultDashboardConfig :: Maybe Value
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data MemberItem = MemberItem
     { email :: Text
     , role :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data LlmItem = LlmItem
     { providerName :: Text
@@ -118,7 +125,8 @@ data LlmItem = LlmItem
     , toolsEnabled :: Bool
     , enabled :: Bool
     , promptTemplates :: [PromptTemplateItem]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data PromptTemplateItem = PromptTemplateItem
     { name :: Text
@@ -126,7 +134,8 @@ data PromptTemplateItem = PromptTemplateItem
     , body :: Text
     , active :: Bool
     , notes :: Maybe Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data FieldMappingItem = FieldMappingItem
     { facet :: Text
@@ -134,7 +143,8 @@ data FieldMappingItem = FieldMappingItem
     , kind :: Text
     , key :: Text
     , enabled :: Bool
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data DashboardItem = DashboardItem
     { name :: Text
@@ -142,7 +152,8 @@ data DashboardItem = DashboardItem
     , config :: Value
     , position :: Int
     , isDefault :: Bool
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data JiraConfigItem = JiraConfigItem
     { jiraConfigName :: Text
@@ -151,7 +162,8 @@ data JiraConfigItem = JiraConfigItem
     , jiraApiVersion :: Text
     , jiraProjects :: [Text]
     , jiraEnabled :: Bool
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 data CmdbConfigItem = CmdbConfigItem
     { cmdbConfigName :: Text
@@ -159,7 +171,8 @@ data CmdbConfigItem = CmdbConfigItem
     , cmdbTokenEnv :: Text
     , cmdbSpaces :: [Text]
     , cmdbEnabled :: Bool
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- Auto-analysis gate (milestone 10 §5): singleton, not a Section — no
 -- strict-delete semantics; an absent key leaves the row untouched.
@@ -169,7 +182,8 @@ data AutoAnalyzeItem = AutoAnalyzeItem
     , aaItemSeverities :: [Text]
     , aaItemEnvironments :: [Text]
     , aaItemEnabled :: Bool
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- Parsing (strict: unknown keys rejected at every level, milestone_7.md §2)
 
@@ -177,9 +191,9 @@ rejectUnknownFields :: [Text] -> Aeson.Object -> Parser ()
 rejectUnknownFields allowed o =
     case filter (`notElem` allowed) (map Key.toText (KeyMap.keys o)) of
         [] -> pure ()
-        (unknown:_) -> fail ("unknown field \"" <> cs unknown <> "\"")
+        (unknown : _) -> fail ("unknown field \"" <> cs unknown <> "\"")
 
-instance FromJSON a => FromJSON (Section a) where
+instance (FromJSON a) => FromJSON (Section a) where
     parseJSON = Aeson.withObject "section" \o -> do
         rejectUnknownFields ["strict", "items"] o
         strict <- o .:? "strict" .!= False
@@ -189,7 +203,7 @@ instance FromJSON a => FromJSON (Section a) where
                 | strict -> fail "strict section requires an explicit \"items\" list (use \"items\": [] to empty the category)"
                 | otherwise -> pure []
             Just items -> pure items
-        pure Section { .. }
+        pure Section{..}
 
 instance FromJSON UserItem where
     parseJSON = Aeson.withObject "users item" \o -> do
@@ -200,7 +214,7 @@ instance FromJSON UserItem where
         roles <- o .:? "roles" .!= []
         settings <- o .:? "settings" .!= Aeson.object []
         validateTheme settings
-        pure UserItem { .. }
+        pure UserItem{..}
 
 validateTheme :: Value -> Parser ()
 validateTheme settings = case settings of
@@ -216,7 +230,7 @@ instance FromJSON WebhookTokenItem where
     parseJSON = Aeson.withObject "webhook token" \o -> do
         rejectUnknownFields ["tokenEnv"] o
         tokenEnv <- o .: "tokenEnv"
-        pure WebhookTokenItem { .. }
+        pure WebhookTokenItem{..}
 
 instance FromJSON SourceItem where
     parseJSON = Aeson.withObject "sources item" \o -> do
@@ -234,7 +248,7 @@ instance FromJSON SourceItem where
         hostGroupsFile <- o .:? "hostGroupsFile"
         when (isJust hostGroupsFile && sourceType /= "zabbix") do
             fail "hostGroupsFile is only valid for zabbix sources"
-        pure SourceItem { .. }
+        pure SourceItem{..}
 
 instance FromJSON MemberItem where
     parseJSON = Aeson.withObject "team member" \o -> do
@@ -242,7 +256,7 @@ instance FromJSON MemberItem where
         email <- o .: "email"
         rawRole <- o .:? "role" .!= "member"
         let role = if rawRole == "" then "member" else rawRole
-        pure MemberItem { .. }
+        pure MemberItem{..}
 
 instance FromJSON TeamItem where
     parseJSON = Aeson.withObject "teams item" \o -> do
@@ -255,7 +269,7 @@ instance FromJSON TeamItem where
         defaults <- o .:? "defaults"
         members <- o .:? "members" .!= []
         defaultDashboardConfig <- o .:? "defaultDashboardConfig"
-        pure TeamItem { .. }
+        pure TeamItem{..}
 
 instance FromJSON PromptTemplateItem where
     parseJSON = Aeson.withObject "prompt template" \o -> do
@@ -265,7 +279,7 @@ instance FromJSON PromptTemplateItem where
         body <- o .: "body"
         active <- o .:? "active" .!= False
         notes <- o .:? "notes"
-        pure PromptTemplateItem { .. }
+        pure PromptTemplateItem{..}
 
 instance FromJSON LlmItem where
     parseJSON = Aeson.withObject "llm item" \o -> do
@@ -277,7 +291,7 @@ instance FromJSON LlmItem where
         toolsEnabled <- o .:? "toolsEnabled" .!= False
         enabled <- o .:? "enabled" .!= False
         promptTemplates <- o .:? "promptTemplates" .!= []
-        pure LlmItem { .. }
+        pure LlmItem{..}
 
 instance FromJSON FieldMappingItem where
     parseJSON = Aeson.withObject "fieldMappings item" \o -> do
@@ -291,7 +305,7 @@ instance FromJSON FieldMappingItem where
             fail ("unknown field mapping kind \"" <> cs kind <> "\" (valid: field label attr)")
         when (kind == "field" && isNothing (parseAlertField key)) do
             fail ("unknown alert field \"" <> cs key <> "\" (valid: env host service check severity status)")
-        pure FieldMappingItem { .. }
+        pure FieldMappingItem{..}
 
 instance FromJSON DashboardItem where
     parseJSON = Aeson.withObject "dashboards item" \o -> do
@@ -304,7 +318,7 @@ instance FromJSON DashboardItem where
         case decodeDashboardConfig config of
             Left err -> fail ("invalid config for dashboard \"" <> cs name <> "\": " <> cs err)
             Right _ -> pure ()
-        pure DashboardItem { .. }
+        pure DashboardItem{..}
 
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
@@ -318,7 +332,7 @@ instance FromJSON ProvisionConfig where
         jiraConfigs <- o .:? "jiraConfigs"
         cmdbConfigs <- o .:? "cmdbConfigs"
         autoAnalyze <- o .:? "autoAnalyze"
-        pure ProvisionConfig { .. }
+        pure ProvisionConfig{..}
 
 instance FromJSON JiraConfigItem where
     parseJSON = Aeson.withObject "jiraConfigs item" \o -> do
@@ -331,7 +345,7 @@ instance FromJSON JiraConfigItem where
         jiraEnabled <- o .:? "enabled" .!= True
         unless (jiraApiVersion `elem` ["2", "3"]) do
             fail ("unknown jira apiVersion \"" <> cs jiraApiVersion <> "\" (valid: 2 3)")
-        pure JiraConfigItem { .. }
+        pure JiraConfigItem{..}
 
 instance FromJSON CmdbConfigItem where
     parseJSON = Aeson.withObject "cmdbConfigs item" \o -> do
@@ -341,7 +355,7 @@ instance FromJSON CmdbConfigItem where
         cmdbTokenEnv <- o .: "tokenEnv"
         cmdbSpaces <- o .:? "spaces" .!= []
         cmdbEnabled <- o .:? "enabled" .!= True
-        pure CmdbConfigItem { .. }
+        pure CmdbConfigItem{..}
 
 instance FromJSON AutoAnalyzeItem where
     parseJSON = Aeson.withObject "autoAnalyze" \o -> do
@@ -356,7 +370,7 @@ instance FromJSON AutoAnalyzeItem where
         forM_ aaItemSeverities \severity ->
             unless (severity `elem` AutoAnalyze.allSeverities) do
                 fail ("unknown severity \"" <> cs severity <> "\" (valid: critical high warning info)")
-        pure AutoAnalyzeItem { .. }
+        pure AutoAnalyzeItem{..}
 
 parseProvisionConfig :: LByteString -> Either Text ProvisionConfig
 parseProvisionConfig bytes = case Aeson.eitherDecode bytes of
@@ -391,9 +405,13 @@ withProvisionLock :: (?modelContext :: ModelContext) => Text -> IO () -> IO ()
 withProvisionLock category action = withTransaction do
     -- pg_advisory_xact_lock returns void; the SELECT 1 ... IS NULL shape is
     -- the typedSql-compatible spell (see MEMORIES typedSql notes).
-    void (sqlQueryTyped [typedSql|
+    void
+        ( sqlQueryTyped
+            [typedSql|
         SELECT 1 WHERE pg_advisory_xact_lock(hashtextextended(${category}, 0)) IS NULL
-    |] :: IO [Int])
+    |] ::
+            IO [Int]
+        )
     action
 
 -- Users (milestone_7.md §4)
@@ -410,7 +428,9 @@ upsertUser item = do
         passwordHash = item.passwordHash
         displayName = item.displayName
         settings = item.settings
-    void $ sqlExecTyped [typedSql|
+    void $
+        sqlExecTyped
+            [typedSql|
         INSERT INTO users (email, password_hash, display_name, settings)
         VALUES (${email}, ${passwordHash}, ${displayName}, ${settings})
         ON CONFLICT (email) DO UPDATE SET
@@ -422,14 +442,18 @@ upsertUser item = do
 
 assignRole :: (?modelContext :: ModelContext) => Text -> Text -> IO ()
 assignRole email roleName = do
-    created <- sqlQueryTyped [typedSql|
+    created <-
+        sqlQueryTyped
+            [typedSql|
         INSERT INTO roles (name) VALUES (${roleName})
         ON CONFLICT (name) DO NOTHING
         RETURNING id
     |]
     unless (null (created :: [Id' "roles"])) do
         putStrLn ("provision: role \"" <> roleName <> "\" auto-created with empty privileges; grant privileges in the admin UI")
-    void $ sqlExecTyped [typedSql|
+    void $
+        sqlExecTyped
+            [typedSql|
         INSERT INTO user_roles (user_id, role_id)
         SELECT u.id, r.id FROM users u, roles r
         WHERE u.email = ${email} AND r.name = ${roleName}
@@ -468,7 +492,9 @@ upsertSource item = do
         pollIntervalSeconds = item.pollIntervalSeconds
         enabled = item.enabled
         config = item.config
-    void $ sqlExecTyped [typedSql|
+    void $
+        sqlExecTyped
+            [typedSql|
         INSERT INTO sources (type, name, base_url, env, poll_interval_seconds, enabled, config)
         VALUES (${sourceType}, ${name}, ${baseUrl}, ${env}, ${pollIntervalSeconds}, ${enabled}, ${config})
         ON CONFLICT (name) DO UPDATE SET
@@ -485,7 +511,9 @@ upsertSource item = do
             Nothing -> throwIO $ ProvisionError ("sources." <> item.name <> ": webhook token env var \"" <> tokenItem.tokenEnv <> "\" is not set")
             Just tokenValue -> do
                 let token = cs tokenValue :: Text
-                void $ sqlExecTyped [typedSql|
+                void $
+                    sqlExecTyped
+                        [typedSql|
                     INSERT INTO webhook_tokens (source_id, token)
                     SELECT id, ${token} FROM sources WHERE name = ${name}
                     ON CONFLICT (token) DO NOTHING
@@ -566,13 +594,14 @@ upsertTeam :: (?modelContext :: ModelContext) => Bool -> TeamItem -> IO ()
 upsertTeam strict item = do
     maybeTeam <- query @Team |> filterWhere (#name, item.name) |> fetchOneOrNothing
     team <- case maybeTeam of
-        Nothing -> newRecord @Team
-            |> set #name item.name
-            |> set #description (fromMaybe "" item.description)
-            |> set #hostGroups (Aeson.toJSON (fromMaybe [] item.hostGroups))
-            |> set #defaults (fromMaybe (Aeson.object []) item.defaults)
-            |> set #defaultDashboardConfig item.defaultDashboardConfig
-            |> createRecord
+        Nothing ->
+            newRecord @Team
+                |> set #name item.name
+                |> set #description (fromMaybe "" item.description)
+                |> set #hostGroups (Aeson.toJSON (fromMaybe [] item.hostGroups))
+                |> set #defaults (fromMaybe (Aeson.object []) item.defaults)
+                |> set #defaultDashboardConfig item.defaultDashboardConfig
+                |> createRecord
         Just team -> do
             let withDescription = case item.description of
                     Just value -> team |> set #description value
@@ -599,7 +628,9 @@ applyMembers team item = do
             Just user -> pure user
         let userId = get #id user
             role = member.role
-        void $ sqlExecTyped [typedSql|
+        void $
+            sqlExecTyped
+                [typedSql|
             INSERT INTO team_members (team_id, user_id, team_role)
             VALUES (${teamId}, ${userId}, ${role})
             ON CONFLICT (team_id, user_id) DO UPDATE SET team_role = EXCLUDED.team_role
@@ -642,61 +673,72 @@ upsertLlm :: (?modelContext :: ModelContext) => LlmItem -> IO ()
 upsertLlm item = do
     when item.enabled do
         let providerName = item.providerName
-        void $ sqlExecTyped [typedSql|
+        void $
+            sqlExecTyped
+                [typedSql|
             UPDATE llm_configs SET enabled = false, updated_at = NOW()
             WHERE enabled AND provider_name <> ${providerName}
         |]
     maybeRow <- query @LlmConfig |> filterWhere (#providerName, item.providerName) |> fetchOneOrNothing
     now <- getCurrentTime
     _ <- case maybeRow of
-        Nothing -> newRecord @LlmConfig
-            |> set #providerName item.providerName
-            |> set #endpoint item.endpoint
-            |> set #model item.model
-            |> set #apiKeyEnv item.apiKeyEnv
-            |> set #toolsEnabled item.toolsEnabled
-            |> set #enabled item.enabled
-            |> createRecord
-        Just row -> row
-            |> set #endpoint item.endpoint
-            |> set #model item.model
-            |> set #apiKeyEnv item.apiKeyEnv
-            |> set #toolsEnabled item.toolsEnabled
-            |> set #enabled item.enabled
-            |> set #updatedAt now
-            |> updateRecord
+        Nothing ->
+            newRecord @LlmConfig
+                |> set #providerName item.providerName
+                |> set #endpoint item.endpoint
+                |> set #model item.model
+                |> set #apiKeyEnv item.apiKeyEnv
+                |> set #toolsEnabled item.toolsEnabled
+                |> set #enabled item.enabled
+                |> createRecord
+        Just row ->
+            row
+                |> set #endpoint item.endpoint
+                |> set #model item.model
+                |> set #apiKeyEnv item.apiKeyEnv
+                |> set #toolsEnabled item.toolsEnabled
+                |> set #enabled item.enabled
+                |> set #updatedAt now
+                |> updateRecord
     forM_ item.promptTemplates upsertPromptTemplate
 
 upsertPromptTemplate :: (?modelContext :: ModelContext) => PromptTemplateItem -> IO ()
 upsertPromptTemplate item = do
-    maybeRow <- query @LlmPromptTemplate
-        |> filterWhere (#name, item.name)
-        |> filterWhere (#version, item.version)
-        |> fetchOneOrNothing
+    maybeRow <-
+        query @LlmPromptTemplate
+            |> filterWhere (#name, item.name)
+            |> filterWhere (#version, item.version)
+            |> fetchOneOrNothing
     now <- getCurrentTime
     _ <- case maybeRow of
-        Nothing -> newRecord @LlmPromptTemplate
-            |> set #name item.name
-            |> set #version item.version
-            |> set #body item.body
-            |> set #active False
-            |> set #notes item.notes
-            |> createRecord
-        Just row -> row
-            |> set #body item.body
-            |> set #notes item.notes
-            |> set #updatedAt now
-            |> updateRecord
+        Nothing ->
+            newRecord @LlmPromptTemplate
+                |> set #name item.name
+                |> set #version item.version
+                |> set #body item.body
+                |> set #active False
+                |> set #notes item.notes
+                |> createRecord
+        Just row ->
+            row
+                |> set #body item.body
+                |> set #notes item.notes
+                |> set #updatedAt now
+                |> updateRecord
     when item.active (activatePromptTemplate item.name item.version)
 
 -- Mirrors ActivateLlmTemplateAction: single active row per template name.
 activatePromptTemplate :: (?modelContext :: ModelContext) => Text -> Int -> IO ()
 activatePromptTemplate name version = do
-    void $ sqlExecTyped [typedSql|
+    void $
+        sqlExecTyped
+            [typedSql|
         UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
         WHERE name = ${name}
     |]
-    void $ sqlExecTyped [typedSql|
+    void $
+        sqlExecTyped
+            [typedSql|
         UPDATE llm_prompt_templates SET active = true, updated_at = NOW()
         WHERE name = ${name} AND version = ${version}
     |]
@@ -735,7 +777,9 @@ upsertFieldMapping item = do
         kind = item.kind
         key = item.key
         enabled = item.enabled
-    void $ sqlExecTyped [typedSql|
+    void $
+        sqlExecTyped
+            [typedSql|
         INSERT INTO field_mappings (facet, rank, kind, key, enabled)
         VALUES (${facet}, ${rank}, ${kind}, ${key}, ${enabled})
         ON CONFLICT (facet, rank) DO UPDATE SET
@@ -768,28 +812,33 @@ upsertDashboard item = do
         Nothing -> throwIO $ ProvisionError ("dashboards." <> item.name <> ": userEmail \"" <> item.userEmail <> "\" does not resolve to any user")
         Just user -> pure user
     let userId = get #id user
-    maybeRow <- query @Dashboard
-        |> filterWhere (#userId, userId)
-        |> filterWhere (#name, item.name)
-        |> fetchOneOrNothing
+    maybeRow <-
+        query @Dashboard
+            |> filterWhere (#userId, userId)
+            |> filterWhere (#name, item.name)
+            |> fetchOneOrNothing
     now <- getCurrentTime
     _ <- case maybeRow of
-        Nothing -> newRecord @Dashboard
-            |> set #userId userId
-            |> set #name item.name
-            |> set #config item.config
-            |> set #position item.position
-            |> set #isDefault item.isDefault
-            |> createRecord
-        Just row -> row
-            |> set #config item.config
-            |> set #position item.position
-            |> set #isDefault item.isDefault
-            |> set #updatedAt now
-            |> updateRecord
+        Nothing ->
+            newRecord @Dashboard
+                |> set #userId userId
+                |> set #name item.name
+                |> set #config item.config
+                |> set #position item.position
+                |> set #isDefault item.isDefault
+                |> createRecord
+        Just row ->
+            row
+                |> set #config item.config
+                |> set #position item.position
+                |> set #isDefault item.isDefault
+                |> set #updatedAt now
+                |> updateRecord
     when item.isDefault do
         let name = item.name
-        void $ sqlExecTyped [typedSql|
+        void $
+            sqlExecTyped
+                [typedSql|
             UPDATE dashboards SET is_default = false, updated_at = NOW()
             WHERE user_id = ${userId} AND name <> ${name} AND is_default
         |]
@@ -823,22 +872,24 @@ upsertJiraConfig item = do
     now <- getCurrentTime
     let projectsJson = Aeson.toJSON item.jiraProjects
     _ <- case maybeRow of
-        Nothing -> newRecord @JiraConfig
-            |> set #name item.jiraConfigName
-            |> set #baseUrl item.jiraBaseUrl
-            |> set #tokenEnv item.jiraTokenEnv
-            |> set #apiVersion item.jiraApiVersion
-            |> set #projects projectsJson
-            |> set #enabled item.jiraEnabled
-            |> createRecord
-        Just row -> row
-            |> set #baseUrl item.jiraBaseUrl
-            |> set #tokenEnv item.jiraTokenEnv
-            |> set #apiVersion item.jiraApiVersion
-            |> set #projects projectsJson
-            |> set #enabled item.jiraEnabled
-            |> set #updatedAt now
-            |> updateRecord
+        Nothing ->
+            newRecord @JiraConfig
+                |> set #name item.jiraConfigName
+                |> set #baseUrl item.jiraBaseUrl
+                |> set #tokenEnv item.jiraTokenEnv
+                |> set #apiVersion item.jiraApiVersion
+                |> set #projects projectsJson
+                |> set #enabled item.jiraEnabled
+                |> createRecord
+        Just row ->
+            row
+                |> set #baseUrl item.jiraBaseUrl
+                |> set #tokenEnv item.jiraTokenEnv
+                |> set #apiVersion item.jiraApiVersion
+                |> set #projects projectsJson
+                |> set #enabled item.jiraEnabled
+                |> set #updatedAt now
+                |> updateRecord
     pure ()
 
 applyCmdbConfigs :: (?modelContext :: ModelContext) => Maybe (Section CmdbConfigItem) -> IO ()
@@ -857,20 +908,22 @@ upsertCmdbConfig item = do
     now <- getCurrentTime
     let spacesJson = Aeson.toJSON item.cmdbSpaces
     _ <- case maybeRow of
-        Nothing -> newRecord @CmdbConfig
-            |> set #name item.cmdbConfigName
-            |> set #baseUrl item.cmdbBaseUrl
-            |> set #tokenEnv item.cmdbTokenEnv
-            |> set #spaces spacesJson
-            |> set #enabled item.cmdbEnabled
-            |> createRecord
-        Just row -> row
-            |> set #baseUrl item.cmdbBaseUrl
-            |> set #tokenEnv item.cmdbTokenEnv
-            |> set #spaces spacesJson
-            |> set #enabled item.cmdbEnabled
-            |> set #updatedAt now
-            |> updateRecord
+        Nothing ->
+            newRecord @CmdbConfig
+                |> set #name item.cmdbConfigName
+                |> set #baseUrl item.cmdbBaseUrl
+                |> set #tokenEnv item.cmdbTokenEnv
+                |> set #spaces spacesJson
+                |> set #enabled item.cmdbEnabled
+                |> createRecord
+        Just row ->
+            row
+                |> set #baseUrl item.cmdbBaseUrl
+                |> set #tokenEnv item.cmdbTokenEnv
+                |> set #spaces spacesJson
+                |> set #enabled item.cmdbEnabled
+                |> set #updatedAt now
+                |> updateRecord
     pure ()
 
 validateEnvRef :: (?modelContext :: ModelContext) => Text -> Text -> Text -> IO ()
@@ -890,16 +943,20 @@ applyAutoAnalyze (Just item) = withProvisionLock "autoAnalyze" do
         severitiesJson = Aeson.toJSON item.aaItemSeverities
         environmentsJson = Aeson.toJSON item.aaItemEnvironments
     _ <- case existing of
-        (row:_) -> row
-            |> set #statuses statusesJson
-            |> set #severities severitiesJson
-            |> set #environments environmentsJson
-            |> set #enabled item.aaItemEnabled
-            |> set #updatedAt now
-            |> updateRecord
-        [] -> createRecord (newRecord @LlmAutoAnalyzeConfig
-            |> set #statuses statusesJson
-            |> set #severities severitiesJson
-            |> set #environments environmentsJson
-            |> set #enabled item.aaItemEnabled)
+        (row : _) ->
+            row
+                |> set #statuses statusesJson
+                |> set #severities severitiesJson
+                |> set #environments environmentsJson
+                |> set #enabled item.aaItemEnabled
+                |> set #updatedAt now
+                |> updateRecord
+        [] ->
+            createRecord
+                ( newRecord @LlmAutoAnalyzeConfig
+                    |> set #statuses statusesJson
+                    |> set #severities severitiesJson
+                    |> set #environments environmentsJson
+                    |> set #enabled item.aaItemEnabled
+                )
     pure ()

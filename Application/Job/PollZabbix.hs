@@ -1,31 +1,31 @@
 module Application.Job.PollZabbix where
 
-import IHP.Prelude
-import IHP.FrameworkConfig (FrameworkConfig (..))
-import IHP.Job.Types
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch)
-import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
-import Generated.Types
+import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
 import Application.Pipeline.Blackouts (blackoutApplies)
-import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack)
-import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
-import qualified Application.Connector.Zabbix as Zabbix
+import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, shouldMirror)
+import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
+import Control.Exception (SomeException, try)
+import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Data.Bits ((.&.))
 import Data.Either (fromRight)
 import Data.List (nub, sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
-import Control.Monad (void)
-import Control.Exception (try, SomeException)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
+import Generated.Types
+import IHP.Fetch (fetch)
+import IHP.FrameworkConfig (FrameworkConfig (..))
+import IHP.Job.Types
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv)
 
 -- Self-rescheduling zabbix poller (milestone 0). Seeded by EnqueuePollers
@@ -42,25 +42,31 @@ instance Job PollZabbixJob where
         -- dedupe then feeds one and starves the other). The older-created
         -- running job wins; this one stops without rescheduling.
         let createdAt = job.createdAt
-        olderRunning <- sqlQueryTyped [typedSql|
+        olderRunning <-
+            sqlQueryTyped
+                [typedSql|
             SELECT count(*) FROM poll_zabbix_jobs
             WHERE status = 'job_status_running' AND created_at < ${createdAt}
         |]
         case olderRunning of
-            (count_ : _) | count_ > 0 ->
-                logWarn "duplicate PollZabbixJob loop detected (an older poll job is running); stopping this one"
+            (count_ : _)
+                | count_ > 0 ->
+                    logWarn "duplicate PollZabbixJob loop detected (an older poll job is running); stopping this one"
             _ -> do
                 now <- getCurrentTime
-                sources <- query @Source
-                    |> filterWhere (#type_, "zabbix" :: Text)
-                    |> filterWhere (#enabled, True)
-                    |> fetch
+                sources <-
+                    query @Source
+                        |> filterWhere (#type_, "zabbix" :: Text)
+                        |> filterWhere (#enabled, True)
+                        |> fetch
                 forM_ (filter (pollDue now) sources) pollSource
 
                 if null sources
                     then do
                         logInfo "no enabled zabbix sources; poll loop stopped (re-arms on source create/enable)"
-                        void $ sqlExecTyped [typedSql|
+                        void $
+                            sqlExecTyped
+                                [typedSql|
                             DELETE FROM poll_zabbix_jobs
                             WHERE status = 'job_status_not_started'
                         |]
@@ -77,14 +83,19 @@ reschedule :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => IO
 reschedule = do
     now <- getCurrentTime
     let runAt = addUTCTime 5 now
-    inserted <- sqlQueryTyped [typedSql|
+    inserted <-
+        sqlQueryTyped
+            [typedSql|
         INSERT INTO poll_zabbix_jobs (run_at)
         SELECT ${runAt}
         WHERE NOT EXISTS (SELECT 1 FROM poll_zabbix_jobs WHERE status = 'job_status_not_started')
         RETURNING id
     |]
     case inserted of
-        (nextId:_) -> void $ sqlExecTyped [typedSql|
+        (nextId : _) ->
+            void $
+                sqlExecTyped
+                    [typedSql|
             DELETE FROM poll_zabbix_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}
         |]
@@ -136,9 +147,10 @@ pollSource source = do
                             -- paged fetch, so nothing is skipped.
                             case maximumMaybe (map (.clock) events) of
                                 Just maxClock -> do
-                                    _ <- source
-                                        |> set #lastSyncCursor (Just (posixSecondsToUTCTime (fromIntegral (maxClock + 1))))
-                                        |> updateRecord
+                                    _ <-
+                                        source
+                                            |> set #lastSyncCursor (Just (posixSecondsToUTCTime (fromIntegral (maxClock + 1))))
+                                            |> updateRecord
                                     pure ()
                                 Nothing -> pure ()
 
@@ -156,15 +168,16 @@ resolveGroupIds source _token = case hostGroupScope source of
         case teamHostGroupNames teams of
             [] -> pure (Right Nothing)
             names -> do
-                rows <- query @ZabbixHostGroup
-                    |> filterWhere (#sourceId, get #id source)
-                    |> filterWhereIn (#name, names)
-                    |> fetch
+                rows <-
+                    query @ZabbixHostGroup
+                        |> filterWhere (#sourceId, get #id source)
+                        |> filterWhereIn (#name, names)
+                        |> fetch
                 pure case rows of
                     [] -> Right Nothing
                     _ -> Right (Just (map (.groupId) rows))
 
-maximumMaybe :: Ord a => [a] -> Maybe a
+maximumMaybe :: (Ord a) => [a] -> Maybe a
 maximumMaybe [] = Nothing
 maximumMaybe xs = Just (maximum xs)
 
@@ -190,10 +203,11 @@ initialHistoryDays source =
 -- newer than the last local action mirrors in, older never clobbers.
 reconcileAcks :: (?modelContext :: ModelContext) => Source -> Text -> IO ()
 reconcileAcks source token = do
-    alerts <- query @Alert
-        |> filterWhere (#sourceId, Just (get #id source))
-        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
-        |> fetch
+    alerts <-
+        query @Alert
+            |> filterWhere (#sourceId, Just (get #id source))
+            |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+            |> fetch
     let eventIds = mapMaybe (.externalId) alerts
     unless (null eventIds) do
         result <- Zabbix.ackStateGet source.baseUrl token eventIds
@@ -201,9 +215,10 @@ reconcileAcks source token = do
             Left _err -> pure ()
             Right states -> do
                 let userIds = nub [row.ackUserId | state <- states, row <- state.ackRows, row.ackUserId /= ""]
-                usersResult <- if null userIds
-                    then pure (Right [])
-                    else Zabbix.usersGet source.baseUrl token userIds
+                usersResult <-
+                    if null userIds
+                        then pure (Right [])
+                        else Zabbix.usersGet source.baseUrl token userIds
                 let userNames = fromRight [] usersResult
                 forM_ states (mirrorState alerts userNames)
 
@@ -255,10 +270,11 @@ lastMaybe = last
 --   eventPageLimit              int   event.get page size (default 1000)
 reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
 reconcileProblemStates source token now = do
-    alerts <- query @Alert
-        |> filterWhere (#sourceId, Just (get #id source))
-        |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
-        |> fetch
+    alerts <-
+        query @Alert
+            |> filterWhere (#sourceId, Just (get #id source))
+            |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
+            |> fetch
     let tracked = [(triggerId, alert) | alert <- alerts, Just triggerId <- [triggerIdOf alert]]
     unless (null tracked) do
         result <- Zabbix.triggerStateGet source.baseUrl token (nub (map fst tracked))
@@ -288,10 +304,13 @@ resolveFromProblem alert resolvedAt = do
     updated <- transitionAlert now Resolved alert.env alert.environmentId alert.hostId alert.serviceId suppressedNow alert
     when (updated.status == "resolved") do
         let alertId = get #id alert
-        void (sqlExecTyped [typedSql|
+        void
+            ( sqlExecTyped
+                [typedSql|
             UPDATE alerts SET resolved_at = ${resolvedAt}
             WHERE id = ${alertId} AND status = 'resolved' AND resolved_at > ${resolvedAt}
-        |])
+        |]
+            )
     pure updated
 
 -- | Just resolvedAt when the alert should be locally resolved; Nothing when
@@ -335,7 +354,7 @@ absentResolveMinAgeSeconds = configInt 86400 "absentResolveMinAgeSeconds"
 eventPageLimit :: Source -> Int
 eventPageLimit source = max 1 (configInt 1000 "eventPageLimit" source)
 
-configVal :: Aeson.FromJSON a => a -> Text -> Source -> a
+configVal :: (Aeson.FromJSON a) => a -> Text -> Source -> a
 configVal def key source = fromMaybe def (parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: Key.fromText key)) source.config)
 
 configInt :: Int -> Text -> Source -> Int

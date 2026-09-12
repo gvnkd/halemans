@@ -1,11 +1,11 @@
 module Test.EscalationSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import Data.Time.Format (parseTimeM, defaultTimeLocale)
+import Application.Pipeline.Escalation
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
-import Application.Pipeline.Escalation
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import IHP.Prelude
+import Test.Hspec
 
 utcTime :: String -> UTCTime
 utcTime s = fromMaybe (error ("bad timestamp: " <> cs s)) (parseTimeM True defaultTimeLocale "%Y-%m-%d %H:%M:%S" s)
@@ -23,10 +23,11 @@ spec :: Spec
 spec = describe "Application.Pipeline.Escalation" do
     describe "stepsFromJSON" do
         it "parses steps with team/user/unless_status" do
-            let json = Aeson.toJSON
-                    [ object ["after_seconds" .= (300 :: Int), "target_team_id" .= ("team-a" :: Text)]
-                    , object ["after_seconds" .= (600 :: Int), "target_user_id" .= ("user-b" :: Text), "unless_status" .= ("ack" :: Text)]
-                    ]
+            let json =
+                    Aeson.toJSON
+                        [ object ["after_seconds" .= (300 :: Int), "target_team_id" .= ("team-a" :: Text)]
+                        , object ["after_seconds" .= (600 :: Int), "target_user_id" .= ("user-b" :: Text), "unless_status" .= ("ack" :: Text)]
+                        ]
             stepsFromJSON json `shouldBe` steps
         it "drops malformed entries" do
             let json = Aeson.toJSON [object ["nope" .= (1 :: Int)], object ["after_seconds" .= (60 :: Int)]]

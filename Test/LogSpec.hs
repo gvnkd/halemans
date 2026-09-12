@@ -1,8 +1,8 @@
 module Test.LogSpec (spec) where
 
-import Test.Hspec
-import IHP.Prelude
 import Application.Service.Log (LogLevel (..), parseLogLevel)
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Log" do

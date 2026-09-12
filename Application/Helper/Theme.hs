@@ -1,14 +1,14 @@
-module Application.Helper.Theme
-( themes
-, isValidTheme
-, themeFromSettings
-, bsTheme
+module Application.Helper.Theme (
+    themes,
+    isValidTheme,
+    themeFromSettings,
+    bsTheme,
 ) where
 
-import IHP.Prelude
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
+import IHP.Prelude
 
 -- Theme packs (design_docs/milestone_3.md §7): CSS-variable packs switched
 -- via data-theme on <html>; the chosen pack persists in users.settings.theme.

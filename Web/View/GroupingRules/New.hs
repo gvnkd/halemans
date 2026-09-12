@@ -1,10 +1,12 @@
 module Web.View.GroupingRules.New where
+
 import Web.View.Prelude
 
 data NewView = NewView
 
 instance View NewView where
-    html NewView = [hsx|
+    html NewView =
+        [hsx|
         <h1>New grouping rule</h1>
         <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form" class="maxw-600">
             {groupingRuleFormFields "" 0 True "" "" ""}
@@ -15,7 +17,8 @@ instance View NewView where
 -- Shared with Edit. Text fields are the match-editor's comma-separated
 -- inputs (Application.Helper.RuleForm).
 groupingRuleFormFields :: Text -> Int -> Bool -> Text -> Text -> Text -> Html
-groupingRuleFormFields name position enabled matchFields matchLabels groupKeyTemplate = [hsx|
+groupingRuleFormFields name position enabled matchFields matchLabels groupKeyTemplate =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Name</label>
         <input name="name" type="text" class="form-control" value={name} data-testid="rule-name" required="required"/>

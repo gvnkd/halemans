@@ -1,25 +1,25 @@
-module Application.Connector.Alertmanager
-( normalize
-, normalizeSeverity
-, AmSilence (..)
-, silencesGet
-, silenceCreate
-, silenceDelete
-, silenceCoversLabels
+module Application.Connector.Alertmanager (
+    normalize,
+    normalizeSeverity,
+    AmSilence (..),
+    silencesGet,
+    silenceCreate,
+    silenceDelete,
+    silenceCoversLabels,
 ) where
 
-import IHP.Prelude
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
+import qualified Application.Service.Http as Http
+import Control.Exception (SomeException, try)
+import Control.Lens ((&), (.~), (^.))
 import Data.Aeson
-import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.Vector as Vector
+import Data.Aeson.Types (parseMaybe)
 import Data.Time.Calendar (fromGregorian)
+import qualified Data.Vector as Vector
+import IHP.Prelude
 import qualified Network.Wreq as Wreq
-import qualified Application.Service.Http as Http
-import Control.Lens ((&), (^.), (.~))
-import Control.Exception (try, SomeException)
 
 -- Alertmanager webhook payload (v4):
 -- { "status": "firing", "externalURL": "...", "alerts": [ { "status",
@@ -46,28 +46,30 @@ toEvent externalUrl a@(Object _) = do
         -- alertmanager sends endsAt=0001-01-01 for still-firing alerts.
         status = if statusText == "resolved" && not (unknownEnd endsAt) then Resolved else Firing
         title = fromMaybe (fromMaybe "Alertmanager alert" (labelText "alertname")) (annotationText "summary")
-    Right NormalizedEvent
-        { fingerprint = "alertmanager:" <> fp
-        , externalId = Just fp
-        , status
-        , severity = normalizeSeverity (labelText "severity")
-        , title
-        , description = fromMaybe "" (annotationText "description")
-        , env = labelText "env"
-        , host = labelText "host"
-        , service = labelText "service"
-        , checkName = labelText "check" <|> labelText "alertname"
-        , labels
-        , annotations
-        , startedAt = lookupTime "startsAt" a
-        , sourceUrl = lookupText "generatorURL" a <|> externalUrl
-        }
+    Right
+        NormalizedEvent
+            { fingerprint = "alertmanager:" <> fp
+            , externalId = Just fp
+            , status
+            , severity = normalizeSeverity (labelText "severity")
+            , title
+            , description = fromMaybe "" (annotationText "description")
+            , env = labelText "env"
+            , host = labelText "host"
+            , service = labelText "service"
+            , checkName = labelText "check" <|> labelText "alertname"
+            , labels
+            , annotations
+            , startedAt = lookupTime "startsAt" a
+            , sourceUrl = lookupText "generatorURL" a <|> externalUrl
+            }
 toEvent _ _ = Left "alertmanager alert: not an object"
 
 unknownEnd :: Maybe UTCTime -> Bool
 unknownEnd Nothing = True
 unknownEnd (Just time) = time <= epoch
-    where epoch = UTCTime (fromGregorian 1 1 2) 0
+  where
+    epoch = UTCTime (fromGregorian 1 1 2) 0
 
 lookupKey :: Text -> Value -> Maybe Value
 lookupKey k (Object o) = KeyMap.lookup (Key.fromText k) o
@@ -98,12 +100,13 @@ normalizeSeverity = \case
 
 data AmSilence = AmSilence
     { silenceId :: Text
-    , silenceState :: Text          -- active | pending | expired
-    , silenceMatchers :: [(Text, Text)]  -- equality matchers only
+    , silenceState :: Text -- active | pending | expired
+    , silenceMatchers :: [(Text, Text)] -- equality matchers only
     , silenceCreatedBy :: Text
     , silenceComment :: Text
     , silenceUpdatedAt :: Maybe UTCTime
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance FromJSON AmSilence where
     parseJSON = withObject "AmSilence" \o -> do
@@ -121,11 +124,12 @@ instance FromJSON AmSilence where
         silenceCreatedBy <- o .:? "createdBy" .!= ""
         silenceComment <- o .:? "comment" .!= ""
         silenceUpdatedAt <- o .:? "updatedAt"
-        pure AmSilence { silenceMatchers = mapMaybe id parsedMatchers, .. }
+        pure AmSilence{silenceMatchers = mapMaybe id parsedMatchers, ..}
 
 amOpts :: Maybe Text -> Wreq.Options
-amOpts token = Wreq.defaults
-    & Wreq.header "Authorization" .~ maybe [] (\t -> ["Bearer " <> cs t]) token
+amOpts token =
+    Wreq.defaults
+        & Wreq.header "Authorization" .~ maybe [] (\t -> ["Bearer " <> cs t]) token
 
 silencesGet :: Text -> Maybe Text -> Text -> IO (Either Text [AmSilence])
 silencesGet baseUrl token apiPrefix = do
@@ -161,8 +165,8 @@ silenceCoversLabels :: AmSilence -> Value -> Bool
 silenceCoversLabels silence (Object labels) =
     silence.silenceState == "active"
         && all matcherMatches silence.silenceMatchers
-    where
-        matcherMatches (name, value) = case KeyMap.lookup (Key.fromText name) labels of
-            Just (String labelValue) -> labelValue == value
-            _ -> False
+  where
+    matcherMatches (name, value) = case KeyMap.lookup (Key.fromText name) labels of
+        Just (String labelValue) -> labelValue == value
+        _ -> False
 silenceCoversLabels _ _ = False

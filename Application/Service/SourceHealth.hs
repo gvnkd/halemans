@@ -1,16 +1,16 @@
 module Application.Service.SourceHealth where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest, publishAlertUpdate)
+import Control.Monad (void)
 import Data.Aeson (object, (.=))
-import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
-import Control.Monad (void)
+import Data.Aeson.Types (parseMaybe)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 
 -- Source-health alerting (design_docs/milestone_5.md §4): connector failures
 -- and webhook silence become ordinary alerts with fingerprint
@@ -41,7 +41,7 @@ jitteredBackoff seed intervalSeconds failures =
     let base = backoffSeconds intervalSeconds failures
         window = max 1 (base `div` 10)
         offset = fromIntegral (hashText seed `mod` fromIntegral (2 * window + 1)) - window
-    in max 1 (base + offset)
+     in max 1 (base + offset)
 
 hashText :: Text -> Integer
 hashText text = foldl' (\acc c -> (acc * 31 + fromIntegral (fromEnum c)) `mod` 1000003) 7 (cs text :: String)
@@ -74,35 +74,40 @@ recordFailureWith setBackoff source err = do
     now <- getCurrentTime
     let failures = source.consecutiveFailures + 1
         delay = jitteredBackoff (healthFingerprint (get #id source)) source.pollIntervalSeconds failures
-    updated <- source
-        |> set #consecutiveFailures failures
-        |> set #lastError (Just err)
-        |> set #nextPollAt (if setBackoff then Just (addUTCTime (fromIntegral delay) now) else Nothing)
-        |> updateRecord
-    maybeAlertId <- ingest updated NormalizedEvent
-        { fingerprint = healthFingerprint (get #id source)
-        , externalId = Nothing
-        , status = Firing
-        , severity = if failures >= escalateAfterFailures then "high" else "warning"
-        , title = "Source " <> source.name <> " unhealthy"
-        , description = err
-        , env = Just source.env
-        , host = Nothing
-        , service = Nothing
-        , checkName = Just "source_health"
-        , labels = object ["source" .= source.name, "kind" .= ("source_health" :: Text)]
-        , annotations = object []
-        , startedAt = Just now
-        , sourceUrl = Nothing
-        }
+    updated <-
+        source
+            |> set #consecutiveFailures failures
+            |> set #lastError (Just err)
+            |> set #nextPollAt (if setBackoff then Just (addUTCTime (fromIntegral delay) now) else Nothing)
+            |> updateRecord
+    maybeAlertId <-
+        ingest
+            updated
+            NormalizedEvent
+                { fingerprint = healthFingerprint (get #id source)
+                , externalId = Nothing
+                , status = Firing
+                , severity = if failures >= escalateAfterFailures then "high" else "warning"
+                , title = "Source " <> source.name <> " unhealthy"
+                , description = err
+                , env = Just source.env
+                , host = Nothing
+                , service = Nothing
+                , checkName = Just "source_health"
+                , labels = object ["source" .= source.name, "kind" .= ("source_health" :: Text)]
+                , annotations = object []
+                , startedAt = Just now
+                , sourceUrl = Nothing
+                }
     when (failures >= escalateAfterFailures) do
         forM_ maybeAlertId \alertId -> do
             alert <- fetch alertId
             when (alert.severity /= "high" && alert.status /= "closed") do
-                _ <- alert
-                    |> set #severity "high"
-                    |> set #updatedAt now
-                    |> updateRecord
+                _ <-
+                    alert
+                        |> set #severity "high"
+                        |> set #updatedAt now
+                        |> updateRecord
                 void do
                     newRecord @AlertEvent
                         |> set #alertId alertId
@@ -118,28 +123,31 @@ recordSuccess :: (?modelContext :: ModelContext) => Source -> IO ()
 recordSuccess source =
     when (source.consecutiveFailures > 0 || isJust source.nextPollAt || isJust source.lastError) do
         now <- getCurrentTime
-        updated <- source
-            |> set #consecutiveFailures 0
-            |> set #lastError Nothing
-            |> set #nextPollAt Nothing
-            |> updateRecord
+        updated <-
+            source
+                |> set #consecutiveFailures 0
+                |> set #lastError Nothing
+                |> set #nextPollAt Nothing
+                |> updateRecord
         void do
-            ingest updated NormalizedEvent
-                { fingerprint = healthFingerprint (get #id source)
-                , externalId = Nothing
-                , status = Resolved
-                , severity = "warning"
-                , title = "Source " <> source.name <> " unhealthy"
-                , description = "source recovered"
-                , env = Just source.env
-                , host = Nothing
-                , service = Nothing
-                , checkName = Just "source_health"
-                , labels = object ["source" .= source.name, "kind" .= ("source_health" :: Text)]
-                , annotations = object []
-                , startedAt = Just now
-                , sourceUrl = Nothing
-                }
+            ingest
+                updated
+                NormalizedEvent
+                    { fingerprint = healthFingerprint (get #id source)
+                    , externalId = Nothing
+                    , status = Resolved
+                    , severity = "warning"
+                    , title = "Source " <> source.name <> " unhealthy"
+                    , description = "source recovered"
+                    , env = Just source.env
+                    , host = Nothing
+                    , service = Nothing
+                    , checkName = Just "source_health"
+                    , labels = object ["source" .= source.name, "kind" .= ("source_health" :: Text)]
+                    , annotations = object []
+                    , startedAt = Just now
+                    , sourceUrl = Nothing
+                    }
 
 -- Reconcile-path health (halemans:source-reconcile:<source_id>): the reverse
 -- state sync (trigger.get for zabbix) can fail while polling itself is fine
@@ -153,46 +161,53 @@ reconcileFingerprint sourceId = "halemans:source-reconcile:" <> tshow sourceId
 recordReconcileFailure :: (?modelContext :: ModelContext) => Source -> Text -> IO ()
 recordReconcileFailure source err = do
     now <- getCurrentTime
-    void $ ingest source NormalizedEvent
-        { fingerprint = reconcileFingerprint (get #id source)
-        , externalId = Nothing
-        , status = Firing
-        , severity = "warning"
-        , title = "Source " <> source.name <> " state reconcile failing"
-        , description = err
-        , env = Just source.env
-        , host = Nothing
-        , service = Nothing
-        , checkName = Just "source_reconcile"
-        , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
-        , annotations = object []
-        , startedAt = Just now
-        , sourceUrl = Nothing
-        }
+    void $
+        ingest
+            source
+            NormalizedEvent
+                { fingerprint = reconcileFingerprint (get #id source)
+                , externalId = Nothing
+                , status = Firing
+                , severity = "warning"
+                , title = "Source " <> source.name <> " state reconcile failing"
+                , description = err
+                , env = Just source.env
+                , host = Nothing
+                , service = Nothing
+                , checkName = Just "source_reconcile"
+                , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
+                , annotations = object []
+                , startedAt = Just now
+                , sourceUrl = Nothing
+                }
 
 -- | No-op unless a reconcile alert is currently open (avoids a write per
 -- successful cycle).
 recordReconcileSuccess :: (?modelContext :: ModelContext) => Source -> IO ()
 recordReconcileSuccess source = do
-    open <- query @Alert
-        |> filterWhere (#fingerprint, reconcileFingerprint (get #id source))
-        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
-        |> fetchOneOrNothing
+    open <-
+        query @Alert
+            |> filterWhere (#fingerprint, reconcileFingerprint (get #id source))
+            |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+            |> fetchOneOrNothing
     forM_ open \_ -> do
         now <- getCurrentTime
-        void $ ingest source NormalizedEvent
-            { fingerprint = reconcileFingerprint (get #id source)
-            , externalId = Nothing
-            , status = Resolved
-            , severity = "warning"
-            , title = "Source " <> source.name <> " state reconcile failing"
-            , description = "reconcile recovered"
-            , env = Just source.env
-            , host = Nothing
-            , service = Nothing
-            , checkName = Just "source_reconcile"
-            , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
-            , annotations = object []
-            , startedAt = Just now
-            , sourceUrl = Nothing
-            }
+        void $
+            ingest
+                source
+                NormalizedEvent
+                    { fingerprint = reconcileFingerprint (get #id source)
+                    , externalId = Nothing
+                    , status = Resolved
+                    , severity = "warning"
+                    , title = "Source " <> source.name <> " state reconcile failing"
+                    , description = "reconcile recovered"
+                    , env = Just source.env
+                    , host = Nothing
+                    , service = Nothing
+                    , checkName = Just "source_reconcile"
+                    , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
+                    , annotations = object []
+                    , startedAt = Just now
+                    , sourceUrl = Nothing
+                    }

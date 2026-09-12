@@ -1,11 +1,12 @@
 module Web.View.Alerts.Index where
-import Web.View.Prelude
-import Web.View.Fragments (AlertsTable (..), AlertsTableSorting (..), AlertsTableContent (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
-import Application.Service.AlertList (AlertListFilters (..), alertFiltersToValue)
+
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
-import Network.HTTP.Types.URI (renderQuery)
+import Application.Service.AlertList (AlertListFilters (..), alertFiltersToValue)
 import qualified Data.Aeson as Aeson
 import qualified Data.List as List
+import Network.HTTP.Types.URI (renderQuery)
+import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), AlertsTableSorting (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
+import Web.View.Prelude
 
 data IndexView = IndexView
     { alerts :: [Alert]
@@ -15,7 +16,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Alerts</h1>
         {severityCounts}
         <form method="GET" action={AlertsAction} class="row g-2 mb-3" data-testid="alerts-filters">
@@ -32,56 +34,62 @@ instance View IndexView where
         </form>
         {table}
     |]
-        where
-            table = alertsTableHtml AlertsTable
-                { atTestId = Just "alerts-table"
-                , atTbodyId = "alerts-tbody"
-                , atLiveScope = Just "alerts"
-                -- Canonical filter state for the WS subscription: the URL can
-                -- be stale after turbolinks followed the prefs redirect
-                -- without a pushState, so the client reads THESE, not
-                -- location.search.
-                , atLiveFilters = Just liveFilters
-                , atTableClass = "table"
-                , atSorting = Just AlertsTableSorting
-                    { atsSort = filters.alfSort
-                    , atsDir = filters.alfDir
-                    , atsUrl = sortUrl
+      where
+        table =
+            alertsTableHtml
+                AlertsTable
+                    { atTestId = Just "alerts-table"
+                    , atTbodyId = "alerts-tbody"
+                    , atLiveScope = Just "alerts"
+                    , -- Canonical filter state for the WS subscription: the URL can
+                      -- be stale after turbolinks followed the prefs redirect
+                      -- without a pushState, so the client reads THESE, not
+                      -- location.search.
+                      atLiveFilters = Just liveFilters
+                    , atTableClass = "table"
+                    , atSorting =
+                        Just
+                            AlertsTableSorting
+                                { atsSort = filters.alfSort
+                                , atsDir = filters.alfDir
+                                , atsUrl = sortUrl
+                                }
+                    , atContent = FlatAlerts alerts
                     }
-                , atContent = FlatAlerts alerts
-                }
-            liveFilters :: Text
-            liveFilters = cs (Aeson.encode (alertFiltersToValue filters))
-            severities = ["critical", "high", "warning", "info"]
-            statuses = ["firing", "ack", "resolved", "stalled", "closed"]
-            resetUrl :: Text
-            resetUrl = pathTo AlertsAction <> "?reset=1"
-            hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
-            serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
-            titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
+        liveFilters :: Text
+        liveFilters = cs (Aeson.encode (alertFiltersToValue filters))
+        severities = ["critical", "high", "warning", "info"]
+        statuses = ["firing", "ack", "resolved", "stalled", "closed"]
+        resetUrl :: Text
+        resetUrl = pathTo AlertsAction <> "?reset=1"
+        hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
+        serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
+        titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
 
-            severityCounts = [hsx|
+        severityCounts =
+            [hsx|
                 <div class="mb-2" data-testid="severity-counts">
                     {forEach severities countBadge}
                 </div>
             |]
-            countBadge severity = [hsx|
+        countBadge severity =
+            [hsx|
                 <span class={"badge severity-badge severity-" <> severity <> " me-1"} data-testid={"count-" <> severity}>{severity} {countFor severity}</span>
             |]
-            countFor severity = fromMaybe 0 (lookup severity counts)
+        countFor severity = fromMaybe 0 (lookup severity counts)
 
-            sortUrl :: Text -> Text
-            sortUrl column = pathTo AlertsAction <> cs (renderQuery True (queryItems column))
-                where
-                    queryItems col = baseItems filters { alfSort = col, alfDir = nextSortDir filters.alfSort filters.alfDir col }
+        sortUrl :: Text -> Text
+        sortUrl column = pathTo AlertsAction <> cs (renderQuery True (queryItems column))
+          where
+            queryItems col = baseItems filters{alfSort = col, alfDir = nextSortDir filters.alfSort filters.alfDir col}
 
 baseItems :: AlertListFilters -> [(ByteString, Maybe ByteString)]
 baseItems f =
     map (\value -> ("severity", Just (cs value))) f.alfSeverities
-    ++ map (\value -> ("status", Just (cs value))) f.alfStatuses
-    ++ map (\value -> ("env", Just (cs value))) f.alfEnvs
-    ++ maybe [] (\value -> [("host", Just (cs value))]) f.alfHost
-    ++ maybe [] (\value -> [("service", Just (cs value))]) f.alfService
-    ++ maybe [] (\value -> [("q", Just (cs value))]) f.alfTitle
-    ++ maybe [] (\value -> [("group", Just (cs value))]) f.alfGroup
-    ++ [ ("sort", Just (cs f.alfSort)), ("dir", Just (cs f.alfDir)) ]
+        ++ map (\value -> ("status", Just (cs value))) f.alfStatuses
+        ++ map (\value -> ("env", Just (cs value))) f.alfEnvs
+        ++ maybe [] (\value -> [("host", Just (cs value))]) f.alfHost
+        ++ maybe [] (\value -> [("service", Just (cs value))]) f.alfService
+        ++ maybe [] (\value -> [("q", Just (cs value))]) f.alfTitle
+        ++ maybe [] (\value -> [("group", Just (cs value))]) f.alfGroup
+        ++ [("sort", Just (cs f.alfSort)), ("dir", Just (cs f.alfDir))]

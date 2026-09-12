@@ -1,11 +1,13 @@
 module Web.View.AssetsAdmin.New where
-import Web.View.Prelude
+
 import Web.View.AssetsAdmin.Form (assetsConfigFormFields)
+import Web.View.Prelude
 
 data NewView = NewView
 
 instance View NewView where
-    html NewView = [hsx|
+    html NewView =
+        [hsx|
         <h1>New Assets info source</h1>
         <p class="text-muted">
             Token env holds the NAME of the environment variable containing the bearer token, not the token itself.

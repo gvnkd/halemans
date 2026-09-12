@@ -1,8 +1,9 @@
 module Web.View.Admin.Index where
-import Web.View.Prelude
-import Web.View.Fragments (inlinePostFormHtml)
-import Application.Service.JobMetrics (JobTypeMetrics (..), FailedJobRow (..))
+
+import Application.Service.JobMetrics (FailedJobRow (..), JobTypeMetrics (..))
 import qualified Data.Text as Text
+import Web.View.Fragments (inlinePostFormHtml)
+import Web.View.Prelude
 
 data IndexView = IndexView
     { metrics :: [JobTypeMetrics]
@@ -11,7 +12,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Admin</h1>
         <h2>Job metrics (last 24h)</h2>
         <table class="table" data-testid="job-metrics-table">
@@ -68,7 +70,7 @@ renderMetricsRow row =
     let failed = show row.failed :: Text
         retried = show row.retried :: Text
         succeeded = show row.succeeded :: Text
-    in [hsx|
+     in [hsx|
     <tr data-testid="job-metrics-row">
         <td>{row.jobType}</td>
         <td>{succeeded}</td>
@@ -80,7 +82,7 @@ renderMetricsRow row =
 renderFailureRow :: FailedJobRow -> Html
 renderFailureRow row =
     let lastError = fromMaybe "" row.failedJobError
-    in [hsx|
+     in [hsx|
     <tr data-testid="job-failure-row">
         <td>{row.failedJobType}</td>
         <td>{row.failedJobId}</td>
@@ -94,7 +96,7 @@ renderApiTokenRow (token, ownerEmail) =
     let scopes :: Text
         scopes = Text.intercalate ", " token.scopes
         revoked = isJust token.revokedAt
-    in [hsx|
+     in [hsx|
     <tr data-testid="admin-api-token-row">
         <td>{ownerEmail}</td>
         <td>{token.name}</td>
@@ -104,7 +106,7 @@ renderApiTokenRow (token, ownerEmail) =
         <td>{revokeCell revoked}</td>
     </tr>
 |]
-    where
-        revokeCell revoked
-            | revoked = [hsx|<span class="badge bg-secondary">revoked</span>|]
-            | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) "Revoke" "btn btn-sm btn-outline-danger" (Just "admin-api-token-revoke") False
+  where
+    revokeCell revoked
+        | revoked = [hsx|<span class="badge bg-secondary">revoked</span>|]
+        | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) "Revoke" "btn btn-sm btn-outline-danger" (Just "admin-api-token-revoke") False

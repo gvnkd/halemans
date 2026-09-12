@@ -1,18 +1,18 @@
-module Application.Service.Assets.Icons
-( iconForObject
-, absoluteIconUrl
+module Application.Service.Assets.Icons (
+    iconForObject,
+    absoluteIconUrl,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetchOneOrNothing)
-import Generated.Types
+import Application.Service.Assets
+import Control.Exception (SomeException, try)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple.Types (Binary (..))
-import Control.Exception (try, SomeException)
-import Application.Service.Assets
+import Generated.Types
+import IHP.Fetch (fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 
 -- Server-side icon/avatar image cache: the card renders <img> against the
 -- app (AssetsIconsController), never against the Jira origin, so browsers
@@ -30,8 +30,8 @@ absoluteIconUrl config iconUrl
 
 jiraOrigin :: AssetsConfig -> Text
 jiraOrigin config = fromMaybe base (Text.stripSuffix "/rest/assets/latest" base)
-    where
-        base = Text.dropWhileEnd (== '/') config.baseUrl
+  where
+    base = Text.dropWhileEnd (== '/') config.baseUrl
 
 -- (content type, body) for the object's icon, from the cache or upstream.
 -- Nothing when the object has no icon or the fetch fails (card then renders
@@ -51,10 +51,11 @@ iconForObject object
                     Nothing -> fetchAndCache configRecord url
 
 cachedIcon :: (?modelContext :: ModelContext) => AssetsConfig -> Text -> IO (Maybe AssetsIconCache)
-cachedIcon config url = query @AssetsIconCache
-    |> filterWhere (#configId, get #id config)
-    |> filterWhere (#url, url)
-    |> fetchOneOrNothing
+cachedIcon config url =
+    query @AssetsIconCache
+        |> filterWhere (#configId, get #id config)
+        |> filterWhere (#url, url)
+        |> fetchOneOrNothing
 
 fetchAndCache :: (?modelContext :: ModelContext) => AssetsConfig -> Text -> IO (Maybe (Text, BL.ByteString))
 fetchAndCache config url = do
@@ -69,12 +70,13 @@ fetchAndCache config url = do
                     -- Concurrent first views race the insert; the unique
                     -- (config_id, url) index keeps one copy, loser re-reads.
                     _ <- try @SomeException do
-                        _ <- newRecord @AssetsIconCache
-                            |> set #configId (get #id config)
-                            |> set #url url
-                            |> set #contentType (normalizeContentType contentType)
-                            |> set #body (Binary (BL.toStrict body))
-                            |> createRecord
+                        _ <-
+                            newRecord @AssetsIconCache
+                                |> set #configId (get #id config)
+                                |> set #url url
+                                |> set #contentType (normalizeContentType contentType)
+                                |> set #body (Binary (BL.toStrict body))
+                                |> createRecord
                         pure ()
                     pure (Just (normalizeContentType contentType, body))
 
@@ -82,5 +84,5 @@ normalizeContentType :: Text -> Text
 normalizeContentType contentType
     | Text.null stripped = "image/png"
     | otherwise = stripped
-    where
-        stripped = Text.strip (Text.takeWhile (/= ';') contentType)
+  where
+    stripped = Text.strip (Text.takeWhile (/= ';') contentType)

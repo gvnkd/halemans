@@ -1,17 +1,17 @@
-module Application.Helper.FilterPrefs
-( filterPrefsFor
-, saveFilterPrefs
-, clearFilterPrefs
-, hasQueryKeys
+module Application.Helper.FilterPrefs (
+    filterPrefsFor,
+    saveFilterPrefs,
+    clearFilterPrefs,
+    hasQueryKeys,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport (ModelContext, updateRecord)
-import Generated.Types
+import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import Control.Monad (void)
+import Generated.Types
+import IHP.ModelSupport (ModelContext, updateRecord)
+import IHP.Prelude
 import Network.Wai (Request, queryString)
 
 -- Per-user persisted filter state lives under settings.filters.<name>
@@ -39,11 +39,14 @@ clearFilterPrefs user name = void do
 withFilters :: (KeyMap.KeyMap Aeson.Value -> KeyMap.KeyMap Aeson.Value) -> Aeson.Value -> Aeson.Value
 withFilters f settings =
     let (outer, filters) = case settings of
-            Aeson.Object o -> (o, case KeyMap.lookup "filters" o of
-                Just (Aeson.Object existing) -> existing
-                _ -> KeyMap.empty)
+            Aeson.Object o ->
+                ( o
+                , case KeyMap.lookup "filters" o of
+                    Just (Aeson.Object existing) -> existing
+                    _ -> KeyMap.empty
+                )
             _ -> (KeyMap.empty, KeyMap.empty)
-    in Aeson.Object (KeyMap.insert "filters" (Aeson.Object (f filters)) outer)
+     in Aeson.Object (KeyMap.insert "filters" (Aeson.Object (f filters)) outer)
 
 -- Distinguishes an explicit filter form submission (all known keys are
 -- always submitted, even empty) from a bare page visit (no query string).

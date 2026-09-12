@@ -1,23 +1,23 @@
-module Application.Service.Assets.Cache
-( lookupAssetsForAlert
-, refreshAssetsForAlert
-, linkedAssetsForAlert
-, queryTemplate
-, negativeTtlSeconds
-, missKey
+module Application.Service.Assets.Cache (
+    lookupAssetsForAlert,
+    refreshAssetsForAlert,
+    linkedAssetsForAlert,
+    queryTemplate,
+    negativeTtlSeconds,
+    missKey,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types
+import Application.Service.Assets
+import Application.Service.Assets.Aql
+import Application.Service.Assets.Types (AssetObject (..), Avatar (..), ObjectAttribute (..), ObjectAttributeValue (..), ObjectListResult (..), StatusType (..), flattenAttributes)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Text as Text
-import Application.Service.Assets
-import Application.Service.Assets.Aql
-import Application.Service.Assets.Types (AssetObject (..), ObjectListResult (..), Avatar (..), ObjectAttribute (..), ObjectAttributeValue (..), StatusType (..), flattenAttributes)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 
 -- App-side asset cache + alert linkage (design_docs/milestone_8.md §4). The
 -- EnrichAlertJob calls lookupAssetsForAlert as a third, independent soft-fail
@@ -52,25 +52,28 @@ resolveAssets :: (?modelContext :: ModelContext) => Bool -> Alert -> IO (Either 
 resolveAssets force alert = case subjectOf alert of
     Nothing -> pure (Right ())
     Just subject -> do
-        configs <- query @AssetsConfig
-            |> filterWhere (#enabled, True)
-            |> fetch
+        configs <-
+            query @AssetsConfig
+                |> filterWhere (#enabled, True)
+                |> fetch
         results <- forM configs \config -> lookupWithConfig force alert config subject
         pure case [err | Left err <- results] of
             [] -> Right ()
-            (err:_) -> Left err
+            (err : _) -> Left err
 
 lookupWithConfig :: (?modelContext :: ModelContext) => Bool -> Alert -> AssetsConfig -> Text -> IO (Either Text ())
 lookupWithConfig force alert config subject = do
     now <- getCurrentTime
     let cutoff = addUTCTime (negate negativeTtlSeconds) now
-    freshMiss <- if force
-        then pure Nothing
-        else query @AssetAlertLink
-            |> filterWhere (#matchedBy, missKey (get #id config) subject)
-            |> filterWhereSql (#createdAt, ">= " <> sqlQuote cutoff)
-            |> limit 1
-            |> fetchOneOrNothing
+    freshMiss <-
+        if force
+            then pure Nothing
+            else
+                query @AssetAlertLink
+                    |> filterWhere (#matchedBy, missKey (get #id config) subject)
+                    |> filterWhereSql (#createdAt, ">= " <> sqlQuote cutoff)
+                    |> limit 1
+                    |> fetchOneOrNothing
     if isJust freshMiss
         then pure (Right ())
         else do
@@ -84,18 +87,19 @@ lookupWithConfig force alert config subject = do
                         Left err -> pure (Left (describeError err))
                         Right page
                             | null page.listEntries -> do
-                                _ <- newRecord @AssetAlertLink
-                                    |> set #alertId (get #id alert)
-                                    |> set #assetsObjectId Nothing
-                                    |> set #matchedBy (missKey (get #id config) subject)
-                                    |> createRecord
+                                _ <-
+                                    newRecord @AssetAlertLink
+                                        |> set #alertId (get #id alert)
+                                        |> set #assetsObjectId Nothing
+                                        |> set #matchedBy (missKey (get #id config) subject)
+                                        |> createRecord
                                 pure (Right ())
                             | otherwise -> do
                                 linked <- forM (take topN page.listEntries) \entry ->
                                     linkEntry client config alert subject entry.objectId
                                 pure case [err | Left err <- linked] of
                                     [] -> Right ()
-                                    (err:_) -> Left err
+                                    (err : _) -> Left err
 
 -- The config template is authoritative; when empty fall back to the default
 -- schema + Name like (milestone_8.md §2 example).
@@ -113,17 +117,19 @@ linkEntry client config alert subject objectId = do
         Left err -> pure (Left (describeError err))
         Right object -> do
             cached <- upsertObject config client object
-            existing <- query @AssetAlertLink
-                |> filterWhere (#alertId, get #id alert)
-                |> filterWhere (#assetsObjectId, Just (get #id cached))
-                |> limit 1
-                |> fetchOneOrNothing
+            existing <-
+                query @AssetAlertLink
+                    |> filterWhere (#alertId, get #id alert)
+                    |> filterWhere (#assetsObjectId, Just (get #id cached))
+                    |> limit 1
+                    |> fetchOneOrNothing
             when (isNothing existing) do
-                _ <- newRecord @AssetAlertLink
-                    |> set #alertId (get #id alert)
-                    |> set #assetsObjectId (Just (get #id cached))
-                    |> set #matchedBy subject
-                    |> createRecord
+                _ <-
+                    newRecord @AssetAlertLink
+                        |> set #alertId (get #id alert)
+                        |> set #assetsObjectId (Just (get #id cached))
+                        |> set #matchedBy subject
+                        |> createRecord
                 pure ()
             pure (Right ())
 
@@ -131,17 +137,21 @@ upsertObject :: (?modelContext :: ModelContext) => AssetsConfig -> AssetsClient 
 upsertObject config client object = do
     now <- getCurrentTime
     let wireObjectId = object.objectId
-    existing <- query @AssetsObject
-        |> filterWhere (#configId, get #id config)
-        |> filterWhere (#objectId, fromIntegral wireObjectId)
-        |> fetchOneOrNothing
+    existing <-
+        query @AssetsObject
+            |> filterWhere (#configId, get #id config)
+            |> filterWhere (#objectId, fromIntegral wireObjectId)
+            |> fetchOneOrNothing
     -- Status badge colour comes from the statustype category (§6); the
     -- category is cached next to the flattened attributes so the card never
     -- calls Assets at render time. Failure to fetch it is non-fatal.
-    let statusId = listToMaybe
-            [ sid | attribute <- object.objectAttributes
-                  , value <- attribute.attrValues
-                  , Just sid <- [value.valueStatusId] ]
+    let statusId =
+            listToMaybe
+                [ sid
+                | attribute <- object.objectAttributes
+                , value <- attribute.attrValues
+                , Just sid <- [value.valueStatusId]
+                ]
     statusCategory <- case statusId of
         Nothing -> pure Nothing
         Just sid -> do
@@ -149,17 +159,19 @@ upsertObject config client object = do
             pure case result of
                 Right resolved -> Just resolved.statusTypeCategory
                 Left _ -> Nothing
-    let flattened = flattenAttributes object.objectAttributes
-            ++ [("StatusCategory", tshow category) | Just category <- [statusCategory]]
+    let flattened =
+            flattenAttributes object.objectAttributes
+                ++ [("StatusCategory", tshow category) | Just category <- [statusCategory]]
         attributesJson = Aeson.object [Key.fromText name Aeson..= value | (name, value) <- flattened]
-    let applyFields record = record
-            |> set #objectKey object.objectKey
-            |> set #label_ object.objectLabel
-            |> set #objectTypeName object.objectTypeName
-            |> set #attributes attributesJson
-            |> set #iconUrl (maybe "" (.avatarUrl16) object.objectAvatar)
-            |> set #sourceUrl (deepLink client object.objectKey)
-            |> set #fetchedAt now
+    let applyFields record =
+            record
+                |> set #objectKey object.objectKey
+                |> set #label_ object.objectLabel
+                |> set #objectTypeName object.objectTypeName
+                |> set #attributes attributesJson
+                |> set #iconUrl (maybe "" (.avatarUrl16) object.objectAvatar)
+                |> set #sourceUrl (deepLink client object.objectKey)
+                |> set #fetchedAt now
     case existing of
         Just row -> updateRecord (applyFields row)
         Nothing -> createRecord do
@@ -173,17 +185,19 @@ upsertObject config client object = do
 deepLink :: AssetsClient -> Text -> Text
 deepLink client objectKey =
     Text.dropWhileEnd (== '/') (fromMaybe client.clientBaseUrl (Text.stripSuffix "/rest/assets/latest" client.clientBaseUrl))
-        <> "/secure/insight/assets/" <> objectKey
+        <> "/secure/insight/assets/"
+        <> objectKey
 
 -- All cached assets linked to an alert, freshest first (card panel + LLM
 -- prompt excerpt read this).
 linkedAssetsForAlert :: (?modelContext :: ModelContext) => Alert -> IO [(AssetAlertLink, AssetsObject)]
 linkedAssetsForAlert alert = do
-    links <- query @AssetAlertLink
-        |> filterWhere (#alertId, get #id alert)
-        |> filterWhereSql (#assetsObjectId, "IS NOT NULL")
-        |> orderByAsc #createdAt
-        |> fetch
+    links <-
+        query @AssetAlertLink
+            |> filterWhere (#alertId, get #id alert)
+            |> filterWhereSql (#assetsObjectId, "IS NOT NULL")
+            |> orderByAsc #createdAt
+            |> fetch
     catMaybes <$> forM links \link -> case link.assetsObjectId of
         Nothing -> pure Nothing
         Just objectId -> do

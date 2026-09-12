@@ -1,25 +1,24 @@
 module Application.Job.EnrichAlert where
 
-import IHP.Prelude
-import IHP.FrameworkConfig (FrameworkConfig)
-import IHP.Job.Types
-import IHP.ModelSupport
-import IHP.Fetch (fetch)
-import Generated.Types
-import qualified Application.Service.Cmdb.DbConfig as Cmdb
-import qualified Application.Service.Jira.DbConfig as Jira
-import qualified Application.Service.Jira.Related as Related
-import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
+import Application.Helper.Ingest (publishAlertUpdate)
 import qualified Application.Service.Assets.Cache as AssetsCache
+import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import qualified Application.Service.Facets as Facets
 import qualified Application.Service.Groups as Groups
 import qualified Application.Service.Http as Http
-import Application.Helper.Ingest (publishAlertUpdate)
-import Data.Aeson (object, (.=))
-import Control.Exception (try, SomeException)
+import qualified Application.Service.Jira.DbConfig as Jira
+import qualified Application.Service.Jira.Related as Related
+import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
+import Control.Exception (SomeException, try)
 import Control.Monad (void)
+import Data.Aeson (object, (.=))
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.FrameworkConfig (FrameworkConfig)
+import IHP.Job.Types
+import IHP.ModelSupport
+import IHP.Prelude
 import IHP.QueryBuilder
-import IHP.Fetch (fetchOneOrNothing)
 
 -- Enrichment pipeline step 8 (design_docs/milestone_3.md §3): on new alert
 -- only. CMDB + Jira lookups soft-fail independently — Confluence down still
@@ -77,11 +76,12 @@ instance Job EnrichAlertJob where
         -- attempts counter carries forward into the fresh row so the budget
         -- actually exhausts (a fresh row's attempts_count starts at 0).
         let retryableFailures = filter (\(_, err) -> not (Http.isDeterministicClientError err)) allFailures
-        retryAllowed <- if null retryableFailures
-            then pure False
-            else do
-                rules <- AutoAnalyze.currentRules
-                pure (alert.status `elem` rules.aaStatuses)
+        retryAllowed <-
+            if null retryableFailures
+                then pure False
+                else do
+                    rules <- AutoAnalyze.currentRules
+                    pure (alert.status `elem` rules.aaStatuses)
         when (retryAllowed && job.attemptsCount < 2) do
             now <- getCurrentTime
             void do
@@ -116,17 +116,19 @@ retriggerMarker = "enrichment_retrigger"
 
 maybeRetriggerAnalysis :: (?modelContext :: ModelContext) => Alert -> UTCTime -> IO ()
 maybeRetriggerAnalysis alert startedAt = do
-    doneBefore <- query @LlmAnalysis
-        |> filterWhere (#alertId, get #id alert)
-        |> filterWhere (#status, "done" :: Text)
-        |> filterWhereSql (#createdAt, "< " <> sqlQuote startedAt)
-        |> limit 1
-        |> fetchOneOrNothing
-    alreadyRetriggered <- query @LlmAnalysis
-        |> filterWhere (#alertId, get #id alert)
-        |> filterWhere (#errorMessage, Just retriggerMarker)
-        |> limit 1
-        |> fetchOneOrNothing
+    doneBefore <-
+        query @LlmAnalysis
+            |> filterWhere (#alertId, get #id alert)
+            |> filterWhere (#status, "done" :: Text)
+            |> filterWhereSql (#createdAt, "< " <> sqlQuote startedAt)
+            |> limit 1
+            |> fetchOneOrNothing
+    alreadyRetriggered <-
+        query @LlmAnalysis
+            |> filterWhere (#alertId, get #id alert)
+            |> filterWhere (#errorMessage, Just retriggerMarker)
+            |> limit 1
+            |> fetchOneOrNothing
     when (isJust doneBefore && isNothing alreadyRetriggered) do
         -- Auto-analysis gate (milestone 10 §5): the alert may have resolved
         -- or stalled between ingest and this enrichment run — re-analysis
@@ -134,10 +136,11 @@ maybeRetriggerAnalysis alert startedAt = do
         autoAnalyze <- AutoAnalyze.autoAnalyzeAllowed alert
         when autoAnalyze do
             void do
-                analysis <- newRecord @LlmAnalysis
-                    |> set #alertId (get #id alert)
-                    |> set #errorMessage (Just retriggerMarker)
-                    |> createRecord
+                analysis <-
+                    newRecord @LlmAnalysis
+                        |> set #alertId (get #id alert)
+                        |> set #errorMessage (Just retriggerMarker)
+                        |> createRecord
                 void do
                     newRecord @LlmAnalysisJob
                         |> set #analysisId (get #id analysis)

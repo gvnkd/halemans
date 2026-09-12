@@ -1,8 +1,8 @@
 module Web.Controller.Live where
 
-import Web.Controller.Prelude
+import Application.Service.Live (ensureBroadcaster, liveBroadcastLoop)
 import IHP.WebSocket
-import Application.Service.Live (liveBroadcastLoop, ensureBroadcaster)
+import Web.Controller.Prelude
 
 -- /ws live updates (milestone_1.md §7). Session-cookie authenticated via the
 -- auth middleware; unauthenticated connects are rejected with a close frame.

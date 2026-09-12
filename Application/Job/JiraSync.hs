@@ -1,12 +1,12 @@
 module Application.Job.JiraSync where
 
-import IHP.Prelude
+import Application.Service.Jira.DbConfig (syncOpenLinks)
+import Generated.Types
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.Job.Types
 import IHP.ModelSupport
+import IHP.Prelude
 import IHP.TypedSql (sqlExecTyped, typedSql)
-import Generated.Types
-import Application.Service.Jira.DbConfig (syncOpenLinks)
 
 -- Periodic Jira status refresh (design_docs/milestone_3.md §5): every 5 min,
 -- refresh summary/status of links whose alert is not closed.
@@ -16,11 +16,14 @@ instance Job JiraSyncJob where
         _ <- syncOpenLinks
 
         now <- getCurrentTime
-        next <- newRecord @JiraSyncJob
-            |> set #runAt (addUTCTime 300 now)
-            |> createRecord
+        next <-
+            newRecord @JiraSyncJob
+                |> set #runAt (addUTCTime 300 now)
+                |> createRecord
         let nextId = get #id next
-        _ <- sqlExecTyped [typedSql|
+        _ <-
+            sqlExecTyped
+                [typedSql|
             DELETE FROM jira_sync_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}
         |]

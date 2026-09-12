@@ -1,6 +1,7 @@
 module Web.View.LlmAdmin.Queue where
-import Web.View.Prelude
+
 import Web.View.Fragments (inlinePostFormHtml)
+import Web.View.Prelude
 
 data QueueRow = QueueRow
     { analysisId :: Id LlmAnalysis
@@ -26,15 +27,18 @@ data QueueView = QueueView
     }
 
 instance View QueueView where
-    html QueueView { .. } = [hsx|
+    html QueueView{..} =
+        [hsx|
         <h1>LLM queue</h1>
         <p><a href={LlmAdminAction} class="btn btn-sm btn-outline-secondary">Back to LLM</a></p>
         {queueTable}
     |]
-        where
-            queueTable = if null queue
+      where
+        queueTable =
+            if null queue
                 then [hsx|<p class="text-muted" data-testid="llm-queue-empty">No pending LLM requests.</p>|]
-                else [hsx|
+                else
+                    [hsx|
                     <table class="table" data-testid="llm-queue-table">
                         <thead>
                             <tr>
@@ -59,7 +63,8 @@ instance View QueueView where
                 |]
 
 queueRowHtml :: QueueRow -> Html
-queueRowHtml row = [hsx|
+queueRowHtml row =
+    [hsx|
     <tr data-testid="llm-queue-row">
         <td>
             <a href={ShowAlertAction row.alertId}>{row.alertTitle}</a><br/>
@@ -78,11 +83,12 @@ queueRowHtml row = [hsx|
         <td>{dropForm}</td>
     </tr>
 |]
-    where
-        errorText = case (row.analysisError, row.jobLastError) of
-            (Just err, _) -> err
-            (Nothing, Just err) -> err
-            (Nothing, Nothing) -> ""
-        dropForm = if row.analysisStatus == "queued"
+  where
+    errorText = case (row.analysisError, row.jobLastError) of
+        (Just err, _) -> err
+        (Nothing, Just err) -> err
+        (Nothing, Nothing) -> ""
+    dropForm =
+        if row.analysisStatus == "queued"
             then inlinePostFormHtml (pathTo (DropLlmAnalysisAction row.analysisId)) "Drop" "btn btn-sm btn-outline-danger" (Just "llm-queue-drop") False
             else mempty

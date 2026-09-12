@@ -1,16 +1,16 @@
 module Application.Connector.Grafana (normalize, GrafanaAmAlert (..), alertsGet, amAlertToNormalized) where
 
-import IHP.Prelude
-import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
 import Application.Connector.Alertmanager (normalizeSeverity)
+import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
+import qualified Application.Service.Http as Http
+import Control.Lens ((&), (.~), (^.))
 import Data.Aeson
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Vector as Vector
+import IHP.Prelude
 import qualified Network.Wreq as Wreq
-import qualified Application.Service.Http as Http
-import Control.Lens ((&), (^.), (.~))
 
 -- Grafana unified alerting webhook payload:
 -- { "status": "firing", "title": "...", "alerts": [ { "status", "labels",
@@ -31,22 +31,23 @@ toEvent a@(Object _) = do
     let statusText = fromMaybe "firing" (lookupText "status" a)
         status = if statusText == "resolved" then Resolved else Firing
         title = fromMaybe (fromMaybe "Grafana alert" (labelText "check")) (annotationText "summary")
-    Right NormalizedEvent
-        { fingerprint = "grafana:" <> fp
-        , externalId = Just fp
-        , status
-        , severity = normalizeSeverity (labelText "severity")
-        , title
-        , description = fromMaybe "" (annotationText "description")
-        , env = labelText "env"
-        , host = labelText "host"
-        , service = labelText "service"
-        , checkName = labelText "check"
-        , labels
-        , annotations
-        , startedAt = lookupTime "startsAt" a
-        , sourceUrl = lookupText "generatorURL" a
-        }
+    Right
+        NormalizedEvent
+            { fingerprint = "grafana:" <> fp
+            , externalId = Just fp
+            , status
+            , severity = normalizeSeverity (labelText "severity")
+            , title
+            , description = fromMaybe "" (annotationText "description")
+            , env = labelText "env"
+            , host = labelText "host"
+            , service = labelText "service"
+            , checkName = labelText "check"
+            , labels
+            , annotations
+            , startedAt = lookupTime "startsAt" a
+            , sourceUrl = lookupText "generatorURL" a
+            }
 toEvent _ = Left "grafana alert: not an object"
 
 lookupKey :: Text -> Value -> Maybe Value
@@ -78,7 +79,8 @@ data GrafanaAmAlert = GrafanaAmAlert
     , amEndsAt :: Maybe UTCTime
     , amUpdatedAt :: Maybe UTCTime
     , amGeneratorUrl :: Maybe Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance FromJSON GrafanaAmAlert where
     parseJSON = Aeson.withObject "GrafanaAmAlert" \o -> do
@@ -89,7 +91,7 @@ instance FromJSON GrafanaAmAlert where
         amEndsAt <- o .:? "endsAt"
         amUpdatedAt <- o .:? "updatedAt"
         amGeneratorUrl <- o .:? "generatorURL"
-        pure GrafanaAmAlert { .. }
+        pure GrafanaAmAlert{..}
 
 alertsGet :: Text -> Text -> IO (Either Text [GrafanaAmAlert])
 alertsGet baseUrl token = do
@@ -109,25 +111,25 @@ amAlertToNormalized now amAlert =
         resolved = case amAlert.amEndsAt of
             Just endsAt -> endsAt <= now
             Nothing -> False
-    in NormalizedEvent
-        { fingerprint = "grafana:" <> amAlert.amFingerprint
-        , externalId = Just amAlert.amFingerprint
-        , status = if resolved then Resolved else Firing
-        , severity = normalizeSeverity (labelText "severity" <|> annotationText "severity")
-        , title = fromMaybe "Grafana alert" (annotationText "summary" <|> labelText "check" <|> labelText "alertname")
-        , description = fromMaybe "" (annotationText "description")
-        , env = labelText "env"
-        , host = labelText "host"
-        , service = labelText "service"
-        , checkName = labelText "check"
-        , labels = amAlert.amLabels
-        , annotations = amAlert.amAnnotations
-        , startedAt = amAlert.amStartsAt
-        , sourceUrl = amAlert.amGeneratorUrl
-        }
-    where
-        textAt k value = case value of
-            Object o -> case KeyMap.lookup (Key.fromText k) o of
-                Just (String t) -> Just t
-                _ -> Nothing
+     in NormalizedEvent
+            { fingerprint = "grafana:" <> amAlert.amFingerprint
+            , externalId = Just amAlert.amFingerprint
+            , status = if resolved then Resolved else Firing
+            , severity = normalizeSeverity (labelText "severity" <|> annotationText "severity")
+            , title = fromMaybe "Grafana alert" (annotationText "summary" <|> labelText "check" <|> labelText "alertname")
+            , description = fromMaybe "" (annotationText "description")
+            , env = labelText "env"
+            , host = labelText "host"
+            , service = labelText "service"
+            , checkName = labelText "check"
+            , labels = amAlert.amLabels
+            , annotations = amAlert.amAnnotations
+            , startedAt = amAlert.amStartsAt
+            , sourceUrl = amAlert.amGeneratorUrl
+            }
+  where
+    textAt k value = case value of
+        Object o -> case KeyMap.lookup (Key.fromText k) o of
+            Just (String t) -> Just t
             _ -> Nothing
+        _ -> Nothing

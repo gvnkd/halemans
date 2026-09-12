@@ -1,8 +1,8 @@
 module Web.Types where
 
-import IHP.Prelude
-import IHP.ModelSupport
 import Generated.Types
+import IHP.ModelSupport
+import IHP.Prelude
 
 data WebApplication = WebApplication deriving (Eq, Show)
 
@@ -17,96 +17,96 @@ data DashboardController
     deriving (Eq, Show, Data)
 
 data EnvironmentsController
-    = ShowEnvironmentAction { environmentName :: !Text }
+    = ShowEnvironmentAction {environmentName :: !Text}
     deriving (Eq, Show, Data)
 
 data AlertsController
     = AlertsAction
-    | ShowAlertAction { alertId :: !(Id Alert) }
-    | AckAlertAction { alertId :: !(Id Alert) }
-    | UnackAlertAction { alertId :: !(Id Alert) }
-    | CloseAlertAction { alertId :: !(Id Alert) }
-    | CreateCommentAction { alertId :: !(Id Alert) }
-    | RefreshCmdbAction { alertId :: !(Id Alert) }
-    | RefreshAssetsAction { alertId :: !(Id Alert) }
-    | CreateJiraTicketAction { alertId :: !(Id Alert) }
-    | DeleteJiraLinkAction { alertId :: !(Id Alert), jiraLinkId :: !(Id JiraLink) }
-    | ReanalyzeAlertAction { alertId :: !(Id Alert) }
-    | LlmFeedbackAction { alertId :: !(Id Alert), analysisId :: !(Id LlmAnalysis) }
+    | ShowAlertAction {alertId :: !(Id Alert)}
+    | AckAlertAction {alertId :: !(Id Alert)}
+    | UnackAlertAction {alertId :: !(Id Alert)}
+    | CloseAlertAction {alertId :: !(Id Alert)}
+    | CreateCommentAction {alertId :: !(Id Alert)}
+    | RefreshCmdbAction {alertId :: !(Id Alert)}
+    | RefreshAssetsAction {alertId :: !(Id Alert)}
+    | CreateJiraTicketAction {alertId :: !(Id Alert)}
+    | DeleteJiraLinkAction {alertId :: !(Id Alert), jiraLinkId :: !(Id JiraLink)}
+    | ReanalyzeAlertAction {alertId :: !(Id Alert)}
+    | LlmFeedbackAction {alertId :: !(Id Alert), analysisId :: !(Id LlmAnalysis)}
     deriving (Eq, Show)
 
 data BlackoutsController
     = BlackoutsAction
     | NewBlackoutAction
     | CreateBlackoutAction
-    | EditBlackoutAction { blackoutId :: !(Id Blackout) }
-    | UpdateBlackoutAction { blackoutId :: !(Id Blackout) }
-    | DeleteBlackoutAction { blackoutId :: !(Id Blackout) }
+    | EditBlackoutAction {blackoutId :: !(Id Blackout)}
+    | UpdateBlackoutAction {blackoutId :: !(Id Blackout)}
+    | DeleteBlackoutAction {blackoutId :: !(Id Blackout)}
     deriving (Eq, Show)
 
 data ProfileController
     = ProfileAction
     | UpdateThemeAction
     | CreateApiTokenAction
-    | RevokeApiTokenAction { apiTokenId :: !(Id ApiToken) }
+    | RevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     deriving (Eq, Show)
 
 data DashboardsController
     = DashboardsAction
     | NewDashboardAction
     | CreateDashboardAction
-    | ShowDashboardAction { dashboardId :: !(Id Dashboard) }
-    | ShowDashboardCardAction { dashboardId :: !(Id Dashboard), cardIndex :: !Int }
-    | EditDashboardAction { dashboardId :: !(Id Dashboard) }
-    | UpdateDashboardAction { dashboardId :: !(Id Dashboard) }
-    | DeleteDashboardAction { dashboardId :: !(Id Dashboard) }
-    | SetDefaultDashboardAction { dashboardId :: !(Id Dashboard) }
-    | MoveDashboardAction { dashboardId :: !(Id Dashboard) }
+    | ShowDashboardAction {dashboardId :: !(Id Dashboard)}
+    | ShowDashboardCardAction {dashboardId :: !(Id Dashboard), cardIndex :: !Int}
+    | EditDashboardAction {dashboardId :: !(Id Dashboard)}
+    | UpdateDashboardAction {dashboardId :: !(Id Dashboard)}
+    | DeleteDashboardAction {dashboardId :: !(Id Dashboard)}
+    | SetDefaultDashboardAction {dashboardId :: !(Id Dashboard)}
+    | MoveDashboardAction {dashboardId :: !(Id Dashboard)}
     deriving (Eq, Show)
 
 data IntegrationsController
     = IntegrationsAction
     | NewJiraConfigAction
     | CreateJiraConfigAction
-    | EditJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
-    | UpdateJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
-    | ToggleJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
-    | DeleteJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
-    | TestJiraConfigAction { jiraConfigId :: !(Id JiraConfig) }
+    | EditJiraConfigAction {jiraConfigId :: !(Id JiraConfig)}
+    | UpdateJiraConfigAction {jiraConfigId :: !(Id JiraConfig)}
+    | ToggleJiraConfigAction {jiraConfigId :: !(Id JiraConfig)}
+    | DeleteJiraConfigAction {jiraConfigId :: !(Id JiraConfig)}
+    | TestJiraConfigAction {jiraConfigId :: !(Id JiraConfig)}
     | NewCmdbConfigAction
     | CreateCmdbConfigAction
-    | EditCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
-    | UpdateCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
-    | ToggleCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
-    | DeleteCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
-    | TestCmdbConfigAction { cmdbConfigId :: !(Id CmdbConfig) }
+    | EditCmdbConfigAction {cmdbConfigId :: !(Id CmdbConfig)}
+    | UpdateCmdbConfigAction {cmdbConfigId :: !(Id CmdbConfig)}
+    | ToggleCmdbConfigAction {cmdbConfigId :: !(Id CmdbConfig)}
+    | DeleteCmdbConfigAction {cmdbConfigId :: !(Id CmdbConfig)}
+    | TestCmdbConfigAction {cmdbConfigId :: !(Id CmdbConfig)}
     deriving (Eq, Show)
 
 data LlmAdminController
     = LlmAdminAction
     | LlmQueueAction
-    | DropLlmAnalysisAction { analysisId :: !(Id LlmAnalysis) }
+    | DropLlmAnalysisAction {analysisId :: !(Id LlmAnalysis)}
     | NewLlmTemplateAction
     | CreateLlmTemplateAction
-    | EditLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
-    | UpdateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
-    | ActivateLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
-    | DeleteLlmTemplateAction { templateId :: !(Id LlmPromptTemplate) }
+    | EditLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
+    | UpdateLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
+    | ActivateLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
+    | DeleteLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
     | TestLlmConnectionAction
     | NewLlmProviderAction
     | CreateLlmProviderAction
-    | EditLlmProviderAction { providerId :: !(Id LlmConfig) }
-    | UpdateLlmProviderAction { providerId :: !(Id LlmConfig) }
-    | EnableLlmProviderAction { providerId :: !(Id LlmConfig) }
-    | DisableLlmProviderAction { providerId :: !(Id LlmConfig) }
-    | DeleteLlmProviderAction { providerId :: !(Id LlmConfig) }
+    | EditLlmProviderAction {providerId :: !(Id LlmConfig)}
+    | UpdateLlmProviderAction {providerId :: !(Id LlmConfig)}
+    | EnableLlmProviderAction {providerId :: !(Id LlmConfig)}
+    | DisableLlmProviderAction {providerId :: !(Id LlmConfig)}
+    | DeleteLlmProviderAction {providerId :: !(Id LlmConfig)}
     | NewLlmRoleAction
     | CreateLlmRoleAction
-    | EditLlmRoleAction { roleId :: !(Id LlmAgentRole) }
-    | UpdateLlmRoleAction { roleId :: !(Id LlmAgentRole) }
-    | ToggleLlmRoleAction { roleId :: !(Id LlmAgentRole) }
-    | SetDefaultLlmRoleAction { roleId :: !(Id LlmAgentRole) }
-    | DeleteLlmRoleAction { roleId :: !(Id LlmAgentRole) }
+    | EditLlmRoleAction {roleId :: !(Id LlmAgentRole)}
+    | UpdateLlmRoleAction {roleId :: !(Id LlmAgentRole)}
+    | ToggleLlmRoleAction {roleId :: !(Id LlmAgentRole)}
+    | SetDefaultLlmRoleAction {roleId :: !(Id LlmAgentRole)}
+    | DeleteLlmRoleAction {roleId :: !(Id LlmAgentRole)}
     | UpdateAutoAnalyzeAction
     | UpdateToolCacheAction
     deriving (Eq, Show)
@@ -115,20 +115,20 @@ data AssetsAdminController
     = AssetsAdminAction
     | NewAssetsConfigAction
     | CreateAssetsConfigAction
-    | EditAssetsConfigAction { configId :: !(Id AssetsConfig) }
-    | UpdateAssetsConfigAction { configId :: !(Id AssetsConfig) }
-    | ToggleAssetsConfigAction { configId :: !(Id AssetsConfig) }
-    | DeleteAssetsConfigAction { configId :: !(Id AssetsConfig) }
-    | TestAssetsConnectionAction { configId :: !(Id AssetsConfig) }
+    | EditAssetsConfigAction {configId :: !(Id AssetsConfig)}
+    | UpdateAssetsConfigAction {configId :: !(Id AssetsConfig)}
+    | ToggleAssetsConfigAction {configId :: !(Id AssetsConfig)}
+    | DeleteAssetsConfigAction {configId :: !(Id AssetsConfig)}
+    | TestAssetsConnectionAction {configId :: !(Id AssetsConfig)}
     deriving (Eq, Show)
 
 data AssetsIconsController
-    = ShowAssetIconAction { objectId :: !(Id AssetsObject) }
+    = ShowAssetIconAction {objectId :: !(Id AssetsObject)}
     deriving (Eq, Show)
 
 data AdminController
     = AdminAction
-    | AdminRevokeApiTokenAction { apiTokenId :: !(Id ApiToken) }
+    | AdminRevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     | AdminPurgeAlertsAction
     deriving (Eq, Show, Data)
 
@@ -156,7 +156,7 @@ data LiveController
 
 data ApiController
     = ApiAlertsAction
-    | ApiAlertAction { alertId :: !(Id Alert) }
+    | ApiAlertAction {alertId :: !(Id Alert)}
     | ApiEnvironmentsAction
     deriving (Eq, Show)
 
@@ -165,41 +165,41 @@ data MetricsController
     deriving (Eq, Show)
 
 data GroupsController
-    = ShowGroupAction { groupId :: !(Id AlertGroup) }
-    | AckGroupAction { groupId :: !(Id AlertGroup) }
+    = ShowGroupAction {groupId :: !(Id AlertGroup)}
+    | AckGroupAction {groupId :: !(Id AlertGroup)}
     deriving (Eq, Show)
 
 data HooksController
-    = HookAlertmanagerAction { token :: !Text }
-    | HookGenericAction { token :: !Text }
+    = HookAlertmanagerAction {token :: !Text}
+    | HookGenericAction {token :: !Text}
     deriving (Eq, Show)
 
 data SourcesController
     = SourcesAction
     | NewSourceAction
     | CreateSourceAction
-    | EditSourceAction { sourceId :: !(Id Source) }
-    | UpdateSourceAction { sourceId :: !(Id Source) }
-    | ToggleSourceAction { sourceId :: !(Id Source) }
-    | SyncHostGroupsAction { sourceId :: !(Id Source) }
+    | EditSourceAction {sourceId :: !(Id Source)}
+    | UpdateSourceAction {sourceId :: !(Id Source)}
+    | ToggleSourceAction {sourceId :: !(Id Source)}
+    | SyncHostGroupsAction {sourceId :: !(Id Source)}
     deriving (Eq, Show)
 
 data TeamsController
     = TeamsAction
     | NewTeamAction
     | CreateTeamAction
-    | EditTeamAction { teamId :: !(Id Team) }
-    | UpdateTeamAction { teamId :: !(Id Team) }
-    | DeleteTeamAction { teamId :: !(Id Team) }
+    | EditTeamAction {teamId :: !(Id Team)}
+    | UpdateTeamAction {teamId :: !(Id Team)}
+    | DeleteTeamAction {teamId :: !(Id Team)}
     deriving (Eq, Show)
 
 data FieldMappingsController
     = FieldMappingsAction
     | NewFieldMappingAction
     | CreateFieldMappingAction
-    | EditFieldMappingAction { fieldMappingId :: !(Id FieldMapping) }
-    | UpdateFieldMappingAction { fieldMappingId :: !(Id FieldMapping) }
-    | DeleteFieldMappingAction { fieldMappingId :: !(Id FieldMapping) }
+    | EditFieldMappingAction {fieldMappingId :: !(Id FieldMapping)}
+    | UpdateFieldMappingAction {fieldMappingId :: !(Id FieldMapping)}
+    | DeleteFieldMappingAction {fieldMappingId :: !(Id FieldMapping)}
     | RecomputeFacetsAction
     deriving (Eq, Show)
 
@@ -207,26 +207,26 @@ data GroupingRulesController
     = GroupingRulesAction
     | NewGroupingRuleAction
     | CreateGroupingRuleAction
-    | EditGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
-    | UpdateGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
-    | DeleteGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
-    | PreviewGroupingRuleAction { groupingRuleId :: !(Id GroupingRule) }
+    | EditGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
+    | UpdateGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
+    | DeleteGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
+    | PreviewGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
     deriving (Eq, Show)
 
 data NotificationRulesController
     = NotificationRulesAction
     | NewNotificationRuleAction
     | CreateNotificationRuleAction
-    | EditNotificationRuleAction { notificationRuleId :: !(Id NotificationRule) }
-    | UpdateNotificationRuleAction { notificationRuleId :: !(Id NotificationRule) }
-    | DeleteNotificationRuleAction { notificationRuleId :: !(Id NotificationRule) }
+    | EditNotificationRuleAction {notificationRuleId :: !(Id NotificationRule)}
+    | UpdateNotificationRuleAction {notificationRuleId :: !(Id NotificationRule)}
+    | DeleteNotificationRuleAction {notificationRuleId :: !(Id NotificationRule)}
     deriving (Eq, Show)
 
 data EscalationPoliciesController
     = EscalationPoliciesAction
     | NewEscalationPolicyAction
     | CreateEscalationPolicyAction
-    | EditEscalationPolicyAction { escalationPolicyId :: !(Id EscalationPolicy) }
-    | UpdateEscalationPolicyAction { escalationPolicyId :: !(Id EscalationPolicy) }
-    | DeleteEscalationPolicyAction { escalationPolicyId :: !(Id EscalationPolicy) }
+    | EditEscalationPolicyAction {escalationPolicyId :: !(Id EscalationPolicy)}
+    | UpdateEscalationPolicyAction {escalationPolicyId :: !(Id EscalationPolicy)}
+    | DeleteEscalationPolicyAction {escalationPolicyId :: !(Id EscalationPolicy)}
     deriving (Eq, Show)

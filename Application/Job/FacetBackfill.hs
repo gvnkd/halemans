@@ -1,15 +1,15 @@
 module Application.Job.FacetBackfill where
 
-import IHP.Prelude
+import qualified Application.Service.Facets as Facets
+import Control.Monad (void)
+import Generated.Types
+import IHP.Fetch (fetch)
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.Job.Types
 import IHP.ModelSupport
+import IHP.Prelude
 import IHP.QueryBuilder
-import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Generated.Types
-import qualified Application.Service.Facets as Facets
-import Control.Monad (void)
 
 -- Bounded facet backfill (design_docs/milestone_9.md §3): mapping edits do
 -- not retro-update alerts; the admin "recompute facets" button enqueues this
@@ -18,13 +18,17 @@ import Control.Monad (void)
 instance Job FacetBackfillJob where
     perform job = do
         chunk <- case job.cursor of
-            Nothing -> sqlQueryTyped [typedSql|
+            Nothing ->
+                sqlQueryTyped
+                    [typedSql|
                 SELECT id FROM alerts
                 WHERE status <> 'closed'
                 ORDER BY id
                 LIMIT ${chunkSize}
             |]
-            Just cursor -> sqlQueryTyped [typedSql|
+            Just cursor ->
+                sqlQueryTyped
+                    [typedSql|
                 SELECT id FROM alerts
                 WHERE status <> 'closed' AND id > ${cursor}
                 ORDER BY id

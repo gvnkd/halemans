@@ -1,38 +1,39 @@
 module Main where
 
-import Test.Hspec
 import IHP.Prelude
+import Test.Hspec
 
 -- Import your test specs here:
-import qualified Test.StateMachineSpec
-import qualified Test.BlackoutsSpec
-import qualified Test.PushSpec
-import qualified Test.GroupingSpec
-import qualified Test.EscalationSpec
+
 import qualified Test.AlertmanagerSpec
-import qualified Test.CmdbSpec
-import qualified Test.JiraSpec
-import qualified Test.WriteBackSpec
-import qualified Test.ReconcileSpec
-import qualified Test.DashboardConfigSpec
-import qualified Test.ThemeSpec
-import qualified Test.LlmSpec
-import qualified Test.SourceHealthSpec
-import qualified Test.AuditExportSpec
 import qualified Test.ApiSpec
-import qualified Test.PollZabbixSpec
-import qualified Test.HostGroupsSpec
-import qualified Test.ProvisionSpec
-import qualified Test.LogSpec
-import qualified Test.HttpSpec
-import qualified Test.VersionSpec
 import qualified Test.AssetsSpec
+import qualified Test.AuditExportSpec
+import qualified Test.BlackoutsSpec
+import qualified Test.CmdbSpec
+import qualified Test.DashboardConfigSpec
+import qualified Test.EscalationSpec
 import qualified Test.FacetsSpec
 import qualified Test.FilterPrefsSpec
-import qualified Test.MarkdownSpec
-import qualified Test.TimelineSpec
 import qualified Test.FlappingSpec
+import qualified Test.GroupingSpec
+import qualified Test.HostGroupsSpec
+import qualified Test.HttpSpec
+import qualified Test.JiraSpec
+import qualified Test.LlmSpec
+import qualified Test.LogSpec
+import qualified Test.MarkdownSpec
+import qualified Test.PollZabbixSpec
+import qualified Test.ProvisionSpec
+import qualified Test.PushSpec
+import qualified Test.ReconcileSpec
 import qualified Test.ReportsSpec
+import qualified Test.SourceHealthSpec
+import qualified Test.StateMachineSpec
+import qualified Test.ThemeSpec
+import qualified Test.TimelineSpec
+import qualified Test.VersionSpec
+import qualified Test.WriteBackSpec
 
 main :: IO ()
 main = hspec do

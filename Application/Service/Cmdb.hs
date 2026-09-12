@@ -1,41 +1,41 @@
-module Application.Service.Cmdb
-( ConfPage (..)
-, CmdbConfig (..)
-, apiUrl
-, cqlForSubject
-, spaceClause
-, pickBestPage
-, excerptFromHtml
-, excerptBudget
-, isFresh
-, positiveTtlSeconds
-, negativeTtlSeconds
-, Subject (..)
-, subjectOf
-, subjectTerm
-, fetchCached
-, upsertEntry
-, sourceSpaceOverride
-, confluenceSearch
-, connectionOk
+module Application.Service.Cmdb (
+    ConfPage (..),
+    CmdbConfig (..),
+    apiUrl,
+    cqlForSubject,
+    spaceClause,
+    pickBestPage,
+    excerptFromHtml,
+    excerptBudget,
+    isFresh,
+    positiveTtlSeconds,
+    negativeTtlSeconds,
+    Subject (..),
+    subjectOf,
+    subjectTerm,
+    fetchCached,
+    upsertEntry,
+    sourceSpaceOverride,
+    confluenceSearch,
+    connectionOk,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types hiding (CmdbConfig)
-import Data.Aeson (Value, (.:), (.:?), (.!=))
-import Data.Aeson.Types (parseMaybe)
+import qualified Application.Service.Http as Http
+import Control.Exception (SomeException, try)
+import Control.Lens ((&), (.~), (^.))
+import Data.Aeson (Value, (.!=), (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.Text as Text
-import qualified Network.Wreq as Wreq
-import qualified Application.Service.Http as Http
-import Control.Lens ((&), (^.), (.~))
-import Control.Exception (try, SomeException)
+import Data.Aeson.Types (parseMaybe)
 import Data.Functor ((<&>))
+import qualified Data.Text as Text
+import Generated.Types hiding (CmdbConfig)
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import qualified Network.Wreq as Wreq
 
 -- Read-only Confluence CMDB client + TTL cache (design_docs/milestone_3.md
 -- §4). Positive cache TTL 6h, negative 30m; stale rows are served while a
@@ -53,7 +53,8 @@ data CmdbConfig = CmdbConfig
     , token :: Text
     , space :: Text
     , spaces :: [Text]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 apiUrl :: CmdbConfig -> Text -> Text
 apiUrl config path = Text.dropWhileEnd (== '/') config.baseUrl <> path
@@ -76,7 +77,8 @@ data ConfPage = ConfPage
     , pageTitle :: Text
     , pageBodyHtml :: Text
     , pageWebui :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON ConfPage where
     parseJSON = Aeson.withObject "ConfPage" \o -> do
@@ -84,21 +86,23 @@ instance Aeson.FromJSON ConfPage where
         pageTitle <- o .: "title"
         body <- o .:? "body"
         pageBodyHtml <- case body of
-            Just b -> b .:? "view" >>= \case
-                Just view -> view .:? "value" .!= ""
-                Nothing -> pure ""
+            Just b ->
+                b .:? "view" >>= \case
+                    Just view -> view .:? "value" .!= ""
+                    Nothing -> pure ""
             Nothing -> pure ""
         links <- o .:? "_links"
         pageWebui <- case links of
             Just l -> l .:? "webui" .!= ""
             Nothing -> pure ""
-        pure ConfPage { .. }
+        pure ConfPage{..}
 
 confluenceSearch :: CmdbConfig -> Text -> IO (Either Text [ConfPage])
 confluenceSearch config cql = do
-    let opts = Wreq.defaults
-            & Wreq.header "Authorization" .~ ["Bearer " <> cs config.token]
-            & Wreq.param "cql" .~ [cql]
+    let opts =
+            Wreq.defaults
+                & Wreq.header "Authorization" .~ ["Bearer " <> cs config.token]
+                & Wreq.param "cql" .~ [cql]
     result <- try (Http.getFollowing opts (cs (apiUrl config "/rest/api/content/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -122,23 +126,23 @@ spaceClause [] = ""
 spaceClause [space] = "space = \"" <> space <> "\" AND "
 spaceClause spaces =
     "space in (" <> Text.intercalate ", " (map quote spaces) <> ") AND "
-    where
-        quote space = "\"" <> space <> "\""
+  where
+    quote space = "\"" <> space <> "\""
 
 -- Exact title match wins; otherwise the first hit (milestone_3.md §4).
 pickBestPage :: Text -> [ConfPage] -> Maybe ConfPage
 pickBestPage _ [] = Nothing
-pickBestPage term pages@(page:_) =
+pickBestPage term pages@(page : _) =
     case filter (\candidate -> Text.toLower candidate.pageTitle == Text.toLower term) pages of
-        (exact:_) -> Just exact
+        (exact : _) -> Just exact
         [] -> Just page
 
 excerptFromHtml :: Int -> Text -> Text
 excerptFromHtml budget html =
     let stripped = Text.unwords (Text.words (stripHtmlTags html))
-    in if Text.length stripped > budget
-        then Text.take budget stripped <> "…"
-        else stripped
+     in if Text.length stripped > budget
+            then Text.take budget stripped <> "…"
+            else stripped
 
 stripHtmlTags :: Text -> Text
 stripHtmlTags input = case Text.breakOn "<" input of
@@ -162,12 +166,14 @@ subjectOf alert = case (alert.hostId, alert.host) of
         _ -> Nothing
 
 fetchCached :: (?modelContext :: ModelContext) => Subject -> IO (Maybe CmdbEntry)
-fetchCached (SubjectHost hostId _) = query @CmdbEntry
-    |> filterWhere (#hostId, Just hostId)
-    |> fetchOneOrNothing
-fetchCached (SubjectService serviceId _) = query @CmdbEntry
-    |> filterWhere (#serviceId, Just serviceId)
-    |> fetchOneOrNothing
+fetchCached (SubjectHost hostId _) =
+    query @CmdbEntry
+        |> filterWhere (#hostId, Just hostId)
+        |> fetchOneOrNothing
+fetchCached (SubjectService serviceId _) =
+    query @CmdbEntry
+        |> filterWhere (#serviceId, Just serviceId)
+        |> fetchOneOrNothing
 
 subjectTerm :: Subject -> Text
 subjectTerm (SubjectHost _ fqdn) = fqdn
@@ -177,12 +183,13 @@ upsertEntry :: (?modelContext :: ModelContext) => Subject -> Maybe ConfPage -> C
 upsertEntry subject page config = do
     now <- getCurrentTime
     existing <- fetchCached subject
-    let applyFields record = record
-            |> set #pageId (page <&> (.pageId))
-            |> set #title (maybe "" (.pageTitle) page)
-            |> set #excerpt (maybe "" (excerptFromHtml excerptBudget . (.pageBodyHtml)) page)
-            |> set #url (maybe "" (\p -> apiUrl config p.pageWebui) page)
-            |> set #fetchedAt now
+    let applyFields record =
+            record
+                |> set #pageId (page <&> (.pageId))
+                |> set #title (maybe "" (.pageTitle) page)
+                |> set #excerpt (maybe "" (excerptFromHtml excerptBudget . (.pageBodyHtml)) page)
+                |> set #url (maybe "" (\p -> apiUrl config p.pageWebui) page)
+                |> set #fetchedAt now
     entry <- case existing of
         Just entry -> updateRecord (applyFields entry)
         Nothing -> createRecord (applyFields (subjectRecord (newRecord @CmdbEntry)))
@@ -196,10 +203,10 @@ upsertEntry subject page config = do
             _ <- service |> set #cmdbPageId (Just found.pageId) |> updateRecord
             pure ()
     pure entry
-    where
-        subjectRecord record = case subject of
-            SubjectHost hostId _ -> record |> set #hostId (Just hostId)
-            SubjectService serviceId _ -> record |> set #serviceId (Just serviceId)
+  where
+    subjectRecord record = case subject of
+        SubjectHost hostId _ -> record |> set #hostId (Just hostId)
+        SubjectService serviceId _ -> record |> set #serviceId (Just serviceId)
 
 -- Cache-first alert lookup (lookupForAlert/refreshForAlert/resolve) lives in
 -- Application.Service.Cmdb.DbConfig — it needs DB config resolution, which

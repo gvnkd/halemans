@@ -1,11 +1,13 @@
 module Web.View.FieldMappings.Edit where
-import Web.View.Prelude
-import Web.View.FieldMappings.New (fieldMappingFormFields)
 
-data EditView = EditView { mapping :: FieldMapping }
+import Web.View.FieldMappings.New (fieldMappingFormFields)
+import Web.View.Prelude
+
+data EditView = EditView {mapping :: FieldMapping}
 
 instance View EditView where
-    html EditView { .. } = [hsx|
+    html EditView{..} =
+        [hsx|
         <h1>Edit field mapping</h1>
         <form method="POST" action={UpdateFieldMappingAction mapping.id} data-testid="field-mapping-edit-form" class="maxw-600">
             {fieldMappingFormFields mapping.facet mapping.rank mapping.kind mapping.key mapping.enabled}

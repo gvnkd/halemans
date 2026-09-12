@@ -1,4 +1,5 @@
 module Web.View.LlmAdmin.EditProvider where
+
 import Web.View.Prelude
 
 data EditProviderView = EditProviderView
@@ -6,7 +7,8 @@ data EditProviderView = EditProviderView
     }
 
 instance View EditProviderView where
-    html EditProviderView { .. } = [hsx|
+    html EditProviderView{..} =
+        [hsx|
         <h1>Edit LLM provider</h1>
         <p class="text-muted">
             {provider.providerName} is {stateText}. Enabling/disabling happens from the provider list.
@@ -36,5 +38,5 @@ instance View EditProviderView where
             <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
-        where
-            stateText = if provider.enabled then "enabled" else "disabled" :: Text
+      where
+        stateText = if provider.enabled then "enabled" else "disabled" :: Text

@@ -1,22 +1,22 @@
-module Application.Service.Reconcile
-( shouldMirror
-, mirrorExternalAck
-, mirrorExternalUnack
-, lastAckWasExternal
+module Application.Service.Reconcile (
+    shouldMirror,
+    mirrorExternalAck,
+    mirrorExternalUnack,
+    lastAckWasExternal,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetchOneOrNothing)
-import Generated.Types
-import Data.Aeson (object, (.=))
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
 import Application.Helper.Ingest (publishAlertUpdate)
 import Application.Service.Escalation (cancelTrackersFor, restartTrackersFor)
 import Application.Service.Groups (recomputeGroupRollup)
 import Control.Monad (void)
+import Data.Aeson (object, (.=))
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
+import Generated.Types
+import IHP.Fetch (fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 
 -- Reverse reconciliation (design_docs/milestone_3.md §6): source-side
 -- ack/close mirrors into Halemans. Last-writer-wins by timestamp: source
@@ -35,12 +35,13 @@ mirrorExternalAck alert source actor sourceAt
     | alert.status /= "firing" = pure alert
     | otherwise = do
         now <- getCurrentTime
-        updated <- alert
-            |> set #status "ack"
-            |> set #acknowledgedBy Nothing
-            |> set #acknowledgedAt (Just now)
-            |> set #updatedAt now
-            |> updateRecord
+        updated <-
+            alert
+                |> set #status "ack"
+                |> set #acknowledgedBy Nothing
+                |> set #acknowledgedAt (Just now)
+                |> set #updatedAt now
+                |> updateRecord
         recordExternal alert "ack" source actor sourceAt
         cancelTrackersFor (get #id alert)
         forM_ alert.groupId (void . recomputeGroupRollup)
@@ -52,11 +53,12 @@ mirrorExternalUnack alert source actor sourceAt
     | alert.status /= "ack" = pure alert
     | otherwise = do
         now <- getCurrentTime
-        updated <- alert
-            |> set #status "firing"
-            |> set #ackExpiresAt Nothing
-            |> set #updatedAt now
-            |> updateRecord
+        updated <-
+            alert
+                |> set #status "firing"
+                |> set #ackExpiresAt Nothing
+                |> set #updatedAt now
+                |> updateRecord
         recordExternal alert "unack" source actor sourceAt
         restartTrackersFor (get #id alert)
         forM_ alert.groupId (void . recomputeGroupRollup)
@@ -69,12 +71,15 @@ recordExternal alert action source actor sourceAt = void do
         |> set #alertId (get #id alert)
         |> set #userId Nothing
         |> set #kind "external"
-        |> set #payload (object
-            [ "source" .= source
-            , "action" .= action
-            , "actor" .= actor
-            , "sourceAt" .= sourceAt
-            ])
+        |> set
+            #payload
+            ( object
+                [ "source" .= source
+                , "action" .= action
+                , "actor" .= actor
+                , "sourceAt" .= sourceAt
+                ]
+            )
         |> createRecord
 
 -- | True when the alert's most recent ack/unack-relevant event was an
@@ -82,11 +87,12 @@ recordExternal alert action source actor sourceAt = void do
 -- are reverted by the poller).
 lastAckWasExternal :: (?modelContext :: ModelContext) => Alert -> IO Bool
 lastAckWasExternal alert = do
-    latest <- query @AlertEvent
-        |> filterWhere (#alertId, get #id alert)
-        |> filterWhereIn (#kind, ["ack", "unack", "external"])
-        |> orderByDesc #createdAt
-        |> fetchOneOrNothing
+    latest <-
+        query @AlertEvent
+            |> filterWhere (#alertId, get #id alert)
+            |> filterWhereIn (#kind, ["ack", "unack", "external"])
+            |> orderByDesc #createdAt
+            |> fetchOneOrNothing
     pure case latest of
         Just event
             | event.kind == "external" ->

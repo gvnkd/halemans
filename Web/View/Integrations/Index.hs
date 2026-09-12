@@ -1,9 +1,10 @@
 module Web.View.Integrations.Index where
-import Web.View.Prelude
-import Web.View.Fragments (inlinePostFormHtml, stateBadgeHtml, sectionHeaderHtml)
-import Data.Aeson.Types (parseMaybe)
+
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
+import Web.View.Fragments (inlinePostFormHtml, sectionHeaderHtml, stateBadgeHtml)
+import Web.View.Prelude
 
 data IndexView = IndexView
     { jiraConfigs :: [JiraConfig]
@@ -26,7 +27,8 @@ data JiraCacheStats = JiraCacheStats
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Integrations</h1>
 
         {sectionHeaderHtml "Jira connections" newJiraButton}
@@ -61,18 +63,19 @@ instance View IndexView where
             {jiraLastSync}
         </p>
     |]
-        where
-            newJiraButton = [hsx|<a href={NewJiraConfigAction} class="btn btn-sm btn-primary" data-testid="new-jira-config">New Jira connection</a>|]
-            newCmdbButton = [hsx|<a href={NewCmdbConfigAction} class="btn btn-sm btn-primary" data-testid="new-cmdb-config">New CMDB connection</a>|]
-            cmdbLastFetch = case cmdbCache.cmdbLastFetch of
-                Nothing -> mempty
-                Just fetchedAt -> [hsx| — last fetch {utcTimeHtml fetchedAt}|]
-            jiraLastSync = case jiraCache.jiraLastSync of
-                Nothing -> mempty
-                Just syncedAt -> [hsx| — last sync {utcTimeHtml syncedAt}|]
+      where
+        newJiraButton = [hsx|<a href={NewJiraConfigAction} class="btn btn-sm btn-primary" data-testid="new-jira-config">New Jira connection</a>|]
+        newCmdbButton = [hsx|<a href={NewCmdbConfigAction} class="btn btn-sm btn-primary" data-testid="new-cmdb-config">New CMDB connection</a>|]
+        cmdbLastFetch = case cmdbCache.cmdbLastFetch of
+            Nothing -> mempty
+            Just fetchedAt -> [hsx| — last fetch {utcTimeHtml fetchedAt}|]
+        jiraLastSync = case jiraCache.jiraLastSync of
+            Nothing -> mempty
+            Just syncedAt -> [hsx| — last sync {utcTimeHtml syncedAt}|]
 
 jiraConfigRowHtml :: JiraConfig -> Html
-jiraConfigRowHtml config = [hsx|
+jiraConfigRowHtml config =
+    [hsx|
     <tr data-testid="jira-config">
         <td>{config.name}</td>
         <td data-testid="jira-config-base-url-cell">{config.baseUrl}</td>
@@ -87,14 +90,15 @@ jiraConfigRowHtml config = [hsx|
         </td>
     </tr>
 |]
-    where
-        configId = get #id config
-        toggleForm = inlinePostFormHtml (pathTo (ToggleJiraConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "jira-config-toggle") False
-        toggleLabel :: Text
-        toggleLabel = if config.enabled then "Disable" else "Enable"
+  where
+    configId = get #id config
+    toggleForm = inlinePostFormHtml (pathTo (ToggleJiraConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "jira-config-toggle") False
+    toggleLabel :: Text
+    toggleLabel = if config.enabled then "Disable" else "Enable"
 
 cmdbConfigRowHtml :: CmdbConfig -> Html
-cmdbConfigRowHtml config = [hsx|
+cmdbConfigRowHtml config =
+    [hsx|
     <tr data-testid="cmdb-config">
         <td>{config.name}</td>
         <td data-testid="cmdb-config-base-url-cell">{config.baseUrl}</td>
@@ -108,11 +112,11 @@ cmdbConfigRowHtml config = [hsx|
         </td>
     </tr>
 |]
-    where
-        configId = get #id config
-        toggleForm = inlinePostFormHtml (pathTo (ToggleCmdbConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "cmdb-config-toggle") False
-        toggleLabel :: Text
-        toggleLabel = if config.enabled then "Disable" else "Enable"
+  where
+    configId = get #id config
+    toggleForm = inlinePostFormHtml (pathTo (ToggleCmdbConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "cmdb-config-toggle") False
+    toggleLabel :: Text
+    toggleLabel = if config.enabled then "Disable" else "Enable"
 
 scopeText :: Aeson.Value -> Text
 scopeText value = case fromMaybe [] (parseMaybe Aeson.parseJSON value) of

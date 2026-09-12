@@ -1,11 +1,13 @@
 module Web.View.GroupingRules.Index where
-import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml, enabledBadgeHtml)
 
-data IndexView = IndexView { rules :: [GroupingRule] }
+import Web.View.Fragments (editDeleteActionsHtml, enabledBadgeHtml, pageHeaderHtml)
+import Web.View.Prelude
+
+data IndexView = IndexView {rules :: [GroupingRule]}
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Grouping rules" newButton}
         <table class="table" data-testid="grouping-rules-table">
             <thead>
@@ -23,11 +25,12 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = [hsx|<a href={NewGroupingRuleAction} class="btn btn-sm btn-primary" data-testid="new-grouping-rule">New rule</a>|]
+      where
+        newButton = [hsx|<a href={NewGroupingRuleAction} class="btn btn-sm btn-primary" data-testid="new-grouping-rule">New rule</a>|]
 
 renderRule :: GroupingRule -> Html
-renderRule rule = [hsx|
+renderRule rule =
+    [hsx|
     <tr data-testid="grouping-rule-row">
         <td>{rule.position}</td>
         <td>{rule.name}</td>

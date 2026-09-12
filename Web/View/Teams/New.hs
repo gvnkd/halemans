@@ -1,4 +1,5 @@
 module Web.View.Teams.New where
+
 import Web.View.Prelude
 
 data NewView = NewView
@@ -8,7 +9,8 @@ data NewView = NewView
     }
 
 instance View NewView where
-    html NewView { .. } = [hsx|
+    html NewView{..} =
+        [hsx|
         <h1>New team</h1>
         <form method="POST" action={CreateTeamAction} data-testid="team-form" class="maxw-600">
             <div class="mb-3">
@@ -30,7 +32,8 @@ instance View NewView where
 -- the picker degrades to instructions. Shared with the edit form.
 hostGroupPicker :: [Text] -> [Text] -> Html
 hostGroupPicker availableGroups selected = case availableGroups of
-    [] -> [hsx|
+    [] ->
+        [hsx|
         <div class="mb-3" data-testid="team-host-groups-empty">
             <label class="form-label">Zabbix host groups</label>
             <div class="form-text">
@@ -39,7 +42,8 @@ hostGroupPicker availableGroups selected = case availableGroups of
             </div>
         </div>
     |]
-    _ -> [hsx|
+    _ ->
+        [hsx|
         <div class="mb-3">
             <label class="form-label">Zabbix host groups</label>
             <input type="text" class="form-control form-control-sm mb-1" placeholder="Filter groups…" data-testid="team-host-groups-filter" data-hg-filter=""/>
@@ -49,10 +53,10 @@ hostGroupPicker availableGroups selected = case availableGroups of
             <div class="form-text">Used by zabbix sources with host group scope "teams" to restrict which alerts are fetched. Ctrl-click to select multiple.</div>
         </div>
     |]
-    where
-        pickerSize :: Text
-        pickerSize = tshow (min 8 (max 2 (length availableGroups)))
-        groupOption name = [hsx|<option value={name} selected={name `elem` selected}>{name}</option>|]
+  where
+    pickerSize :: Text
+    pickerSize = tshow (min 8 (max 2 (length availableGroups)))
+    groupOption name = [hsx|<option value={name} selected={name `elem` selected}>{name}</option>|]
 
 -- | Members section: only current members are visible; the filter field
 -- reveals matching non-members so they can be added (pick a role in their
@@ -61,17 +65,18 @@ hostGroupPicker availableGroups selected = case availableGroups of
 -- on the data-hg-filter / data-member-* hooks; without JS every row stays
 -- visible (pre-rewrite behavior).
 memberPicker :: [User] -> [(Id User, Text)] -> Html
-memberPicker users currentRoles = [hsx|
+memberPicker users currentRoles =
+    [hsx|
     <div class="mb-3" data-testid="team-members">
         <label class="form-label">Members</label>
         <input type="text" class="form-control form-control-sm mb-1" placeholder="Filter users to add…" data-testid="team-members-filter" data-member-filter=""/>
         {forEach users userRow}
     </div>
 |]
-    where
-        userRow user =
-            let current = lookup (get #id user) currentRoles
-            in [hsx|
+  where
+    userRow user =
+        let current = lookup (get #id user) currentRoles
+         in [hsx|
                 <div class="input-group input-group-sm mb-1" data-member-row="" data-email={user.email}>
                     <span class="input-group-text member-email">{user.email}</span>
                     <select name={"member-" <> tshow (get #id user)} class="form-select" data-testid={"member-" <> user.email}>

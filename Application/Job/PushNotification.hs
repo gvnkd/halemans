@@ -1,19 +1,19 @@
 module Application.Job.PushNotification where
 
-import IHP.Prelude
-import IHP.Job.Types
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch)
-import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
-import Generated.Types
-import Application.Service.Push (VapidKeys (..), PushResult (..), loadVapidKeys, sendPush)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
-import qualified Data.Aeson as Aeson
+import Application.Service.Push (PushResult (..), VapidKeys (..), loadVapidKeys, sendPush)
+import Control.Monad (void)
 import Data.Aeson (object, (.=))
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Vector as Vector
-import Control.Monad (void)
+import Generated.Types
+import IHP.Fetch (fetch)
+import IHP.Job.Types
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 
 -- Delivers a browser push for one alert (design_docs/milestone_1.md §3 step
 -- 6 simplified dispatch: every user with view/admin privilege and a push
@@ -35,14 +35,17 @@ instance Job PushNotificationJob where
                         PushSubscriptionGone -> deleteRecord subscription
                         PushFailed err -> error (cs err) -- job retry/backoff
       where
-        payload alert = Aeson.encode (object
-            [ "title" .= alert.title
-            , "severity" .= alert.severity
-            , "status" .= alert.status
-            , "env" .= effectiveFieldText FieldEnv alert
-            , "alertId" .= get #id alert
-            , "url" .= ("/alerts/" <> tshow (get #id alert))
-            ])
+        payload alert =
+            Aeson.encode
+                ( object
+                    [ "title" .= alert.title
+                    , "severity" .= alert.severity
+                    , "status" .= alert.status
+                    , "env" .= effectiveFieldText FieldEnv alert
+                    , "alertId" .= get #id alert
+                    , "url" .= ("/alerts/" <> tshow (get #id alert))
+                    ]
+                )
 
     maxAttempts = 5
 
@@ -52,14 +55,16 @@ targetUsers :: PushNotificationJob -> Maybe [Id User]
 targetUsers job = do
     json <- job.targetUserIds
     parseMaybe (Aeson.withArray "target_user_ids" (pure . mapMaybe parseId . Vector.toList)) json
-    where
-        parseId (Aeson.String raw) = Just (textToId raw)
-        parseId _ = Nothing
+  where
+    parseId (Aeson.String raw) = Just (textToId raw)
+    parseId _ = Nothing
 
 -- | Push subscriptions belonging to users with the view (or admin) privilege.
 subscriptionsForViewers :: (?modelContext :: ModelContext) => IO [PushSubscription]
 subscriptionsForViewers = do
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT ps.id FROM push_subscriptions ps
         JOIN user_roles ur ON ur.user_id = ps.user_id
         JOIN roles r ON r.id = ur.role_id

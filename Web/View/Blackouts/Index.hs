@@ -1,11 +1,13 @@
 module Web.View.Blackouts.Index where
-import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml)
 
-data IndexView = IndexView { blackouts :: [(Blackout, Text)] }
+import Web.View.Fragments (editDeleteActionsHtml, pageHeaderHtml)
+import Web.View.Prelude
+
+data IndexView = IndexView {blackouts :: [(Blackout, Text)]}
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Blackouts" newButton}
         <table class="table" data-testid="blackouts-table">
             <thead>
@@ -22,11 +24,12 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = [hsx|<a href={NewBlackoutAction} class="btn btn-sm btn-primary" data-testid="new-blackout">New blackout</a>|]
+      where
+        newButton = [hsx|<a href={NewBlackoutAction} class="btn btn-sm btn-primary" data-testid="new-blackout">New blackout</a>|]
 
 renderBlackout :: (Blackout, Text) -> Html
-renderBlackout (blackout, scopeName) = [hsx|
+renderBlackout (blackout, scopeName) =
+    [hsx|
     <tr data-testid="blackout-row">
         <td>{scopeName}</td>
         <td>{utcTimeHtml blackout.startsAt}</td>

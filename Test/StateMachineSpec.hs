@@ -1,8 +1,8 @@
 module Test.StateMachineSpec where
 
-import Test.Hspec
-import IHP.Prelude
 import Application.Pipeline.StateMachine
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Pipeline.StateMachine" do
@@ -42,18 +42,18 @@ spec = describe "Application.Pipeline.StateMachine" do
 
     describe "step (illegal transitions are no-ops)" do
         it "never applies and keeps the state" do
-            forEach [(state, trigger) | state <- [minBound..maxBound], trigger <- [minBound..maxBound]] \(state, trigger) -> do
+            forEach [(state, trigger) | state <- [minBound .. maxBound], trigger <- [minBound .. maxBound]] \(state, trigger) -> do
                 let transition = step state trigger
                 unless (transition.applied) do
                     transition.to `shouldBe` state
                     transition.eventKind `shouldBe` "external"
 
     describe "properties (exhaustive sequences)" do
-        let allStates = [minBound..maxBound] :: [AlertState]
-        let allTriggers = [minBound..maxBound] :: [Trigger]
+        let allStates = [minBound .. maxBound] :: [AlertState]
+        let allTriggers = [minBound .. maxBound] :: [Trigger]
         let exactLength 0 = [[]]
-            exactLength k = [t:ts | t <- allTriggers, ts <- exactLength (k - 1)]
-        let sequencesUpTo n = concatMap exactLength [0..n]
+            exactLength k = [t : ts | t <- allTriggers, ts <- exactLength (k - 1)]
+        let sequencesUpTo n = concatMap exactLength [0 .. n]
 
         it "every state reachable from any trigger sequence is a valid AlertState" do
             forEach allStates \start ->
@@ -64,10 +64,22 @@ spec = describe "Application.Pipeline.StateMachine" do
 
         it "applied transitions only ever use the legal edge set" do
             let legalEdges =
-                    [ (Firing, Refire), (Firing, SourceResolved), (Firing, AckTrigger), (Firing, StallTimeout)
-                    , (Acked, Refire), (Acked, SourceResolved), (Acked, Unack), (Acked, CloseTrigger), (Acked, StallTimeout)
-                    , (Resolved, Refire), (Resolved, AutoClose)
-                    , (Stalled, Refire), (Stalled, SourceResolved), (Stalled, AckTrigger), (Stalled, CloseTrigger), (Stalled, AutoClose)
+                    [ (Firing, Refire)
+                    , (Firing, SourceResolved)
+                    , (Firing, AckTrigger)
+                    , (Firing, StallTimeout)
+                    , (Acked, Refire)
+                    , (Acked, SourceResolved)
+                    , (Acked, Unack)
+                    , (Acked, CloseTrigger)
+                    , (Acked, StallTimeout)
+                    , (Resolved, Refire)
+                    , (Resolved, AutoClose)
+                    , (Stalled, Refire)
+                    , (Stalled, SourceResolved)
+                    , (Stalled, AckTrigger)
+                    , (Stalled, CloseTrigger)
+                    , (Stalled, AutoClose)
                     ]
             forEach allStates \start ->
                 forEach (sequencesUpTo 4) \triggers ->
@@ -90,7 +102,7 @@ spec = describe "Application.Pipeline.StateMachine" do
 
     describe "text mapping" do
         it "round-trips" do
-            forEach [minBound..maxBound] \state ->
+            forEach [minBound .. maxBound] \state ->
                 alertStateFromText (alertStateToText state) `shouldBe` Just state
         it "rejects unknown states" do
             alertStateFromText "bogus" `shouldBe` Nothing

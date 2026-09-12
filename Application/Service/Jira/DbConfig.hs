@@ -1,22 +1,22 @@
-module Application.Service.Jira.DbConfig
-( jiraConfigsFromDb
-, currentJiraConfigs
-, jiraConfigsForSource
-, autoLinkForAlert
-, createTicketForAlert
-, syncOpenLinks
+module Application.Service.Jira.DbConfig (
+    jiraConfigsFromDb,
+    currentJiraConfigs,
+    jiraConfigsForSource,
+    autoLinkForAlert,
+    createTicketForAlert,
+    syncOpenLinks,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport (ModelContext, newRecord, createRecord, updateRecord, Id' (..))
-import IHP.HaskellSupport (set, get)
-import IHP.QueryBuilder (query, filterWhere, filterWhereNot, filterWhereIn, orderByAsc)
-import IHP.Fetch (fetch)
-import Generated.Types (Source, Alert, Alert' (..), JiraLink, JiraLink' (..), JiraConfig, JiraConfig' (..))
-import qualified Application.Service.Jira as Jira
-import Application.Service.Jira (JiraIssue (..))
 import Application.Helper.Json (stringList)
+import Application.Service.Jira (JiraIssue (..))
+import qualified Application.Service.Jira as Jira
 import Data.Functor ((<&>))
+import Generated.Types (Alert, Alert' (..), JiraConfig, JiraConfig' (..), JiraLink, JiraLink' (..), Source)
+import IHP.Fetch (fetch)
+import IHP.HaskellSupport (get, set)
+import IHP.ModelSupport (Id' (..), ModelContext, createRecord, newRecord, updateRecord)
+import IHP.Prelude
+import IHP.QueryBuilder (filterWhere, filterWhereIn, filterWhereNot, orderByAsc, query)
 import System.Environment (lookupEnv)
 
 -- DB-only Jira config resolution (milestone 10; env fallback removed in
@@ -27,23 +27,25 @@ import System.Environment (lookupEnv)
 -- env var NAME, never the secret). Rows whose env var is unset are skipped.
 jiraConfigsFromDb :: (?modelContext :: ModelContext) => IO [Jira.JiraConfig]
 jiraConfigsFromDb = do
-    rows <- query @JiraConfig
-        |> filterWhere (#enabled, True)
-        |> orderByAsc #name
-        |> fetch
+    rows <-
+        query @JiraConfig
+            |> filterWhere (#enabled, True)
+            |> orderByAsc #name
+            |> fetch
     catMaybes <$> forM rows \row -> do
         maybeToken <- lookupEnv (cs (get #tokenEnv row))
         pure case maybeToken of
             Nothing -> Nothing
             Just token ->
                 let projects = stringList (get #projects row)
-                in Just Jira.JiraConfig
-                    { Jira.baseUrl = get #baseUrl row
-                    , Jira.token = cs token
-                    , Jira.project = fromMaybe "" (head projects)
-                    , Jira.projects = projects
-                    , Jira.apiVersion = get #apiVersion row
-                    }
+                 in Just
+                        Jira.JiraConfig
+                            { Jira.baseUrl = get #baseUrl row
+                            , Jira.token = cs token
+                            , Jira.project = fromMaybe "" (head projects)
+                            , Jira.projects = projects
+                            , Jira.apiVersion = get #apiVersion row
+                            }
 
 -- All usable configs: the enabled DB rows.
 currentJiraConfigs :: (?modelContext :: ModelContext) => IO [Jira.JiraConfig]
@@ -58,8 +60,9 @@ jiraConfigsForSource source = do
     pure case Jira.sourceProjectOverride source of
         [] -> dbConfigs
         projects -> map (applyScope projects) dbConfigs
-    where
-        applyScope projects config = config
+  where
+    applyScope projects config =
+        config
             { Jira.projects = projects
             , Jira.project = fromMaybe "" (head projects)
             }
@@ -95,7 +98,7 @@ createTicketForAlert source alert issueType summary body = do
     configs <- jiraConfigsForSource source
     case configs of
         [] -> pure (Left "jira not configured")
-        (config:_) ->
+        (config : _) ->
             Jira.createTicketWithConfig config (get #id alert) issueType summary body
 
 -- JiraSyncJob body (milestone_3.md §5): refresh status/summary of every link
@@ -104,14 +107,16 @@ createTicketForAlert source alert issueType summary body = do
 -- (milestone 10: links may live in different Jira projects/instances).
 syncOpenLinks :: (?modelContext :: ModelContext) => IO Int
 syncOpenLinks = do
-    openAlerts <- query @Alert
-        |> filterWhereNot (#status, "closed" :: Text)
-        |> fetch
+    openAlerts <-
+        query @Alert
+            |> filterWhereNot (#status, "closed" :: Text)
+            |> fetch
     links <- case openAlerts of
         [] -> pure []
-        alerts -> query @JiraLink
-            |> filterWhereIn (#alertId, map (get #id) alerts)
-            |> fetch
+        alerts ->
+            query @JiraLink
+                |> filterWhereIn (#alertId, map (get #id) alerts)
+                |> fetch
     configs <- currentJiraConfigs
     if null configs
         then pure 0
@@ -122,17 +127,18 @@ syncOpenLinks = do
                     Nothing -> pure False
                     Just issue -> do
                         now <- getCurrentTime
-                        _ <- link
-                            |> set #summary issue.issueSummary
-                            |> set #status issue.issueStatus
-                            |> set #syncedAt now
-                            |> updateRecord
+                        _ <-
+                            link
+                                |> set #summary issue.issueSummary
+                                |> set #status issue.issueStatus
+                                |> set #syncedAt now
+                                |> updateRecord
                         pure True
             pure (length (filter (\did -> did) refreshed))
-    where
-        firstIssue [] _ = pure Nothing
-        firstIssue (config:rest) key = do
-            result <- Jira.getIssue config key
-            case result of
-                Right issue -> pure (Just issue)
-                Left _ -> firstIssue rest key
+  where
+    firstIssue [] _ = pure Nothing
+    firstIssue (config : rest) key = do
+        result <- Jira.getIssue config key
+        case result of
+            Right issue -> pure (Just issue)
+            Left _ -> firstIssue rest key

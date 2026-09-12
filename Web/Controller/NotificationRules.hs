@@ -1,11 +1,11 @@
 module Web.Controller.NotificationRules where
 
-import Web.Controller.Prelude
-import Web.View.NotificationRules.Index
-import Web.View.NotificationRules.New
-import Web.View.NotificationRules.Edit
 import Application.Helper.RuleForm (parseMatchForm)
 import qualified Data.Text as Text
+import Web.Controller.Prelude
+import Web.View.NotificationRules.Edit
+import Web.View.NotificationRules.Index
+import Web.View.NotificationRules.New
 
 instance Controller NotificationRulesController where
     beforeAction = ensureIsUser
@@ -14,56 +14,53 @@ instance Controller NotificationRulesController where
         requirePrivilege "manage_rules"
         rules <- query @NotificationRule |> orderByAsc #position |> fetch
         targets <- forM rules targetLabel
-        render IndexView { rulesWithTargets = zip rules targets }
-
+        render IndexView{rulesWithTargets = zip rules targets}
     action NewNotificationRuleAction = do
         requirePrivilege "manage_rules"
         (teams, users, policies) <- formChoices
-        render NewView { teams, users, policies }
-
+        render NewView{teams, users, policies}
     action CreateNotificationRuleAction = do
         requirePrivilege "manage_rules"
         let (teamRef, userRef) = targetRef
-        _ <- newRecord @NotificationRule
-            |> set #name (param @Text "name")
-            |> set #position (param @Int "position")
-            |> set #enabled enabledParam
-            |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
-            |> set #severityThreshold (param @Text "severityThreshold")
-            |> set #teamId teamRef
-            |> set #userId userRef
-            |> set #channel "browser_push"
-            |> set #throttleSeconds (param @Int "throttleSeconds")
-            |> set #escalationPolicyId policyRef
-            |> createRecord
+        _ <-
+            newRecord @NotificationRule
+                |> set #name (param @Text "name")
+                |> set #position (param @Int "position")
+                |> set #enabled enabledParam
+                |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
+                |> set #severityThreshold (param @Text "severityThreshold")
+                |> set #teamId teamRef
+                |> set #userId userRef
+                |> set #channel "browser_push"
+                |> set #throttleSeconds (param @Int "throttleSeconds")
+                |> set #escalationPolicyId policyRef
+                |> createRecord
         setSuccessMessage "Notification rule created"
         redirectTo NotificationRulesAction
-
-    action EditNotificationRuleAction { notificationRuleId } = do
+    action EditNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
         (teams, users, policies) <- formChoices
-        render EditView { rule, teams, users, policies }
-
-    action UpdateNotificationRuleAction { notificationRuleId } = do
+        render EditView{rule, teams, users, policies}
+    action UpdateNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
         let (teamRef, userRef) = targetRef
-        _ <- rule
-            |> set #name (param @Text "name")
-            |> set #position (param @Int "position")
-            |> set #enabled enabledParam
-            |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
-            |> set #severityThreshold (param @Text "severityThreshold")
-            |> set #teamId teamRef
-            |> set #userId userRef
-            |> set #throttleSeconds (param @Int "throttleSeconds")
-            |> set #escalationPolicyId policyRef
-            |> updateRecord
+        _ <-
+            rule
+                |> set #name (param @Text "name")
+                |> set #position (param @Int "position")
+                |> set #enabled enabledParam
+                |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
+                |> set #severityThreshold (param @Text "severityThreshold")
+                |> set #teamId teamRef
+                |> set #userId userRef
+                |> set #throttleSeconds (param @Int "throttleSeconds")
+                |> set #escalationPolicyId policyRef
+                |> updateRecord
         setSuccessMessage "Notification rule updated"
         redirectTo NotificationRulesAction
-
-    action DeleteNotificationRuleAction { notificationRuleId } = do
+    action DeleteNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
         deleteRecord rule
@@ -84,10 +81,10 @@ targetRef =
     let raw = param @Text "target"
         (kind, rest) = Text.break (== ':') raw
         rawId = Text.drop 1 rest
-    in case kind of
-        "team" -> (Just (textToId rawId), Nothing)
-        "user" -> (Nothing, Just (textToId rawId))
-        _ -> (Nothing, Nothing)
+     in case kind of
+            "team" -> (Just (textToId rawId), Nothing)
+            "user" -> (Nothing, Just (textToId rawId))
+            _ -> (Nothing, Nothing)
 
 policyRef :: (?request :: Request, ?respond :: Respond) => Maybe (Id EscalationPolicy)
 policyRef = case paramOrNothing @Text "escalationPolicyId" of

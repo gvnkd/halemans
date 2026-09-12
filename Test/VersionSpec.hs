@@ -1,10 +1,10 @@
 module Test.VersionSpec where
 
-import Test.Hspec
-import IHP.Prelude
+import Application.Version (appVersion)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
-import Application.Version (appVersion)
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Version" do

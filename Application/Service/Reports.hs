@@ -1,19 +1,19 @@
-module Application.Service.Reports
-    ( severityChartSvg
-    , envChartSvg
-    , volumeChartSvg
-    , mttrChartSvg
-    , formatDuration
-    , severityCssClass
-    , truncateLabel
-    ) where
+module Application.Service.Reports (
+    severityChartSvg,
+    envChartSvg,
+    volumeChartSvg,
+    mttrChartSvg,
+    formatDuration,
+    severityCssClass,
+    truncateLabel,
+) where
 
-import IHP.Prelude
 import Data.Int (Int64)
 import qualified Data.Text as Text
-import qualified Diagrams.Prelude as D
 import qualified Diagrams.Backend.SVG as DS
+import qualified Diagrams.Prelude as D
 import qualified Graphics.Svg as SvgBuilder
+import IHP.Prelude
 
 -- Static report charts (/reports). Charts are drawn on a pixel grid (1 unit =
 -- 1 px at the design width) and rendered to inline SVG. NO colors are baked
@@ -35,42 +35,46 @@ fontSizePx = 12
 severityChartSvg :: [(Text, Int64)] -> Text
 severityChartSvg rows = hbarChartSvg 900 (map mk rows)
   where
-    mk (severity, n) = BarDatum
-        { barLabel = severity
-        , barValue = fromIntegral n
-        , barValueText = show n
-        , barClass = severityCssClass severity
-        }
+    mk (severity, n) =
+        BarDatum
+            { barLabel = severity
+            , barValue = fromIntegral n
+            , barValueText = show n
+            , barClass = severityCssClass severity
+            }
 
 envChartSvg :: [(Text, Int64)] -> Text
 envChartSvg rows = hbarChartSvg 900 (map mk rows)
   where
-    mk (env, n) = BarDatum
-        { barLabel = truncateLabel 20 env
-        , barValue = fromIntegral n
-        , barValueText = show n
-        , barClass = "chart-bar-accent"
-        }
+    mk (env, n) =
+        BarDatum
+            { barLabel = truncateLabel 20 env
+            , barValue = fromIntegral n
+            , barValueText = show n
+            , barClass = "chart-bar-accent"
+            }
 
 volumeChartSvg :: [(Text, Int64)] -> Text
 volumeChartSvg rows = vbarChartSvg 1800 (map mk rows)
   where
-    mk (bucket, n) = BarDatum
-        { barLabel = bucket
-        , barValue = fromIntegral n
-        , barValueText = show n
-        , barClass = "chart-bar-accent"
-        }
+    mk (bucket, n) =
+        BarDatum
+            { barLabel = bucket
+            , barValue = fromIntegral n
+            , barValueText = show n
+            , barClass = "chart-bar-accent"
+            }
 
 mttrChartSvg :: [(Text, Double)] -> Text
 mttrChartSvg rows = hbarChartSvg 900 (map mk rows)
   where
-    mk (severity, seconds) = BarDatum
-        { barLabel = severity
-        , barValue = seconds
-        , barValueText = formatDuration seconds
-        , barClass = severityCssClass severity
-        }
+    mk (severity, seconds) =
+        BarDatum
+            { barLabel = severity
+            , barValue = seconds
+            , barValueText = formatDuration seconds
+            , barClass = severityCssClass severity
+            }
 
 hbarChartSvg :: Double -> [BarDatum] -> Text
 hbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
@@ -86,15 +90,16 @@ hbarChartSvg w rows = renderChartSvg w h (D.vsep rowGap (map row rows))
     marginV = 8
     h = fromIntegral (length rows) * (barH + rowGap) - rowGap + 2 * marginV
     barArea = w - 2 * padding - labelCol - valueCol - 2 * gap
-    row datum = D.hcat
-        [ D.strutX padding
-        , labelBox datum
-        , D.strutX gap
-        , barBox datum
-        , D.strutX gap
-        , valueBox datum
-        , D.strutX padding
-        ]
+    row datum =
+        D.hcat
+            [ D.strutX padding
+            , labelBox datum
+            , D.strutX gap
+            , barBox datum
+            , D.strutX gap
+            , valueBox datum
+            , D.strutX padding
+            ]
     labelBox datum = D.alignR (chartText "chart-text" 1 0.5 datum.barLabel) D.<> D.alignR (D.strutX labelCol)
     barBox datum = D.alignL (bar (scaled datum) barH datum.barClass) D.<> D.alignL (D.strutX barArea)
     valueBox datum = D.alignL (chartText "chart-text-muted" 0 0.5 datum.barValueText) D.<> D.alignL (D.strutX valueCol)
@@ -122,10 +127,16 @@ vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> day
     maxLabelChars = maximum (map (Text.length . barLabel) rows)
     dayFontSize = max 7 (min fontSizePx (slot * 0.9 / (0.55 * fromIntegral maxLabelChars)))
     indexed = zip [0 ..] rows
-    bars = [ (D.p2 (xCenter i, 0), D.alignB (bar barW (colH datum.barValue) datum.barClass))
-           | (i, datum) <- indexed, datum.barValue > 0 ]
-    valueLabels = [ (D.p2 (xCenter i, colH datum.barValue + 4), chartText "chart-text-muted" 0.5 0 datum.barValueText)
-                  | (i, datum) <- indexed, datum.barValue > 0 ]
+    bars =
+        [ (D.p2 (xCenter i, 0), D.alignB (bar barW (colH datum.barValue) datum.barClass))
+        | (i, datum) <- indexed
+        , datum.barValue > 0
+        ]
+    valueLabels =
+        [ (D.p2 (xCenter i, colH datum.barValue + 4), chartText "chart-text-muted" 0.5 0 datum.barValueText)
+        | (i, datum) <- indexed
+        , datum.barValue > 0
+        ]
     dayLabels = zipWith mkDay [0 ..] rows
     mkDay i datum = (D.p2 (xCenter i, negate bottomGap), chartTextSized dayFontSize "chart-text-muted" 0.5 1 datum.barLabel)
     baseline = (D.p2 (padding, 0), D.alignL (D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid"))
@@ -143,32 +154,34 @@ renderChartSvg w h dia = cs (SvgBuilder.renderBS (D.renderDia DS.SVG opts framed
     framed = D.centerXY dia D.<> (D.rect w h D.# D.fcA D.transparent D.# D.lw D.none)
 
 bar :: Double -> Double -> Text -> Chart
-bar len h cls = D.rect len h
-    -- explicit fill: diagrams' default fill is fully transparent
-    -- (fill-opacity=0); the neutral gray is only a fallback — app.css
-    -- re-colors via the chart-* class
-    D.# D.fc (D.sRGB24read "#6c757d")
-    D.# D.lw D.none
-    D.# DS.svgClass (cs cls)
+bar len h cls =
+    D.rect len h
+        -- explicit fill: diagrams' default fill is fully transparent
+        -- (fill-opacity=0); the neutral gray is only a fallback — app.css
+        -- re-colors via the chart-* class
+        D.# D.fc (D.sRGB24read "#6c757d")
+        D.# D.lw D.none
+        D.# DS.svgClass (cs cls)
 
 chartText :: Text -> Double -> Double -> Text -> Chart
 chartText = chartTextSized fontSizePx
 
 chartTextSized :: Double -> Text -> Double -> Double -> Text -> Chart
-chartTextSized sizePx cls ax ay content = D.alignedText ax ay (cs content)
-    D.# D.fontSizeL sizePx
-    D.# DS.svgClass (cs cls)
+chartTextSized sizePx cls ax ay content =
+    D.alignedText ax ay (cs content)
+        D.# D.fontSizeL sizePx
+        D.# DS.svgClass (cs cls)
 
 severityCssClass :: Text -> Text
 severityCssClass severity = case Text.toLower severity of
-    "critical"    -> "chart-sev-critical"
-    "disaster"    -> "chart-sev-critical"
-    "high"        -> "chart-sev-high"
-    "average"     -> "chart-sev-high"
-    "warning"     -> "chart-sev-warning"
-    "info"        -> "chart-sev-info"
+    "critical" -> "chart-sev-critical"
+    "disaster" -> "chart-sev-critical"
+    "high" -> "chart-sev-high"
+    "average" -> "chart-sev-high"
+    "warning" -> "chart-sev-warning"
+    "info" -> "chart-sev-info"
     "information" -> "chart-sev-info"
-    _             -> "chart-sev-other"
+    _ -> "chart-sev-other"
 
 truncateLabel :: Int -> Text -> Text
 truncateLabel maxChars label

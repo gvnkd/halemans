@@ -1,24 +1,24 @@
 module Application.Job.PollGrafana where
 
-import IHP.Prelude
-import IHP.FrameworkConfig (FrameworkConfig (..))
-import IHP.Job.Types
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
-import Generated.Types
-import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
-import Application.Service.Reconcile (shouldMirror, mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
-import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
-import Application.Service.Log (logDebug, logInfo, logWarn)
 import qualified Application.Connector.Alertmanager as Am
 import qualified Application.Connector.Grafana as Grafana
+import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
+import Application.Service.Log (logDebug, logInfo, logWarn)
+import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack, shouldMirror)
+import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
+import Control.Exception (SomeException, try)
+import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
-import Control.Monad (void)
-import Control.Exception (try, SomeException)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.FrameworkConfig (FrameworkConfig (..))
+import IHP.Job.Types
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv)
 
 -- Reconcile poller for grafana sources (design_docs/milestone_2.md §8): the
@@ -39,25 +39,31 @@ instance Job PollGrafanaJob where
         -- double-ingest and create duplicate alert rows. The older-created
         -- running job wins; this one stops without rescheduling.
         let createdAt = job.createdAt
-        olderRunning <- sqlQueryTyped [typedSql|
+        olderRunning <-
+            sqlQueryTyped
+                [typedSql|
             SELECT count(*) FROM poll_grafana_jobs
             WHERE status = 'job_status_running' AND created_at < ${createdAt}
         |]
         case olderRunning of
-            (count_ : _) | count_ > 0 ->
-                logWarn "duplicate PollGrafanaJob loop detected (an older poll job is running); stopping this one"
+            (count_ : _)
+                | count_ > 0 ->
+                    logWarn "duplicate PollGrafanaJob loop detected (an older poll job is running); stopping this one"
             _ -> do
                 now <- getCurrentTime
-                sources <- query @Source
-                    |> filterWhere (#type_, "grafana" :: Text)
-                    |> filterWhere (#enabled, True)
-                    |> fetch
+                sources <-
+                    query @Source
+                        |> filterWhere (#type_, "grafana" :: Text)
+                        |> filterWhere (#enabled, True)
+                        |> fetch
                 forM_ (filter (pollDue now) sources) pollSource
 
                 if null sources
                     then do
                         logInfo "no enabled grafana sources; poll loop stopped (re-arms on source create/enable)"
-                        void $ sqlExecTyped [typedSql|
+                        void $
+                            sqlExecTyped
+                                [typedSql|
                             DELETE FROM poll_grafana_jobs
                             WHERE status = 'job_status_not_started'
                         |]
@@ -73,14 +79,19 @@ reschedule :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => IO
 reschedule = do
     now <- getCurrentTime
     let runAt = addUTCTime 5 now
-    inserted <- sqlQueryTyped [typedSql|
+    inserted <-
+        sqlQueryTyped
+            [typedSql|
         INSERT INTO poll_grafana_jobs (run_at)
         SELECT ${runAt}
         WHERE NOT EXISTS (SELECT 1 FROM poll_grafana_jobs WHERE status = 'job_status_not_started')
         RETURNING id
     |]
     case inserted of
-        (nextId:_) -> void $ sqlExecTyped [typedSql|
+        (nextId : _) ->
+            void $
+                sqlExecTyped
+                    [typedSql|
             DELETE FROM poll_grafana_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}
         |]
@@ -118,9 +129,10 @@ pollSource source = do
                         unless skip (void (ingest source event))
                     reconcileAbsences source now alerts
                     reconcileSilences source token now
-                    _ <- source
-                        |> set #lastSyncCursor (Just now)
-                        |> updateRecord
+                    _ <-
+                        source
+                            |> set #lastSyncCursor (Just now)
+                            |> updateRecord
                     pure ()
 
 -- | The listing can lag a webhook resolve by a few seconds (alertmanager
@@ -130,14 +142,16 @@ refireGuard :: (?modelContext :: ModelContext) => UTCTime -> NormalizedEvent -> 
 refireGuard now event = case event.status of
     Resolved -> pure False
     Firing -> do
-        existing <- query @Alert
-            |> filterWhere (#fingerprint, event.fingerprint)
-            |> fetchOneOrNothing
+        existing <-
+            query @Alert
+                |> filterWhere (#fingerprint, event.fingerprint)
+                |> fetchOneOrNothing
         pure case existing of
             Just alert
                 | alert.status == "resolved"
                 , Just resolvedAt <- alert.resolvedAt
-                , resolvedAt > addUTCTime (-90) now -> True
+                , resolvedAt > addUTCTime (-90) now ->
+                    True
             _ -> False
 
 -- | Firing alerts owned by this source that vanished from the listing
@@ -146,49 +160,59 @@ refireGuard now event = case event.status of
 reconcileAbsences :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> UTCTime -> [Grafana.GrafanaAmAlert] -> IO ()
 reconcileAbsences source now alerts = do
     let listedFingerprints = map ("grafana:" <>) (map (.amFingerprint) alerts)
-    firing <- query @Alert
-        |> filterWhere (#sourceId, Just (get #id source))
-        |> filterWhereIn (#status, ["firing", "stalled"] :: [Text])
-        |> fetch
+    firing <-
+        query @Alert
+            |> filterWhere (#sourceId, Just (get #id source))
+            |> filterWhereIn (#status, ["firing", "stalled"] :: [Text])
+            |> fetch
     let graceCutoff = addUTCTime (-60) now
-        vanished = filter (\alert ->
-            "grafana:" `Text.isPrefixOf` alert.fingerprint
-                && alert.fingerprint `notElem` listedFingerprints
-                && alert.lastSeenAt < graceCutoff) firing
+        vanished =
+            filter
+                ( \alert ->
+                    "grafana:" `Text.isPrefixOf` alert.fingerprint
+                        && alert.fingerprint `notElem` listedFingerprints
+                        && alert.lastSeenAt < graceCutoff
+                )
+                firing
     forM_ vanished \alert ->
-        void (ingest source NormalizedEvent
-            { fingerprint = alert.fingerprint
-            , externalId = alert.externalId
-            , status = Resolved
-            , severity = alert.severity
-            , title = alert.title
-            , description = alert.description
-            , env = alert.env
-            , host = alert.host
-            , service = alert.service
-            , checkName = alert.checkName
-            , labels = alert.labels
-            , annotations = alert.annotations
-            , startedAt = alert.startedAt
-            , sourceUrl = alert.sourceUrl
-            })
+        void
+            ( ingest
+                source
+                NormalizedEvent
+                    { fingerprint = alert.fingerprint
+                    , externalId = alert.externalId
+                    , status = Resolved
+                    , severity = alert.severity
+                    , title = alert.title
+                    , description = alert.description
+                    , env = alert.env
+                    , host = alert.host
+                    , service = alert.service
+                    , checkName = alert.checkName
+                    , labels = alert.labels
+                    , annotations = alert.annotations
+                    , startedAt = alert.startedAt
+                    , sourceUrl = alert.sourceUrl
+                    }
+            )
 
 -- Silence-based ack reconciliation (milestone_3.md §6): an active silence
 -- covering a firing alert mirrors in as an external ack; silence expiry
 -- reverts only acks that came from this mirror (never a local user's ack).
 reconcileSilences :: (?modelContext :: ModelContext) => Source -> Text -> UTCTime -> IO ()
 reconcileSilences source token now = do
-    alerts <- query @Alert
-        |> filterWhere (#sourceId, Just (get #id source))
-        |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
-        |> fetch
+    alerts <-
+        query @Alert
+            |> filterWhere (#sourceId, Just (get #id source))
+            |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+            |> fetch
     result <- Am.silencesGet source.baseUrl (Just token) "/api/alertmanager/grafana/api/v2"
     case result of
         Left _err -> pure ()
         Right silences -> forM_ alerts \alert -> do
             let covering = filter (\silence -> Am.silenceCoversLabels silence alert.labels) silences
             case (alert.status, covering) of
-                ("firing", (silence:_)) -> do
+                ("firing", (silence : _)) -> do
                     let sourceAt = fromMaybe now silence.silenceUpdatedAt
                     when (shouldMirror alert.acknowledgedAt sourceAt) do
                         void (mirrorExternalAck alert "grafana" silence.silenceCreatedBy sourceAt)

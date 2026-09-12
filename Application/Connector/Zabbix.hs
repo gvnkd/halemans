@@ -1,31 +1,31 @@
-module Application.Connector.Zabbix
-( ZabbixEvent (..)
-, eventGet
-, ZabbixGroup (..)
-, hostGroupsGetAll
-, toNormalizedEvent
-, eventAcknowledge
-, ZabbixEventAck (..)
-, ZabbixAckRow (..)
-, ackStateGet
-, ZabbixTriggerState (..)
-, triggerStateGet
-, usersGet
+module Application.Connector.Zabbix (
+    ZabbixEvent (..),
+    eventGet,
+    ZabbixGroup (..),
+    hostGroupsGetAll,
+    toNormalizedEvent,
+    eventAcknowledge,
+    ZabbixEventAck (..),
+    ZabbixAckRow (..),
+    ackStateGet,
+    ZabbixTriggerState (..),
+    triggerStateGet,
+    usersGet,
 ) where
 
-import IHP.Prelude
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
-import Data.Aeson ((.:), (.:?), (.=), (.!=))
+import qualified Application.Service.Http as Http
+import Control.Exception (SomeException, try)
+import Control.Lens ((&), (.~), (^.))
+import Data.Aeson ((.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
-import qualified Network.Wreq as Wreq
-import qualified Application.Service.Http as Http
-import Control.Lens ((&), (^.), (.~))
-import Control.Exception (try, SomeException)
 import Data.List (nubBy)
 import qualified Data.Text
-import Text.Read (readMaybe)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import IHP.Prelude
+import qualified Network.Wreq as Wreq
+import Text.Read (readMaybe)
 
 -- A trigger event from zabbix event.get (source=0, object=0).
 data ZabbixEvent = ZabbixEvent
@@ -33,10 +33,11 @@ data ZabbixEvent = ZabbixEvent
     , triggerId :: Text
     , name :: Text
     , clock :: Integer
-    , value :: Text        -- "1" problem, "0" OK
-    , severity :: Text     -- "0".."5"
+    , value :: Text -- "1" problem, "0" OK
+    , severity :: Text -- "0".."5"
     , host :: Maybe Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON ZabbixEvent where
     parseJSON = Aeson.withObject "ZabbixEvent" $ \o -> do
@@ -49,9 +50,9 @@ instance Aeson.FromJSON ZabbixEvent where
         severity <- o .: "severity"
         hosts <- o .:? "hosts"
         let host = case hosts of
-                Just (h:_) -> parseMaybe (Aeson.withObject "host" (.: "name")) h
+                Just (h : _) -> parseMaybe (Aeson.withObject "host" (.: "name")) h
                 _ -> Nothing
-        pure ZabbixEvent { .. }
+        pure ZabbixEvent{..}
 
 -- | Fetch trigger events (problems and OKs) newer than the cursor, paging
 -- until a short page: after an outage the backlog can exceed one page and a
@@ -72,29 +73,33 @@ eventGet baseUrl token timeFrom groupIds pageLimit = go timeFrom []
                     -- pageLimit events share one clock second; stop rather
                     -- than loop forever (reconcile covers any state we miss).
                     nextCursor = maximum (map (.clock) page)
-                in if length page < pageLimit || nextCursor <= cursor
-                    then pure (Right (dedupEvents acc'))
-                    else go nextCursor acc'
+                 in if length page < pageLimit || nextCursor <= cursor
+                        then pure (Right (dedupEvents acc'))
+                        else go nextCursor acc'
     dedupEvents = nubBy (\a b -> a.eventId == b.eventId)
 
 eventGetPage :: Text -> Text -> Integer -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
 eventGetPage baseUrl token timeFrom groupIds pageLimit = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        body = Aeson.object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("event.get" :: Text)
-            , "id" .= (1 :: Int)
-            , "params" .= Aeson.object
-                ([ "source" .= (0 :: Int)
-                , "object" .= (0 :: Int)
-                , "value" .= ([0, 1] :: [Int])
-                , "time_from" .= timeFrom
-                , "sortfield" .= (["clock", "eventid"] :: [Text])
-                , "sortorder" .= ("ASC" :: Text)
-                , "selectHosts" .= (["name"] :: [Text])
-                , "limit" .= pageLimit
-                ] ++ [ "groupids" .= groupIds | not (null groupIds) ])
-            ]
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("event.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        ( [ "source" .= (0 :: Int)
+                          , "object" .= (0 :: Int)
+                          , "value" .= ([0, 1] :: [Int])
+                          , "time_from" .= timeFrom
+                          , "sortfield" .= (["clock", "eventid"] :: [Text])
+                          , "sortorder" .= ("ASC" :: Text)
+                          , "selectHosts" .= (["name"] :: [Text])
+                          , "limit" .= pageLimit
+                          ]
+                            ++ ["groupids" .= groupIds | not (null groupIds)]
+                        )
+                ]
     resp <- Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body
     case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
         Left err -> pure (Left (cs err))
@@ -107,13 +112,14 @@ eventGetPage baseUrl token timeFrom groupIds pageLimit = do
 data ZabbixGroup = ZabbixGroup
     { groupId :: Text
     , groupName :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON ZabbixGroup where
     parseJSON = Aeson.withObject "ZabbixGroup" $ \o -> do
         groupId <- o .: "groupid"
         groupName <- o .: "name"
-        pure ZabbixGroup { .. }
+        pure ZabbixGroup{..}
 
 -- | Fetch ALL host groups (hostgroup.get, no filter). Host groups are
 -- near-static; this backs the manual sync that populates the
@@ -121,15 +127,17 @@ instance Aeson.FromJSON ZabbixGroup where
 hostGroupsGetAll :: Text -> Text -> IO (Either Text [ZabbixGroup])
 hostGroupsGetAll baseUrl token = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        body = Aeson.object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("hostgroup.get" :: Text)
-            , "id" .= (1 :: Int)
-            , "params" .= Aeson.object
-                [ "output" .= (["groupid", "name"] :: [Text])
-                , "sortfield" .= (["name"] :: [Text])
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("hostgroup.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "output" .= (["groupid", "name"] :: [Text])
+                        , "sortfield" .= (["name"] :: [Text])
+                        ]
                 ]
-            ]
     resp <- Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body
     case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
         Left err -> pure (Left (cs err))
@@ -143,30 +151,31 @@ hostGroupsGetAll baseUrl token = do
 -- corresponding problem event. Zabbix events carry no environment concept,
 -- so the env comes from the source row (sources.env).
 toNormalizedEvent :: Text -> Text -> ZabbixEvent -> NormalizedEvent
-toNormalizedEvent baseUrl envName event = NormalizedEvent
-    { fingerprint = "zabbix:trigger:" <> event.triggerId
-    , externalId = Just event.eventId
-    , status = if event.value == "1" then Firing else Resolved
-    , severity = severityFromZabbix event.severity
-    , title = event.name
-    , description = ""
-    , env = Just envName
-    , host = event.host
-    , service = Nothing
-    , checkName = Just event.name
-    , labels = Aeson.object [ "source" .= ("zabbix" :: Text) ]
-    , annotations = Aeson.object []
-    , startedAt = Just (posixSecondsToUTCTime (fromIntegral event.clock))
-    , sourceUrl = Just (baseUrl <> "/tr_events.php?triggerid=" <> event.triggerId <> "&eventid=" <> event.eventId)
-    }
+toNormalizedEvent baseUrl envName event =
+    NormalizedEvent
+        { fingerprint = "zabbix:trigger:" <> event.triggerId
+        , externalId = Just event.eventId
+        , status = if event.value == "1" then Firing else Resolved
+        , severity = severityFromZabbix event.severity
+        , title = event.name
+        , description = ""
+        , env = Just envName
+        , host = event.host
+        , service = Nothing
+        , checkName = Just event.name
+        , labels = Aeson.object ["source" .= ("zabbix" :: Text)]
+        , annotations = Aeson.object []
+        , startedAt = Just (posixSecondsToUTCTime (fromIntegral event.clock))
+        , sourceUrl = Just (baseUrl <> "/tr_events.php?triggerid=" <> event.triggerId <> "&eventid=" <> event.eventId)
+        }
 
 severityFromZabbix :: Text -> Text
 severityFromZabbix = \case
     "5" -> "critical" -- disaster
-    "4" -> "high"     -- high
-    "3" -> "warning"  -- average
-    "2" -> "warning"  -- warning
-    _ -> "info"       -- information / not classified
+    "4" -> "high" -- high
+    "3" -> "warning" -- average
+    "2" -> "warning" -- warning
+    _ -> "info" -- information / not classified
 
 -- Write-back + ack reconciliation (milestone_3.md §6). event.acknowledge
 -- action bits (zabbix 7.0): 1 close, 2 acknowledge, 4 add message,
@@ -175,16 +184,18 @@ severityFromZabbix = \case
 eventAcknowledge :: Text -> Text -> [Text] -> Int -> Text -> IO (Either Text ())
 eventAcknowledge baseUrl token eventIds actionBits message = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        body = Aeson.object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("event.acknowledge" :: Text)
-            , "id" .= (1 :: Int)
-            , "params" .= Aeson.object
-                [ "eventids" .= eventIds
-                , "action" .= actionBits
-                , "message" .= message
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("event.acknowledge" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "eventids" .= eventIds
+                        , "action" .= actionBits
+                        , "message" .= message
+                        ]
                 ]
-            ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -201,16 +212,17 @@ rpcError :: Aeson.Value -> Text
 rpcError decoded = case errValue of
     Just err -> cs (Aeson.encode err)
     Nothing -> "zabbix rpc: unexpected response"
-    where
-        errValue :: Maybe Aeson.Value
-        errValue = parseMaybe (Aeson.withObject "rpc" (.: "error")) decoded
+  where
+    errValue :: Maybe Aeson.Value
+    errValue = parseMaybe (Aeson.withObject "rpc" (.: "error")) decoded
 
 data ZabbixAckRow = ZabbixAckRow
     { ackClock :: Integer
     , ackAction :: Integer
     , ackMessage :: Text
     , ackUserId :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON ZabbixAckRow where
     parseJSON = Aeson.withObject "ZabbixAckRow" $ \o -> do
@@ -220,20 +232,21 @@ instance Aeson.FromJSON ZabbixAckRow where
         ackAction <- maybe mempty pure (readMaybe actionText)
         ackMessage <- o .:? "message" .!= ""
         ackUserId <- o .:? "userid" .!= ""
-        pure ZabbixAckRow { .. }
+        pure ZabbixAckRow{..}
 
 data ZabbixEventAck = ZabbixEventAck
     { ackEventId :: Text
-    , ackAcknowledged :: Text   -- "0" / "1"
+    , ackAcknowledged :: Text -- "0" / "1"
     , ackRows :: [ZabbixAckRow]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON ZabbixEventAck where
     parseJSON = Aeson.withObject "ZabbixEventAck" $ \o -> do
         ackEventId <- o .: "eventid"
         ackAcknowledged <- o .:? "acknowledged" .!= "0"
         ackRows <- o .:? "acknowledges" .!= []
-        pure ZabbixEventAck { .. }
+        pure ZabbixEventAck{..}
 
 -- | Ack state for a known set of problem events (reverse reconciliation,
 -- milestone_3.md §6): the poller re-fetches ack flags for alerts it already
@@ -241,15 +254,17 @@ instance Aeson.FromJSON ZabbixEventAck where
 ackStateGet :: Text -> Text -> [Text] -> IO (Either Text [ZabbixEventAck])
 ackStateGet baseUrl token eventIds = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        body = Aeson.object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("event.get" :: Text)
-            , "id" .= (1 :: Int)
-            , "params" .= Aeson.object
-                [ "eventids" .= eventIds
-                , "selectAcknowledges" .= ("extend" :: Text)
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("event.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "eventids" .= eventIds
+                        , "selectAcknowledges" .= ("extend" :: Text)
+                        ]
                 ]
-            ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -270,9 +285,10 @@ ackStateGet baseUrl token eventIds = do
 -- caller decides what that means. Disabled triggers keep their last value.
 data ZabbixTriggerState = ZabbixTriggerState
     { triggerStateId :: Text
-    , triggerStateValue :: Text          -- "0" OK, "1" problem
-    , triggerStateLastChange :: Integer  -- unix time of last state flip
-    } deriving (Eq, Show)
+    , triggerStateValue :: Text -- "0" OK, "1" problem
+    , triggerStateLastChange :: Integer -- unix time of last state flip
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON ZabbixTriggerState where
     parseJSON = Aeson.withObject "ZabbixTriggerState" $ \o -> do
@@ -280,20 +296,22 @@ instance Aeson.FromJSON ZabbixTriggerState where
         triggerStateValue <- o .:? "value" .!= "1"
         lastChangeText <- o .:? "lastchange" .!= "0"
         triggerStateLastChange <- maybe mempty pure (readMaybe lastChangeText)
-        pure ZabbixTriggerState { .. }
+        pure ZabbixTriggerState{..}
 
 triggerStateGet :: Text -> Text -> [Text] -> IO (Either Text [ZabbixTriggerState])
 triggerStateGet baseUrl token triggerIds = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        body = Aeson.object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("trigger.get" :: Text)
-            , "id" .= (1 :: Int)
-            , "params" .= Aeson.object
-                [ "triggerids" .= triggerIds
-                , "output" .= (["triggerid", "value", "lastchange"] :: [Text])
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("trigger.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "triggerids" .= triggerIds
+                        , "output" .= (["triggerid", "value", "lastchange"] :: [Text])
+                        ]
                 ]
-            ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -308,15 +326,17 @@ triggerStateGet baseUrl token triggerIds = do
 usersGet :: Text -> Text -> [Text] -> IO (Either Text [(Text, Text)])
 usersGet baseUrl token userIds = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        body = Aeson.object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "method" .= ("user.get" :: Text)
-            , "id" .= (1 :: Int)
-            , "params" .= Aeson.object
-                [ "userids" .= userIds
-                , "output" .= (["userid", "username", "name", "surname"] :: [Text])
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("user.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "userids" .= userIds
+                        , "output" .= (["userid", "username", "name", "surname"] :: [Text])
+                        ]
                 ]
-            ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -326,13 +346,14 @@ usersGet baseUrl token userIds = do
                 case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
                     Just users -> pure (Right (mapMaybe userName users))
                     Nothing -> pure (Left (rpcError decoded))
-    where
-        userName = parseMaybe $ Aeson.withObject "user" \o -> do
-            userId <- o .: "userid"
-            username <- o .:? "username" .!= ""
-            name <- o .:? "name" .!= ""
-            surname <- o .:? "surname" .!= ""
-            let display = if null username
+  where
+    userName = parseMaybe $ Aeson.withObject "user" \o -> do
+        userId <- o .: "userid"
+        username <- o .:? "username" .!= ""
+        name <- o .:? "name" .!= ""
+        surname <- o .:? "surname" .!= ""
+        let display =
+                if null username
                     then Data.Text.unwords (filter (not . null) [name, surname])
                     else username
-            pure (userId, display)
+        pure (userId, display)

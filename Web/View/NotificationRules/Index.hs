@@ -1,11 +1,13 @@
 module Web.View.NotificationRules.Index where
-import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml, enabledBadgeHtml)
 
-data IndexView = IndexView { rulesWithTargets :: [(NotificationRule, Text)] }
+import Web.View.Fragments (editDeleteActionsHtml, enabledBadgeHtml, pageHeaderHtml)
+import Web.View.Prelude
+
+data IndexView = IndexView {rulesWithTargets :: [(NotificationRule, Text)]}
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Notification rules" newButton}
         <table class="table" data-testid="notification-rules-table">
             <thead>
@@ -24,11 +26,12 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = [hsx|<a href={NewNotificationRuleAction} class="btn btn-sm btn-primary" data-testid="new-notification-rule">New rule</a>|]
+      where
+        newButton = [hsx|<a href={NewNotificationRuleAction} class="btn btn-sm btn-primary" data-testid="new-notification-rule">New rule</a>|]
 
 renderRule :: (NotificationRule, Text) -> Html
-renderRule (rule, target) = [hsx|
+renderRule (rule, target) =
+    [hsx|
     <tr data-testid="notification-rule-row">
         <td>{rule.position}</td>
         <td>{rule.name}</td>

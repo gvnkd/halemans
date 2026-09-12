@@ -1,85 +1,95 @@
 module Main where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
-import Generated.Types
-import System.Environment (lookupEnv, getEnv, setEnv, unsetEnv)
-import System.Process (callProcess, readProcess)
+import Control.Exception (SomeException, finally, try)
+import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
-import Data.UUID.V4 (nextRandom)
-import Control.Monad (void, replicateM_)
-import Control.Exception (try, finally, SomeException)
-import Data.Int (Int64)
-import IHP.Job.Types (Job (..))
-import IHP.FrameworkConfig (FrameworkConfig, buildFrameworkConfig)
-import qualified Data.Text as Text
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
+import Data.Int (Int64)
+import qualified Data.Text as Text
+import Data.UUID.V4 (nextRandom)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.FrameworkConfig (FrameworkConfig, buildFrameworkConfig)
+import IHP.Job.Types (Job (..))
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import qualified Network.Wreq as Wreq
+import System.Environment (getEnv, lookupEnv, setEnv, unsetEnv)
+import System.Process (callProcess, readProcess)
+import Test.Hspec
 
+import qualified Application.Connector.Grafana as Grafana
+import Application.Helper.DashboardConfig (DashboardCard (..), FacetRef (..), MatchClause (..), MatchOp (..), decodeDashboardConfig)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
-import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert)
-import Application.Job.AutoClose (autoCloseResolved, unackExpiredAcks, unsuppressExpired, stallStaleAlerts, closeStalledAlerts)
-import Application.Job.Escalation (runDueTrackers)
+import Application.Job.AutoClose (autoCloseResolved, closeStalledAlerts, stallStaleAlerts, unackExpiredAcks, unsuppressExpired)
 import Application.Job.EnrichAlert ()
+import Application.Job.Escalation (runDueTrackers)
+import Application.Job.FacetBackfill ()
 import Application.Job.LlmAnalysis ()
+import Application.Job.PollZabbix ()
 import Application.Job.Retention ()
 import Application.Job.SourceHealth (checkSilence)
-import Application.Job.PollZabbix ()
-import Application.Service.PollerControl (ensurePollerForSourceType)
-import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
-import Application.Service.Api.Token (newApiToken, resolveToken, hashToken)
-import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage, alertDetail, AlertDetail (..))
+import Application.Pipeline.Actions (ackAlert, closeAlert, unackAlert)
+import Application.Pipeline.Grouping (AlertField (..), facetValue)
+import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, effectiveEnvNames, listAlerts)
+import Application.Service.Api.Alerts (AlertDetail (..), AlertFilters (..), alertDetail, defaultFilters, listAlertsPage)
 import Application.Service.Api.Auth (AuthDecision (..), authorizeToken)
-import Application.Service.Api.Metrics (collectMetrics)
 import Application.Service.Api.Cursor (decodeCursor)
-import Network.HTTP.Types (status401, status403)
-import Data.Time.Clock (getCurrentTime)
-import Application.Service.Notify (currentOnCall, resolveRuleTargets)
-import Application.Service.WriteBack (executeAttempt)
-import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, lastAckWasExternal)
+import Application.Service.Api.Metrics (collectMetrics)
+import Application.Service.Api.Token (hashToken, newApiToken, resolveToken)
+import Application.Service.Assets.Attrs (objectAttributes)
+import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), expandDashboardCards, runCardQuery, runCardQueryGroups, runCardSummary)
 import Application.Service.Jira.DbConfig (syncOpenLinks)
-import Application.Service.Provision (applyProvisionConfig, ProvisionError (..))
 import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
-import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Llm.ToolCache (cachedToolCall)
-import Data.IORef (newIORef, readIORef, modifyIORef')
-import Application.Service.Assets.Attrs (objectAttributes)
-import Application.Pipeline.Grouping (AlertField (..), facetValue)
-import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), FacetRef (..), MatchOp (..), decodeDashboardConfig)
-import Application.Service.DashboardCards (runCardQueryGroups, CardGroup (..), expandDashboardCards, ExpandedCard (..), runCardSummary, CardSummary (..), runCardQuery)
-import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, listAlerts, effectiveEnvNames)
-import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..))
-import Application.Job.FacetBackfill ()
-import qualified Application.Connector.Grafana as Grafana
+import Application.Service.Llm.Tools (executeToolCall)
+import Application.Service.Notify (currentOnCall, resolveRuleTargets)
+import Application.Service.PollerControl (ensurePollerForSourceType)
+import Application.Service.Provision (ProvisionError (..), applyProvisionConfig)
+import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack)
+import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
+import Application.Service.WriteBack (executeAttempt)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
+import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Time.Clock (getCurrentTime)
+import Network.HTTP.Types (status401, status403)
+import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
 
 -- Pipeline integration tests (design_docs/milestone_1.md §10). The check
 -- derivation boots a temp PostgreSQL; we apply IHPSchema + Schema.sql +
 -- Fixtures.sql ourselves before running.
 main :: IO ()
 main = do
-    databaseUrl <- lookupEnv "DATABASE_URL" >>= \case
-        Just url -> pure (cs url)
-        Nothing -> error "DATABASE_URL not set. Run via `nix flake check`."
+    databaseUrl <-
+        lookupEnv "DATABASE_URL" >>= \case
+            Just url -> pure (cs url)
+            Nothing -> error "DATABASE_URL not set. Run via `nix flake check`."
     ihpLib <- getEnv "IHP_LIB"
     -- Load the schema only when missing (the nix check pre-loads it so
     -- typedSql compile-time introspection works; manual dev runs don't).
     hasSchema <- schemaPresent databaseUrl
     if hasSchema
         then pure ()
-        else callProcess "psql" [databaseUrl, "-v", "ON_ERROR_STOP=1", "-q"
-            , "-f", ihpLib <> "/IHPSchema.sql"
-            , "-f", "Application/Schema.sql"
-            , "-f", "Application/Fixtures.sql"
-            ]
+        else
+            callProcess
+                "psql"
+                [ databaseUrl
+                , "-v"
+                , "ON_ERROR_STOP=1"
+                , "-q"
+                , "-f"
+                , ihpLib <> "/IHPSchema.sql"
+                , "-f"
+                , "Application/Schema.sql"
+                , "-f"
+                , "Application/Fixtures.sql"
+                ]
     frameworkConfig <- buildFrameworkConfig noopLogger (pure ())
     withModelContext (cs databaseUrl) noopLogger \modelContext -> do
         let ?modelContext = modelContext
@@ -161,21 +171,23 @@ spec = describe "alert pipeline (milestone 1)" do
         void (ingest source (testEventIn "itest-env-bo1" "itest-env-bo1-bootstrap" Firing))
         environment <- fetchEnvironment "itest-env-bo1"
         now <- getCurrentTime
-        _ <- newRecord @Blackout
-            |> set #environmentId (Just (get #id environment))
-            |> set #startsAt (addUTCTime (-60) now)
-            |> set #endsAt (addUTCTime 3600 now)
-            |> set #reason "integration test"
-            |> createRecord
+        _ <-
+            newRecord @Blackout
+                |> set #environmentId (Just (get #id environment))
+                |> set #startsAt (addUTCTime (-60) now)
+                |> set #endsAt (addUTCTime 3600 now)
+                |> set #reason "integration test"
+                |> createRecord
         Just alertId <- ingest source (testEventIn "itest-env-bo1" fp Firing)
         alert <- fetch alertId
         alert.suppressed `shouldBe` True
         events <- eventKinds alertId
         events `shouldSatisfy` ("suppressed" `elem`)
         events `shouldSatisfy` (not . ("notified" `elem`))
-        pushJobs <- query @PushNotificationJob
-            |> filterWhere (#alertId, alertId)
-            |> fetch
+        pushJobs <-
+            query @PushNotificationJob
+                |> filterWhere (#alertId, alertId)
+                |> fetch
         length pushJobs `shouldBe` 0
 
     it "blackout expiry restores the alert via unsuppressExpired" do
@@ -184,11 +196,12 @@ spec = describe "alert pipeline (milestone 1)" do
         void (ingest source (testEventIn "itest-env-bo2" "itest-env-bo2-bootstrap" Firing))
         environment <- fetchEnvironment "itest-env-bo2"
         now <- getCurrentTime
-        _ <- newRecord @Blackout
-            |> set #environmentId (Just (get #id environment))
-            |> set #startsAt (addUTCTime (-60) now)
-            |> set #endsAt (addUTCTime (-1) now) -- already expired
-            |> createRecord
+        _ <-
+            newRecord @Blackout
+                |> set #environmentId (Just (get #id environment))
+                |> set #startsAt (addUTCTime (-60) now)
+                |> set #endsAt (addUTCTime (-1) now) -- already expired
+                |> createRecord
         -- ingest happens while the blackout is already expired -> not suppressed
         Just alertId <- ingest source (testEventIn "itest-env-bo2" fp Firing)
         -- force the suppressed flag as if the blackout was live at ingest time
@@ -267,7 +280,7 @@ spec = describe "alert pipeline (milestone 1)" do
             fp1 <- freshFingerprint
             fp2 <- freshFingerprint
             Just alertId1 <- ingest source (testEventIn "itest-env-g1" fp1 Firing)
-            Just alertId2 <- ingest source ((testEventIn "itest-env-g1" fp2 Firing) { severity = "critical" })
+            Just alertId2 <- ingest source ((testEventIn "itest-env-g1" fp2 Firing){severity = "critical"})
             alert1 <- fetch alertId1
             alert2 <- fetch alertId2
             isJust alert1.groupId `shouldBe` True
@@ -299,8 +312,8 @@ spec = describe "alert pipeline (milestone 1)" do
             _ <- notificationRule "it-notify-g3" (Just (get #id user)) Nothing
             fp1 <- freshFingerprint
             fp2 <- freshFingerprint
-            Just alertId1 <- ingest source ((testEventIn "itest-env-g3" fp1 Firing) { severity = "critical" })
-            Just alertId2 <- ingest source ((testEventIn "itest-env-g3" fp2 Firing) { severity = "critical" })
+            Just alertId1 <- ingest source ((testEventIn "itest-env-g3" fp1 Firing){severity = "critical"})
+            Just alertId2 <- ingest source ((testEventIn "itest-env-g3" fp2 Firing){severity = "critical"})
             notified1 <- notifiedEvents alertId1
             notified2 <- notifiedEvents alertId2
             length notified1 `shouldBe` 1
@@ -311,10 +324,11 @@ spec = describe "alert pipeline (milestone 1)" do
             rule <- groupingRule "it-grp-4" "{env}/{host}"
             fp <- freshFingerprint
             Just alertId <- ingest source (testEventIn "itest-env-g4" fp Firing)
-            updatedRule <- rule
-                |> set #groupKeyTemplate "{env}/{host}/{check}"
-                |> set #version (rule.version + 1)
-                |> updateRecord
+            updatedRule <-
+                rule
+                    |> set #groupKeyTemplate "{env}/{host}/{check}"
+                    |> set #version (rule.version + 1)
+                    |> updateRecord
             updatedRule.version `shouldBe` 2
             alert <- fetch alertId
             alert.groupedByVersion `shouldBe` Just 1
@@ -322,14 +336,15 @@ spec = describe "alert pipeline (milestone 1)" do
 
         it "disabled rules never match, even at an earlier position" do
             source <- testSource
-            _ <- newRecord @GroupingRule
-                |> set #name "it-grp-disabled"
-                |> set #position 0
-                |> set #enabled False
-                |> set #version 77
-                |> set #match (object [])
-                |> set #groupKeyTemplate "disabled-rule-key"
-                |> createRecord
+            _ <-
+                newRecord @GroupingRule
+                    |> set #name "it-grp-disabled"
+                    |> set #position 0
+                    |> set #enabled False
+                    |> set #version 77
+                    |> set #match (object [])
+                    |> set #groupKeyTemplate "disabled-rule-key"
+                    |> createRecord
             fp <- freshFingerprint
             Just alertId <- ingest source (testEventIn "itest-env-norule" fp Firing)
             alert <- fetch alertId
@@ -339,54 +354,71 @@ spec = describe "alert pipeline (milestone 1)" do
         it "subject-less alerts are never grouped (all-dash key guard)" do
             source <- testSource
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { env = Nothing, host = Nothing, service = Nothing }
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { env = Nothing
+                        , host = Nothing
+                        , service = Nothing
+                        }
             alert <- fetch alertId
             alert.groupId `shouldBe` Nothing
 
         it "escalation: tracker created on notify, step fires on schedule, ack cancels, unack restarts" do
             source <- testSource
             user <- testUser
-            policy <- newRecord @EscalationPolicy
-                |> set #name "it-policy-1"
-                |> set #steps (Aeson.toJSON [object
-                    [ "after_seconds" .= (0 :: Int)
-                    , "target_user_id" .= tshow (get #id user)
-                    ]])
-                |> createRecord
+            policy <-
+                newRecord @EscalationPolicy
+                    |> set #name "it-policy-1"
+                    |> set
+                        #steps
+                        ( Aeson.toJSON
+                            [ object
+                                [ "after_seconds" .= (0 :: Int)
+                                , "target_user_id" .= tshow (get #id user)
+                                ]
+                            ]
+                        )
+                    |> createRecord
             _ <- notificationRule "it-notify-esc1" (Just (get #id user)) (Just (get #id policy))
             fp <- freshFingerprint
-            Just alertId <- ingest source ((testEvent fp Firing) { severity = "critical" })
-            tracker <- query @EscalationTracker
-                |> filterWhere (#alertId, alertId)
-                |> filterWhere (#status, "active" :: Text)
-                |> fetchOneOrNothing
-                >>= maybe (error "tracker missing") pure
+            Just alertId <- ingest source ((testEvent fp Firing){severity = "critical"})
+            tracker <-
+                query @EscalationTracker
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#status, "active" :: Text)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "tracker missing") pure
             runDueTrackers
             events <- eventKinds alertId
             events `shouldSatisfy` ("escalated" `elem`)
             firedTracker <- fetch (get #id tracker)
             firedTracker.status `shouldBe` "done" -- single step: no further advance
-
         it "ack cancels an active tracker; unack re-activates from step 0" do
             source <- testSource
             user <- testUser
-            policy <- newRecord @EscalationPolicy
-                |> set #name "it-policy-2"
-                |> set #steps (Aeson.toJSON
-                    [ object ["after_seconds" .= (3600 :: Int), "target_user_id" .= tshow (get #id user)]
-                    , object ["after_seconds" .= (3600 :: Int), "target_user_id" .= tshow (get #id user)]
-                    ])
-                |> createRecord
+            policy <-
+                newRecord @EscalationPolicy
+                    |> set #name "it-policy-2"
+                    |> set
+                        #steps
+                        ( Aeson.toJSON
+                            [ object ["after_seconds" .= (3600 :: Int), "target_user_id" .= tshow (get #id user)]
+                            , object ["after_seconds" .= (3600 :: Int), "target_user_id" .= tshow (get #id user)]
+                            ]
+                        )
+                    |> createRecord
             _ <- notificationRule "it-notify-esc2" (Just (get #id user)) (Just (get #id policy))
             fp <- freshFingerprint
-            Just alertId <- ingest source ((testEvent fp Firing) { severity = "critical" })
+            Just alertId <- ingest source ((testEvent fp Firing){severity = "critical"})
             alert <- fetch alertId
             acked <- ackAlert user alert Nothing Nothing
-            tracker <- query @EscalationTracker
-                |> filterWhere (#alertId, alertId)
-                |> fetchOneOrNothing
-                >>= maybe (error "tracker missing") pure
+            tracker <-
+                query @EscalationTracker
+                    |> filterWhere (#alertId, alertId)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "tracker missing") pure
             tracker.status `shouldBe` "cancelled"
             _ <- unackAlert (Just user) acked "back to firing"
             restarted <- fetch (get #id tracker)
@@ -396,108 +428,126 @@ spec = describe "alert pipeline (milestone 1)" do
         it "suppressed alerts never create escalation trackers" do
             source <- testSource
             user <- testUser
-            policy <- newRecord @EscalationPolicy
-                |> set #name "it-policy-3"
-                |> set #steps (Aeson.toJSON [object ["after_seconds" .= (0 :: Int), "target_user_id" .= tshow (get #id user)]])
-                |> createRecord
+            policy <-
+                newRecord @EscalationPolicy
+                    |> set #name "it-policy-3"
+                    |> set #steps (Aeson.toJSON [object ["after_seconds" .= (0 :: Int), "target_user_id" .= tshow (get #id user)]])
+                    |> createRecord
             _ <- notificationRule "it-notify-esc3" (Just (get #id user)) (Just (get #id policy))
             void (ingest source (testEventIn "itest-env-bo3" "itest-env-bo3-bootstrap" Firing))
             environment <- fetchEnvironment "itest-env-bo3"
             now <- getCurrentTime
-            _ <- newRecord @Blackout
-                |> set #environmentId (Just (get #id environment))
-                |> set #startsAt (addUTCTime (-60) now)
-                |> set #endsAt (addUTCTime 3600 now)
-                |> set #reason "integration test"
-                |> createRecord
+            _ <-
+                newRecord @Blackout
+                    |> set #environmentId (Just (get #id environment))
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "integration test"
+                    |> createRecord
             fp <- freshFingerprint
-            Just alertId <- ingest source ((testEventIn "itest-env-bo3" fp Firing) { severity = "critical" })
-            trackers <- query @EscalationTracker
-                |> filterWhere (#alertId, alertId)
-                |> fetch
+            Just alertId <- ingest source ((testEventIn "itest-env-bo3" fp Firing){severity = "critical"})
+            trackers <-
+                query @EscalationTracker
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
             length trackers `shouldBe` 0
 
         it "currentOnCall stub: first schedule member; missing schedule falls back to all team members" do
             user <- testUser
-            otherUser <- newRecord @User
-                |> set #email "itest2@dev"
-                |> set #passwordHash "unused"
-                |> createRecord
-            team <- newRecord @Team
-                |> set #name "it-team-1"
-                |> createRecord
-            _ <- newRecord @TeamMember
-                |> set #teamId (get #id team)
-                |> set #userId (get #id user)
-                |> set #teamRole "lead"
-                |> createRecord
-            _ <- newRecord @TeamMember
-                |> set #teamId (get #id team)
-                |> set #userId (get #id otherUser)
-                |> set #teamRole "member"
-                |> createRecord
+            otherUser <-
+                newRecord @User
+                    |> set #email "itest2@dev"
+                    |> set #passwordHash "unused"
+                    |> createRecord
+            team <-
+                newRecord @Team
+                    |> set #name "it-team-1"
+                    |> createRecord
+            _ <-
+                newRecord @TeamMember
+                    |> set #teamId (get #id team)
+                    |> set #userId (get #id user)
+                    |> set #teamRole "lead"
+                    |> createRecord
+            _ <-
+                newRecord @TeamMember
+                    |> set #teamId (get #id team)
+                    |> set #userId (get #id otherUser)
+                    |> set #teamRole "member"
+                    |> createRecord
             -- no schedule row yet: targets fall back to all members
-            noSchedule <- query @Team
-                |> filterWhere (#name, "it-team-nosched" :: Text)
-                |> fetchOneOrNothing
+            noSchedule <-
+                query @Team
+                    |> filterWhere (#name, "it-team-nosched" :: Text)
+                    |> fetchOneOrNothing
             teamNoSched <- case noSchedule of
                 Just t -> pure t
                 Nothing -> newRecord @Team |> set #name "it-team-nosched" |> createRecord
-            _ <- newRecord @TeamMember
-                |> set #teamId (get #id teamNoSched)
-                |> set #userId (get #id user)
-                |> set #teamRole "member"
-                |> createRecord
-            ruleNoSched <- newRecord @NotificationRule
-                |> set #name "it-notify-team-fallback"
-                |> set #teamId (Just (get #id teamNoSched))
-                |> createRecord
+            _ <-
+                newRecord @TeamMember
+                    |> set #teamId (get #id teamNoSched)
+                    |> set #userId (get #id user)
+                    |> set #teamRole "member"
+                    |> createRecord
+            ruleNoSched <-
+                newRecord @NotificationRule
+                    |> set #name "it-notify-team-fallback"
+                    |> set #teamId (Just (get #id teamNoSched))
+                    |> createRecord
             fallbackTargets <- resolveRuleTargets ruleNoSched
             fallbackTargets `shouldBe` [get #id user]
             -- schedule present: first member wins
-            _ <- newRecord @OnCallSchedule
-                |> set #teamId (get #id team)
-                |> set #members (Aeson.toJSON [tshow (get #id otherUser) :: Text])
-                |> createRecord
+            _ <-
+                newRecord @OnCallSchedule
+                    |> set #teamId (get #id team)
+                    |> set #members (Aeson.toJSON [tshow (get #id otherUser) :: Text])
+                    |> createRecord
             onCall <- currentOnCall (get #id team)
             onCall `shouldBe` Just (get #id otherUser)
-            rule <- newRecord @NotificationRule
-                |> set #name "it-notify-team-oncall"
-                |> set #teamId (Just (get #id team))
-                |> createRecord
+            rule <-
+                newRecord @NotificationRule
+                    |> set #name "it-notify-team-oncall"
+                    |> set #teamId (Just (get #id team))
+                    |> createRecord
             targets <- resolveRuleTargets rule
             targets `shouldBe` [get #id otherUser]
 
         it "grafana webhook and poller paths dedupe onto one alert via shared fingerprint" do
-            grafanaSource <- query @Source
-                |> filterWhere (#type_, "grafana" :: Text)
-                |> fetchOneOrNothing
-                >>= maybe (error "grafana source fixture missing") pure
-            let webhookPayload = object
-                    [ "status" .= ("firing" :: Text)
-                    , "alerts" .= [object
+            grafanaSource <-
+                query @Source
+                    |> filterWhere (#type_, "grafana" :: Text)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "grafana source fixture missing") pure
+            let webhookPayload =
+                    object
                         [ "status" .= ("firing" :: Text)
-                        , "fingerprint" .= ("poller-dedupe" :: Text)
-                        , "labels" .= object ["severity" .= ("high" :: Text), "env" .= ("itest-env-dedupe" :: Text), "host" .= ("itest-host" :: Text)]
-                        , "annotations" .= object []
-                        ]]
-                    ]
+                        , "alerts"
+                            .= [ object
+                                    [ "status" .= ("firing" :: Text)
+                                    , "fingerprint" .= ("poller-dedupe" :: Text)
+                                    , "labels" .= object ["severity" .= ("high" :: Text), "env" .= ("itest-env-dedupe" :: Text), "host" .= ("itest-host" :: Text)]
+                                    , "annotations" .= object []
+                                    ]
+                               ]
+                        ]
             Right [webhookEvent] <- pure (Grafana.normalize webhookPayload)
             Just alertId <- ingest grafanaSource webhookEvent
             now <- getCurrentTime
-            let polled = Grafana.GrafanaAmAlert
-                    { amFingerprint = "poller-dedupe"
-                    , amLabels = object ["severity" .= ("high" :: Text)]
-                    , amAnnotations = object []
-                    , amStartsAt = Nothing
-                    , amEndsAt = Just now -- resolved while "webhook was down"
-                    , amUpdatedAt = Just now
-                    , amGeneratorUrl = Nothing
-                    }
+            let polled =
+                    Grafana.GrafanaAmAlert
+                        { amFingerprint = "poller-dedupe"
+                        , amLabels = object ["severity" .= ("high" :: Text)]
+                        , amAnnotations = object []
+                        , amStartsAt = Nothing
+                        , amEndsAt = Just now -- resolved while "webhook was down"
+                        , amUpdatedAt = Just now
+                        , amGeneratorUrl = Nothing
+                        }
             void (ingest grafanaSource (Grafana.amAlertToNormalized now polled))
-            alerts <- query @Alert
-                |> filterWhere (#fingerprint, "grafana:poller-dedupe" :: Text)
-                |> fetch
+            alerts <-
+                query @Alert
+                    |> filterWhere (#fingerprint, "grafana:poller-dedupe" :: Text)
+                    |> fetch
             length alerts `shouldBe` 1
             resolved <- fetch alertId
             resolved.status `shouldBe` "resolved"
@@ -507,45 +557,61 @@ spec = describe "alert pipeline (milestone 1)" do
             source <- testSource
             fp <- freshFingerprint
             Just alertId <- ingest source (testEvent fp Firing)
-            jobs <- query @EnrichAlertJob
-                |> filterWhere (#alertId, alertId)
-                |> fetch
+            jobs <-
+                query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
             length jobs `shouldBe` 1
             void (ingest source (testEvent fp Firing))
-            jobsAfterRefire <- query @EnrichAlertJob
-                |> filterWhere (#alertId, alertId)
-                |> fetch
+            jobsAfterRefire <-
+                query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
             length jobsAfterRefire `shouldBe` 1
 
         it "enrich job populates cmdb cache and jira links" do
             ensureMockJiraConfig
             ensureMockCmdbConfig
-            source <- integrationSource "zabbix" "itest-m3-enrich" "" (object
-                [ "writeBack" .= True
-                , "jiraProjects" .= (["DEV"] :: [Text])
-                , "cmdbSpaces" .= (["DEV"] :: [Text])
-                ])
+            source <-
+                integrationSource
+                    "zabbix"
+                    "itest-m3-enrich"
+                    ""
+                    ( object
+                        [ "writeBack" .= True
+                        , "jiraProjects" .= (["DEV"] :: [Text])
+                        , "cmdbSpaces" .= (["DEV"] :: [Text])
+                        ]
+                    )
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { host = Just "dev-host-01", checkName = Just "halemans test trigger" }
-            job <- query @EnrichAlertJob
-                |> filterWhere (#alertId, alertId)
-                |> fetchOneOrNothing
-                >>= maybe (error "enrich job missing") pure
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { host = Just "dev-host-01"
+                        , checkName = Just "halemans test trigger"
+                        }
+            job <-
+                query @EnrichAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "enrich job missing") pure
             perform job
             alert <- fetch alertId
             let Just hostId = alert.hostId
-            entry <- query @CmdbEntry
-                |> filterWhere (#hostId, Just hostId)
-                |> fetchOneOrNothing
-                >>= maybe (error "cmdb entry missing") pure
+            entry <-
+                query @CmdbEntry
+                    |> filterWhere (#hostId, Just hostId)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "cmdb entry missing") pure
             entry.pageId `shouldBe` Just "1001"
             (not (Text.null entry.excerpt)) `shouldBe` True
             host <- fetch hostId
             host.cmdbPageId `shouldBe` Just "1001"
-            links <- query @JiraLink
-                |> filterWhere (#alertId, alertId)
-                |> fetch
+            links <-
+                query @JiraLink
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
             case links of
                 [link] -> do
                     link.ticketKey `shouldBe` "DEV-101"
@@ -553,13 +619,15 @@ spec = describe "alert pipeline (milestone 1)" do
                 _ -> expectationFailure "expected exactly one auto jira link"
             -- second run: fresh cache row is served, upserts are idempotent
             perform job
-            entries <- query @CmdbEntry
-                |> filterWhere (#hostId, Just hostId)
-                |> fetch
+            entries <-
+                query @CmdbEntry
+                    |> filterWhere (#hostId, Just hostId)
+                    |> fetch
             length entries `shouldBe` 1
-            linksAfter <- query @JiraLink
-                |> filterWhere (#alertId, alertId)
-                |> fetch
+            linksAfter <-
+                query @JiraLink
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
             length linksAfter `shouldBe` 1
 
         it "per-source scope override replaces the connection's jira projects" do
@@ -568,50 +636,73 @@ spec = describe "alert pipeline (milestone 1)" do
             -- the mock jira holds only DEV tickets, so a NOPE scope (both
             -- the array key and the legacy scalar) auto-links nothing — a
             -- legitimate empty result, not an enrichment failure
-            forM_ [ object ["jiraProjects" .= (["NOPE"] :: [Text])]
-                  , object ["jiraProject" .= ("NOPE" :: Text)]
-                  ] \config -> do
-                suffix <- tshow <$> nextRandom
-                source <- integrationSource "zabbix" ("itest-m3-scope-" <> suffix) "" config
-                fp <- freshFingerprint
-                Just alertId <- ingest source (testEvent fp Firing)
-                    { host = Just ("itest-m3-scope-host-" <> suffix), checkName = Just "halemans test trigger" }
-                job <- enrichJobFor alertId
-                perform job
-                links <- query @JiraLink
-                    |> filterWhere (#alertId, alertId)
-                    |> fetch
-                links `shouldBe` []
-                failures <- query @AlertEvent
-                    |> filterWhere (#alertId, alertId)
-                    |> filterWhere (#kind, "enrichment_failed" :: Text)
-                    |> fetch
-                mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` []
+            forM_
+                [ object ["jiraProjects" .= (["NOPE"] :: [Text])]
+                , object ["jiraProject" .= ("NOPE" :: Text)]
+                ]
+                \config -> do
+                    suffix <- tshow <$> nextRandom
+                    source <- integrationSource "zabbix" ("itest-m3-scope-" <> suffix) "" config
+                    fp <- freshFingerprint
+                    Just alertId <-
+                        ingest
+                            source
+                            (testEvent fp Firing)
+                                { host = Just ("itest-m3-scope-host-" <> suffix)
+                                , checkName = Just "halemans test trigger"
+                                }
+                    job <- enrichJobFor alertId
+                    perform job
+                    links <-
+                        query @JiraLink
+                            |> filterWhere (#alertId, alertId)
+                            |> fetch
+                    links `shouldBe` []
+                    failures <-
+                        query @AlertEvent
+                            |> filterWhere (#alertId, alertId)
+                            |> filterWhere (#kind, "enrichment_failed" :: Text)
+                            |> fetch
+                    mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` []
 
         it "enrich soft-fails per subsystem (confluence down, jira still runs)" do
             ensureMockJiraConfig
             withOnlyCmdbConfig "http://127.0.0.1:9" do
-                source <- integrationSource "zabbix" "itest-m3-softfail" "" (object
-                    [ "writeBack" .= True ])
+                source <-
+                    integrationSource
+                        "zabbix"
+                        "itest-m3-softfail"
+                        ""
+                        ( object
+                            ["writeBack" .= True]
+                        )
                 fp <- freshFingerprint
                 -- unique host (not dev-host-01): that host's cmdb_entries
                 -- row is cached by the previous test and would be served
                 -- fresh instead of failing against the dead Confluence URL.
-                Just alertId <- ingest source (testEvent fp Firing)
-                    { host = Just "itest-m3-softfail-host", checkName = Just "halemans test trigger" }
-                job <- query @EnrichAlertJob
-                    |> filterWhere (#alertId, alertId)
-                    |> fetchOneOrNothing
-                    >>= maybe (error "enrich job missing") pure
+                Just alertId <-
+                    ingest
+                        source
+                        (testEvent fp Firing)
+                            { host = Just "itest-m3-softfail-host"
+                            , checkName = Just "halemans test trigger"
+                            }
+                job <-
+                    query @EnrichAlertJob
+                        |> filterWhere (#alertId, alertId)
+                        |> fetchOneOrNothing
+                        >>= maybe (error "enrich job missing") pure
                 perform job
-                failures <- query @AlertEvent
-                    |> filterWhere (#alertId, alertId)
-                    |> filterWhere (#kind, "enrichment_failed" :: Text)
-                    |> fetch
+                failures <-
+                    query @AlertEvent
+                        |> filterWhere (#alertId, alertId)
+                        |> filterWhere (#kind, "enrichment_failed" :: Text)
+                        |> fetch
                 mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` ["cmdb"]
-                links <- query @JiraLink
-                    |> filterWhere (#alertId, alertId)
-                    |> fetch
+                links <-
+                    query @JiraLink
+                        |> filterWhere (#alertId, alertId)
+                        |> fetch
                 length links `shouldBe` 1
 
         it "enrich retry carries attempts forward and stops once resolved" do
@@ -619,22 +710,29 @@ spec = describe "alert pipeline (milestone 1)" do
             withOnlyCmdbConfig "http://127.0.0.1:9" do
                 source <- integrationSource "zabbix" "itest-m3-retry" "" (object [])
                 fp <- freshFingerprint
-                Just alertId <- ingest source (testEvent fp Firing)
-                    { host = Just "itest-m3-retry-host", checkName = Just "halemans test trigger" }
+                Just alertId <-
+                    ingest
+                        source
+                        (testEvent fp Firing)
+                            { host = Just "itest-m3-retry-host"
+                            , checkName = Just "halemans test trigger"
+                            }
                 job <- freshEnrichJob alertId
                 perform job
-                retries <- query @EnrichAlertJob
-                    |> filterWhere (#alertId, alertId)
-                    |> orderByAsc #createdAt
-                    |> fetch
+                retries <-
+                    query @EnrichAlertJob
+                        |> filterWhere (#alertId, alertId)
+                        |> orderByAsc #createdAt
+                        |> fetch
                 map (get #attemptsCount) retries `shouldBe` [0, 1]
                 -- resolved alert: retry budget is irrelevant, no re-enqueue
                 alert <- fetch alertId
                 _ <- alert |> set #status "resolved" |> updateRecord
                 perform (retries !! 1)
-                retriesAfter <- query @EnrichAlertJob
-                    |> filterWhere (#alertId, alertId)
-                    |> fetch
+                retriesAfter <-
+                    query @EnrichAlertJob
+                        |> filterWhere (#alertId, alertId)
+                        |> fetch
                 length retriesAfter `shouldBe` 2
 
         it "enrich does not re-enqueue on deterministic client errors (401)" do
@@ -644,16 +742,22 @@ spec = describe "alert pipeline (milestone 1)" do
                 withOnlyCmdbConfig "http://127.0.0.1:18082" do
                     source <- integrationSource "zabbix" "itest-m3-4xx" "" (object [])
                     fp <- freshFingerprint
-                    Just alertId <- ingest source (testEvent fp Firing)
-                        { host = Just "itest-m3-4xx-host", checkName = Just "halemans test trigger" }
+                    Just alertId <-
+                        ingest
+                            source
+                            (testEvent fp Firing)
+                                { host = Just "itest-m3-4xx-host"
+                                , checkName = Just "halemans test trigger"
+                                }
                     job <- freshEnrichJob alertId
                     perform job
                     -- deterministic client error (401): no re-enqueue, whatever
                     -- the other subsystems did (the dev worker may have raced us
                     -- to a cached cmdb row, so event contents are not asserted)
-                    retries <- query @EnrichAlertJob
-                        |> filterWhere (#alertId, alertId)
-                        |> fetch
+                    retries <-
+                        query @EnrichAlertJob
+                            |> filterWhere (#alertId, alertId)
+                            |> fetch
                     length retries `shouldBe` 1
 
         it "ack enqueues write-back; webhook sources record unsupported" do
@@ -663,16 +767,18 @@ spec = describe "alert pipeline (milestone 1)" do
             Just alertId <- ingest zabbixSource (testEvent fp Firing)
             alert <- fetch alertId
             _ <- ackAlert user alert Nothing Nothing
-            attempts <- query @WriteBackAttempt
-                |> filterWhere (#alertId, alertId)
-                |> fetch
+            attempts <-
+                query @WriteBackAttempt
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
             case attempts of
                 [attempt] -> do
                     attempt.status `shouldBe` "queued"
                     attempt.action `shouldBe` "ack"
-                    jobs <- query @WriteBackJob
-                        |> filterWhere (#attemptId, get #id attempt)
-                        |> fetch
+                    jobs <-
+                        query @WriteBackJob
+                            |> filterWhere (#attemptId, get #id attempt)
+                            |> fetch
                     length jobs `shouldBe` 1
                 _ -> expectationFailure "expected exactly one write-back attempt"
             webhookSource <- integrationSource "webhook" "itest-m3-wb-wh" "" (object ["writeBack" .= True])
@@ -680,33 +786,42 @@ spec = describe "alert pipeline (milestone 1)" do
             Just alertId2 <- ingest webhookSource (testEvent fp2 Firing)
             alert2 <- fetch alertId2
             _ <- ackAlert user alert2 Nothing Nothing
-            attempts2 <- query @WriteBackAttempt
-                |> filterWhere (#alertId, alertId2)
-                |> fetch
+            attempts2 <-
+                query @WriteBackAttempt
+                    |> filterWhere (#alertId, alertId2)
+                    |> fetch
             case attempts2 of
                 [attempt] -> do
                     attempt.status `shouldBe` "done"
                     attempt.lastError `shouldSatisfy` maybe False ("unsupported" `Text.isInfixOf`)
-                    jobs <- query @WriteBackJob
-                        |> filterWhere (#attemptId, get #id attempt)
-                        |> fetch
+                    jobs <-
+                        query @WriteBackJob
+                            |> filterWhere (#attemptId, get #id attempt)
+                            |> fetch
                     length jobs `shouldBe` 0
                 _ -> expectationFailure "expected exactly one write-back attempt"
 
         it "write-back retries then fails terminally" do
             user <- testUser
-            source <- integrationSource "zabbix" "itest-m3-wb-retry" "http://127.0.0.1:9" (object
-                [ "writeBack" .= True
-                , "tokenEnv" .= ("JIRA_TOKEN" :: Text)
-                ])
+            source <-
+                integrationSource
+                    "zabbix"
+                    "itest-m3-wb-retry"
+                    "http://127.0.0.1:9"
+                    ( object
+                        [ "writeBack" .= True
+                        , "tokenEnv" .= ("JIRA_TOKEN" :: Text)
+                        ]
+                    )
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing) { externalId = Just "424242" }
+            Just alertId <- ingest source (testEvent fp Firing){externalId = Just "424242"}
             alert <- fetch alertId
             _ <- ackAlert user alert Nothing Nothing
-            attempt <- query @WriteBackAttempt
-                |> filterWhere (#alertId, alertId)
-                |> fetchOneOrNothing
-                >>= maybe (error "write-back attempt missing") pure
+            attempt <-
+                query @WriteBackAttempt
+                    |> filterWhere (#alertId, alertId)
+                    |> fetchOneOrNothing
+                    >>= maybe (error "write-back attempt missing") pure
             final <- retryWriteBack 6 attempt
             final.status `shouldBe` "failed"
             final.attempts `shouldBe` 5
@@ -722,10 +837,11 @@ spec = describe "alert pipeline (milestone 1)" do
             acked <- mirrorExternalAck alert "zabbix" "admin" now
             acked.status `shouldBe` "ack"
             acked.acknowledgedBy `shouldBe` Nothing
-            externalEvents <- query @AlertEvent
-                |> filterWhere (#alertId, alertId)
-                |> filterWhere (#kind, "external" :: Text)
-                |> fetch
+            externalEvents <-
+                query @AlertEvent
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#kind, "external" :: Text)
+                    |> fetch
             case externalEvents of
                 [event] -> do
                     payloadText "action" event.payload `shouldBe` Just "ack"
@@ -743,39 +859,49 @@ spec = describe "alert pipeline (milestone 1)" do
             fp <- freshFingerprint
             Just alertId <- ingest source (testEvent fp Firing)
             now <- getCurrentTime
-            _ <- newRecord @JiraLink
-                |> set #alertId alertId
-                |> set #ticketKey "DEV-101"
-                |> set #summary "Investigate halemans test trigger on dev-host-01"
-                |> set #status "Open"
-                |> set #url "http://127.0.0.1:18083/browse/DEV-101"
-                |> set #origin "manual"
-                |> set #syncedAt now
-                |> createRecord
+            _ <-
+                newRecord @JiraLink
+                    |> set #alertId alertId
+                    |> set #ticketKey "DEV-101"
+                    |> set #summary "Investigate halemans test trigger on dev-host-01"
+                    |> set #status "Open"
+                    |> set #url "http://127.0.0.1:18083/browse/DEV-101"
+                    |> set #origin "manual"
+                    |> set #syncedAt now
+                    |> createRecord
             let postStatus status = void (Wreq.post "http://127.0.0.1:18083/debug/issue/DEV-101/status" (object ["status" .= (status :: Text)]))
             flip finally (postStatus "Open") do
                 postStatus "In Progress"
                 refreshed <- syncOpenLinks
                 refreshed `shouldSatisfy` (>= 1)
-                link <- query @JiraLink
-                    |> filterWhere (#alertId, alertId)
-                    |> fetchOneOrNothing
-                    >>= maybe (error "jira link missing") pure
+                link <-
+                    query @JiraLink
+                        |> filterWhere (#alertId, alertId)
+                        |> fetchOneOrNothing
+                        >>= maybe (error "jira link missing") pure
                 link.status `shouldBe` "In Progress"
 
         it "one default dashboard per user" do
             user <- testUser
-            _ <- newRecord @Dashboard
-                |> set #userId (get #id user)
-                |> set #name "itest-dash-1"
-                |> set #config (Aeson.toJSON ([] :: [Aeson.Value]))
-                |> set #isDefault True
-                |> createRecord
+            _ <-
+                newRecord @Dashboard
+                    |> set #userId (get #id user)
+                    |> set #name "itest-dash-1"
+                    |> set #config (Aeson.toJSON ([] :: [Aeson.Value]))
+                    |> set #isDefault True
+                    |> createRecord
             let userUuid = unpackId (get #id user)
-            result <- try (void (sqlExecTyped [typedSql|
+            result <-
+                try
+                    ( void
+                        ( sqlExecTyped
+                            [typedSql|
                 INSERT INTO dashboards (user_id, name, is_default)
                 VALUES (${userUuid}, 'itest-dash-2', true)
-            |])) :: IO (Either SomeException ())
+            |]
+                        )
+                    ) ::
+                    IO (Either SomeException ())
             case result of
                 Left _ -> pure ()
                 Right _ -> expectationFailure "second default dashboard should violate the partial unique index"
@@ -789,15 +915,21 @@ llmSpec = describe "llm enrichment (milestone 4)" do
         _ <- ensureTemplate
         source <- testSource
         fp <- freshFingerprint
-        Just alertId <- ingest source (testEvent fp Firing)
-            { title = "disk pressure on itest-host", description = "disk usage above 90%" }
+        Just alertId <-
+            ingest
+                source
+                (testEvent fp Firing)
+                    { title = "disk pressure on itest-host"
+                    , description = "disk usage above 90%"
+                    }
         analysis <- latestAnalysis alertId
         analysis.status `shouldBe` "queued"
         -- refire does not enqueue another analysis (milestone_4.md §4)
         void (ingest source (testEvent fp Firing))
-        analyses <- query @LlmAnalysis
-            |> filterWhere (#alertId, alertId)
-            |> fetch
+        analyses <-
+            query @LlmAnalysis
+                |> filterWhere (#alertId, alertId)
+                |> fetch
         length analyses `shouldBe` 1
         performLatestJob (get #id analysis)
         done <- fetch (get #id analysis)
@@ -839,9 +971,10 @@ llmSpec = describe "llm enrichment (milestone 4)" do
         Just alertId <- ingest source (testEvent fp Firing)
         analysis <- latestAnalysis alertId
         -- simulate the crash window: worker set running, then died before done
-        crashed <- analysis
-            |> set #status "running"
-            |> updateRecord
+        crashed <-
+            analysis
+                |> set #status "running"
+                |> updateRecord
         performLatestJob (get #id crashed)
         recovered <- fetch (get #id analysis)
         recovered.status `shouldBe` "done"
@@ -873,9 +1006,10 @@ llmSpec = describe "llm enrichment (milestone 4)" do
         performLatestJob (get #id analysis)
         requeued <- fetch (get #id analysis)
         requeued.status `shouldBe` "queued"
-        jobs <- query @LlmAnalysisJob
-            |> filterWhere (#analysisId, get #id analysis)
-            |> fetch
+        jobs <-
+            query @LlmAnalysisJob
+                |> filterWhere (#analysisId, get #id analysis)
+                |> fetch
         length jobs `shouldBe` 2
         performLatestJob (get #id analysis)
         done <- fetch (get #id analysis)
@@ -930,28 +1064,37 @@ llmSpec = describe "llm enrichment (milestone 4)" do
         fp <- freshFingerprint
         Just alertId <- ingest source (testEvent fp Firing)
         analysis <- latestAnalysis alertId
-        _ <- newRecord @LlmFeedback
-            |> set #analysisId (get #id analysis)
-            |> set #userId (get #id user)
-            |> set #score 1
-            |> createRecord
-        duplicate <- try (void (newRecord @LlmFeedback
-            |> set #analysisId (get #id analysis)
-            |> set #userId (get #id user)
-            |> set #score (-1)
-            |> createRecord)) :: IO (Either SomeException ())
+        _ <-
+            newRecord @LlmFeedback
+                |> set #analysisId (get #id analysis)
+                |> set #userId (get #id user)
+                |> set #score 1
+                |> createRecord
+        duplicate <-
+            try
+                ( void
+                    ( newRecord @LlmFeedback
+                        |> set #analysisId (get #id analysis)
+                        |> set #userId (get #id user)
+                        |> set #score (-1)
+                        |> createRecord
+                    )
+                ) ::
+                IO (Either SomeException ())
         case duplicate of
             Left _ -> pure ()
             Right _ -> expectationFailure "duplicate feedback should violate the unique index"
-        existing <- query @LlmFeedback
-            |> filterWhere (#analysisId, get #id analysis)
-            |> filterWhere (#userId, get #id user)
-            |> fetchOneOrNothing
-            >>= maybe (error "feedback missing") pure
+        existing <-
+            query @LlmFeedback
+                |> filterWhere (#analysisId, get #id analysis)
+                |> filterWhere (#userId, get #id user)
+                |> fetchOneOrNothing
+                >>= maybe (error "feedback missing") pure
         void (existing |> set #score (-1) |> updateRecord)
-        votes <- query @LlmFeedback
-            |> filterWhere (#analysisId, get #id analysis)
-            |> fetch
+        votes <-
+            query @LlmFeedback
+                |> filterWhere (#analysisId, get #id analysis)
+                |> fetch
         map (get #score) votes `shouldBe` [-1]
 
 m5Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
@@ -988,9 +1131,10 @@ m5Spec = describe "milestone 5 hardening" do
     it "source failures raise a warning internal alert, escalate at 5, recovery resolves" do
         source <- integrationSource "webhook" "itest-webhook-health" "" (object [])
         recordFailure source "connection refused"
-        Just alert <- query @Alert
-            |> filterWhere (#fingerprint, healthFingerprint (get #id source))
-            |> fetchOneOrNothing
+        Just alert <-
+            query @Alert
+                |> filterWhere (#fingerprint, healthFingerprint (get #id source))
+                |> fetchOneOrNothing
         alert.severity `shouldBe` "warning"
         alert.status `shouldBe` "firing"
         after1 <- fetch (get #id source)
@@ -1015,9 +1159,10 @@ m5Spec = describe "milestone 5 hardening" do
     it "reconcile failure raises an internal alert without backoff; success resolves it" do
         source <- integrationSource "zabbix" "itest-zabbix-reconcile-health" "" (object [])
         recordReconcileFailure source "No permissions to call \"trigger.get\""
-        Just alert <- query @Alert
-            |> filterWhere (#fingerprint, reconcileFingerprint (get #id source))
-            |> fetchOneOrNothing
+        Just alert <-
+            query @Alert
+                |> filterWhere (#fingerprint, reconcileFingerprint (get #id source))
+                |> fetchOneOrNothing
         alert.severity `shouldBe` "warning"
         alert.status `shouldBe` "firing"
         -- polling health state untouched: no backoff, no last_error
@@ -1031,7 +1176,9 @@ m5Spec = describe "milestone 5 hardening" do
         -- success with no open alert is a no-op (no new row)
         recordReconcileSuccess source
         let fp = reconcileFingerprint (get #id source)
-        count <- sqlQueryTyped [typedSql|
+        count <-
+            sqlQueryTyped
+                [typedSql|
             SELECT count(*) FROM alerts WHERE fingerprint = ${fp}
         |]
         pure (fromMaybe 0 (head count)) `shouldReturn` 1
@@ -1041,9 +1188,10 @@ m5Spec = describe "milestone 5 hardening" do
         let sourceId = get #id source
         _ <- sqlExecTyped [typedSql| UPDATE sources SET created_at = NOW() - INTERVAL '1 hour' WHERE id = ${sourceId} |]
         checkSilence
-        alert <- query @Alert
-            |> filterWhere (#fingerprint, healthFingerprint sourceId)
-            |> fetchOneOrNothing
+        alert <-
+            query @Alert
+                |> filterWhere (#fingerprint, healthFingerprint sourceId)
+                |> fetchOneOrNothing
         isJust alert `shouldBe` True
 
     it "webhook silence check ignores poll sources with expectedIntervalSeconds set" do
@@ -1051,9 +1199,10 @@ m5Spec = describe "milestone 5 hardening" do
         let sourceId = get #id source
         _ <- sqlExecTyped [typedSql| UPDATE sources SET created_at = NOW() - INTERVAL '1 hour' WHERE id = ${sourceId} |]
         checkSilence
-        alert <- query @Alert
-            |> filterWhere (#fingerprint, healthFingerprint sourceId)
-            |> fetchOneOrNothing
+        alert <-
+            query @Alert
+                |> filterWhere (#fingerprint, healthFingerprint sourceId)
+                |> fetchOneOrNothing
         isJust alert `shouldBe` False
 
     it "enrichment completion re-analyzes an alert analyzed before enrichment landed, exactly once" do
@@ -1063,21 +1212,28 @@ m5Spec = describe "milestone 5 hardening" do
         -- dev-host-01 + the trigger check are the subject the mocks carry
         -- context for (milestone 3): the jira auto-link lands on enrichment,
         -- after the first analysis, and changes the rendered prompt.
-        Just alertId <- ingest source (testEvent fp Firing)
-            { host = Just "dev-host-01", checkName = Just "halemans test trigger" }
+        Just alertId <-
+            ingest
+                source
+                (testEvent fp Firing)
+                    { host = Just "dev-host-01"
+                    , checkName = Just "halemans test trigger"
+                    }
         first <- latestAnalysis alertId
         performLatestJob (get #id first)
         doneFirst <- fetch (get #id first)
         doneFirst.status `shouldBe` "done"
-        enrichJob <- query @EnrichAlertJob
-            |> filterWhere (#alertId, alertId)
-            |> fetchOneOrNothing
-            >>= maybe (error "enrich job missing") pure
+        enrichJob <-
+            query @EnrichAlertJob
+                |> filterWhere (#alertId, alertId)
+                |> fetchOneOrNothing
+                >>= maybe (error "enrich job missing") pure
         perform enrichJob
-        analyses <- query @LlmAnalysis
-            |> filterWhere (#alertId, alertId)
-            |> orderByAsc #createdAt
-            |> fetch
+        analyses <-
+            query @LlmAnalysis
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
         length analyses `shouldBe` 2
         let second = analyses !! 1
         second.errorMessage `shouldBe` Just "enrichment_retrigger"
@@ -1087,39 +1243,44 @@ m5Spec = describe "milestone 5 hardening" do
         doneSecond.dedupedFrom `shouldBe` Nothing
         doneSecond.promptHash `shouldNotBe` doneFirst.promptHash
         perform enrichJob
-        analysesAgain <- query @LlmAnalysis
-            |> filterWhere (#alertId, alertId)
-            |> fetch
+        analysesAgain <-
+            query @LlmAnalysis
+                |> filterWhere (#alertId, alertId)
+                |> fetch
         length analysesAgain `shouldBe` 2
 
 ensureTemplate :: (?modelContext :: ModelContext) => IO LlmPromptTemplate
 ensureTemplate = do
-    existing <- query @LlmPromptTemplate
-        |> filterWhere (#name, "alert_enrichment" :: Text)
-        |> filterWhere (#version, 1)
-        |> fetchOneOrNothing
+    existing <-
+        query @LlmPromptTemplate
+            |> filterWhere (#name, "alert_enrichment" :: Text)
+            |> filterWhere (#version, 1)
+            |> fetchOneOrNothing
     case existing of
         Just template -> pure template
-        Nothing -> newRecord @LlmPromptTemplate
-            |> set #name "alert_enrichment"
-            |> set #version 1
-            |> set #body "Alert: {{alert.title}}\n{{alert.description}}\nEvents:\n{{events}}\nCMDB:\n{{cmdb_excerpt}}\nSimilar:\n{{similar_alerts}}\nJira:\n{{jira_links}}"
-            |> set #active True
-            |> createRecord
+        Nothing ->
+            newRecord @LlmPromptTemplate
+                |> set #name "alert_enrichment"
+                |> set #version 1
+                |> set #body "Alert: {{alert.title}}\n{{alert.description}}\nEvents:\n{{events}}\nCMDB:\n{{cmdb_excerpt}}\nSimilar:\n{{similar_alerts}}\nJira:\n{{jira_links}}"
+                |> set #active True
+                |> createRecord
 
 latestAnalysis :: (?modelContext :: ModelContext) => Id Alert -> IO LlmAnalysis
-latestAnalysis alertId = query @LlmAnalysis
-    |> filterWhere (#alertId, alertId)
-    |> orderByDesc #createdAt
-    |> limit 1
-    |> fetchOneOrNothing
-    >>= maybe (error "llm analysis missing") pure
+latestAnalysis alertId =
+    query @LlmAnalysis
+        |> filterWhere (#alertId, alertId)
+        |> orderByDesc #createdAt
+        |> limit 1
+        |> fetchOneOrNothing
+        >>= maybe (error "llm analysis missing") pure
 
 enqueueAnalysis :: (?modelContext :: ModelContext) => Id Alert -> IO LlmAnalysis
 enqueueAnalysis alertId = do
-    analysis <- newRecord @LlmAnalysis
-        |> set #alertId alertId
-        |> createRecord
+    analysis <-
+        newRecord @LlmAnalysis
+            |> set #alertId alertId
+            |> createRecord
     void do
         newRecord @LlmAnalysisJob
             |> set #analysisId (get #id analysis)
@@ -1128,17 +1289,20 @@ enqueueAnalysis alertId = do
 
 performLatestJob :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Id LlmAnalysis -> IO ()
 performLatestJob analysisId = do
-    job <- query @LlmAnalysisJob
-        |> filterWhere (#analysisId, analysisId)
-        |> orderByDesc #createdAt
-        |> limit 1
-        |> fetchOneOrNothing
-        >>= maybe (error "llm job missing") pure
+    job <-
+        query @LlmAnalysisJob
+            |> filterWhere (#analysisId, analysisId)
+            |> orderByDesc #createdAt
+            |> limit 1
+            |> fetchOneOrNothing
+            >>= maybe (error "llm job missing") pure
     perform job
 
 counterRequestsAfter :: (?modelContext :: ModelContext) => Text -> IO Int
 counterRequestsAfter provider = do
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT requests FROM llm_budget_counters
         WHERE provider = ${provider} AND day = CURRENT_DATE
     |]
@@ -1165,7 +1329,6 @@ pollerLifecycleSpec = describe "poll loop lifecycle" do
         pending <- pendingZabbixJobs
         pending `shouldBe` 1
         ensurePollerForSourceType "alertmanager" -- push-only type: no poller, no-op
-
     it "reschedules while an enabled zabbix source exists" do
         void $ sqlExecTyped [typedSql| UPDATE sources SET enabled = false WHERE type = 'zabbix' |]
         name <- ("itest-zabbix-lifecycle-" <>) . tshow <$> nextRandom
@@ -1178,7 +1341,9 @@ pollerLifecycleSpec = describe "poll loop lifecycle" do
 
     it "stops a duplicate loop when an older poll job is running" do
         void $ sqlExecTyped [typedSql| DELETE FROM poll_zabbix_jobs WHERE status = 'job_status_not_started' |]
-        void $ sqlExecTyped [typedSql|
+        void $
+            sqlExecTyped
+                [typedSql|
             INSERT INTO poll_zabbix_jobs (status, created_at)
             VALUES ('job_status_running', now() - interval '1 minute')
         |]
@@ -1194,7 +1359,9 @@ pollerLifecycleSpec = describe "poll loop lifecycle" do
 
 pendingZabbixJobs :: (?modelContext :: ModelContext) => IO Int64
 pendingZabbixJobs = do
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT count(*) FROM poll_zabbix_jobs WHERE status = 'job_status_not_started'
     |]
     pure (fromMaybe 0 (head rows))
@@ -1242,7 +1409,7 @@ m6Spec = describe "public API (milestone 6)" do
             allowed <- authorizeToken (Just ("Bearer " <> plaintext)) "metrics"
             case allowed of
                 Allow _ allowedUser -> get #id allowedUser `shouldBe` get #id user
-                Deny {} -> expectationFailure "expected Allow"
+                Deny{} -> expectationFailure "expected Allow"
             demoted <- m6User ["ack"]
             (_, demotedPlaintext) <- newApiToken (get #id demoted) "ci" ["alerts:read"] Nothing
             demotedDecision <- authorizeToken (Just ("Bearer " <> demotedPlaintext)) "alerts:read"
@@ -1255,18 +1422,18 @@ m6Spec = describe "public API (milestone 6)" do
             fp1 <- freshFingerprint
             fp2 <- freshFingerprint
             Just a1 <- ingest source (testEventIn envName fp1 Firing)
-            Just a2 <- ingest source ((testEventIn envName fp2 Firing) { severity = "critical" })
+            Just a2 <- ingest source ((testEventIn envName fp2 Firing){severity = "critical"})
             void (ingest source (testEventIn envName fp2 Resolved))
             let idsOf filters = map (get #id) . fst <$> listAlertsPage filters
-            idsOf defaultFilters { afEnvironment = envName } `shouldReturn` [a2, a1]
-            idsOf defaultFilters { afEnvironment = envName, afStatus = "firing" } `shouldReturn` [a1]
-            idsOf defaultFilters { afEnvironment = envName, afStatus = "resolved" } `shouldReturn` [a2]
-            idsOf defaultFilters { afEnvironment = envName, afSeverity = "critical" } `shouldReturn` [a2]
-            idsOf defaultFilters { afEnvironment = envName, afFingerprint = fp1 } `shouldReturn` [a1]
-            idsOf defaultFilters { afEnvironment = envName, afHost = "itest-host" } `shouldReturn` [a2, a1]
-            idsOf defaultFilters { afEnvironment = envName, afHost = "no-such-host" } `shouldReturn` []
-            idsOf defaultFilters { afEnvironment = envName, afService = "itest-svc" } `shouldReturn` [a2, a1]
-            idsOf defaultFilters { afEnvironment = "no-such-env" } `shouldReturn` []
+            idsOf defaultFilters{afEnvironment = envName} `shouldReturn` [a2, a1]
+            idsOf defaultFilters{afEnvironment = envName, afStatus = "firing"} `shouldReturn` [a1]
+            idsOf defaultFilters{afEnvironment = envName, afStatus = "resolved"} `shouldReturn` [a2]
+            idsOf defaultFilters{afEnvironment = envName, afSeverity = "critical"} `shouldReturn` [a2]
+            idsOf defaultFilters{afEnvironment = envName, afFingerprint = fp1} `shouldReturn` [a1]
+            idsOf defaultFilters{afEnvironment = envName, afHost = "itest-host"} `shouldReturn` [a2, a1]
+            idsOf defaultFilters{afEnvironment = envName, afHost = "no-such-host"} `shouldReturn` []
+            idsOf defaultFilters{afEnvironment = envName, afService = "itest-svc"} `shouldReturn` [a2, a1]
+            idsOf defaultFilters{afEnvironment = "no-such-env"} `shouldReturn` []
 
         it "paginates with a stable cursor and ends with next_cursor Nothing" do
             source <- testSource
@@ -1275,12 +1442,12 @@ m6Spec = describe "public API (milestone 6)" do
             Just a1 <- fire
             Just a2 <- fire
             Just a3 <- fire
-            (page1, next1) <- listAlertsPage defaultFilters { afEnvironment = envName, afLimit = 2 }
+            (page1, next1) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2}
             map (get #id) page1 `shouldBe` [a3, a2]
             -- An alert inserted between pages is newer than the cursor and
             -- must not appear on the next page (keyset stability).
             Just _ <- fire
-            (page2, next2) <- listAlertsPage defaultFilters { afEnvironment = envName, afLimit = 2, afCursor = decodeCursor =<< next1 }
+            (page2, next2) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2, afCursor = decodeCursor =<< next1}
             map (get #id) page2 `shouldBe` [a1]
             next2 `shouldBe` Nothing
 
@@ -1293,9 +1460,9 @@ m6Spec = describe "public API (milestone 6)" do
             let old = addUTCTime (-3600) now
             void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = ${old} WHERE id = ${a1} |])
             let idsOf filters = map (get #id) . fst <$> listAlertsPage filters
-            idsOf defaultFilters { afEnvironment = envName, afSince = addUTCTime (-60) now } `shouldReturn` []
-            idsOf defaultFilters { afEnvironment = envName, afUntil = addUTCTime (-60) now } `shouldReturn` [a1]
-            idsOf defaultFilters { afEnvironment = envName, afSince = addUTCTime (-7200) now, afUntil = now } `shouldReturn` [a1]
+            idsOf defaultFilters{afEnvironment = envName, afSince = addUTCTime (-60) now} `shouldReturn` []
+            idsOf defaultFilters{afEnvironment = envName, afUntil = addUTCTime (-60) now} `shouldReturn` [a1]
+            idsOf defaultFilters{afEnvironment = envName, afSince = addUTCTime (-7200) now, afUntil = now} `shouldReturn` [a1]
 
     describe "alertDetail" do
         it "returns the ordered timeline, group membership and latest done analysis" do
@@ -1304,27 +1471,30 @@ m6Spec = describe "public API (milestone 6)" do
             fp <- freshFingerprint
             Just a1 <- ingest source (testEventIn envName fp Firing)
             void (ingest source (testEventIn envName fp Firing))
-            group <- newRecord @AlertGroup
-                |> set #groupKey fp
-                |> set #title "m6 group"
-                |> set #status "firing"
-                |> set #worstSeverity "warning"
-                |> set #memberCount 1
-                |> createRecord
+            group <-
+                newRecord @AlertGroup
+                    |> set #groupKey fp
+                    |> set #title "m6 group"
+                    |> set #status "firing"
+                    |> set #worstSeverity "warning"
+                    |> set #memberCount 1
+                    |> createRecord
             alert <- fetch a1
             void (alert |> set #groupId (Just (get #id group)) |> updateRecord)
-            void $ newRecord @LlmAnalysis
-                |> set #alertId a1
-                |> set #status "done"
-                |> set #resultMd "old analysis"
-                |> set #createdAt (UTCTime (fromGregorian 2998 1 1) 0)
-                |> createRecord
-            void $ newRecord @LlmAnalysis
-                |> set #alertId a1
-                |> set #status "done"
-                |> set #resultMd "new analysis"
-                |> set #createdAt (UTCTime (fromGregorian 2999 1 1) 0)
-                |> createRecord
+            void $
+                newRecord @LlmAnalysis
+                    |> set #alertId a1
+                    |> set #status "done"
+                    |> set #resultMd "old analysis"
+                    |> set #createdAt (UTCTime (fromGregorian 2998 1 1) 0)
+                    |> createRecord
+            void $
+                newRecord @LlmAnalysis
+                    |> set #alertId a1
+                    |> set #status "done"
+                    |> set #resultMd "new analysis"
+                    |> set #createdAt (UTCTime (fromGregorian 2999 1 1) 0)
+                    |> createRecord
             Just detail <- alertDetail a1
             let kinds = map (get #kind . fst) detail.adTimeline
             head kinds `shouldBe` Just "created"
@@ -1361,23 +1531,26 @@ m6Spec = describe "public API (milestone 6)" do
             body `shouldSatisfy` Text.isInfixOf "halemans_build_info{version=\"1.1.0\"} 1\n"
   where
     denyStatus (Deny status _ _) = Just status
-    denyStatus Allow {} = Nothing
+    denyStatus Allow{} = Nothing
 
 m6User :: (?modelContext :: ModelContext) => [Text] -> IO User
 m6User privileges = do
     suffix <- tshow <$> nextRandom
-    role <- newRecord @Role
-        |> set #name ("m6-" <> suffix)
-        |> set #privileges privileges
-        |> createRecord
-    user <- newRecord @User
-        |> set #email ("m6-" <> suffix <> "@dev")
-        |> set #passwordHash "unused"
-        |> createRecord
-    void $ newRecord @UserRole
-        |> set #userId (get #id user)
-        |> set #roleId (get #id role)
-        |> createRecord
+    role <-
+        newRecord @Role
+            |> set #name ("m6-" <> suffix)
+            |> set #privileges privileges
+            |> createRecord
+    user <-
+        newRecord @User
+            |> set #email ("m6-" <> suffix <> "@dev")
+            |> set #passwordHash "unused"
+            |> createRecord
+    void $
+        newRecord @UserRole
+            |> set #userId (get #id user)
+            |> set #roleId (get #id role)
+            |> createRecord
     pure user
 
 mockFail :: Text -> Int -> IO ()
@@ -1389,18 +1562,20 @@ schemaPresent databaseUrl = do
     pure (output == "t\n")
 
 testSource :: (?modelContext :: ModelContext) => IO Source
-testSource = query @Source
-    |> filterWhere (#type_, "alertmanager" :: Text)
-    |> fetchOneOrNothing
-    >>= maybe (error "alertmanager source fixture missing") pure
+testSource =
+    query @Source
+        |> filterWhere (#type_, "alertmanager" :: Text)
+        |> fetchOneOrNothing
+        >>= maybe (error "alertmanager source fixture missing") pure
 
 integrationSource :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO Source
-integrationSource sourceType name baseUrl config = newRecord @Source
-    |> set #type_ sourceType
-    |> set #name name
-    |> set #baseUrl baseUrl
-    |> set #config config
-    |> createRecord
+integrationSource sourceType name baseUrl config =
+    newRecord @Source
+        |> set #type_ sourceType
+        |> set #name name
+        |> set #baseUrl baseUrl
+        |> set #config config
+        |> createRecord
 
 payloadText :: Text -> Aeson.Value -> Maybe Text
 payloadText key = parseMaybe (Aeson.withObject "payload" (\o -> o Aeson..: Key.fromText key))
@@ -1415,22 +1590,25 @@ retryWriteBack n attempt
         retryWriteBack (n - 1) updated
 
 fetchEnvironment :: (?modelContext :: ModelContext) => Text -> IO Environment
-fetchEnvironment name = query @Environment
-    |> filterWhere (#name, name)
-    |> fetchOneOrNothing
-    >>= maybe (error "environment missing") pure
+fetchEnvironment name =
+    query @Environment
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
+        >>= maybe (error "environment missing") pure
 
 testUser :: (?modelContext :: ModelContext) => IO User
 testUser = do
-    existing <- query @User
-        |> filterWhere (#email, "itest@dev" :: Text)
-        |> fetchOneOrNothing
+    existing <-
+        query @User
+            |> filterWhere (#email, "itest@dev" :: Text)
+            |> fetchOneOrNothing
     case existing of
         Just user -> pure user
-        Nothing -> newRecord @User
-            |> set #email "itest@dev"
-            |> set #passwordHash "unused"
-            |> createRecord
+        Nothing ->
+            newRecord @User
+                |> set #email "itest@dev"
+                |> set #passwordHash "unused"
+                |> createRecord
 
 freshFingerprint :: IO Text
 freshFingerprint = ("itest:" <>) . tshow <$> nextRandom
@@ -1439,56 +1617,63 @@ testEvent :: Text -> SourceStatus -> NormalizedEvent
 testEvent = testEventIn "itest-env"
 
 testEventIn :: Text -> Text -> SourceStatus -> NormalizedEvent
-testEventIn envName fp status = NormalizedEvent
-    { fingerprint = fp
-    , externalId = Nothing
-    , status
-    , severity = "warning"
-    , title = "integration test alert"
-    , description = ""
-    , env = Just envName
-    , host = Just "itest-host"
-    , service = Just "itest-svc"
-    , checkName = Just "itest-check"
-    , labels = object []
-    , annotations = object []
-    , startedAt = Nothing
-    , sourceUrl = Nothing
-    }
+testEventIn envName fp status =
+    NormalizedEvent
+        { fingerprint = fp
+        , externalId = Nothing
+        , status
+        , severity = "warning"
+        , title = "integration test alert"
+        , description = ""
+        , env = Just envName
+        , host = Just "itest-host"
+        , service = Just "itest-svc"
+        , checkName = Just "itest-check"
+        , labels = object []
+        , annotations = object []
+        , startedAt = Nothing
+        , sourceUrl = Nothing
+        }
 
 eventKinds :: (?modelContext :: ModelContext) => Id Alert -> IO [Text]
-eventKinds alertId = map (get #kind) <$> (query @AlertEvent
-    |> filterWhere (#alertId, alertId)
-    |> orderByAsc #createdAt
-    |> fetch)
+eventKinds alertId =
+    map (get #kind)
+        <$> ( query @AlertEvent
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
+            )
 
 notifiedEvents :: (?modelContext :: ModelContext) => Id Alert -> IO [AlertEvent]
-notifiedEvents alertId = query @AlertEvent
-    |> filterWhere (#alertId, alertId)
-    |> filterWhere (#kind, "notified" :: Text)
-    |> fetch
+notifiedEvents alertId =
+    query @AlertEvent
+        |> filterWhere (#alertId, alertId)
+        |> filterWhere (#kind, "notified" :: Text)
+        |> fetch
 
 groupingRule :: (?modelContext :: ModelContext) => Text -> Text -> IO GroupingRule
-groupingRule name template = newRecord @GroupingRule
-    |> set #name name
-    |> set #position 10
-    |> set #enabled True
-    |> set #match (object [])
-    |> set #groupKeyTemplate template
-    |> createRecord
+groupingRule name template =
+    newRecord @GroupingRule
+        |> set #name name
+        |> set #position 10
+        |> set #enabled True
+        |> set #match (object [])
+        |> set #groupKeyTemplate template
+        |> createRecord
 
 notificationRule :: (?modelContext :: ModelContext) => Text -> Maybe (Id User) -> Maybe (Id EscalationPolicy) -> IO NotificationRule
-notificationRule name userRef policyRef = newRecord @NotificationRule
-    |> set #name name
-    |> set #position 50
-    |> set #enabled True
-    |> set #match (object [])
-    |> set #severityThreshold "high"
-    |> set #userId userRef
-    |> set #channel "browser_push"
-    |> set #throttleSeconds 300
-    |> set #escalationPolicyId policyRef
-    |> createRecord
+notificationRule name userRef policyRef =
+    newRecord @NotificationRule
+        |> set #name name
+        |> set #position 50
+        |> set #enabled True
+        |> set #match (object [])
+        |> set #severityThreshold "high"
+        |> set #userId userRef
+        |> set #channel "browser_push"
+        |> set #throttleSeconds 300
+        |> set #escalationPolicyId policyRef
+        |> createRecord
 
 -- Milestone 7: declarative provisioning (design_docs/milestone_7.md §9).
 -- Keep-lists for strict tests are built from current DB rows so the specs are
@@ -1504,27 +1689,62 @@ m7Spec = describe "provisioning (milestone 7)" do
             provider = "m7-llm-" <> suffix
             templateName = "m7_tmpl_" <> Text.replace "-" "_" suffix
             token = "tok-" <> suffix
-            config = object
-                [ "users" .= object ["items" .= [object
-                    [ "email" .= email, "passwordHash" .= ("sha256|17|a|b" :: Text)
-                    , "displayName" .= ("M7 " <> suffix)
-                    , "roles" .= (["m7-role-" <> suffix] :: [Text])
-                    , "settings" .= object ["theme" .= ("latte" :: Text)] ]]]
-                , "sources" .= object ["items" .= [object
-                    [ "type" .= ("webhook" :: Text), "name" .= sourceName
-                    , "enabled" .= False
-                    , "webhookTokens" .= [object ["tokenEnv" .= ("M7_TEST_HOOK_TOKEN" :: Text)]] ]]]
-                , "teams" .= object ["items" .= [object
-                    [ "name" .= teamName, "description" .= ("m7 team " <> suffix)
-                    , "hostGroups" .= (["Linux servers"] :: [Text])
-                    , "members" .= [object ["email" .= email, "role" .= ("lead" :: Text)]] ]]]
-                , "llm" .= object ["items" .= [object
-                    [ "providerName" .= provider, "endpoint" .= ("http://m7.example" :: Text)
-                    , "model" .= ("m7-model" :: Text), "enabled" .= False
-                    , "promptTemplates" .= [object
-                        [ "name" .= templateName, "version" .= (1 :: Int)
-                        , "body" .= ("body one" :: Text), "active" .= True ]] ]]]
-                ]
+            config =
+                object
+                    [ "users"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "email" .= email
+                                        , "passwordHash" .= ("sha256|17|a|b" :: Text)
+                                        , "displayName" .= ("M7 " <> suffix)
+                                        , "roles" .= (["m7-role-" <> suffix] :: [Text])
+                                        , "settings" .= object ["theme" .= ("latte" :: Text)]
+                                        ]
+                                   ]
+                            ]
+                    , "sources"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "type" .= ("webhook" :: Text)
+                                        , "name" .= sourceName
+                                        , "enabled" .= False
+                                        , "webhookTokens" .= [object ["tokenEnv" .= ("M7_TEST_HOOK_TOKEN" :: Text)]]
+                                        ]
+                                   ]
+                            ]
+                    , "teams"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "name" .= teamName
+                                        , "description" .= ("m7 team " <> suffix)
+                                        , "hostGroups" .= (["Linux servers"] :: [Text])
+                                        , "members" .= [object ["email" .= email, "role" .= ("lead" :: Text)]]
+                                        ]
+                                   ]
+                            ]
+                    , "llm"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "providerName" .= provider
+                                        , "endpoint" .= ("http://m7.example" :: Text)
+                                        , "model" .= ("m7-model" :: Text)
+                                        , "enabled" .= False
+                                        , "promptTemplates"
+                                            .= [ object
+                                                    [ "name" .= templateName
+                                                    , "version" .= (1 :: Int)
+                                                    , "body" .= ("body one" :: Text)
+                                                    , "active" .= True
+                                                    ]
+                                               ]
+                                        ]
+                                   ]
+                            ]
+                    ]
         m7Apply config
         m7Apply config
         users <- query @User |> filterWhere (#email, email) |> fetch
@@ -1533,7 +1753,9 @@ m7Spec = describe "provisioning (milestone 7)" do
             [user] -> pure user
             _ -> expectationFailure "expected exactly one provisioned user" >> error "unreachable"
         user.displayName `shouldBe` "M7 " <> suffix
-        roles <- sqlQueryTyped [typedSql|
+        roles <-
+            sqlQueryTyped
+                [typedSql|
             SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
             JOIN users u ON u.id = ur.user_id WHERE u.email = ${email}
         |]
@@ -1560,11 +1782,12 @@ m7Spec = describe "provisioning (milestone 7)" do
         let email = "m7-" <> suffix <> "@dev"
             sourceName = "m7-src-" <> suffix
             teamName = "m7-team-" <> suffix
-            config hash enabled role = object
-                [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= hash]]]
-                , "sources" .= object ["items" .= [object ["type" .= ("webhook" :: Text), "name" .= sourceName, "enabled" .= enabled]]]
-                , "teams" .= object ["items" .= [object ["name" .= teamName, "members" .= [object ["email" .= email, "role" .= role]]]]]
-                ]
+            config hash enabled role =
+                object
+                    [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= hash]]]
+                    , "sources" .= object ["items" .= [object ["type" .= ("webhook" :: Text), "name" .= sourceName, "enabled" .= enabled]]]
+                    , "teams" .= object ["items" .= [object ["name" .= teamName, "members" .= [object ["email" .= email, "role" .= role]]]]]
+                    ]
         m7Apply (config ("hash-one" :: Text) False ("member" :: Text))
         m7Apply (config ("hash-two" :: Text) True ("lead" :: Text))
         user <- query @User |> filterWhere (#email, email) |> fetchOneOrNothing >>= maybe (error "user missing") pure
@@ -1578,8 +1801,16 @@ m7Spec = describe "provisioning (milestone 7)" do
     it "merges user settings instead of replacing them" do
         suffix <- tshow <$> nextRandom
         let email = "m7-" <> suffix <> "@dev"
-            config = object ["users" .= object ["items" .= [object
-                ["email" .= email, "passwordHash" .= ("x" :: Text), "settings" .= object ["theme" .= ("frappe" :: Text)]]]]]
+            config =
+                object
+                    [ "users"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        ["email" .= email, "passwordHash" .= ("x" :: Text), "settings" .= object ["theme" .= ("frappe" :: Text)]]
+                                   ]
+                            ]
+                    ]
         m7Apply config
         let patch = object ["ui_note" .= ("kept" :: Text)]
         void $ sqlExecTyped [typedSql| UPDATE users SET settings = settings || ${patch} WHERE email = ${email} |]
@@ -1593,14 +1824,25 @@ m7Spec = describe "provisioning (milestone 7)" do
         let teamName = "m7-team-" <> suffix
             uiGroups = Aeson.toJSON (["UI group"] :: [Text])
             uiDescription = "ui-edited " <> suffix :: Text
-        m7Apply (object ["teams" .= object ["items" .= [object
-            [ "name" .= teamName
-            , "description" .= ("original" :: Text)
-            , "hostGroups" .= (["Linux servers"] :: [Text])
-            , "defaults" .= object ["k" .= ("v" :: Text)]
-            ]]]])
+        m7Apply
+            ( object
+                [ "teams"
+                    .= object
+                        [ "items"
+                            .= [ object
+                                    [ "name" .= teamName
+                                    , "description" .= ("original" :: Text)
+                                    , "hostGroups" .= (["Linux servers"] :: [Text])
+                                    , "defaults" .= object ["k" .= ("v" :: Text)]
+                                    ]
+                               ]
+                        ]
+                ]
+            )
         -- Simulate UI edits on top of the provisioned values.
-        void $ sqlExecTyped [typedSql|
+        void $
+            sqlExecTyped
+                [typedSql|
             UPDATE teams SET host_groups = ${uiGroups}, description = ${uiDescription}
             WHERE name = ${teamName}
         |]
@@ -1610,23 +1852,52 @@ m7Spec = describe "provisioning (milestone 7)" do
         get #hostGroups team `shouldBe` uiGroups
         payloadText "k" (get #defaults team) `shouldBe` Just "v"
         -- An explicit empty list still clears the groups.
-        m7Apply (object ["teams" .= object ["items" .= [object
-            [ "name" .= teamName, "hostGroups" .= ([] :: [Text]) ]]]])
+        m7Apply
+            ( object
+                [ "teams"
+                    .= object
+                        [ "items"
+                            .= [ object
+                                    ["name" .= teamName, "hostGroups" .= ([] :: [Text])]
+                               ]
+                        ]
+                ]
+            )
         cleared <- query @Team |> filterWhere (#name, teamName) |> fetchOneOrNothing >>= maybe (error "team missing") pure
         get #hostGroups cleared `shouldBe` Aeson.toJSON ([] :: [Text])
 
     it "aborts on an unresolvable team member email" do
         suffix <- tshow <$> nextRandom
-        m7Apply (object ["teams" .= object ["items" .= [object
-            ["name" .= ("m7-team-" <> suffix), "members" .= [object ["email" .= ("m7-missing-" <> suffix <> "@dev")]]]]]])
+        m7Apply
+            ( object
+                [ "teams"
+                    .= object
+                        [ "items"
+                            .= [ object
+                                    ["name" .= ("m7-team-" <> suffix), "members" .= [object ["email" .= ("m7-missing-" <> suffix <> "@dev")]]]
+                               ]
+                        ]
+                ]
+            )
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "does not resolve to any user" msg
 
     it "aborts on an unset tokenEnv reference" do
         suffix <- tshow <$> nextRandom
         unsetEnv "M7_MISSING_TOKEN"
-        m7Apply (object ["sources" .= object ["items" .= [object
-            [ "type" .= ("zabbix" :: Text), "name" .= ("m7-src-" <> suffix)
-            , "config" .= object ["tokenEnv" .= ("M7_MISSING_TOKEN" :: Text)] ]]]])
+        m7Apply
+            ( object
+                [ "sources"
+                    .= object
+                        [ "items"
+                            .= [ object
+                                    [ "type" .= ("zabbix" :: Text)
+                                    , "name" .= ("m7-src-" <> suffix)
+                                    , "config" .= object ["tokenEnv" .= ("M7_MISSING_TOKEN" :: Text)]
+                                    ]
+                               ]
+                        ]
+                ]
+            )
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "M7_MISSING_TOKEN" msg
 
     it "imports zabbix host groups from a local file, replacing the cache" do
@@ -1634,30 +1905,60 @@ m7Spec = describe "provisioning (milestone 7)" do
         let sourceName = "m7-zbx-" <> suffix
             groupsPath :: Text
             groupsPath = "/tmp/halemans-m7-groups-" <> cs suffix <> ".json"
-            config = object ["sources" .= object ["items" .= [object
-                [ "type" .= ("zabbix" :: Text), "name" .= sourceName
-                , "hostGroupsFile" .= groupsPath ]]]]
-        LBS.writeFile (cs groupsPath) (Aeson.encode
-            [ object ["groupid" .= ("2" :: Text), "name" .= ("Linux servers" :: Text)]
-            , object ["groupid" .= ("5" :: Text), "name" .= ("Databases" :: Text)] ])
+            config =
+                object
+                    [ "sources"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "type" .= ("zabbix" :: Text)
+                                        , "name" .= sourceName
+                                        , "hostGroupsFile" .= groupsPath
+                                        ]
+                                   ]
+                            ]
+                    ]
+        LBS.writeFile
+            (cs groupsPath)
+            ( Aeson.encode
+                [ object ["groupid" .= ("2" :: Text), "name" .= ("Linux servers" :: Text)]
+                , object ["groupid" .= ("5" :: Text), "name" .= ("Databases" :: Text)]
+                ]
+            )
         m7Apply config
         source <- query @Source |> filterWhere (#name, sourceName) |> fetchOneOrNothing >>= maybe (error "source missing") pure
         rows <- query @ZabbixHostGroup |> filterWhere (#sourceId, get #id source) |> orderByAsc #name |> fetch
         map (\g -> (g.groupId, g.name)) rows `shouldBe` [("5", "Databases"), ("2", "Linux servers")]
         -- A hostgroup.get response dump works verbatim and re-apply replaces.
-        LBS.writeFile (cs groupsPath) (Aeson.encode $ object
-            [ "jsonrpc" .= ("2.0" :: Text)
-            , "result" .= [object ["groupid" .= ("7" :: Text), "name" .= ("Hypervisors" :: Text)]]
-            , "id" .= (1 :: Int) ])
+        LBS.writeFile
+            (cs groupsPath)
+            ( Aeson.encode $
+                object
+                    [ "jsonrpc" .= ("2.0" :: Text)
+                    , "result" .= [object ["groupid" .= ("7" :: Text), "name" .= ("Hypervisors" :: Text)]]
+                    , "id" .= (1 :: Int)
+                    ]
+            )
         m7Apply config
         rows' <- query @ZabbixHostGroup |> filterWhere (#sourceId, get #id source) |> fetch
         map (\g -> (g.groupId, g.name)) rows' `shouldBe` [("7", "Hypervisors")]
 
     it "aborts when hostGroupsFile is unreadable" do
         suffix <- tshow <$> nextRandom
-        m7Apply (object ["sources" .= object ["items" .= [object
-            [ "type" .= ("zabbix" :: Text), "name" .= ("m7-zbx-" <> suffix)
-            , "hostGroupsFile" .= ("/tmp/halemans-m7-no-such-" <> suffix) ]]]])
+        m7Apply
+            ( object
+                [ "sources"
+                    .= object
+                        [ "items"
+                            .= [ object
+                                    [ "type" .= ("zabbix" :: Text)
+                                    , "name" .= ("m7-zbx-" <> suffix)
+                                    , "hostGroupsFile" .= ("/tmp/halemans-m7-no-such-" <> suffix)
+                                    ]
+                               ]
+                        ]
+                ]
+            )
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "cannot read hostGroupsFile" msg
 
     it "currentLlmConfig prefers the enabled DB row, env is the fallback" do
@@ -1671,9 +1972,21 @@ m7Spec = describe "provisioning (milestone 7)" do
             fmap (.endpoint) fromEnv `shouldBe` Just "http://m7-env.example"
             suffix <- tshow <$> nextRandom
             let provider = "m7-llm-" <> suffix
-            m7Apply (object ["llm" .= object ["items" .= [object
-                [ "providerName" .= provider, "endpoint" .= ("http://m7-db.example" :: Text)
-                , "model" .= ("m7-db-model" :: Text), "enabled" .= True ]]]])
+            m7Apply
+                ( object
+                    [ "llm"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "providerName" .= provider
+                                        , "endpoint" .= ("http://m7-db.example" :: Text)
+                                        , "model" .= ("m7-db-model" :: Text)
+                                        , "enabled" .= True
+                                        ]
+                                   ]
+                            ]
+                    ]
+                )
             fromDb <- currentLlmConfig
             fmap (.endpoint) fromDb `shouldBe` Just "http://m7-db.example"
             fmap (.providerName) fromDb `shouldBe` Just provider
@@ -1682,19 +1995,35 @@ m7Spec = describe "provisioning (milestone 7)" do
         suffix <- tshow <$> nextRandom
         let provider = "m7-llm-" <> suffix
             templateName = "m7_tmpl_" <> Text.replace "-" "_" suffix
-            config version = object ["llm" .= object ["items" .= [object
-                [ "providerName" .= provider, "endpoint" .= ("http://m7.example" :: Text)
-                , "model" .= ("m" :: Text)
-                , "promptTemplates" .= [object
-                    [ "name" .= templateName, "version" .= version
-                    , "body" .= ("body" :: Text), "active" .= True ]] ]]]]
+            config version =
+                object
+                    [ "llm"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "providerName" .= provider
+                                        , "endpoint" .= ("http://m7.example" :: Text)
+                                        , "model" .= ("m" :: Text)
+                                        , "promptTemplates"
+                                            .= [ object
+                                                    [ "name" .= templateName
+                                                    , "version" .= version
+                                                    , "body" .= ("body" :: Text)
+                                                    , "active" .= True
+                                                    ]
+                                               ]
+                                        ]
+                                   ]
+                            ]
+                    ]
         m7Apply (config (1 :: Int))
         m7Apply (config (2 :: Int))
         m7Apply (config (2 :: Int))
-        templates <- query @LlmPromptTemplate
-            |> filterWhere (#name, templateName)
-            |> orderByAsc #version
-            |> fetch
+        templates <-
+            query @LlmPromptTemplate
+                |> filterWhere (#name, templateName)
+                |> orderByAsc #version
+                |> fetch
         map (\t -> (t.version, t.active)) templates `shouldBe` [(1, False), (2, True)]
 
     it "strict teams deletes absent teams and prunes members of kept teams" do
@@ -1719,17 +2048,32 @@ m7Spec = describe "provisioning (milestone 7)" do
         suffix <- tshow <$> nextRandom
         let templateName = "m7_strict_" <> Text.replace "-" "_" suffix
         keepProviders <- m7LlmKeepItems
-        void $ newRecord @LlmConfig
-            |> set #providerName ("m7-doomed-llm-" <> suffix)
-            |> set #endpoint "http://doomed.example"
-            |> set #model "m"
-            |> createRecord
+        void $
+            newRecord @LlmConfig
+                |> set #providerName ("m7-doomed-llm-" <> suffix)
+                |> set #endpoint "http://doomed.example"
+                |> set #model "m"
+                |> createRecord
         v1 <- newRecord @LlmPromptTemplate |> set #name templateName |> set #version 1 |> set #body "one" |> createRecord
         void $ newRecord @LlmPromptTemplate |> set #name templateName |> set #version 2 |> set #body "two" |> createRecord
-        m7Apply (object ["llm" .= object ["strict" .= True, "items" .= (keepProviders <> [object
-            [ "providerName" .= ("m7-strict-llm-" <> suffix), "endpoint" .= ("http://kept.example" :: Text)
-            , "model" .= ("m" :: Text)
-            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (1 :: Int), "body" .= ("one" :: Text), "active" .= True]] ]])]])
+        m7Apply
+            ( object
+                [ "llm"
+                    .= object
+                        [ "strict" .= True
+                        , "items"
+                            .= ( keepProviders
+                                    <> [ object
+                                            [ "providerName" .= ("m7-strict-llm-" <> suffix)
+                                            , "endpoint" .= ("http://kept.example" :: Text)
+                                            , "model" .= ("m" :: Text)
+                                            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (1 :: Int), "body" .= ("one" :: Text), "active" .= True]]
+                                            ]
+                                       ]
+                               )
+                        ]
+                ]
+            )
         query @LlmConfig |> filterWhere (#providerName, "m7-doomed-llm-" <> suffix) |> fetch `shouldReturn` []
         templates <- query @LlmPromptTemplate |> filterWhere (#name, templateName) |> fetch
         map (get #id) templates `shouldBe` [get #id v1]
@@ -1741,16 +2085,31 @@ m7Spec = describe "provisioning (milestone 7)" do
         source <- testSource
         fp <- freshFingerprint
         Just alertId <- ingest source (testEvent fp Firing)
-        void $ newRecord @LlmAnalysis
-            |> set #alertId alertId
-            |> set #promptTemplateId (Just (get #id v1))
-            |> set #promptHash fp
-            |> createRecord
+        void $
+            newRecord @LlmAnalysis
+                |> set #alertId alertId
+                |> set #promptTemplateId (Just (get #id v1))
+                |> set #promptHash fp
+                |> createRecord
         keepProviders <- m7LlmKeepItems
-        m7Apply (object ["llm" .= object ["strict" .= True, "items" .= (keepProviders <> [object
-            [ "providerName" .= ("m7-strict-llm-" <> suffix), "endpoint" .= ("http://kept.example" :: Text)
-            , "model" .= ("m" :: Text)
-            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (2 :: Int), "body" .= ("two" :: Text)]] ]])]])
+        m7Apply
+            ( object
+                [ "llm"
+                    .= object
+                        [ "strict" .= True
+                        , "items"
+                            .= ( keepProviders
+                                    <> [ object
+                                            [ "providerName" .= ("m7-strict-llm-" <> suffix)
+                                            , "endpoint" .= ("http://kept.example" :: Text)
+                                            , "model" .= ("m" :: Text)
+                                            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (2 :: Int), "body" .= ("two" :: Text)]]
+                                            ]
+                                       ]
+                               )
+                        ]
+                ]
+            )
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "cannot delete prompt template" msg
 
     it "strict users deletes unreferenced users and aborts on alert-history references" do
@@ -1760,11 +2119,12 @@ m7Spec = describe "provisioning (milestone 7)" do
         source <- testSource
         fp <- freshFingerprint
         Just alertId <- ingest source (testEvent fp Firing)
-        void $ newRecord @AlertEvent
-            |> set #alertId alertId
-            |> set #userId (Just (get #id doomedReferenced))
-            |> set #kind "external"
-            |> createRecord
+        void $
+            newRecord @AlertEvent
+                |> set #alertId alertId
+                |> set #userId (Just (get #id doomedReferenced))
+                |> set #kind "external"
+                |> createRecord
         -- Transactional: the FK-blocked delete rolls the whole category back,
         -- so even the unreferenced doomed user survives this apply.
         keepWithoutReferenced <- m7UserKeepItems [get #email doomedReferenced]
@@ -1800,18 +2160,39 @@ m7Spec = describe "provisioning (milestone 7)" do
         let email = "m7-" <> suffix <> "@dev"
             facet = "m7facet-" <> suffix
             dashName = "m7-dash-" <> suffix
-            config enabled = object
-                [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= ("x" :: Text)]]]
-                , "fieldMappings" .= object ["items" .= [object
-                    [ "facet" .= facet, "rank" .= (42 :: Int), "kind" .= ("field" :: Text)
-                    , "key" .= ("env" :: Text), "enabled" .= enabled ]]]
-                , "dashboards" .= object ["items" .= [object
-                    [ "name" .= dashName, "userEmail" .= email, "isDefault" .= True
-                    , "config" .= [object
-                        [ "title" .= ("probe" :: Text)
-                        , "match" .= [object ["facet" .= ("field:env" :: Text), "op" .= ("=" :: Text), "value" .= ("prod" :: Text)]]
-                        , "groupBy" .= ("field:host" :: Text) ]] ]]]
-                ]
+            config enabled =
+                object
+                    [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= ("x" :: Text)]]]
+                    , "fieldMappings"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "facet" .= facet
+                                        , "rank" .= (42 :: Int)
+                                        , "kind" .= ("field" :: Text)
+                                        , "key" .= ("env" :: Text)
+                                        , "enabled" .= enabled
+                                        ]
+                                   ]
+                            ]
+                    , "dashboards"
+                        .= object
+                            [ "items"
+                                .= [ object
+                                        [ "name" .= dashName
+                                        , "userEmail" .= email
+                                        , "isDefault" .= True
+                                        , "config"
+                                            .= [ object
+                                                    [ "title" .= ("probe" :: Text)
+                                                    , "match" .= [object ["facet" .= ("field:env" :: Text), "op" .= ("=" :: Text), "value" .= ("prod" :: Text)]]
+                                                    , "groupBy" .= ("field:host" :: Text)
+                                                    ]
+                                               ]
+                                        ]
+                                   ]
+                            ]
+                    ]
         m7Apply (config False)
         m7Apply (config True)
         mappings <- query @FieldMapping |> filterWhere (#facet, facet) |> fetch
@@ -1821,8 +2202,17 @@ m7Spec = describe "provisioning (milestone 7)" do
 
     it "dashboard provisioning rejects an unresolvable userEmail" do
         suffix <- tshow <$> nextRandom
-        m7Apply (object ["dashboards" .= object ["items" .= [object
-            [ "name" .= ("m7-dash-" <> suffix), "userEmail" .= ("m7-ghost-" <> suffix <> "@dev") ]]]])
+        m7Apply
+            ( object
+                [ "dashboards"
+                    .= object
+                        [ "items"
+                            .= [ object
+                                    ["name" .= ("m7-dash-" <> suffix), "userEmail" .= ("m7-ghost-" <> suffix <> "@dev")]
+                               ]
+                        ]
+                ]
+            )
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "does not resolve to any user" msg
 
     it "strict fieldMappings/dashboards delete only unlisted rows" do
@@ -1831,30 +2221,51 @@ m7Spec = describe "provisioning (milestone 7)" do
             doomedFacet = "m7doomed-" <> suffix
             doomedDash = "m7-doomed-dash-" <> suffix
         owner <- m7User email
-        void $ sqlExecTyped [typedSql|
+        void $
+            sqlExecTyped
+                [typedSql|
             INSERT INTO field_mappings (facet, rank, kind, key, enabled)
             VALUES (${doomedFacet}, 7, 'field', 'env', true)
         |]
-        _ <- newRecord @Dashboard
-            |> set #userId (get #id owner)
-            |> set #name doomedDash
-            |> createRecord
+        _ <-
+            newRecord @Dashboard
+                |> set #userId (get #id owner)
+                |> set #name doomedDash
+                |> createRecord
         mappings <- query @FieldMapping |> fetch
-        let keepMappings = [object
-                [ "facet" .= mapping.facet, "rank" .= mapping.rank, "kind" .= mapping.kind
-                , "key" .= mapping.key, "enabled" .= mapping.enabled ]
-                | mapping <- mappings, mapping.facet /= doomedFacet ]
+        let keepMappings =
+                [ object
+                    [ "facet" .= mapping.facet
+                    , "rank" .= mapping.rank
+                    , "kind" .= mapping.kind
+                    , "key" .= mapping.key
+                    , "enabled" .= mapping.enabled
+                    ]
+                | mapping <- mappings
+                , mapping.facet /= doomedFacet
+                ]
         dashboards <- query @Dashboard |> fetch
         keepDashboards <- fmap catMaybes $ forM dashboards \dashboard -> do
             dashOwner <- fetch dashboard.userId
-            pure $ if dashboard.name == doomedDash then Nothing else Just (object
-                [ "name" .= dashboard.name, "userEmail" .= dashOwner.email
-                , "config" .= dashboard.config, "position" .= dashboard.position
-                , "isDefault" .= dashboard.isDefault ])
-        m7Apply (object
-            [ "fieldMappings" .= object ["strict" .= True, "items" .= keepMappings]
-            , "dashboards" .= object ["strict" .= True, "items" .= keepDashboards]
-            ])
+            pure $
+                if dashboard.name == doomedDash
+                    then Nothing
+                    else
+                        Just
+                            ( object
+                                [ "name" .= dashboard.name
+                                , "userEmail" .= dashOwner.email
+                                , "config" .= dashboard.config
+                                , "position" .= dashboard.position
+                                , "isDefault" .= dashboard.isDefault
+                                ]
+                            )
+        m7Apply
+            ( object
+                [ "fieldMappings" .= object ["strict" .= True, "items" .= keepMappings]
+                , "dashboards" .= object ["strict" .= True, "items" .= keepDashboards]
+                ]
+            )
         query @FieldMapping |> filterWhere (#facet, doomedFacet) |> fetch `shouldReturn` []
         query @Dashboard |> filterWhere (#name, doomedDash) |> fetch `shouldReturn` []
         remainingMappings <- query @FieldMapping |> fetch
@@ -1870,63 +2281,78 @@ m7Apply config = do
     applyProvisionConfig path
 
 m7User :: (?modelContext :: ModelContext) => Text -> IO User
-m7User email = newRecord @User
-    |> set #email email
-    |> set #passwordHash "unused"
-    |> createRecord
+m7User email =
+    newRecord @User
+        |> set #email email
+        |> set #passwordHash "unused"
+        |> createRecord
 
 -- Rows currently in the DB rendered back as config items (minus the excluded
 -- natural keys), so strict applies keep them untouched.
 m7UserKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
 m7UserKeepItems exclude = do
     users <- query @User |> fetch
-    pure [object
-        [ "email" .= get #email user
-        , "passwordHash" .= get #passwordHash user
-        , "displayName" .= get #displayName user
-        ] | user <- users, get #email user `notElem` exclude]
+    pure
+        [ object
+            [ "email" .= get #email user
+            , "passwordHash" .= get #passwordHash user
+            , "displayName" .= get #displayName user
+            ]
+        | user <- users
+        , get #email user `notElem` exclude
+        ]
 
 m7SourceKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
 m7SourceKeepItems exclude = do
     sources <- query @Source |> fetch
-    pure [object
-        [ "type" .= get #type_ source
-        , "name" .= get #name source
-        , "baseUrl" .= get #baseUrl source
-        , "env" .= get #env source
-        , "pollIntervalSeconds" .= get #pollIntervalSeconds source
-        , "enabled" .= get #enabled source
-        , "config" .= get #config source
-        ] | source <- sources, get #name source `notElem` exclude]
+    pure
+        [ object
+            [ "type" .= get #type_ source
+            , "name" .= get #name source
+            , "baseUrl" .= get #baseUrl source
+            , "env" .= get #env source
+            , "pollIntervalSeconds" .= get #pollIntervalSeconds source
+            , "enabled" .= get #enabled source
+            , "config" .= get #config source
+            ]
+        | source <- sources
+        , get #name source `notElem` exclude
+        ]
 
 m7TeamKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
 m7TeamKeepItems exclude = do
     teams <- query @Team |> fetch
     forM (filter (\team -> get #name team `notElem` exclude) teams) \team -> do
         let teamId = get #id team
-        members <- sqlQueryTyped [typedSql|
+        members <-
+            sqlQueryTyped
+                [typedSql|
             SELECT u.email, tm.team_role FROM team_members tm
             JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ${teamId}
         |]
-        pure $ object
-            [ "name" .= get #name team
-            , "description" .= get #description team
-            , "hostGroups" .= get #hostGroups team
-            , "defaults" .= get #defaults team
-            , "members" .= map (\row -> object ["email" .= get #email row, "role" .= get #team_role row]) members
-            ]
+        pure $
+            object
+                [ "name" .= get #name team
+                , "description" .= get #description team
+                , "hostGroups" .= get #hostGroups team
+                , "defaults" .= get #defaults team
+                , "members" .= map (\row -> object ["email" .= get #email row, "role" .= get #team_role row]) members
+                ]
 
 m7LlmKeepItems :: (?modelContext :: ModelContext) => IO [Aeson.Value]
 m7LlmKeepItems = do
     rows <- query @LlmConfig |> fetch
-    pure [object
-        [ "providerName" .= get #providerName row
-        , "endpoint" .= get #endpoint row
-        , "model" .= get #model row
-        , "apiKeyEnv" .= get #apiKeyEnv row
-        , "toolsEnabled" .= get #toolsEnabled row
-        , "enabled" .= get #enabled row
-        ] | row <- rows]
+    pure
+        [ object
+            [ "providerName" .= get #providerName row
+            , "endpoint" .= get #endpoint row
+            , "model" .= get #model row
+            , "apiKeyEnv" .= get #apiKeyEnv row
+            , "toolsEnabled" .= get #toolsEnabled row
+            , "enabled" .= get #enabled row
+            ]
+        | row <- rows
+        ]
 
 restoreEnv :: String -> Maybe String -> IO ()
 restoreEnv name = maybe (unsetEnv name) (setEnv name)
@@ -1940,13 +2366,19 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         config <- ensureAssetsConfig
         source <- testSource
         fp <- freshFingerprint
-        Just alertId <- ingest source (testEvent fp Firing)
-            { host = Just "dev-host-01", checkName = Just "halemans test trigger" }
+        Just alertId <-
+            ingest
+                source
+                (testEvent fp Firing)
+                    { host = Just "dev-host-01"
+                    , checkName = Just "halemans test trigger"
+                    }
         job <- enrichJobFor alertId
         perform job
-        objects <- query @AssetsObject
-            |> filterWhere (#configId, get #id config)
-            |> fetch
+        objects <-
+            query @AssetsObject
+                |> filterWhere (#configId, get #id config)
+                |> fetch
         case objects of
             [object] -> do
                 object.objectId `shouldBe` 10001
@@ -1956,39 +2388,48 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
                 assetAttr "Status" object `shouldBe` Just "Active"
                 assetAttr "Datacenter" object `shouldBe` Just "dc-eu-1"
             _ -> expectationFailure "expected exactly one cached asset"
-        links <- query @AssetAlertLink
-            |> filterWhere (#alertId, alertId)
-            |> fetch
+        links <-
+            query @AssetAlertLink
+                |> filterWhere (#alertId, alertId)
+                |> fetch
         case links of
             [link] -> link.matchedBy `shouldBe` "dev-host-01"
             _ -> expectationFailure "expected exactly one asset link"
         -- second run: upserts are idempotent
         perform job
-        objectsAfter <- query @AssetsObject
-            |> filterWhere (#configId, get #id config)
-            |> fetch
+        objectsAfter <-
+            query @AssetsObject
+                |> filterWhere (#configId, get #id config)
+                |> fetch
         length objectsAfter `shouldBe` 1
-        linksAfter <- query @AssetAlertLink
-            |> filterWhere (#alertId, alertId)
-            |> fetch
+        linksAfter <-
+            query @AssetAlertLink
+                |> filterWhere (#alertId, alertId)
+                |> fetch
         length linksAfter `shouldBe` 1
 
     it "unknown hosts are negative-cached (no re-query within the TTL)" do
         _ <- ensureAssetsConfig
         source <- testSource
         fp <- freshFingerprint
-        Just alertId <- ingest source (testEvent fp Firing)
-            { host = Just "itest-m8-unknown-host" }
+        Just alertId <-
+            ingest
+                source
+                (testEvent fp Firing)
+                    { host = Just "itest-m8-unknown-host"
+                    }
         job <- enrichJobFor alertId
         perform job
-        linked <- query @AssetAlertLink
-            |> filterWhere (#alertId, alertId)
-            |> filterWhereSql (#assetsObjectId, "IS NOT NULL")
-            |> fetch
+        linked <-
+            query @AssetAlertLink
+                |> filterWhere (#alertId, alertId)
+                |> filterWhereSql (#assetsObjectId, "IS NOT NULL")
+                |> fetch
         length linked `shouldBe` 0
-        misses <- query @AssetAlertLink
-            |> filterWhere (#alertId, alertId)
-            |> fetch
+        misses <-
+            query @AssetAlertLink
+                |> filterWhere (#alertId, alertId)
+                |> fetch
         case misses of
             [miss] -> do
                 miss.assetsObjectId `shouldBe` Nothing
@@ -1999,10 +2440,11 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         assetsMockFail 10
         perform job
         assetsMockReset
-        failures <- query @AlertEvent
-            |> filterWhere (#alertId, alertId)
-            |> filterWhere (#kind, "enrichment_failed" :: Text)
-            |> fetch
+        failures <-
+            query @AlertEvent
+                |> filterWhere (#alertId, alertId)
+                |> filterWhere (#kind, "enrichment_failed" :: Text)
+                |> fetch
         mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` []
 
     it "assets outage soft-fails with an enrichment_failed event" do
@@ -2011,14 +2453,19 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         flip finally assetsMockReset do
             source <- testSource
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { host = Just "itest-m8-softfail-host" }
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { host = Just "itest-m8-softfail-host"
+                        }
             job <- enrichJobFor alertId
             perform job
-            failures <- query @AlertEvent
-                |> filterWhere (#alertId, alertId)
-                |> filterWhere (#kind, "enrichment_failed" :: Text)
-                |> fetch
+            failures <-
+                query @AlertEvent
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#kind, "enrichment_failed" :: Text)
+                    |> fetch
             mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` ["assets"]
 
     it "a role on the analysis drives the prompt template and is recorded" do
@@ -2030,26 +2477,29 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         suffix <- tshow <$> nextRandom
         let templateName = "itest_role_marker_" <> suffix
             roleName = "itest-role-" <> suffix
-        template <- newRecord @LlmPromptTemplate
-            |> set #name templateName
-            |> set #version 1
-            |> set #body "ROLE MARKER {{alert.title}}\nAssets:\n{{assets_excerpt}}"
-            |> set #active True
-            |> createRecord
-        role <- newRecord @LlmAgentRole
-            |> set #name roleName
-            |> set #promptTemplateName templateName
-            |> set #tools (Aeson.toJSON ["assets_lookup" :: Text])
-            |> set #enabled True
-            |> set #isDefault False
-            |> createRecord
+        template <-
+            newRecord @LlmPromptTemplate
+                |> set #name templateName
+                |> set #version 1
+                |> set #body "ROLE MARKER {{alert.title}}\nAssets:\n{{assets_excerpt}}"
+                |> set #active True
+                |> createRecord
+        role <-
+            newRecord @LlmAgentRole
+                |> set #name roleName
+                |> set #promptTemplateName templateName
+                |> set #tools (Aeson.toJSON ["assets_lookup" :: Text])
+                |> set #enabled True
+                |> set #isDefault False
+                |> createRecord
         source <- testSource
         fp <- freshFingerprint
         Just alertId <- ingest source (testEvent fp Firing)
-        analysis <- newRecord @LlmAnalysis
-            |> set #alertId alertId
-            |> set #agentRoleId (Just (get #id role))
-            |> createRecord
+        analysis <-
+            newRecord @LlmAnalysis
+                |> set #alertId alertId
+                |> set #agentRoleId (Just (get #id role))
+                |> createRecord
         void do
             newRecord @LlmAnalysisJob
                 |> set #analysisId (get #id analysis)
@@ -2062,18 +2512,24 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
 
     it "assets_lookup returns an in-band summary from the mock" do
         _ <- ensureAssetsConfig
-        result <- executeToolCall Nothing ToolCall
-            { callId = "call-1"
-            , callName = "assets_lookup"
-            , callArguments = "{\"term\": \"dev-host-01\"}"
-            }
+        result <-
+            executeToolCall
+                Nothing
+                ToolCall
+                    { callId = "call-1"
+                    , callName = "assets_lookup"
+                    , callArguments = "{\"term\": \"dev-host-01\"}"
+                    }
         result `shouldSatisfy` ("dev-host-01" `Text.isInfixOf`)
         result `shouldSatisfy` ("CHCMDB-10001" `Text.isInfixOf`)
-        failing <- executeToolCall Nothing ToolCall
-            { callId = "call-2"
-            , callName = "assets_lookup"
-            , callArguments = "{\"term\": \"itest-no-such-asset\"}"
-            }
+        failing <-
+            executeToolCall
+                Nothing
+                ToolCall
+                    { callId = "call-2"
+                    , callName = "assets_lookup"
+                    , callArguments = "{\"term\": \"itest-no-such-asset\"}"
+                    }
         failing `shouldBe` "no assets found"
 
     it "the default role applies to automatic analyses" do
@@ -2081,13 +2537,14 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
         void $ sqlExecTyped [typedSql| UPDATE llm_agent_roles SET is_default = false |]
         suffix <- tshow <$> nextRandom
-        role <- newRecord @LlmAgentRole
-            |> set #name ("itest-default-role-" <> suffix)
-            |> set #promptTemplateName "alert_enrichment"
-            |> set #tools (Aeson.toJSON ([] :: [Text]))
-            |> set #enabled True
-            |> set #isDefault True
-            |> createRecord
+        role <-
+            newRecord @LlmAgentRole
+                |> set #name ("itest-default-role-" <> suffix)
+                |> set #promptTemplateName "alert_enrichment"
+                |> set #tools (Aeson.toJSON ([] :: [Text]))
+                |> set #enabled True
+                |> set #isDefault True
+                |> createRecord
         source <- testSource
         fp <- freshFingerprint
         Just alertId <- ingest source (testEvent fp Firing)
@@ -2102,59 +2559,72 @@ itestAttrNames = "Owner,Cluster,Database,IP,Datacenter,Service,DB Cluster,Enviro
 
 ensureAssetsConfig :: (?modelContext :: ModelContext) => IO AssetsConfig
 ensureAssetsConfig = do
-    existing <- query @AssetsConfig
-        |> filterWhere (#name, "itest-assets" :: Text)
-        |> fetchOneOrNothing
+    existing <-
+        query @AssetsConfig
+            |> filterWhere (#name, "itest-assets" :: Text)
+            |> fetchOneOrNothing
     case existing of
         -- Milestone 9 widened the verbatim-facet whitelist; refresh stale rows.
         Just config
             | config.attributeNames == itestAttrNames -> pure config
-            | otherwise -> config
+            | otherwise ->
+                config
+                    |> set #attributeNames itestAttrNames
+                    |> updateRecord
+        Nothing ->
+            newRecord @AssetsConfig
+                |> set #name "itest-assets"
+                |> set #baseUrl "http://127.0.0.1:18085/rest/assets/latest"
+                |> set #tokenEnv "ASSETS_TOKEN"
+                |> set #authMode "bearer"
+                |> set #defaultSchemaName "Capacity CMDB"
+                |> set #hostQueryTemplate "objectSchema = \"Capacity CMDB\" AND Name like \"{host}\""
                 |> set #attributeNames itestAttrNames
-                |> updateRecord
-        Nothing -> newRecord @AssetsConfig
-            |> set #name "itest-assets"
-            |> set #baseUrl "http://127.0.0.1:18085/rest/assets/latest"
-            |> set #tokenEnv "ASSETS_TOKEN"
-            |> set #authMode "bearer"
-            |> set #defaultSchemaName "Capacity CMDB"
-            |> set #hostQueryTemplate "objectSchema = \"Capacity CMDB\" AND Name like \"{host}\""
-            |> set #attributeNames itestAttrNames
-            |> set #enabled True
-            |> createRecord
+                |> set #enabled True
+                |> createRecord
 
 ensureMockJiraConfig :: (?modelContext :: ModelContext) => IO ()
 ensureMockJiraConfig = do
-    existing <- query @JiraConfig
-        |> filterWhere (#name, "itest-jira" :: Text)
-        |> fetchOneOrNothing
+    existing <-
+        query @JiraConfig
+            |> filterWhere (#name, "itest-jira" :: Text)
+            |> fetchOneOrNothing
     case existing of
-        Just config -> unless config.enabled
-            (void (config |> set #enabled True |> updateRecord))
-        Nothing -> void $ newRecord @JiraConfig
-            |> set #name "itest-jira"
-            |> set #baseUrl "http://127.0.0.1:18083"
-            |> set #tokenEnv "JIRA_TOKEN"
-            |> set #apiVersion "3"
-            |> set #projects (Aeson.toJSON ["DEV" :: Text])
-            |> set #enabled True
-            |> createRecord
+        Just config ->
+            unless
+                config.enabled
+                (void (config |> set #enabled True |> updateRecord))
+        Nothing ->
+            void $
+                newRecord @JiraConfig
+                    |> set #name "itest-jira"
+                    |> set #baseUrl "http://127.0.0.1:18083"
+                    |> set #tokenEnv "JIRA_TOKEN"
+                    |> set #apiVersion "3"
+                    |> set #projects (Aeson.toJSON ["DEV" :: Text])
+                    |> set #enabled True
+                    |> createRecord
 
 ensureMockCmdbConfig :: (?modelContext :: ModelContext) => IO ()
 ensureMockCmdbConfig = do
-    existing <- query @CmdbConfig
-        |> filterWhere (#name, "itest-confluence" :: Text)
-        |> fetchOneOrNothing
+    existing <-
+        query @CmdbConfig
+            |> filterWhere (#name, "itest-confluence" :: Text)
+            |> fetchOneOrNothing
     case existing of
-        Just config -> unless config.enabled
-            (void (config |> set #enabled True |> updateRecord))
-        Nothing -> void $ newRecord @CmdbConfig
-            |> set #name "itest-confluence"
-            |> set #baseUrl "http://127.0.0.1:18082"
-            |> set #tokenEnv "CONFLUENCE_TOKEN"
-            |> set #spaces (Aeson.toJSON ["DEV" :: Text])
-            |> set #enabled True
-            |> createRecord
+        Just config ->
+            unless
+                config.enabled
+                (void (config |> set #enabled True |> updateRecord))
+        Nothing ->
+            void $
+                newRecord @CmdbConfig
+                    |> set #name "itest-confluence"
+                    |> set #baseUrl "http://127.0.0.1:18082"
+                    |> set #tokenEnv "CONFLUENCE_TOKEN"
+                    |> set #spaces (Aeson.toJSON ["DEV" :: Text])
+                    |> set #enabled True
+                    |> createRecord
 
 -- Runs the action with the ONLY enabled CMDB connection pointing at
 -- baseUrl (dead port, wrong token, ...), restoring the previous rows
@@ -2166,25 +2636,27 @@ withOnlyCmdbConfig baseUrl action = do
     previous <- query @CmdbConfig |> fetch
     forM_ (filter (.enabled) previous) \row ->
         void (row |> set #enabled False |> updateRecord)
-    probe <- newRecord @CmdbConfig
-        |> set #name ("itest-cmdb-probe-" <> suffix)
-        |> set #baseUrl baseUrl
-        |> set #tokenEnv "CONFLUENCE_TOKEN"
-        |> set #enabled True
-        |> createRecord
+    probe <-
+        newRecord @CmdbConfig
+            |> set #name ("itest-cmdb-probe-" <> suffix)
+            |> set #baseUrl baseUrl
+            |> set #tokenEnv "CONFLUENCE_TOKEN"
+            |> set #enabled True
+            |> createRecord
     flip finally (restore previous probe) action
-    where
-        restore previous probe = do
-            deleteRecord probe
-            forM_ (filter (.enabled) previous) \row -> do
-                current <- fetch (get #id row)
-                void (current |> set #enabled True |> updateRecord)
+  where
+    restore previous probe = do
+        deleteRecord probe
+        forM_ (filter (.enabled) previous) \row -> do
+            current <- fetch (get #id row)
+            void (current |> set #enabled True |> updateRecord)
 
 enrichJobFor :: (?modelContext :: ModelContext) => Id Alert -> IO EnrichAlertJob
-enrichJobFor alertId = query @EnrichAlertJob
-    |> filterWhere (#alertId, alertId)
-    |> fetchOneOrNothing
-    >>= maybe (error "enrich job missing") pure
+enrichJobFor alertId =
+    query @EnrichAlertJob
+        |> filterWhere (#alertId, alertId)
+        |> fetchOneOrNothing
+        >>= maybe (error "enrich job missing") pure
 
 -- Replaces the ingest-created row (which the dev worker races us for) with
 -- a manually inserted one whose run_at is in the future, so only the test
@@ -2218,8 +2690,12 @@ m9Spec = describe "resolved facets (milestone 9)" do
         flip finally (cleanupMappings [(envMapping, envCreated), (teamMapping, True)]) do
             source <- testSource
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { labels = object ["team" .= ("itest-facet-team" :: Text)] }
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { labels = object ["team" .= ("itest-facet-team" :: Text)]
+                        }
             alert <- fetch alertId
             facetValue alert "env" `shouldBe` Just "itest-env"
             facetValue alert "team" `shouldBe` Just "itest-facet-team"
@@ -2231,8 +2707,14 @@ m9Spec = describe "resolved facets (milestone 9)" do
         flip finally (cleanupMappings [(overrideMapping, True), (fallbackMapping, fallbackCreated)]) do
             source <- testSource
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { host = Just "dev-host-01", checkName = Just "halemans test trigger", env = Just "zabbix-prod" }
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { host = Just "dev-host-01"
+                        , checkName = Just "halemans test trigger"
+                        , env = Just "zabbix-prod"
+                        }
             alertIngest <- fetch alertId
             -- ingest-time: attr source absent, field fallback wins
             facetValue alertIngest "env" `shouldBe` Just "zabbix-prod"
@@ -2249,25 +2731,32 @@ m9Spec = describe "resolved facets (milestone 9)" do
         source <- testSource
         alertIds <- forM [("dev-host-01", "ibstaffcopdb01"), ("dev-db-01", "ibstaffcopdb02")] \(host, _) -> do
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { host = Just host, checkName = Just "halemans test trigger", title = "m9 grouped " <> host }
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { host = Just host
+                        , checkName = Just "halemans test trigger"
+                        , title = "m9 grouped " <> host
+                        }
             job <- enrichJobFor alertId
             perform job
             pure alertId
-        let card = DashboardCard
-                { cardTitle = Just "pg clusters"
-                , cardMatch = [MatchClause (FacetAttr "Service") OpEq "PostgreSQL" []]
-                , cardGroupBy = Just (FacetAttr "DB Cluster")
-                , cardLimit = 50
-                , cardLegacy = False
-                , cardForEach = Nothing
-                , cardHideWhen = Nothing
-                , cardSummary = False
-                , cardSortBy = []
-                , cardAlertSortBy = []
-                , cardSize = Nothing
-                , cardExtras = mempty
-                }
+        let card =
+                DashboardCard
+                    { cardTitle = Just "pg clusters"
+                    , cardMatch = [MatchClause (FacetAttr "Service") OpEq "PostgreSQL" []]
+                    , cardGroupBy = Just (FacetAttr "DB Cluster")
+                    , cardLimit = 50
+                    , cardLegacy = False
+                    , cardForEach = Nothing
+                    , cardHideWhen = Nothing
+                    , cardSummary = False
+                    , cardSortBy = []
+                    , cardAlertSortBy = []
+                    , cardSize = Nothing
+                    , cardExtras = mempty
+                    }
         groups <- runCardQueryGroups card (FacetAttr "DB Cluster")
         -- dev-DB tolerant: other runs' enriched alerts may share the sections
         let alertsIn value = concatMap cgAlerts [group | group <- groups, group.cgValue == value]
@@ -2284,22 +2773,28 @@ m9Spec = describe "resolved facets (milestone 9)" do
         -- sideline all other rules for the duration of this test.
         otherRules <- query @GroupingRule |> filterWhere (#enabled, True) |> fetch
         forM_ otherRules \other -> void (other |> set #enabled False |> updateRecord)
-        rule <- newRecord @GroupingRule
-            |> set #name ("itest-facet-group-" <> tag)
-            |> set #position 9000
-            |> set #enabled True
-            |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
-            |> set #groupKeyTemplate "db-{facet:DB Cluster}"
-            |> set #createdBy Nothing
-            |> createRecord
+        rule <-
+            newRecord @GroupingRule
+                |> set #name ("itest-facet-group-" <> tag)
+                |> set #position 9000
+                |> set #enabled True
+                |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
+                |> set #groupKeyTemplate "db-{facet:DB Cluster}"
+                |> set #createdBy Nothing
+                |> createRecord
         let restore = do
                 deleteRecord rule
                 forM_ otherRules \other -> void (other |> set #enabled True |> updateRecord)
         flip finally restore do
             source <- testSource
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEventIn envName fp Firing)
-                { host = Just "dev-host-01", checkName = Just checkName' }
+            Just alertId <-
+                ingest
+                    source
+                    (testEventIn envName fp Firing)
+                        { host = Just "dev-host-01"
+                        , checkName = Just checkName'
+                        }
             alertIngest <- fetch alertId
             -- facet absent at ingest: the rule does not match yet
             alertIngest.groupId `shouldBe` Nothing
@@ -2320,13 +2815,19 @@ m9Spec = describe "resolved facets (milestone 9)" do
         flip finally (cleanupMappings [(overrideMapping, True), (fallbackMapping, fallbackCreated)]) do
             source <- testSource
             fp <- freshFingerprint
-            Just alertId <- ingest source (testEvent fp Firing)
-                { host = Just "dev-host-01", checkName = Just "halemans test trigger", env = Just "m9-override-raw" }
+            Just alertId <-
+                ingest
+                    source
+                    (testEvent fp Firing)
+                        { host = Just "dev-host-01"
+                        , checkName = Just "halemans test trigger"
+                        , env = Just "m9-override-raw"
+                        }
             job <- enrichJobFor alertId
             perform job
             -- /alerts env filter matches the override, not the raw env
             -- (dev-DB tolerant: other runs may leave PROD-overridden alerts)
-            let idsFor envName = map (get #id) <$> listAlerts defaultAlertListFilters { alfEnvs = [envName] } 500
+            let idsFor envName = map (get #id) <$> listAlerts defaultAlertListFilters{alfEnvs = [envName]} 500
             prodIds <- idsFor "PROD"
             prodIds `shouldContain` [alertId]
             idsFor "m9-override-raw" `shouldReturn` []
@@ -2334,20 +2835,21 @@ m9Spec = describe "resolved facets (milestone 9)" do
             names <- effectiveEnvNames
             names `shouldContain` ["PROD"]
             -- dashboard card with a legacy field:env clause follows the override
-            let card = DashboardCard
-                    { cardTitle = Nothing
-                    , cardMatch = [MatchClause (FacetField FieldEnv) OpEq "PROD" []]
-                    , cardGroupBy = Nothing
-                    , cardLimit = 50
-                    , cardLegacy = False
-                    , cardForEach = Nothing
-                    , cardHideWhen = Nothing
-                    , cardSummary = False
-                    , cardSortBy = []
-                    , cardAlertSortBy = []
-                    , cardSize = Nothing
-                    , cardExtras = mempty
-                    }
+            let card =
+                    DashboardCard
+                        { cardTitle = Nothing
+                        , cardMatch = [MatchClause (FacetField FieldEnv) OpEq "PROD" []]
+                        , cardGroupBy = Nothing
+                        , cardLimit = 50
+                        , cardLegacy = False
+                        , cardForEach = Nothing
+                        , cardHideWhen = Nothing
+                        , cardSummary = False
+                        , cardSortBy = []
+                        , cardAlertSortBy = []
+                        , cardSize = Nothing
+                        , cardExtras = mempty
+                        }
             cardIds <- map (get #id) <$> runCardQuery card
             cardIds `shouldContain` [alertId]
             -- overview cards are keyed by the effective env
@@ -2381,16 +2883,21 @@ m9Spec = describe "resolved facets (milestone 9)" do
             envA = "m9tpl-a-" <> suffix
             envB = "m9tpl-b-" <> suffix
         source <- integrationSource "webhook" ("m9tpl-" <> suffix) "" (object [])
-        let eventIn env fp severity = (testEventIn env fp Firing :: NormalizedEvent) { host = Just host, severity = severity }
+        let eventIn env fp severity = (testEventIn env fp Firing :: NormalizedEvent){host = Just host, severity = severity}
         Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a") "warning")
         Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b") "critical")
-        cards <- case decodeDashboardConfig (Aeson.toJSON [object
-                [ "title" .= ("probe {value}" :: Text)
-                , "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
-                , "forEach" .= ("field:env" :: Text)
-                , "hideWhen" .= object
-                    [ "match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("=" :: Text), "value" .= ("critical" :: Text)]] ]
-                ]]) of
+        cards <- case decodeDashboardConfig
+            ( Aeson.toJSON
+                [ object
+                    [ "title" .= ("probe {value}" :: Text)
+                    , "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                    , "forEach" .= ("field:env" :: Text)
+                    , "hideWhen"
+                        .= object
+                            ["match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("=" :: Text), "value" .= ("critical" :: Text)]]]
+                    ]
+                ]
+            ) of
             Left err -> expectationFailure (cs err) >> error "unreachable"
             Right decoded -> pure decoded
         expanded <- expandDashboardCards cards
@@ -2401,11 +2908,13 @@ m9Spec = describe "resolved facets (milestone 9)" do
         -- envA has no critical alert: hidden; envB has one: visible
         map ecHidden expanded `shouldBe` [True, False]
         -- same hideWhen on a plain (non-template) card
-        let plainCard sev = object
-                [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
-                , "hideWhen" .= object
-                    [ "match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("=" :: Text), "value" .= (sev :: Text)]] ]
-                ]
+        let plainCard sev =
+                object
+                    [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                    , "hideWhen"
+                        .= object
+                            ["match" .= [object ["facet" .= ("field:severity" :: Text), "op" .= ("=" :: Text), "value" .= (sev :: Text)]]]
+                    ]
         void $ forM [("critical", False), ("info", True)] \(sev, expectedHidden) -> do
             single <- case decodeDashboardConfig (Aeson.toJSON [plainCard sev]) of
                 Left err -> expectationFailure (cs err) >> error "unreachable"
@@ -2421,16 +2930,20 @@ m9Spec = describe "resolved facets (milestone 9)" do
             envA = "m9sum-a-" <> suffix
             envB = "m9sum-b-" <> suffix
         source <- integrationSource "webhook" ("m9sum-" <> suffix) "" (object [])
-        let eventIn env fp severity status = (testEventIn env fp status :: NormalizedEvent) { host = Just host, severity = severity }
+        let eventIn env fp severity status = (testEventIn env fp status :: NormalizedEvent){host = Just host, severity = severity}
         Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a1") "warning" Firing)
         Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a2") "info" Firing)
         void $ ingest source (eventIn envA ("itest:" <> suffix <> "-a2") "info" Resolved)
         Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b1") "critical" Firing)
-        cards <- case decodeDashboardConfig (Aeson.toJSON [object
-                [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
-                , "forEach" .= ("field:env" :: Text)
-                , "summary" .= True
-                ]]) of
+        cards <- case decodeDashboardConfig
+            ( Aeson.toJSON
+                [ object
+                    [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                    , "forEach" .= ("field:env" :: Text)
+                    , "summary" .= True
+                    ]
+                ]
+            ) of
             Left err -> expectationFailure (cs err) >> error "unreachable"
             Right decoded -> pure decoded
         expanded <- expandDashboardCards cards
@@ -2448,16 +2961,20 @@ m9Spec = describe "resolved facets (milestone 9)" do
             envB = "m9srt-b-" <> suffix
             envC = "m9srt-c-" <> suffix
         source <- integrationSource "webhook" ("m9srt-" <> suffix) "" (object [])
-        let eventIn env fp severity = (testEventIn env fp Firing :: NormalizedEvent) { host = Just host, severity = severity }
+        let eventIn env fp severity = (testEventIn env fp Firing :: NormalizedEvent){host = Just host, severity = severity}
         Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a") "critical")
         Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b") "info")
         Just _ <- ingest source (eventIn envC ("itest:" <> suffix <> "-c") "warning")
         let expandWith sortKeys = do
-                cards <- case decodeDashboardConfig (Aeson.toJSON [object
-                        [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
-                        , "forEach" .= ("field:env" :: Text)
-                        , "sortBy" .= sortKeys
-                        ]]) of
+                cards <- case decodeDashboardConfig
+                    ( Aeson.toJSON
+                        [ object
+                            [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                            , "forEach" .= ("field:env" :: Text)
+                            , "sortBy" .= sortKeys
+                            ]
+                        ]
+                    ) of
                     Left err -> expectationFailure (cs err) >> error "unreachable"
                     Right decoded -> pure decoded
                 map ecValue <$> expandDashboardCards cards
@@ -2473,16 +2990,20 @@ m9Spec = describe "resolved facets (milestone 9)" do
         let host = "m9asrt-host-" <> suffix
             env = "m9asrt-" <> suffix
         source <- integrationSource "webhook" ("m9asrt-" <> suffix) "" (object [])
-        let eventIn fp severity = (testEventIn env fp Firing :: NormalizedEvent) { host = Just host, severity = severity }
+        let eventIn fp severity = (testEventIn env fp Firing :: NormalizedEvent){host = Just host, severity = severity}
         Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-i1") "info")
         Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-w1") "warning")
         Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-i2") "info")
         Just _ <- ingest source (eventIn ("itest:" <> suffix <> "-c1") "critical")
         let queryWith alertSortBy = do
-                cards <- case decodeDashboardConfig (Aeson.toJSON [object
-                        [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
-                        , "alertSortBy" .= alertSortBy
-                        ]]) of
+                cards <- case decodeDashboardConfig
+                    ( Aeson.toJSON
+                        [ object
+                            [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                            , "alertSortBy" .= alertSortBy
+                            ]
+                        ]
+                    ) of
                     Left err -> expectationFailure (cs err) >> error "unreachable"
                     Right decoded -> pure decoded
                 case cards of
@@ -2497,20 +3018,22 @@ m9Spec = describe "resolved facets (milestone 9)" do
 -- mappings); the Bool marks rows this run created and must delete.
 ensureMapping :: (?modelContext :: ModelContext) => Text -> Int -> Text -> Text -> IO (FieldMapping, Bool)
 ensureMapping facet rank kind key = do
-    existing <- query @FieldMapping
-        |> filterWhere (#facet, facet)
-        |> filterWhere (#rank, rank)
-        |> fetchOneOrNothing
+    existing <-
+        query @FieldMapping
+            |> filterWhere (#facet, facet)
+            |> filterWhere (#rank, rank)
+            |> fetchOneOrNothing
     case existing of
         Just row -> pure (row, False)
         Nothing -> do
-            row <- newRecord @FieldMapping
-                |> set #facet facet
-                |> set #rank rank
-                |> set #kind kind
-                |> set #key key
-                |> set #enabled True
-                |> createRecord
+            row <-
+                newRecord @FieldMapping
+                    |> set #facet facet
+                    |> set #rank rank
+                    |> set #kind kind
+                    |> set #key key
+                    |> set #enabled True
+                    |> createRecord
             pure (row, True)
 
 cleanupMappings :: (?modelContext :: ModelContext) => [(FieldMapping, Bool)] -> IO ()
@@ -2521,7 +3044,7 @@ toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
     it "serves repeat calls from the cache within the TTL" do
         resetToolCache
         counter <- newIORef (0 :: Int)
-        let action = modifyIORef' counter (+1) >> pure "cached-result"
+        let action = modifyIORef' counter (+ 1) >> pure "cached-result"
         first <- cachedToolCall "itest_tool" "{}" action
         second <- cachedToolCall "itest_tool" "{}" action
         first `shouldBe` "cached-result"
@@ -2530,7 +3053,7 @@ toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
     it "keys on tool and arguments separately" do
         resetToolCache
         counter <- newIORef (0 :: Int)
-        let action = modifyIORef' counter (+1) >> pure "x"
+        let action = modifyIORef' counter (+ 1) >> pure "x"
         _ <- cachedToolCall "itest_tool" "{\"a\":1}" action
         _ <- cachedToolCall "itest_tool" "{\"a\":2}" action
         _ <- cachedToolCall "itest_tool_2" "{\"a\":1}" action
@@ -2538,7 +3061,7 @@ toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
     it "never caches failure texts" do
         resetToolCache
         counter <- newIORef (0 :: Int)
-        let action = modifyIORef' counter (+1) >> pure "jira search failed: boom"
+        let action = modifyIORef' counter (+ 1) >> pure "jira search failed: boom"
         _ <- cachedToolCall "itest_tool" "{}" action
         _ <- cachedToolCall "itest_tool" "{}" action
         readIORef counter `shouldReturn` 2
@@ -2547,7 +3070,7 @@ toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
         _ <- createRecord (newRecord @LlmToolCacheConfig |> set #enabled False |> set #ttlSeconds 300)
         flip finally resetToolCacheConfig do
             counter <- newIORef (0 :: Int)
-            let action = modifyIORef' counter (+1) >> pure "y"
+            let action = modifyIORef' counter (+ 1) >> pure "y"
             _ <- cachedToolCall "itest_tool" "{}" action
             _ <- cachedToolCall "itest_tool" "{}" action
             readIORef counter `shouldReturn` 2
@@ -2560,5 +3083,3 @@ resetToolCache = do
 resetToolCacheConfig :: (?modelContext :: ModelContext) => IO ()
 resetToolCacheConfig =
     void (sqlExecTyped [typedSql| DELETE FROM llm_tool_cache_configs |])
-
-

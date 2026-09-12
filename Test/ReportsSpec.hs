@@ -1,9 +1,9 @@
 module Test.ReportsSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import qualified Data.Text as Text
 import Application.Service.Reports
+import qualified Data.Text as Text
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Reports" do

@@ -1,8 +1,9 @@
-module Web.View.Sources.Form
-( SourceFormValues (..)
-, defaultSourceFormValues
-, sourceFormFields
+module Web.View.Sources.Form (
+    SourceFormValues (..),
+    defaultSourceFormValues,
+    sourceFormFields,
 ) where
+
 import Web.View.Prelude
 
 -- Shared new/edit fields for sources (milestone 12 §3).
@@ -22,23 +23,25 @@ data SourceFormValues = SourceFormValues
     }
 
 defaultSourceFormValues :: SourceFormValues
-defaultSourceFormValues = SourceFormValues
-    { formName = ""
-    , formType = "webhook"
-    , formBaseUrl = ""
-    , formEnv = "dev"
-    , formPollIntervalSeconds = 30
-    , formTokenEnv = ""
-    , formWriteBack = False
-    , formJiraWritable = False
-    , formCmdbSpaces = ""
-    , formJiraProjects = ""
-    , formInitialHistoryDays = ""
-    , formHostGroupScope = "all"
-    }
+defaultSourceFormValues =
+    SourceFormValues
+        { formName = ""
+        , formType = "webhook"
+        , formBaseUrl = ""
+        , formEnv = "dev"
+        , formPollIntervalSeconds = 30
+        , formTokenEnv = ""
+        , formWriteBack = False
+        , formJiraWritable = False
+        , formCmdbSpaces = ""
+        , formJiraProjects = ""
+        , formInitialHistoryDays = ""
+        , formHostGroupScope = "all"
+        }
 
 sourceFormFields :: SourceFormValues -> Html
-sourceFormFields values = [hsx|
+sourceFormFields values =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Name</label>
         <input name="name" type="text" class="form-control" value={values.formName} data-testid="source-name" required="required"/>
@@ -93,5 +96,5 @@ sourceFormFields values = [hsx|
         </select>
     </div>
 |]
-    where
-        typeOption value = [hsx|<option value={value} selected={values.formType == value}>{value}</option>|]
+  where
+    typeOption value = [hsx|<option value={value} selected={values.formType == value}>{value}</option>|]

@@ -1,4 +1,5 @@
 module Web.View.GroupingRules.Preview where
+
 import Web.View.Prelude
 
 data PreviewView = PreviewView
@@ -7,7 +8,8 @@ data PreviewView = PreviewView
     }
 
 instance View PreviewView where
-    html PreviewView { .. } = [hsx|
+    html PreviewView{..} =
+        [hsx|
         <h1>Preview: {rule.name}</h1>
         <p class="text-secondary">Recent alerts this rule would group, with the rendered group key.</p>
         <table class="table" data-testid="grouping-rule-preview-table">
@@ -22,8 +24,9 @@ instance View PreviewView where
             </tbody>
         </table>
     |]
-        where
-            renderRow (alert, key) = [hsx|
+      where
+        renderRow (alert, key) =
+            [hsx|
                 <tr>
                     <td><a href={ShowAlertAction (get #id alert)}>{alert.title}</a></td>
                     <td><code>{key}</code></td>

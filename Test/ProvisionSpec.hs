@@ -1,11 +1,11 @@
 module Test.ProvisionSpec where
 
-import Test.Hspec
-import IHP.Prelude
+import Application.Connector.Zabbix (ZabbixGroup (..))
+import Application.Service.Provision
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
-import Application.Service.Provision
-import Application.Connector.Zabbix (ZabbixGroup (..))
+import IHP.Prelude
+import Test.Hspec
 
 -- Unit coverage for the milestone 7 provision config parser (§9): round-trip
 -- of valid fixtures, unknown-field rejection, required-field errors naming
@@ -18,48 +18,73 @@ spec = describe "Application.Service.Provision" do
             parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
-            let json = Aeson.encode $ object
-                    [ "users" .= object ["strict" .= True, "items" .= [object
-                        [ "email" .= ("ops@example.com" :: Text)
-                        , "displayName" .= ("Ops" :: Text)
-                        , "passwordHash" .= ("sha256|17|salt|hash" :: Text)
-                        , "roles" .= (["admin"] :: [Text])
-                        , "settings" .= object ["theme" .= ("dark" :: Text)]
-                        ]]]
-                    , "sources" .= object ["items" .= [object
-                        [ "type" .= ("zabbix" :: Text)
-                        , "name" .= ("zabbix-prod" :: Text)
-                        , "baseUrl" .= ("https://zabbix.example" :: Text)
-                        , "env" .= ("prod" :: Text)
-                        , "pollIntervalSeconds" .= (30 :: Int)
-                        , "enabled" .= True
-                        , "config" .= object ["tokenEnv" .= ("ZABBIX_TOKEN" :: Text)]
-                        , "webhookTokens" .= [object ["tokenEnv" .= ("HALEMANS_AM_HOOK_TOKEN" :: Text)]]
-                        ]]]
-                    , "teams" .= object ["items" .= [object
-                        [ "name" .= ("sre" :: Text)
-                        , "description" .= ("Site reliability engineering" :: Text)
-                        , "hostGroups" .= (["Linux servers"] :: [Text])
-                        , "defaults" .= object []
-                        , "members" .= [object ["email" .= ("ops@example.com" :: Text), "role" .= ("lead" :: Text)]]
-                        , "defaultDashboardConfig" .= [object ["env" .= ("prod" :: Text)]]
-                        ]]]
-                    , "llm" .= object ["items" .= [object
-                        [ "providerName" .= ("default" :: Text)
-                        , "endpoint" .= ("http://127.0.0.1:18084" :: Text)
-                        , "model" .= ("qwen" :: Text)
-                        , "apiKeyEnv" .= ("LLM_API_KEY" :: Text)
-                        , "toolsEnabled" .= False
-                        , "enabled" .= True
-                        , "promptTemplates" .= [object
-                            [ "name" .= ("alert_enrichment" :: Text)
-                            , "version" .= (1 :: Int)
-                            , "body" .= ("..." :: Text)
-                            , "active" .= True
-                            , "notes" .= ("provisioned" :: Text)
-                            ]]
-                        ]]]
-                    ]
+            let json =
+                    Aeson.encode $
+                        object
+                            [ "users"
+                                .= object
+                                    [ "strict" .= True
+                                    , "items"
+                                        .= [ object
+                                                [ "email" .= ("ops@example.com" :: Text)
+                                                , "displayName" .= ("Ops" :: Text)
+                                                , "passwordHash" .= ("sha256|17|salt|hash" :: Text)
+                                                , "roles" .= (["admin"] :: [Text])
+                                                , "settings" .= object ["theme" .= ("dark" :: Text)]
+                                                ]
+                                           ]
+                                    ]
+                            , "sources"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "type" .= ("zabbix" :: Text)
+                                                , "name" .= ("zabbix-prod" :: Text)
+                                                , "baseUrl" .= ("https://zabbix.example" :: Text)
+                                                , "env" .= ("prod" :: Text)
+                                                , "pollIntervalSeconds" .= (30 :: Int)
+                                                , "enabled" .= True
+                                                , "config" .= object ["tokenEnv" .= ("ZABBIX_TOKEN" :: Text)]
+                                                , "webhookTokens" .= [object ["tokenEnv" .= ("HALEMANS_AM_HOOK_TOKEN" :: Text)]]
+                                                ]
+                                           ]
+                                    ]
+                            , "teams"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "name" .= ("sre" :: Text)
+                                                , "description" .= ("Site reliability engineering" :: Text)
+                                                , "hostGroups" .= (["Linux servers"] :: [Text])
+                                                , "defaults" .= object []
+                                                , "members" .= [object ["email" .= ("ops@example.com" :: Text), "role" .= ("lead" :: Text)]]
+                                                , "defaultDashboardConfig" .= [object ["env" .= ("prod" :: Text)]]
+                                                ]
+                                           ]
+                                    ]
+                            , "llm"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "providerName" .= ("default" :: Text)
+                                                , "endpoint" .= ("http://127.0.0.1:18084" :: Text)
+                                                , "model" .= ("qwen" :: Text)
+                                                , "apiKeyEnv" .= ("LLM_API_KEY" :: Text)
+                                                , "toolsEnabled" .= False
+                                                , "enabled" .= True
+                                                , "promptTemplates"
+                                                    .= [ object
+                                                            [ "name" .= ("alert_enrichment" :: Text)
+                                                            , "version" .= (1 :: Int)
+                                                            , "body" .= ("..." :: Text)
+                                                            , "active" .= True
+                                                            , "notes" .= ("provisioned" :: Text)
+                                                            ]
+                                                       ]
+                                                ]
+                                           ]
+                                    ]
+                            ]
             case parseProvisionConfig json of
                 Left err -> expectationFailure (cs err)
                 Right config -> do
@@ -178,25 +203,39 @@ spec = describe "Application.Service.Provision" do
                 Right _ -> expectationFailure "expected parse failure"
 
         it "parses field mappings and dashboards" do
-            let json = Aeson.encode $ object
-                    [ "fieldMappings" .= object ["items" .= [object
-                        [ "facet" .= ("Environments" :: Text)
-                        , "rank" .= (50 :: Int)
-                        , "kind" .= ("attr" :: Text)
-                        , "key" .= ("Environments" :: Text)
-                        ]]]
-                    , "dashboards" .= object ["items" .= [object
-                        [ "name" .= ("Service matrix" :: Text)
-                        , "userEmail" .= ("ops@example.com" :: Text)
-                        , "position" .= (60 :: Int)
-                        , "config" .= [object
-                            [ "title" .= ("ETCD / EU / PROD" :: Text)
-                            , "match" .= [object ["facet" .= ("attr:Service" :: Text), "op" .= ("=" :: Text), "value" .= ("ETCD" :: Text)]]
-                            , "groupBy" .= ("field:host" :: Text)
-                            , "limit" .= (20 :: Int)
-                            ]]
-                        ]]]
-                    ]
+            let json =
+                    Aeson.encode $
+                        object
+                            [ "fieldMappings"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "facet" .= ("Environments" :: Text)
+                                                , "rank" .= (50 :: Int)
+                                                , "kind" .= ("attr" :: Text)
+                                                , "key" .= ("Environments" :: Text)
+                                                ]
+                                           ]
+                                    ]
+                            , "dashboards"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "name" .= ("Service matrix" :: Text)
+                                                , "userEmail" .= ("ops@example.com" :: Text)
+                                                , "position" .= (60 :: Int)
+                                                , "config"
+                                                    .= [ object
+                                                            [ "title" .= ("ETCD / EU / PROD" :: Text)
+                                                            , "match" .= [object ["facet" .= ("attr:Service" :: Text), "op" .= ("=" :: Text), "value" .= ("ETCD" :: Text)]]
+                                                            , "groupBy" .= ("field:host" :: Text)
+                                                            , "limit" .= (20 :: Int)
+                                                            ]
+                                                       ]
+                                                ]
+                                           ]
+                                    ]
+                            ]
             case parseProvisionConfig json of
                 Left err -> expectationFailure (cs err)
                 Right config -> do
@@ -226,19 +265,31 @@ spec = describe "Application.Service.Provision" do
                 Right _ -> expectationFailure "expected parse failure"
 
         it "parses jira and cmdb config sections (milestone 10)" do
-            let json = Aeson.encode $ object
-                    [ "jiraConfigs" .= object ["items" .= [object
-                        [ "name" .= ("jira-prod" :: Text)
-                        , "baseUrl" .= ("https://jira.example" :: Text)
-                        , "tokenEnv" .= ("JIRA_TOKEN" :: Text)
-                        , "projects" .= (["OPS", "SRE"] :: [Text])
-                        ]]]
-                    , "cmdbConfigs" .= object ["items" .= [object
-                        [ "name" .= ("confluence-prod" :: Text)
-                        , "baseUrl" .= ("https://confluence.example" :: Text)
-                        , "tokenEnv" .= ("CONFLUENCE_TOKEN" :: Text)
-                        ]]]
-                    ]
+            let json =
+                    Aeson.encode $
+                        object
+                            [ "jiraConfigs"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "name" .= ("jira-prod" :: Text)
+                                                , "baseUrl" .= ("https://jira.example" :: Text)
+                                                , "tokenEnv" .= ("JIRA_TOKEN" :: Text)
+                                                , "projects" .= (["OPS", "SRE"] :: [Text])
+                                                ]
+                                           ]
+                                    ]
+                            , "cmdbConfigs"
+                                .= object
+                                    [ "items"
+                                        .= [ object
+                                                [ "name" .= ("confluence-prod" :: Text)
+                                                , "baseUrl" .= ("https://confluence.example" :: Text)
+                                                , "tokenEnv" .= ("CONFLUENCE_TOKEN" :: Text)
+                                                ]
+                                           ]
+                                    ]
+                            ]
             case parseProvisionConfig json of
                 Left err -> expectationFailure (cs err)
                 Right config -> do

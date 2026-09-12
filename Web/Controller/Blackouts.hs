@@ -1,26 +1,25 @@
 module Web.Controller.Blackouts where
 
+import qualified Data.Text as Text
 import Web.Controller.Prelude
+import Web.View.Blackouts.Edit
 import Web.View.Blackouts.Index
 import Web.View.Blackouts.New
-import Web.View.Blackouts.Edit
-import qualified Data.Text as Text
 
 instance Controller BlackoutsController where
     beforeAction = ensureIsUser
 
     action BlackoutsAction = do
-        blackouts <- query @Blackout
-            |> orderByDesc #startsAt
-            |> fetch
+        blackouts <-
+            query @Blackout
+                |> orderByDesc #startsAt
+                |> fetch
         scopeNames <- forM blackouts resolveScopeName
-        render IndexView { blackouts = zip blackouts scopeNames }
-
+        render IndexView{blackouts = zip blackouts scopeNames}
     action NewBlackoutAction = do
         requirePrivilege "manage_blackouts"
         (environments, hosts, services) <- scopeChoices
-        render NewView { .. }
-
+        render NewView{..}
     action CreateBlackoutAction = do
         requirePrivilege "manage_blackouts"
         let startsAt = param @UTCTime "startsAt"
@@ -28,26 +27,25 @@ instance Controller BlackoutsController where
         let reason = param @Text "reason"
         case parseScopeRef (param @Text "scopeId") of
             Just (environmentRef, hostRef, serviceRef) -> do
-                _ <- newRecord @Blackout
-                    |> set #environmentId environmentRef
-                    |> set #hostId hostRef
-                    |> set #serviceId serviceRef
-                    |> set #startsAt startsAt
-                    |> set #endsAt endsAt
-                    |> set #reason reason
-                    |> set #createdBy (Just currentUserId)
-                    |> createRecord
+                _ <-
+                    newRecord @Blackout
+                        |> set #environmentId environmentRef
+                        |> set #hostId hostRef
+                        |> set #serviceId serviceRef
+                        |> set #startsAt startsAt
+                        |> set #endsAt endsAt
+                        |> set #reason reason
+                        |> set #createdBy (Just currentUserId)
+                        |> createRecord
                 setSuccessMessage "Blackout created"
             Nothing -> setErrorMessage "invalid scope"
         redirectTo BlackoutsAction
-
-    action EditBlackoutAction { blackoutId } = do
+    action EditBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
         (environments, hosts, services) <- scopeChoices
-        render EditView { .. }
-
-    action UpdateBlackoutAction { blackoutId } = do
+        render EditView{..}
+    action UpdateBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
         let startsAt = param @UTCTime "startsAt"
@@ -55,19 +53,19 @@ instance Controller BlackoutsController where
         let reason = param @Text "reason"
         case parseScopeRef (param @Text "scopeId") of
             Just (environmentRef, hostRef, serviceRef) -> do
-                _ <- blackout
-                    |> set #environmentId environmentRef
-                    |> set #hostId hostRef
-                    |> set #serviceId serviceRef
-                    |> set #startsAt startsAt
-                    |> set #endsAt endsAt
-                    |> set #reason reason
-                    |> updateRecord
+                _ <-
+                    blackout
+                        |> set #environmentId environmentRef
+                        |> set #hostId hostRef
+                        |> set #serviceId serviceRef
+                        |> set #startsAt startsAt
+                        |> set #endsAt endsAt
+                        |> set #reason reason
+                        |> updateRecord
                 setSuccessMessage "Blackout updated"
             Nothing -> setErrorMessage "invalid scope"
         redirectTo BlackoutsAction
-
-    action DeleteBlackoutAction { blackoutId } = do
+    action DeleteBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
         deleteRecord blackout
@@ -87,11 +85,11 @@ parseScopeRef :: Text -> Maybe (Maybe (Id Environment), Maybe (Id Host), Maybe (
 parseScopeRef scopeValue =
     let (scopeType, scopeIdText) = Text.break (== ':') scopeValue
         scopeId = Text.drop 1 scopeIdText
-    in case scopeType of
-        "environment" -> Just (Just (textToId scopeId), Nothing, Nothing)
-        "host" -> Just (Nothing, Just (textToId scopeId), Nothing)
-        "service" -> Just (Nothing, Nothing, Just (textToId scopeId))
-        _ -> Nothing
+     in case scopeType of
+            "environment" -> Just (Just (textToId scopeId), Nothing, Nothing)
+            "host" -> Just (Nothing, Just (textToId scopeId), Nothing)
+            "service" -> Just (Nothing, Nothing, Just (textToId scopeId))
+            _ -> Nothing
 
 resolveScopeName :: (?modelContext :: ModelContext) => Blackout -> IO Text
 resolveScopeName blackout = case (blackout.environmentId, blackout.hostId, blackout.serviceId) of

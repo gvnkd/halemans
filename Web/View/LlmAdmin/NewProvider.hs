@@ -1,10 +1,12 @@
 module Web.View.LlmAdmin.NewProvider where
+
 import Web.View.Prelude
 
 data NewProviderView = NewProviderView
 
 instance View NewProviderView where
-    html NewProviderView = [hsx|
+    html NewProviderView =
+        [hsx|
         <h1>New LLM provider</h1>
         <p class="text-muted">
             API key env holds the NAME of the environment variable containing the key, not the key itself.

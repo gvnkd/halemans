@@ -1,22 +1,21 @@
-module Application.Service.Llm.Roles
-( resolveAgentRole
-, resolveAgentRoleByName
-, roleToolNames
-, templateNameForRole
-, toolsForRole
+module Application.Service.Llm.Roles (
+    resolveAgentRole,
+    resolveAgentRoleByName,
+    roleToolNames,
+    templateNameForRole,
+    toolsForRole,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetchOneOrNothing)
-import IHP.Fetch (fetch)
-import Generated.Types
-import Data.Aeson (Value)
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
-import qualified Data.Vector as Vector
 import Application.Service.Llm.Tools (toolDefinitions)
+import Data.Aeson (Value)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.Vector as Vector
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 
 -- Agent roles (design_docs/milestone_8.md §7): a role bundles a prompt
 -- template name + tool whitelist. Resolution is DB-first like llm_configs
@@ -28,10 +27,11 @@ resolveAgentRole :: (?modelContext :: ModelContext) => Maybe (Id LlmAgentRole) -
 resolveAgentRole (Just roleId) = do
     role <- fetch roleId
     pure (if role.enabled then Just role else Nothing)
-resolveAgentRole Nothing = query @LlmAgentRole
-    |> filterWhere (#isDefault, True)
-    |> filterWhere (#enabled, True)
-    |> fetchOneOrNothing
+resolveAgentRole Nothing =
+    query @LlmAgentRole
+        |> filterWhere (#isDefault, True)
+        |> filterWhere (#enabled, True)
+        |> fetchOneOrNothing
 
 -- Named-role lookup for internal pipeline consumers that are not driven by an
 -- analysis row (milestone 10: the related-tasks filter uses the
@@ -39,17 +39,18 @@ resolveAgentRole Nothing = query @LlmAgentRole
 -- tool whitelist from the web UI).
 resolveAgentRoleByName :: (?modelContext :: ModelContext) => Text -> IO (Maybe LlmAgentRole)
 resolveAgentRoleByName name = do
-    role <- query @LlmAgentRole
-        |> filterWhere (#name, name)
-        |> fetchOneOrNothing
+    role <-
+        query @LlmAgentRole
+            |> filterWhere (#name, name)
+            |> fetchOneOrNothing
     pure case role of
         Just found | found.enabled -> Just found
         _ -> Nothing
 
 roleToolNames :: LlmAgentRole -> [Text]
 roleToolNames role = fromMaybe [] (parseMaybe parser role.tools)
-    where
-        parser = Aeson.withArray "tools" \arr -> mapM Aeson.parseJSON (Vector.toList arr)
+  where
+    parser = Aeson.withArray "tools" \arr -> mapM Aeson.parseJSON (Vector.toList arr)
 
 templateNameForRole :: Maybe LlmAgentRole -> Text
 templateNameForRole = maybe "alert_enrichment" (.promptTemplateName)
@@ -60,11 +61,11 @@ toolsForRole :: Maybe LlmAgentRole -> [Value]
 toolsForRole Nothing = toolDefinitions
 toolsForRole (Just role) =
     let names = roleToolNames role
-    in filter (definitionIncluded names) toolDefinitions
-    where
-        definitionIncluded names definition = case parseMaybe toolName definition of
-            Nothing -> False
-            Just name -> name `elem` names
-        toolName = Aeson.withObject "tool" \o -> do
-            function <- o Aeson..: "function"
-            function Aeson..: "name"
+     in filter (definitionIncluded names) toolDefinitions
+  where
+    definitionIncluded names definition = case parseMaybe toolName definition of
+        Nothing -> False
+        Just name -> name `elem` names
+    toolName = Aeson.withObject "tool" \o -> do
+        function <- o Aeson..: "function"
+        function Aeson..: "name"

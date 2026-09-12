@@ -1,11 +1,11 @@
 module Test.BlackoutsSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (textToId, newRecord)
-import Data.Time.Format (parseTimeM, defaultTimeLocale)
-import Generated.Types
 import Application.Pipeline.Blackouts
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Generated.Types
+import IHP.ModelSupport (newRecord, textToId)
+import IHP.Prelude
+import Test.Hspec
 
 utcTime :: String -> UTCTime
 utcTime s = fromMaybe (error ("bad timestamp: " <> cs s)) (parseTimeM True defaultTimeLocale "%Y-%m-%d %H:%M:%S" s)
@@ -13,9 +13,10 @@ utcTime s = fromMaybe (error ("bad timestamp: " <> cs s)) (parseTimeM True defau
 spec :: Spec
 spec = describe "Application.Pipeline.Blackouts" do
     let now = utcTime "2026-09-04 10:00:00"
-    let blackout start end = newRecord @Blackout
-            |> set #startsAt start
-            |> set #endsAt end
+    let blackout start end =
+            newRecord @Blackout
+                |> set #startsAt start
+                |> set #endsAt end
 
     describe "blackoutWindowActive" do
         it "is active inside the window" do
@@ -46,6 +47,7 @@ spec = describe "Application.Pipeline.Blackouts" do
             blackoutApplies now Nothing (Just otherHostId) Nothing scoped `shouldBe` False
         it "expired window never matches" do
             let envId = (textToId @"environments" ("2b1b0e4d-3a0f-4a6e-9a3c-4c7f3b8a0001" :: Text) :: Id Environment)
-            let scoped = blackout (utcTime "2026-09-04 06:00:00") (utcTime "2026-09-04 07:00:00")
-                    |> set #environmentId (Just envId)
+            let scoped =
+                    blackout (utcTime "2026-09-04 06:00:00") (utcTime "2026-09-04 07:00:00")
+                        |> set #environmentId (Just envId)
             blackoutApplies now (Just envId) Nothing Nothing scoped `shouldBe` False

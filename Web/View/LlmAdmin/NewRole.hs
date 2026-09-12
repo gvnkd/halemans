@@ -1,11 +1,13 @@
 module Web.View.LlmAdmin.NewRole where
-import Web.View.Prelude
+
 import Web.View.LlmAdmin.RoleForm (roleFormFields)
+import Web.View.Prelude
 
 data NewRoleView = NewRoleView
 
 instance View NewRoleView where
-    html NewRoleView = [hsx|
+    html NewRoleView =
+        [hsx|
         <h1>New agent role</h1>
         <p class="text-muted">
             A role bundles a prompt template name with a tool whitelist for LLM enrichment.

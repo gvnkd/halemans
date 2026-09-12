@@ -1,23 +1,24 @@
 module Test.GroupingSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
-import Data.Aeson (object, (.=))
 import Application.Pipeline.Grouping
+import Data.Aeson (object, (.=))
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
 
 alert :: Alert
-alert = newRecord @Alert
-    |> set #fingerprint "test:fp"
-    |> set #title "t"
-    |> set #severity "critical"
-    |> set #status "firing"
-    |> set #env (Just "dev")
-    |> set #host (Just "dev-host-01")
-    |> set #service Nothing
-    |> set #checkName (Just "cpu")
-    |> set #labels (object ["team" .= ("infra" :: Text), "component" .= ("db-primary" :: Text)])
+alert =
+    newRecord @Alert
+        |> set #fingerprint "test:fp"
+        |> set #title "t"
+        |> set #severity "critical"
+        |> set #status "firing"
+        |> set #env (Just "dev")
+        |> set #host (Just "dev-host-01")
+        |> set #service Nothing
+        |> set #checkName (Just "cpu")
+        |> set #labels (object ["team" .= ("infra" :: Text), "component" .= ("db-primary" :: Text)])
 
 spec :: Spec
 spec = describe "Application.Pipeline.Grouping" do
@@ -37,10 +38,13 @@ spec = describe "Application.Pipeline.Grouping" do
 
     describe "matchExprFromJSON" do
         it "parses fields and labels, ignoring unknown keys" do
-            let expr = matchExprFromJSON (object
-                    [ "fields" .= object ["env" .= ("dev" :: Text), "bogus" .= ("x" :: Text)]
-                    , "labels" .= object ["component" .= ("db-*" :: Text)]
-                    ])
+            let expr =
+                    matchExprFromJSON
+                        ( object
+                            [ "fields" .= object ["env" .= ("dev" :: Text), "bogus" .= ("x" :: Text)]
+                            , "labels" .= object ["component" .= ("db-*" :: Text)]
+                            ]
+                        )
             expr `shouldBe` MatchExpr [(FieldEnv, "dev")] [("component", "db-*")] []
         it "parses empty object as empty match" do
             matchExprFromJSON (object []) `shouldBe` emptyMatch
@@ -56,9 +60,9 @@ spec = describe "Application.Pipeline.Grouping" do
         it "severity/status are fields too" do
             matchAlert (MatchExpr [(FieldSeverity, "critical"), (FieldStatus, "firing")] [] []) alert `shouldBe` True
         it "label globs" do
-            matchAlert (MatchExpr [] [("component", "db-*")] [] ) alert `shouldBe` True
-            matchAlert (MatchExpr [] [("component", "web-*")] [] ) alert `shouldBe` False
-            matchAlert (MatchExpr [] [("absent", "*")] [] ) alert `shouldBe` False
+            matchAlert (MatchExpr [] [("component", "db-*")] []) alert `shouldBe` True
+            matchAlert (MatchExpr [] [("component", "web-*")] []) alert `shouldBe` False
+            matchAlert (MatchExpr [] [("absent", "*")] []) alert `shouldBe` False
         it "conjunction: one failing clause fails all" do
             matchAlert (MatchExpr [(FieldEnv, "dev")] [("component", "web-*")] []) alert `shouldBe` False
 
@@ -119,15 +123,18 @@ spec = describe "Application.Pipeline.Grouping" do
             matchAlert (MatchExpr [(FieldEnv, "PROD")] [] []) faceted `shouldBe` True
             matchAlert (MatchExpr [(FieldEnv, "dev")] [] []) faceted `shouldBe` False
         it "ruleReferencesFacets detects facet globs and facet placeholders" do
-            let ruleWithGlob = newRecord @GroupingRule
-                    |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
-                    |> set #groupKeyTemplate "{env}/{host}"
-                ruleWithTemplate = newRecord @GroupingRule
-                    |> set #match (object [])
-                    |> set #groupKeyTemplate "db-{facet:DB Cluster}"
-                plain = newRecord @GroupingRule
-                    |> set #match (object ["fields" .= object ["env" .= ("dev" :: Text)]])
-                    |> set #groupKeyTemplate "{env}/{host}"
+            let ruleWithGlob =
+                    newRecord @GroupingRule
+                        |> set #match (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
+                        |> set #groupKeyTemplate "{env}/{host}"
+                ruleWithTemplate =
+                    newRecord @GroupingRule
+                        |> set #match (object [])
+                        |> set #groupKeyTemplate "db-{facet:DB Cluster}"
+                plain =
+                    newRecord @GroupingRule
+                        |> set #match (object ["fields" .= object ["env" .= ("dev" :: Text)]])
+                        |> set #groupKeyTemplate "{env}/{host}"
             ruleReferencesFacets ruleWithGlob `shouldBe` True
             ruleReferencesFacets ruleWithTemplate `shouldBe` True
             ruleReferencesFacets plain `shouldBe` False

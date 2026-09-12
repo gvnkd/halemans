@@ -1,9 +1,11 @@
 module Web.View.Sessions.New where
-import Web.View.Prelude
+
 import IHP.AuthSupport.View.Sessions.New
+import Web.View.Prelude
 
 instance View (NewView User) where
-    html NewView { .. } = [hsx|
+    html NewView{..} =
+        [hsx|
         <div class="h-100" id="sessions-new">
             <div class="d-flex align-items-center">
                 <div class="w-100">
@@ -17,7 +19,8 @@ instance View (NewView User) where
     |]
 
 renderForm :: User -> Html
-renderForm user = [hsx|
+renderForm user =
+    [hsx|
     <form method="POST" action={CreateSessionAction} data-testid="login-form">
         <div class="mb-3">
             <input name="email" value={user.email} type="email" class="form-control" placeholder="E-Mail" required="required" autofocus="autofocus" data-testid="login-email" />

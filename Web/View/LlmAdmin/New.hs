@@ -1,11 +1,13 @@
 module Web.View.LlmAdmin.New where
-import Web.View.Prelude
+
 import Application.Service.Llm.Prompt (templateSlotNames)
+import Web.View.Prelude
 
 data NewView = NewView
 
 instance View NewView where
-    html NewView = [hsx|
+    html NewView =
+        [hsx|
         <h1>New prompt template</h1>
         <p class="text-muted">
             Placeholders: {forEach templateSlotNames placeholderChip}
@@ -35,5 +37,5 @@ instance View NewView where
             <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
-        where
-            placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]
+      where
+        placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]

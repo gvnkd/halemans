@@ -1,7 +1,8 @@
 module Web.View.Teams.Edit where
-import Web.View.Prelude
-import Web.View.Teams.New (memberPicker, hostGroupPicker)
+
 import qualified Data.Aeson as Aeson
+import Web.View.Prelude
+import Web.View.Teams.New (hostGroupPicker, memberPicker)
 
 data EditView = EditView
     { team :: Team
@@ -12,7 +13,8 @@ data EditView = EditView
     }
 
 instance View EditView where
-    html EditView { .. } = [hsx|
+    html EditView{..} =
+        [hsx|
         <h1>Edit team</h1>
         <form method="POST" action={UpdateTeamAction team.id} data-testid="team-edit-form" class="maxw-600">
             <div class="mb-3">
@@ -33,8 +35,8 @@ instance View EditView where
             <button type="submit" class="btn btn-primary" data-testid="team-submit">Save</button>
         </form>
     |]
-        where
-            defaultConfig :: Text
-            defaultConfig = maybe "" (cs . Aeson.encode) team.defaultDashboardConfig
-            exampleConfig :: Text
-            exampleConfig = "[{\"env\": \"dev\"}]"
+      where
+        defaultConfig :: Text
+        defaultConfig = maybe "" (cs . Aeson.encode) team.defaultDashboardConfig
+        exampleConfig :: Text
+        exampleConfig = "[{\"env\": \"dev\"}]"

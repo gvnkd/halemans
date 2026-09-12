@@ -1,94 +1,94 @@
 module Web.Controller.Sources where
 
-import Web.Controller.Prelude
-import Web.View.Sources.Index
-import Web.View.Sources.New
-import Web.View.Sources.Edit
-import Data.Aeson (object, (.=))
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
-import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.Text as Text
-import Text.Read (readMaybe)
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Service.HostGroups (replaceHostGroupCache)
 import Application.Service.PollerControl (ensurePollerForSourceType)
-import Control.Exception (try, SomeException)
+import Control.Exception (SomeException, try)
+import Data.Aeson (object, (.=))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.Text as Text
 import System.Environment (lookupEnv)
+import Text.Read (readMaybe)
+import Web.Controller.Prelude
+import Web.View.Sources.Edit
+import Web.View.Sources.Index
+import Web.View.Sources.New
 
 instance Controller SourcesController where
     beforeAction = ensureIsUser
 
     action SourcesAction = do
-        sources <- query @Source
-            |> orderByAsc #name
-            |> fetch
+        sources <-
+            query @Source
+                |> orderByAsc #name
+                |> fetch
         canManage <- currentUserHasPrivilege "manage_sources"
-        render IndexView { .. }
-
+        render IndexView{..}
     action NewSourceAction = do
         requirePrivilege "manage_sources"
         render NewView
-
     action CreateSourceAction = do
         requirePrivilege "manage_sources"
-        _ <- newRecord @Source
-            |> set #type_ (param @Text "type")
-            |> set #name (param @Text "name")
-            |> set #baseUrl (param @Text "baseUrl")
-            |> set #env (param @Text "env")
-            |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-            |> set #enabled True
-            |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
-            |> createRecord
+        _ <-
+            newRecord @Source
+                |> set #type_ (param @Text "type")
+                |> set #name (param @Text "name")
+                |> set #baseUrl (param @Text "baseUrl")
+                |> set #env (param @Text "env")
+                |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
+                |> set #enabled True
+                |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
+                |> createRecord
         ensurePollerForSourceType (param @Text "type")
         setSuccessMessage "Source created"
         redirectTo SourcesAction
-
-    action EditSourceAction { sourceId } = do
+    action EditSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
-        render EditView
-            { source
-            , tokenEnv = tokenEnvOf source
-            , writeBack = configBool "writeBack" source
-            , jiraWritable = configBool "jiraWritable" source
-            , cmdbSpaces = configScope "cmdbSpaces" "cmdbSpace" source
-            , jiraProjects = configScope "jiraProjects" "jiraProject" source
-            , initialHistoryDays = maybe "" tshow (configInt "initialHistoryDays" source)
-            , hostGroupScope = configValue "hostGroupScope" source
-            }
-
-    action UpdateSourceAction { sourceId } = do
+        render
+            EditView
+                { source
+                , tokenEnv = tokenEnvOf source
+                , writeBack = configBool "writeBack" source
+                , jiraWritable = configBool "jiraWritable" source
+                , cmdbSpaces = configScope "cmdbSpaces" "cmdbSpace" source
+                , jiraProjects = configScope "jiraProjects" "jiraProject" source
+                , initialHistoryDays = maybe "" tshow (configInt "initialHistoryDays" source)
+                , hostGroupScope = configValue "hostGroupScope" source
+                }
+    action UpdateSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
-        _ <- source
-            |> set #type_ (param @Text "type")
-            |> set #name (param @Text "name")
-            |> set #baseUrl (param @Text "baseUrl")
-            |> set #env (param @Text "env")
-            |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-            |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
-            |> updateRecord
+        _ <-
+            source
+                |> set #type_ (param @Text "type")
+                |> set #name (param @Text "name")
+                |> set #baseUrl (param @Text "baseUrl")
+                |> set #env (param @Text "env")
+                |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
+                |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
+                |> updateRecord
         when source.enabled (ensurePollerForSourceType (param @Text "type"))
         setSuccessMessage "Source updated"
         redirectTo SourcesAction
-
-    action ToggleSourceAction { sourceId } = do
+    action ToggleSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
-        _ <- source
-            |> set #enabled (not source.enabled)
-            |> updateRecord
+        _ <-
+            source
+                |> set #enabled (not source.enabled)
+                |> updateRecord
         unless source.enabled (ensurePollerForSourceType (get #type_ source))
         setSuccessMessage (if source.enabled then "Source disabled" else "Source enabled")
         redirectTo SourcesAction
 
-    -- | Manual sync of the zabbix host group cache (zabbix_host_groups).
+    -- \| Manual sync of the zabbix host group cache (zabbix_host_groups).
     -- Host groups are near-static, so the poller never calls hostgroup.get —
     -- an admin triggers this after group changes on the zabbix side.
-    action SyncHostGroupsAction { sourceId } = do
+    action SyncHostGroupsAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
         if get #type_ source /= ("zabbix" :: Text)
@@ -114,14 +114,16 @@ sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> [Text] -> [Text] -> Maybe
 sourceConfig base tokenEnv writeBack jiraWritable cmdbSpaces jiraProjects historyDays scope =
     Aeson.Object (extra <> managed)
   where
-    managed = KeyMap.fromList $
-        [ "writeBack" .= writeBack
-        , "jiraWritable" .= jiraWritable ]
-        ++ [ "tokenEnv" .= tokenEnv | tokenEnv /= "" ]
-        ++ [ "cmdbSpaces" .= cmdbSpaces | not (null cmdbSpaces) ]
-        ++ [ "jiraProjects" .= jiraProjects | not (null jiraProjects) ]
-        ++ [ "initialHistoryDays" .= days | Just days <- [historyDays] ]
-        ++ [ "hostGroupScope" .= scope | scope == "teams" ]
+    managed =
+        KeyMap.fromList $
+            [ "writeBack" .= writeBack
+            , "jiraWritable" .= jiraWritable
+            ]
+                ++ ["tokenEnv" .= tokenEnv | tokenEnv /= ""]
+                ++ ["cmdbSpaces" .= cmdbSpaces | not (null cmdbSpaces)]
+                ++ ["jiraProjects" .= jiraProjects | not (null jiraProjects)]
+                ++ ["initialHistoryDays" .= days | Just days <- [historyDays]]
+                ++ ["hostGroupScope" .= scope | scope == "teams"]
     managedKeys = ["writeBack", "jiraWritable", "tokenEnv", "cmdbSpaces", "cmdbSpace", "jiraProjects", "jiraProject", "initialHistoryDays", "hostGroupScope"]
     extra = case base of
         Aeson.Object o -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) o

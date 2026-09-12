@@ -1,35 +1,38 @@
 module Test.FacetsSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
+import Application.Service.Facets (resolveFacets)
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson.Key as Key
-import Application.Service.Facets (resolveFacets)
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
 
 -- Facet resolution (milestone_9.md §3): precedence, fallback, verbatim
 -- whitelisted attributes, mapping-wins on collision.
 
 alert :: Alert
-alert = newRecord @Alert
-    |> set #severity "high"
-    |> set #status "firing"
-    |> set #env (Just "zabbix-prod")
-    |> set #host (Just "dev-host-01")
-    |> set #labels (object ["team" .= ("label-team" :: Text)])
+alert =
+    newRecord @Alert
+        |> set #severity "high"
+        |> set #status "firing"
+        |> set #env (Just "zabbix-prod")
+        |> set #host (Just "dev-host-01")
+        |> set #labels (object ["team" .= ("label-team" :: Text)])
 
 mapping :: Text -> Int -> Text -> Text -> FieldMapping
-mapping facet rank kind key = newRecord @FieldMapping
-    |> set #facet facet
-    |> set #rank rank
-    |> set #kind kind
-    |> set #key key
-    |> set #enabled True
+mapping facet rank kind key =
+    newRecord @FieldMapping
+        |> set #facet facet
+        |> set #rank rank
+        |> set #kind kind
+        |> set #key key
+        |> set #enabled True
 
 objectWith :: [(Text, Text)] -> AssetsObject
-objectWith attrs = newRecord @AssetsObject
-    |> set #attributes (object [Key.fromText name .= value | (name, value) <- attrs])
+objectWith attrs =
+    newRecord @AssetsObject
+        |> set #attributes (object [Key.fromText name .= value | (name, value) <- attrs])
 
 spec :: Spec
 spec = describe "Application.Service.Facets.resolveFacets" do

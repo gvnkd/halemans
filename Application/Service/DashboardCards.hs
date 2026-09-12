@@ -1,29 +1,29 @@
-module Application.Service.DashboardCards
-( CardGroup (..)
-, CardSummary (..)
-, ExpandedCard (..)
-, runCardQuery
-, runCardQueryGroups
-, runCardSummary
-, sortCardAlerts
-, expandDashboardCards
-, legacyCardDomKey
-, expandedDomId
-, pinCard
+module Application.Service.DashboardCards (
+    CardGroup (..),
+    CardSummary (..),
+    ExpandedCard (..),
+    runCardQuery,
+    runCardQueryGroups,
+    runCardSummary,
+    sortCardAlerts,
+    expandDashboardCards,
+    legacyCardDomKey,
+    expandedDomId,
+    pinCard,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.Fetch (fetch)
-import IHP.QueryBuilder
-import Generated.Types
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldSql, effectiveFieldText, severityRank)
+import Data.List (nub, sort, sortOn)
 import qualified Data.Map.Strict as Map
-import qualified Data.Text as Text
-import Data.List (sortOn, nub, sort)
 import Data.Ord (Down (..))
+import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
+import Generated.Types
+import IHP.Fetch (fetch)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 
 -- Card query engine (design_docs/milestone_9.md §5): single-table queries
 -- over alerts; facet references compile to columns or jsonb accessors on the
@@ -34,7 +34,8 @@ data CardGroup = CardGroup
     , cgTotal :: Int
     , cgWorstSeverity :: Text
     , cgAlerts :: [Alert]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | Flat card: global limit. alertSortBy orders the list (stable over the
 -- newest-first base order, so ties stay newest-first); without it the SQL
@@ -47,9 +48,10 @@ runCardQuery card
             |> limit (fromIntegral card.cardLimit)
             |> fetch
     | otherwise = do
-        alerts <- cardBaseQuery card
-            |> orderByDesc #lastSeenAt
-            |> fetch
+        alerts <-
+            cardBaseQuery card
+                |> orderByDesc #lastSeenAt
+                |> fetch
         pure (take card.cardLimit (sortCardAlerts card.cardAlertSortBy alerts))
 
 -- | alertSortBy ordering of a card's alerts: stable sort over the
@@ -85,10 +87,11 @@ instance Eq AlertSortPayload where
 
 instance Ord AlertSortPayload where
     compare (AlertSortPayload desc a) (AlertSortPayload _ b) = applyDir desc (compareAlertSortValue a b)
-        where applyDir False o = o
-              applyDir True EQ = EQ
-              applyDir True LT = GT
-              applyDir True GT = LT
+      where
+        applyDir False o = o
+        applyDir True EQ = EQ
+        applyDir True LT = GT
+        applyDir True GT = LT
 
 compareAlertSortValue :: AlertSortValue -> AlertSortValue -> Ordering
 compareAlertSortValue (APInt a) (APInt b) = compare a b
@@ -101,11 +104,14 @@ compareAlertSortValue _ _ = EQ
 -- ordered by worst severity then count desc, limit per group.
 runCardQueryGroups :: (?modelContext :: ModelContext) => DashboardCard -> FacetRef -> IO [CardGroup]
 runCardQueryGroups card groupBy = do
-    alerts <- cardBaseQuery card
-        |> orderByDesc #lastSeenAt
-        |> fetch
-    let byGroup = Map.fromListWith (\new old -> old ++ new)
-            [(fromMaybe "-" (clauseValue groupBy alert), [alert]) | alert <- alerts]
+    alerts <-
+        cardBaseQuery card
+            |> orderByDesc #lastSeenAt
+            |> fetch
+    let byGroup =
+            Map.fromListWith
+                (\new old -> old ++ new)
+                [(fromMaybe "-" (clauseValue groupBy alert), [alert]) | alert <- alerts]
         groups =
             [ CardGroup
                 { cgValue = value
@@ -131,7 +137,8 @@ data CardSummary = CardSummary
     , csSuppressed :: Int
     , csWorstSeverity :: Maybe Text
     , csHourly :: [(UTCTime, Int)]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 runCardSummary :: (?modelContext :: ModelContext) => DashboardCard -> IO CardSummary
 runCardSummary card = do
@@ -140,18 +147,24 @@ runCardSummary card = do
     let countFor status = length (filter (\alert -> alert.status == status) alerts)
         cutoff = addUTCTime (-24 * 3600) now
         hourOf alert = posixSecondsToUTCTime (fromIntegral (seconds - seconds `mod` 3600))
-            where seconds = floor (utcTimeToPOSIXSeconds alert.createdAt) :: Int
-        hourly = Map.toAscList (Map.fromListWith (+)
-            [(hourOf alert, 1) | alert <- alerts, alert.createdAt > cutoff])
-    pure CardSummary
-        { csFiring = countFor "firing"
-        , csAcked = countFor "ack"
-        , csResolved = countFor "resolved"
-        , csStalled = countFor "stalled"
-        , csSuppressed = length (filter (.suppressed) alerts)
-        , csWorstSeverity = if null alerts then Nothing else Just (groupWorst alerts)
-        , csHourly = hourly
-        }
+          where
+            seconds = floor (utcTimeToPOSIXSeconds alert.createdAt) :: Int
+        hourly =
+            Map.toAscList
+                ( Map.fromListWith
+                    (+)
+                    [(hourOf alert, 1) | alert <- alerts, alert.createdAt > cutoff]
+                )
+    pure
+        CardSummary
+            { csFiring = countFor "firing"
+            , csAcked = countFor "ack"
+            , csResolved = countFor "resolved"
+            , csStalled = countFor "stalled"
+            , csSuppressed = length (filter (.suppressed) alerts)
+            , csWorstSeverity = if null alerts then Nothing else Just (groupWorst alerts)
+            , csHourly = hourly
+            }
 
 -- | A template card expanded to a concrete renderable card: forEach pins the
 -- facet value into the match, the title gets {value} substituted, domId is
@@ -163,7 +176,8 @@ data ExpandedCard = ExpandedCard
     , ecHidden :: Bool
     , ecIndex :: Int
     , ecValue :: Maybe Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 -- | DOM key convention: legacy cards keep the M3 dashboard-card-<env> id;
 -- v2 cards key by config index, forEach expansions append the facet value.
@@ -176,36 +190,39 @@ legacyCardDomKey card
 -- value among the template's matching non-closed alerts, sorted) and
 -- evaluate hideWhen counts. Cards without forEach pass through unchanged.
 expandDashboardCards :: (?modelContext :: ModelContext) => [DashboardCard] -> IO [ExpandedCard]
-expandDashboardCards cards = concat <$> forM (zip [0 ..] cards) \(index, card) -> do
-    pinned <- case card.cardForEach of
-        Nothing -> pure [(card, Nothing)]
-        Just facetRef -> do
-            alerts <- cardBaseQuery card |> fetch
-            let values = sort (nub (mapMaybe (clauseValue facetRef) alerts))
-            sortPinned card [(pinCard card facetRef value, Just value) | value <- values]
-    forM pinned \(expandedCard, pinnedValue) -> do
-        hidden <- evaluateHideWhen expandedCard
-        pure ExpandedCard
-            { ecDomId = expandedDomId index card pinnedValue
-            , ecCard = expandedCard
-            , ecHidden = hidden
-            , ecIndex = index
-            , ecValue = pinnedValue
-            }
+expandDashboardCards cards =
+    concat <$> forM (zip [0 ..] cards) \(index, card) -> do
+        pinned <- case card.cardForEach of
+            Nothing -> pure [(card, Nothing)]
+            Just facetRef -> do
+                alerts <- cardBaseQuery card |> fetch
+                let values = sort (nub (mapMaybe (clauseValue facetRef) alerts))
+                sortPinned card [(pinCard card facetRef value, Just value) | value <- values]
+        forM pinned \(expandedCard, pinnedValue) -> do
+            hidden <- evaluateHideWhen expandedCard
+            pure
+                ExpandedCard
+                    { ecDomId = expandedDomId index card pinnedValue
+                    , ecCard = expandedCard
+                    , ecHidden = hidden
+                    , ecIndex = index
+                    , ecValue = pinnedValue
+                    }
 
 -- | Stable section dom id for a (possibly hypothetical) expanded card: config
 -- index (or legacy env key) plus the pinned forEach value when present.
 expandedDomId :: Int -> DashboardCard -> Maybe Text -> Text
 expandedDomId index card pinnedValue =
     "dashboard-card-" <> fromMaybe (tshow index) (legacyCardDomKey card) <> valueSuffix
-    where
-        valueSuffix = maybe "" ("-" <>) (Text.replace " " "_" <$> pinnedValue)
+  where
+    valueSuffix = maybe "" ("-" <>) (Text.replace " " "_" <$> pinnedValue)
 
 pinCard :: DashboardCard -> FacetRef -> Text -> DashboardCard
-pinCard card facetRef value = card
-    { cardMatch = card.cardMatch ++ [MatchClause facetRef OpEq value []]
-    , cardTitle = Just (Text.replace "{value}" value (fromMaybe value card.cardTitle))
-    }
+pinCard card facetRef value =
+    card
+        { cardMatch = card.cardMatch ++ [MatchClause facetRef OpEq value []]
+        , cardTitle = Just (Text.replace "{value}" value (fromMaybe value card.cardTitle))
+        }
 
 -- | sortBy ordering of one template's expanded cards: stable, per template,
 -- so config order between templates is preserved. Metrics (worst severity,
@@ -228,26 +245,27 @@ sortPinned card pinned
 cardSortMetrics :: (?modelContext :: ModelContext) => DashboardCard -> IO SortMetrics
 cardSortMetrics card = do
     alerts <- cardBaseQuery card |> fetch
-    pure SortMetrics
-        { smWorst = if null alerts then Nothing else Just (groupWorst alerts)
-        , smCount = length alerts
-        , smTitle = fromMaybe "" card.cardTitle
-        }
+    pure
+        SortMetrics
+            { smWorst = if null alerts then Nothing else Just (groupWorst alerts)
+            , smCount = length alerts
+            , smTitle = fromMaybe "" card.cardTitle
+            }
 
 -- | Mapped into a sortable key: each SortKey contributes its comparison
 -- payload in order; severityRank higher = more severe, so worst-first is
 -- Just-rank descending with alert-less cards last.
 sortEntryKey :: [SortKey] -> (SortMetrics, DashboardCard, Maybe Text) -> [SortKeyPayload]
 sortEntryKey keys (metrics, card, value) = map payload keys
-    where
-        payload key = SortKeyPayload (key.skDesc) $ case key.skTarget of
-            SortBuiltin "severity" -> PInt (Down (maybe (-1) severityRank metrics.smWorst))
-            SortBuiltin "count" -> PInt (Down metrics.smCount)
-            SortBuiltin "title" -> PText metrics.smTitle
-            SortBuiltin _ -> PText ""
-            SortFacet ref -> case (card.cardForEach, value) of
-                (Just forEachRef, Just pinned) | ref == forEachRef -> PMaybeText (Just pinned)
-                _ -> PMaybeText Nothing
+  where
+    payload key = SortKeyPayload (key.skDesc) $ case key.skTarget of
+        SortBuiltin "severity" -> PInt (Down (maybe (-1) severityRank metrics.smWorst))
+        SortBuiltin "count" -> PInt (Down metrics.smCount)
+        SortBuiltin "title" -> PText metrics.smTitle
+        SortBuiltin _ -> PText ""
+        SortFacet ref -> case (card.cardForEach, value) of
+            (Just forEachRef, Just pinned) | ref == forEachRef -> PMaybeText (Just pinned)
+            _ -> PMaybeText Nothing
 
 data SortKeyPayload = SortKeyPayload Bool Payload
 data Payload = PInt (Down Int) | PText Text | PMaybeText (Maybe Text)
@@ -257,10 +275,11 @@ instance Eq SortKeyPayload where
 
 instance Ord SortKeyPayload where
     compare (SortKeyPayload desc a) (SortKeyPayload _ b) = applyDir desc (comparePayload a b)
-        where applyDir False o = o
-              applyDir True EQ = EQ
-              applyDir True LT = GT
-              applyDir True GT = LT
+      where
+        applyDir False o = o
+        applyDir True EQ = EQ
+        applyDir True LT = GT
+        applyDir True GT = LT
 
 comparePayload :: Payload -> Payload -> Ordering
 comparePayload (PInt a) (PInt b) = compare a b
@@ -272,14 +291,14 @@ evaluateHideWhen :: (?modelContext :: ModelContext) => DashboardCard -> IO Bool
 evaluateHideWhen card = case card.cardHideWhen of
     Nothing -> pure False
     Just hw -> do
-        let scoped = card { cardMatch = card.cardMatch ++ hw.hwMatch }
+        let scoped = card{cardMatch = card.cardMatch ++ hw.hwMatch}
         matches <- cardBaseQuery scoped |> fetch
         pure (length matches <= hw.hwMaxCount)
 
 cardBaseQuery :: DashboardCard -> QueryBuilder "alerts"
 cardBaseQuery card = foldl' apply (query @Alert |> filterWhereNot (#status, "closed" :: Text)) card.cardMatch
-    where
-        apply builder clause = applyClause clause builder
+  where
+    apply builder clause = applyClause clause builder
 
 applyClause :: MatchClause -> QueryBuilder "alerts" -> QueryBuilder "alerts"
 applyClause clause builder = case clause.mcFacet of
@@ -296,22 +315,25 @@ applyClause clause builder = case clause.mcFacet of
             FieldStatus -> builder |> filterWhereSql (#status, fragment "" "alerts.status")
             _ -> builder
     FacetLabel name -> builder |> filterWhereSql (#labels, fragment accessor ("alerts.labels " <> accessor))
-        where accessor = "->> " <> quoteSqlText name
+      where
+        accessor = "->> " <> quoteSqlText name
     FacetAttr name -> builder |> filterWhereSql (#facets, fragment accessor ("alerts.facets " <> accessor))
-        where accessor = "->> " <> quoteSqlText name
-    where
-        -- A NULL effective value (facet and raw column both absent) never
-        -- matches, mirroring matchClauseAlert on Nothing.
-        effectiveCondition expr = "IS NOT NULL AND " <> case clause.mcOp of
+      where
+        accessor = "->> " <> quoteSqlText name
+  where
+    -- A NULL effective value (facet and raw column both absent) never
+    -- matches, mirroring matchClauseAlert on Nothing.
+    effectiveCondition expr =
+        "IS NOT NULL AND " <> case clause.mcOp of
             OpEq -> expr <> " = " <> quoteSqlText clause.mcValue
             OpNe -> expr <> " IS NOT NULL AND " <> expr <> " <> " <> quoteSqlText clause.mcValue
             OpGlob -> expr <> " LIKE " <> quoteSqlText (globToLike clause.mcValue)
             OpIn -> expr <> " IN (" <> Text.intercalate ", " (map quoteSqlText clause.mcValues) <> ")"
-        -- filterWhereSql appends the fragment after the qualified proxy
-        -- column; `accessor` extends the column to the value expression and
-        -- `valueExpr` repeats it in full for the != null guard.
-        fragment accessor valueExpr = case clause.mcOp of
-            OpEq -> accessor <> " = " <> quoteSqlText clause.mcValue
-            OpNe -> accessor <> " IS NOT NULL AND " <> valueExpr <> " <> " <> quoteSqlText clause.mcValue
-            OpGlob -> accessor <> " LIKE " <> quoteSqlText (globToLike clause.mcValue)
-            OpIn -> accessor <> " IN (" <> Text.intercalate ", " (map quoteSqlText clause.mcValues) <> ")"
+    -- filterWhereSql appends the fragment after the qualified proxy
+    -- column; `accessor` extends the column to the value expression and
+    -- `valueExpr` repeats it in full for the != null guard.
+    fragment accessor valueExpr = case clause.mcOp of
+        OpEq -> accessor <> " = " <> quoteSqlText clause.mcValue
+        OpNe -> accessor <> " IS NOT NULL AND " <> valueExpr <> " <> " <> quoteSqlText clause.mcValue
+        OpGlob -> accessor <> " LIKE " <> quoteSqlText (globToLike clause.mcValue)
+        OpIn -> accessor <> " IN (" <> Text.intercalate ", " (map quoteSqlText clause.mcValues) <> ")"

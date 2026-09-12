@@ -1,16 +1,17 @@
 module Main where
+
 import IHP.Prelude
 
 import Config
-import qualified IHP.Server
-import IHP.RouterSupport
 import IHP.FrameworkConfig
+import IHP.RouterSupport
+import qualified IHP.Server
 import Web.FrontController
 import Web.Types
 
 instance FrontController RootApplication where
-    controllers = [
-            mountFrontController WebApplication
+    controllers =
+        [ mountFrontController WebApplication
         ]
 
 main :: IO ()

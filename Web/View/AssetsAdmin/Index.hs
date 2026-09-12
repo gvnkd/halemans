@@ -1,6 +1,7 @@
 module Web.View.AssetsAdmin.Index where
+
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, stateBadgeHtml)
 import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, inlinePostFormHtml, stateBadgeHtml)
 
 data IndexView = IndexView
     { configs :: [AssetsConfig]
@@ -8,7 +9,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Assets info sources" newButton}
         <table class="table" data-testid="assets-configs">
             <thead>
@@ -19,11 +21,12 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = [hsx|<a href={NewAssetsConfigAction} class="btn btn-sm btn-primary" data-testid="new-assets-config">New info source</a>|]
+      where
+        newButton = [hsx|<a href={NewAssetsConfigAction} class="btn btn-sm btn-primary" data-testid="new-assets-config">New info source</a>|]
 
 configRowHtml :: (Id AssetsConfig -> (Int64, Maybe UTCTime)) -> AssetsConfig -> Html
-configRowHtml statsFor config = [hsx|
+configRowHtml statsFor config =
+    [hsx|
     <tr data-testid="assets-config">
         <td>{config.name}</td>
         <td data-testid="assets-config-base-url-cell">{config.baseUrl}</td>
@@ -40,12 +43,12 @@ configRowHtml statsFor config = [hsx|
         </td>
     </tr>
 |]
-    where
-        configId = get #id config
-        (cachedCount, maybeNewest) = statsFor configId
-        newestFetch = case maybeNewest of
-            Just newest -> [hsx|{utcTimeHtml newest}|]
-            Nothing -> [hsx|-|]
-        toggleForm = inlinePostFormHtml (pathTo (ToggleAssetsConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "assets-config-toggle") False
-        toggleLabel :: Text
-        toggleLabel = if config.enabled then "Disable" else "Enable"
+  where
+    configId = get #id config
+    (cachedCount, maybeNewest) = statsFor configId
+    newestFetch = case maybeNewest of
+        Just newest -> [hsx|{utcTimeHtml newest}|]
+        Nothing -> [hsx|-|]
+    toggleForm = inlinePostFormHtml (pathTo (ToggleAssetsConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "assets-config-toggle") False
+    toggleLabel :: Text
+    toggleLabel = if config.enabled then "Disable" else "Enable"

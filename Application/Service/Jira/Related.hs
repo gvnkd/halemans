@@ -1,38 +1,38 @@
-module Application.Service.Jira.Related
-( relatedTasksForAlert
-, relevancePrompt
-, relevanceContract
-, relatedRoleName
-, relatedTemplateName
-, parseRelevantKeys
-, maxCandidates
+module Application.Service.Jira.Related (
+    relatedTasksForAlert,
+    relevancePrompt,
+    relevanceContract,
+    relatedRoleName,
+    relatedTemplateName,
+    parseRelevantKeys,
+    maxCandidates,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport (ModelContext, newRecord, createRecord, updateRecord, deleteRecord)
-import IHP.HaskellSupport (set, get)
-import IHP.QueryBuilder (query, filterWhere)
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types
-import qualified Application.Service.Jira as Jira
-import Application.Service.Jira (JiraIssue (..))
-import qualified Application.Service.Jira.DbConfig as JiraDb
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Application.Service.Assets as Assets
 import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Types (Ticket (..))
-import Application.Service.Llm (Prompt (..), userMessage, Completion (..), LlmProviderConfig (..))
-import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Jira (JiraIssue (..))
+import qualified Application.Service.Jira as Jira
+import qualified Application.Service.Jira.DbConfig as JiraDb
+import Application.Service.Llm (Completion (..), LlmProviderConfig (..), Prompt (..), userMessage)
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
-import Application.Service.Llm.Output (parseCompletionOutput, ParsedOutput (..))
-import Application.Service.Llm.Prompt (PromptInputs (..), emptyInputs, bindingsFor, renderTemplate)
+import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
+import Application.Service.Llm.Prompt (PromptInputs (..), bindingsFor, emptyInputs, renderTemplate)
 import Application.Service.Llm.Roles (resolveAgentRoleByName, toolsForRole)
 import Application.Service.Llm.Tools (runWithToolLoop)
-import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Data.Aeson ((.:))
-import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
-import qualified Data.Text as Text
+import Data.Aeson.Types (parseMaybe)
 import Data.Functor ((<&>))
+import qualified Data.Text as Text
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.HaskellSupport (get, set)
+import IHP.ModelSupport (ModelContext, createRecord, deleteRecord, newRecord, updateRecord)
+import IHP.Prelude
+import IHP.QueryBuilder (filterWhere, query)
 
 -- Related Jira tasks (milestone 10): candidates are gathered from Jira issue
 -- search across ALL configured projects AND from Jira Assets "linked tasks"
@@ -88,9 +88,10 @@ runRelated maybeSource alert = do
     let jiraCandidates = concat [issues | Right issues <- jiraResults]
     assetsCandidates <- assetsTicketCandidates configs alert
     let candidates = dedupeOn candidateKey (jiraCandidates ++ assetsCandidates)
-    existing <- query @JiraLink
-        |> filterWhere (#alertId, get #id alert)
-        |> fetch
+    existing <-
+        query @JiraLink
+            |> filterWhere (#alertId, get #id alert)
+            |> fetch
     let linkedKeys = [link.ticketKey | link <- existing, link.origin /= "related"]
         fresh = filter (\candidate -> candidate.candidateKey `notElem` linkedKeys) (take maxCandidates candidates)
     enriched <- enrichCandidates configs fresh
@@ -100,27 +101,35 @@ runRelated maybeSource alert = do
             Nothing -> enriched -- no LLM configured or call failed: keep candidates unfiltered
     now <- getCurrentTime
     forM_ kept \candidate -> do
-        existingLink <- query @JiraLink
-            |> filterWhere (#alertId, get #id alert)
-            |> filterWhere (#ticketKey, candidate.candidateKey)
-            |> fetchOneOrNothing
-        let applyFields record = record
-                |> set #summary candidate.candidateSummary
-                |> set #status candidate.candidateStatus
-                |> set #url candidate.candidateUrl
-                |> set #syncedAt now
+        existingLink <-
+            query @JiraLink
+                |> filterWhere (#alertId, get #id alert)
+                |> filterWhere (#ticketKey, candidate.candidateKey)
+                |> fetchOneOrNothing
+        let applyFields record =
+                record
+                    |> set #summary candidate.candidateSummary
+                    |> set #status candidate.candidateStatus
+                    |> set #url candidate.candidateUrl
+                    |> set #syncedAt now
         -- Skip the write when nothing changed — re-upserting identical rows
         -- every cycle is pure churn (syncedAt only moves on real changes).
         _ <- case existingLink of
             Just link
                 | link.summary == candidate.candidateSummary
                 , link.status == candidate.candidateStatus
-                , link.url == candidate.candidateUrl -> pure link
+                , link.url == candidate.candidateUrl ->
+                    pure link
                 | otherwise -> updateRecord (applyFields link)
-            Nothing -> createRecord (applyFields (newRecord @JiraLink
-                |> set #alertId (get #id alert)
-                |> set #ticketKey candidate.candidateKey
-                |> set #origin "related"))
+            Nothing ->
+                createRecord
+                    ( applyFields
+                        ( newRecord @JiraLink
+                            |> set #alertId (get #id alert)
+                            |> set #ticketKey candidate.candidateKey
+                            |> set #origin "related"
+                        )
+                    )
         pure ()
     let keepKeys = map (.candidateKey) kept
         stale = [link | link <- existing, link.origin == "related", link.ticketKey `notElem` keepKeys]
@@ -133,12 +142,13 @@ runRelated maybeSource alert = do
         _ -> Right ()
 
 fromIssue :: Jira.JiraConfig -> JiraIssue -> RelatedCandidate
-fromIssue config issue = RelatedCandidate
-    { candidateKey = issue.issueKey
-    , candidateSummary = issue.issueSummary
-    , candidateStatus = issue.issueStatus
-    , candidateUrl = Jira.issueUrl config issue.issueKey
-    }
+fromIssue config issue =
+    RelatedCandidate
+        { candidateKey = issue.issueKey
+        , candidateSummary = issue.issueSummary
+        , candidateStatus = issue.issueStatus
+        , candidateUrl = Jira.issueUrl config issue.issueKey
+        }
 
 -- Assets "linked tasks" (milestone 10): tickets connected to each linked
 -- assets object. The browse URL is derived from the first Jira config when
@@ -159,12 +169,15 @@ assetsTicketCandidates jiraConfigs alert = do
                         pure case result of
                             Left _ -> []
                             Right tickets -> map (fromTicket (browseBase jiraConfigs assetsConfig)) tickets
-    where
-        browseBase jiraConfigs assetsConfig = case jiraConfigs of
-            (config:_) -> Text.dropWhileEnd (== '/') (Jira.baseUrl config)
-            [] -> Text.dropWhileEnd (== '/')
+  where
+    browseBase jiraConfigs assetsConfig = case jiraConfigs of
+        (config : _) -> Text.dropWhileEnd (== '/') (Jira.baseUrl config)
+        [] ->
+            Text.dropWhileEnd
+                (== '/')
                 (fromMaybe assetsConfig.baseUrl (Text.stripSuffix "/rest/assets/latest" assetsConfig.baseUrl))
-        fromTicket base ticket = RelatedCandidate
+    fromTicket base ticket =
+        RelatedCandidate
             { candidateKey = ticket.ticketKey
             , candidateSummary = ticket.ticketSummary
             , candidateStatus = ticket.ticketStatus
@@ -176,29 +189,31 @@ assetsTicketCandidates jiraConfigs alert = do
 -- the card always have a title to work with.
 enrichCandidates :: [Jira.JiraConfig] -> [RelatedCandidate] -> IO [RelatedCandidate]
 enrichCandidates configs = mapM enrich
-    where
-        enrich candidate
-            | not (Text.null candidate.candidateSummary) = pure candidate
-            | otherwise = go configs
-            where
-                go [] = pure candidate
-                go (config:rest) = do
-                    result <- Jira.getIssue config candidate.candidateKey
-                    case result of
-                        Left _ -> go rest
-                        Right issue -> pure candidate
+  where
+    enrich candidate
+        | not (Text.null candidate.candidateSummary) = pure candidate
+        | otherwise = go configs
+      where
+        go [] = pure candidate
+        go (config : rest) = do
+            result <- Jira.getIssue config candidate.candidateKey
+            case result of
+                Left _ -> go rest
+                Right issue ->
+                    pure
+                        candidate
                             { candidateSummary = issue.issueSummary
                             , candidateStatus = if Text.null candidate.candidateStatus then issue.issueStatus else candidate.candidateStatus
                             , candidateUrl = Jira.issueUrl config issue.issueKey
                             }
 
-dedupeOn :: Eq b => (a -> b) -> [a] -> [a]
+dedupeOn :: (Eq b) => (a -> b) -> [a] -> [a]
 dedupeOn key = go []
-    where
-        go _ [] = []
-        go seen (x:xs)
-            | key x `elem` seen = go seen xs
-            | otherwise = x : go (key x : seen) xs
+  where
+    go _ [] = []
+    go seen (x : xs)
+        | key x `elem` seen = go seen xs
+        | otherwise = x : go (key x : seen) xs
 
 -- LLM relevance filter: returns Just keys-to-keep when the configured LLM
 -- answered with a parseable verdict (an empty list is a valid "none
@@ -225,26 +240,28 @@ filterWithLlm alert maybeSource candidates = do
 renderFilterPrompt :: (?modelContext :: ModelContext) => Alert -> [RelatedCandidate] -> Maybe LlmAgentRole -> IO Text
 renderFilterPrompt alert candidates role = do
     let templateName = maybe relatedTemplateName (.promptTemplateName) role
-    template <- query @LlmPromptTemplate
-        |> filterWhere (#name, templateName)
-        |> filterWhere (#active, True)
-        |> fetchOneOrNothing
+    template <-
+        query @LlmPromptTemplate
+            |> filterWhere (#name, templateName)
+            |> filterWhere (#active, True)
+            |> fetchOneOrNothing
     pure case template of
         Just row -> renderTemplate row.body (filterBindings alert candidates) <> relevanceContract
         Nothing -> relevancePrompt alert candidates
 
 filterBindings :: Alert -> [RelatedCandidate] -> [(Text, Text)]
 filterBindings alert candidates =
-    bindingsFor emptyInputs
-        { piTitle = alert.title
-        , piSeverity = alert.severity
-        , piEnv = fromMaybe "unknown" (effectiveFieldText FieldEnv alert)
-        , piHost = fromMaybe "unknown" (effectiveFieldText FieldHost alert)
-        , piService = fromMaybe "unknown" (effectiveFieldText FieldService alert)
-        , piCheckName = fromMaybe "unknown" alert.checkName
-        , piDescription = Text.take 500 alert.description
-        }
-    ++ [("candidates", Text.intercalate "\n" (map candidateLine candidates))]
+    bindingsFor
+        emptyInputs
+            { piTitle = alert.title
+            , piSeverity = alert.severity
+            , piEnv = fromMaybe "unknown" (effectiveFieldText FieldEnv alert)
+            , piHost = fromMaybe "unknown" (effectiveFieldText FieldHost alert)
+            , piService = fromMaybe "unknown" (effectiveFieldText FieldService alert)
+            , piCheckName = fromMaybe "unknown" alert.checkName
+            , piDescription = Text.take 500 alert.description
+            }
+        ++ [("candidates", Text.intercalate "\n" (map candidateLine candidates))]
 
 candidateLine :: RelatedCandidate -> Text
 candidateLine candidate = "- " <> candidate.candidateKey <> ": " <> candidate.candidateSummary <> " [" <> candidate.candidateStatus <> "]"
@@ -253,27 +270,31 @@ candidateLine candidate = "- " <> candidate.candidateKey <> ": " <> candidate.ca
 -- alert enrichment): the verdict format is a code-level contract, not
 -- template content.
 relevanceContract :: Text
-relevanceContract = Text.intercalate "\n"
-    [ ""
-    , "Keep only tasks plausibly related to this alert (same host, service or failure mode)."
-    , "Respond with exactly one ```json fenced block of the shape {\"relevant\": [\"KEY-1\", ...]}."
-    , "Use only keys from the candidate list; an empty list means none are relevant."
-    ]
+relevanceContract =
+    Text.intercalate
+        "\n"
+        [ ""
+        , "Keep only tasks plausibly related to this alert (same host, service or failure mode)."
+        , "Respond with exactly one ```json fenced block of the shape {\"relevant\": [\"KEY-1\", ...]}."
+        , "Use only keys from the candidate list; an empty list means none are relevant."
+        ]
 
 relevancePrompt :: Alert -> [RelatedCandidate] -> Text
-relevancePrompt alert candidates = Text.intercalate "\n"
-    [ "You are triaging Jira tasks related to a monitoring alert."
-    , ""
-    , "Alert: " <> alert.title
-    , "Host: " <> fromMaybe "-" alert.host <> "; Service: " <> fromMaybe "-" alert.service <> "; Check: " <> fromMaybe "-" alert.checkName
-    , "Severity: " <> alert.severity
-    , "Description: " <> Text.take 500 alert.description
-    , ""
-    , "## Candidate Jira tasks"
-    , Text.intercalate "\n" (map candidateLine candidates)
-    , "You may call jira_issue_details with a task key to inspect its description and comments before deciding."
-    , relevanceContract
-    ]
+relevancePrompt alert candidates =
+    Text.intercalate
+        "\n"
+        [ "You are triaging Jira tasks related to a monitoring alert."
+        , ""
+        , "Alert: " <> alert.title
+        , "Host: " <> fromMaybe "-" alert.host <> "; Service: " <> fromMaybe "-" alert.service <> "; Check: " <> fromMaybe "-" alert.checkName
+        , "Severity: " <> alert.severity
+        , "Description: " <> Text.take 500 alert.description
+        , ""
+        , "## Candidate Jira tasks"
+        , Text.intercalate "\n" (map candidateLine candidates)
+        , "You may call jira_issue_details with a task key to inspect its description and comments before deciding."
+        , relevanceContract
+        ]
 
 -- Extracts the {"relevant": [...]} verdict from the fenced json block,
 -- intersected with the actual candidate keys so hallucinated keys drop out.

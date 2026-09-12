@@ -1,13 +1,15 @@
 module Web.View.Blackouts.Form (blackoutFormFields) where
+
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Web.View.Prelude
-import Data.Time.Format (formatTime, defaultTimeLocale)
 
 -- Shared new/edit fields for blackouts (milestone 12 §3). The scope-type /
 -- scope-id filtering script lives in static/app.js keyed on the
 -- blackout-scope-type / blackout-scope-id testids (auto-selects the first
 -- visible option when the type changes).
 blackoutFormFields :: Maybe Blackout -> [Environment] -> [Host] -> [Service] -> Html
-blackoutFormFields blackout environments hosts services = [hsx|
+blackoutFormFields blackout environments hosts services =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Scope type</label>
         <select name="scopeType" class="form-select" data-testid="blackout-scope-type">
@@ -37,26 +39,29 @@ blackoutFormFields blackout environments hosts services = [hsx|
         <input name="reason" type="text" class="form-control" value={reasonValue} data-testid="blackout-reason"/>
     </div>
 |]
-    where
-        scopeIs :: (Blackout -> Maybe (Id' table)) -> Bool
-        scopeIs getter = maybe False (isJust . getter) blackout
-        selectedId :: (Blackout -> Maybe (Id' table)) -> Maybe (Id' table)
-        selectedId getter = maybe Nothing getter blackout
-        startsAtValue = maybe "" (isoUtc . (.startsAt)) blackout
-        endsAtValue = maybe "" (isoUtc . (.endsAt)) blackout
-        reasonValue = maybe "" (.reason) blackout
-        environmentOption environment = [hsx|
+  where
+    scopeIs :: (Blackout -> Maybe (Id' table)) -> Bool
+    scopeIs getter = maybe False (isJust . getter) blackout
+    selectedId :: (Blackout -> Maybe (Id' table)) -> Maybe (Id' table)
+    selectedId getter = maybe Nothing getter blackout
+    startsAtValue = maybe "" (isoUtc . (.startsAt)) blackout
+    endsAtValue = maybe "" (isoUtc . (.endsAt)) blackout
+    reasonValue = maybe "" (.reason) blackout
+    environmentOption environment =
+        [hsx|
             <option value={scopeValue "environment" environment.id} selected={selectedId (.environmentId) == Just environment.id}>{environment.name}</option>
         |]
-        hostOption host = [hsx|
+    hostOption host =
+        [hsx|
             <option value={scopeValue "host" host.id} selected={selectedId (.hostId) == Just host.id}>{host.fqdn}</option>
         |]
-        serviceOption service = [hsx|
+    serviceOption service =
+        [hsx|
             <option value={scopeValue "service" service.id} selected={selectedId (.serviceId) == Just service.id}>{service.name}</option>
         |]
 
 -- The option value carries the scope type prefix; the controller strips it.
-scopeValue :: Show (PrimaryKey table) => Text -> Id' table -> Text
+scopeValue :: (Show (PrimaryKey table)) => Text -> Id' table -> Text
 scopeValue prefix id = prefix <> ":" <> tshow id
 
 -- Matches the format param @UTCTime parses.

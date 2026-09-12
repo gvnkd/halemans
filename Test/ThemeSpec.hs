@@ -1,9 +1,9 @@
 module Test.ThemeSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import Data.Aeson (object, (.=))
 import Application.Helper.Theme
+import Data.Aeson (object, (.=))
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Helper.Theme" do

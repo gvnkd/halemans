@@ -1,29 +1,29 @@
-module Application.Service.AlertList
-( AlertListFilters (..)
-, defaultAlertListFilters
-, validSortColumns
-, listAlerts
-, countBySeverity
-, effectiveEnvNames
-, matchesFilters
-, parseAlertFilters
-, alertFiltersToValue
-, alertFiltersFromValue
+module Application.Service.AlertList (
+    AlertListFilters (..),
+    defaultAlertListFilters,
+    validSortColumns,
+    listAlerts,
+    countBySeverity,
+    effectiveEnvNames,
+    matchesFilters,
+    parseAlertFilters,
+    alertFiltersToValue,
+    alertFiltersFromValue,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.ModelSupport (Id' (..))
-import IHP.Fetch (fetch)
-import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Generated.Types
 import Application.Helper.DashboardConfig (validAlertSortColumns)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
-import qualified Data.Aeson as Aeson
 import Data.Aeson ((.!=), (.=))
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
-import Data.UUID (UUID)
 import qualified Data.Text as Text
+import Data.UUID (UUID)
+import Generated.Types
+import IHP.Fetch (fetch)
+import IHP.ModelSupport
+import IHP.ModelSupport (Id' (..))
+import IHP.Prelude
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 
 -- Filter/sort state shared by the /alerts HTTP action and the websocket
 -- broadcaster (which needs the same predicate to keep live updates
@@ -38,20 +38,22 @@ data AlertListFilters = AlertListFilters
     , alfGroup :: Maybe Text
     , alfSort :: Text
     , alfDir :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 defaultAlertListFilters :: AlertListFilters
-defaultAlertListFilters = AlertListFilters
-    { alfSeverities = []
-    , alfStatuses = []
-    , alfEnvs = []
-    , alfHost = Nothing
-    , alfService = Nothing
-    , alfTitle = Nothing
-    , alfGroup = Nothing
-    , alfSort = "last_seen_at"
-    , alfDir = "desc"
-    }
+defaultAlertListFilters =
+    AlertListFilters
+        { alfSeverities = []
+        , alfStatuses = []
+        , alfEnvs = []
+        , alfHost = Nothing
+        , alfService = Nothing
+        , alfTitle = Nothing
+        , alfGroup = Nothing
+        , alfSort = "last_seen_at"
+        , alfDir = "desc"
+        }
 
 validSortColumns :: [Text]
 validSortColumns = validAlertSortColumns
@@ -74,7 +76,9 @@ listAlerts filters lim = do
         sort = filters.alfSort
         dir = filters.alfDir
         lim64 = fromIntegral lim :: Int64
-    rows :: [Id Alert] <- sqlQueryTyped [typedSql|
+    rows :: [Id Alert] <-
+        sqlQueryTyped
+            [typedSql|
         SELECT sorted.id
         FROM (
             SELECT a.id,
@@ -118,7 +122,9 @@ countBySeverity filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT a.severity, COUNT(*) AS n
         FROM alerts a
         LEFT JOIN alert_groups g ON g.id = a.group_id
@@ -138,7 +144,9 @@ countBySeverity filters = do
 -- table). The controller merges these with the inventory names.
 effectiveEnvNames :: (?modelContext :: ModelContext) => IO [Text]
 effectiveEnvNames = do
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT DISTINCT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS name
         FROM alerts a
         WHERE a.status <> 'closed'
@@ -159,19 +167,21 @@ matchesFilters filters alert = do
             Just groupId -> do
                 group <- fetch groupId
                 pure (Text.isInfixOf (Text.toLower pattern) (Text.toLower group.groupKey))
-    pure (and
-        [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
-        , statusOk
-        , null filters.alfEnvs || maybe False (`elem` filters.alfEnvs) (effectiveFieldText FieldEnv alert)
-        , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
-        , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
-        , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
-        , groupOk
-        ])
-    where
-        statusOk = case filters.alfStatuses of
-            [] -> alert.status /= "closed"
-            selected -> alert.status `elem` selected
+    pure
+        ( and
+            [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
+            , statusOk
+            , null filters.alfEnvs || maybe False (`elem` filters.alfEnvs) (effectiveFieldText FieldEnv alert)
+            , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
+            , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
+            , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
+            , groupOk
+            ]
+        )
+  where
+    statusOk = case filters.alfStatuses of
+        [] -> alert.status /= "closed"
+        selected -> alert.status `elem` selected
 
 -- Subscribe-frame payload for the alerts scope: the client forwards the
 -- current query string so live updates respect the rendered view.
@@ -184,50 +194,53 @@ parseAlertFilters = Aeson.withObject "filters" \o -> do
     service <- nonEmptyField o "service"
     title <- nonEmptyField o "q"
     group <- nonEmptyField o "group"
-    pure defaultAlertListFilters
-        { alfSeverities = severities
-        , alfStatuses = statuses
-        , alfEnvs = envs
-        , alfHost = host
-        , alfService = service
-        , alfTitle = title
-        , alfGroup = group
-        }
-    where
-        nonEmptyField o key = do
-            raw <- o Aeson..:? key .!= ""
-            pure (if raw == "" then Nothing else Just raw)
+    pure
+        defaultAlertListFilters
+            { alfSeverities = severities
+            , alfStatuses = statuses
+            , alfEnvs = envs
+            , alfHost = host
+            , alfService = service
+            , alfTitle = title
+            , alfGroup = group
+            }
+  where
+    nonEmptyField o key = do
+        raw <- o Aeson..:? key .!= ""
+        pure (if raw == "" then Nothing else Just raw)
 
 -- Persisted shape for users.settings.filters.alerts: same keys as the query
 -- string plus sort/dir, so a bare /alerts visit can be redirected to the
 -- stored URL verbatim.
 alertFiltersToValue :: AlertListFilters -> Aeson.Value
-alertFiltersToValue filters = Aeson.object
-    [ "severity" .= filters.alfSeverities
-    , "status" .= filters.alfStatuses
-    , "env" .= filters.alfEnvs
-    , "host" .= filters.alfHost
-    , "service" .= filters.alfService
-    , "q" .= filters.alfTitle
-    , "group" .= filters.alfGroup
-    , "sort" .= filters.alfSort
-    , "dir" .= filters.alfDir
-    ]
+alertFiltersToValue filters =
+    Aeson.object
+        [ "severity" .= filters.alfSeverities
+        , "status" .= filters.alfStatuses
+        , "env" .= filters.alfEnvs
+        , "host" .= filters.alfHost
+        , "service" .= filters.alfService
+        , "q" .= filters.alfTitle
+        , "group" .= filters.alfGroup
+        , "sort" .= filters.alfSort
+        , "dir" .= filters.alfDir
+        ]
 
 alertFiltersFromValue :: Aeson.Value -> Maybe AlertListFilters
 alertFiltersFromValue = parseMaybe parser
-    where
-        parser = Aeson.withObject "alertFilters" \o -> do
-            severities <- o Aeson..:? "severity" .!= []
-            statuses <- o Aeson..:? "status" .!= []
-            envs <- o Aeson..:? "env" .!= []
-            host <- nonEmptyField o "host"
-            service <- nonEmptyField o "service"
-            title <- nonEmptyField o "q"
-            group <- nonEmptyField o "group"
-            sort :: Text <- o Aeson..:? "sort" .!= "last_seen_at"
-            dir :: Text <- o Aeson..:? "dir" .!= "desc"
-            pure defaultAlertListFilters
+  where
+    parser = Aeson.withObject "alertFilters" \o -> do
+        severities <- o Aeson..:? "severity" .!= []
+        statuses <- o Aeson..:? "status" .!= []
+        envs <- o Aeson..:? "env" .!= []
+        host <- nonEmptyField o "host"
+        service <- nonEmptyField o "service"
+        title <- nonEmptyField o "q"
+        group <- nonEmptyField o "group"
+        sort :: Text <- o Aeson..:? "sort" .!= "last_seen_at"
+        dir :: Text <- o Aeson..:? "dir" .!= "desc"
+        pure
+            defaultAlertListFilters
                 { alfSeverities = severities
                 , alfStatuses = statuses
                 , alfEnvs = envs
@@ -238,6 +251,6 @@ alertFiltersFromValue = parseMaybe parser
                 , alfSort = if sort `elem` validSortColumns then sort else "last_seen_at"
                 , alfDir = if dir == "asc" then "asc" else "desc"
                 }
-        nonEmptyField o key = do
-            raw <- o Aeson..:? key .!= ""
-            pure (if raw == "" then Nothing else Just raw)
+    nonEmptyField o key = do
+        raw <- o Aeson..:? key .!= ""
+        pure (if raw == "" then Nothing else Just raw)

@@ -1,4 +1,5 @@
 module Web.View.NotificationRules.New where
+
 import Web.View.Prelude
 
 data NewView = NewView
@@ -8,7 +9,8 @@ data NewView = NewView
     }
 
 instance View NewView where
-    html NewView { .. } = [hsx|
+    html NewView{..} =
+        [hsx|
         <h1>New notification rule</h1>
         <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form" class="maxw-600">
             {notificationRuleFormFields teams users policies "" 0 True "" "" "high" "" 300 Nothing}
@@ -18,7 +20,8 @@ instance View NewView where
 
 -- Shared with Edit. `target` is "team:<uuid>" | "user:<uuid>" | "".
 notificationRuleFormFields :: [Team] -> [User] -> [EscalationPolicy] -> Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Int -> Maybe (Id EscalationPolicy) -> Html
-notificationRuleFormFields teams users policies name position enabled matchFields matchLabels severityThreshold target throttleSeconds policyRef = [hsx|
+notificationRuleFormFields teams users policies name position enabled matchFields matchLabels severityThreshold target throttleSeconds policyRef =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Name</label>
         <input name="name" type="text" class="form-control" value={name} data-testid="rule-name" required="required"/>
@@ -65,14 +68,17 @@ notificationRuleFormFields teams users policies name position enabled matchField
         </select>
     </div>
 |]
-    where
-        severityOption value = [hsx|<option value={value} selected={severityThreshold == value}>{value}</option>|]
-        teamOption team = [hsx|
+  where
+    severityOption value = [hsx|<option value={value} selected={severityThreshold == value}>{value}</option>|]
+    teamOption team =
+        [hsx|
             <option value={"team:" <> tshow (get #id team)} selected={target == "team:" <> tshow (get #id team)}>team: {team.name}</option>
         |]
-        userOption user = [hsx|
+    userOption user =
+        [hsx|
             <option value={"user:" <> tshow (get #id user)} selected={target == "user:" <> tshow (get #id user)}>user: {user.email}</option>
         |]
-        policyOption policy = [hsx|
+    policyOption policy =
+        [hsx|
             <option value={tshow (get #id policy)} selected={policyRef == Just (get #id policy)}>{policy.name}</option>
         |]

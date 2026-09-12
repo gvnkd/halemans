@@ -1,9 +1,10 @@
 module Web.View.LlmAdmin.Index where
-import Web.View.Prelude
-import Web.View.Fragments (sectionHeaderHtml, inlinePostFormHtml, stateBadgeHtml)
-import Application.Service.Llm.AutoAnalyze (AutoAnalyzeRules (..), allStatuses, allSeverities)
+
+import Application.Service.Llm.AutoAnalyze (AutoAnalyzeRules (..), allSeverities, allStatuses)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
+import Web.View.Fragments (inlinePostFormHtml, sectionHeaderHtml, stateBadgeHtml)
+import Web.View.Prelude
 
 data TemplateRow = TemplateRow
     { templateId :: Id LlmPromptTemplate
@@ -39,7 +40,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>LLM</h1>
 
         <h2>Effective configuration</h2>
@@ -132,12 +134,13 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newProviderButton = [hsx|<a href={NewLlmProviderAction} class="btn btn-sm btn-primary" data-testid="new-llm-provider">New provider</a>|]
-            ttlValue :: Text
-            ttlValue = maybe "300" tshow toolCacheTtl
-            newRoleButton = [hsx|<a href={NewLlmRoleAction} class="btn btn-sm btn-primary" data-testid="new-llm-role">New role</a>|]
-            templateActions = [hsx|
+      where
+        newProviderButton = [hsx|<a href={NewLlmProviderAction} class="btn btn-sm btn-primary" data-testid="new-llm-provider">New provider</a>|]
+        ttlValue :: Text
+        ttlValue = maybe "300" tshow toolCacheTtl
+        newRoleButton = [hsx|<a href={NewLlmRoleAction} class="btn btn-sm btn-primary" data-testid="new-llm-role">New role</a>|]
+        templateActions =
+            [hsx|
                 <div>
                     <a href={LlmQueueAction} class="btn btn-sm btn-outline-secondary" data-testid="llm-queue-link">Queue</a>
                     <a href={NewLlmTemplateAction} class="btn btn-sm btn-primary" data-testid="new-llm-template">New template</a>
@@ -145,7 +148,8 @@ instance View IndexView where
             |]
 
 providerRowHtml :: LlmConfig -> Html
-providerRowHtml provider = [hsx|
+providerRowHtml provider =
+    [hsx|
     <tr data-testid="llm-provider">
         <td>{provider.providerName}</td>
         <td>{provider.endpoint}</td>
@@ -160,18 +164,21 @@ providerRowHtml provider = [hsx|
         </td>
     </tr>
 |]
-    where
-        providerId = get #id provider
-        enabledBadge = if provider.enabled
+  where
+    providerId = get #id provider
+    enabledBadge =
+        if provider.enabled
             then [hsx|<span class="badge status-resolved" data-testid="llm-provider-enabled">enabled</span>|]
             else mempty
-        toggleForm = if provider.enabled
+    toggleForm =
+        if provider.enabled
             then inlinePostFormHtml (pathTo (DisableLlmProviderAction providerId)) "Disable" "btn btn-sm btn-outline-warning" (Just "llm-provider-disable") False
             else inlinePostFormHtml (pathTo (EnableLlmProviderAction providerId)) "Enable" "btn btn-sm btn-outline-primary" (Just "llm-provider-enable") False
-        deleteForm = inlinePostFormHtml (pathTo (DeleteLlmProviderAction providerId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-provider-delete") False
+    deleteForm = inlinePostFormHtml (pathTo (DeleteLlmProviderAction providerId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-provider-delete") False
 
 roleRowHtml :: LlmAgentRole -> Html
-roleRowHtml role = [hsx|
+roleRowHtml role =
+    [hsx|
     <tr data-testid="llm-role">
         <td>{role.name}</td>
         <td>{role.promptTemplateName}</td>
@@ -186,23 +193,26 @@ roleRowHtml role = [hsx|
         </td>
     </tr>
 |]
-    where
-        roleId = get #id role
-        toolsText :: Text
-        toolsText = case decodeTools role.tools of
-            [] -> "(none)"
-            names -> Text.intercalate ", " names
-        enabledBadge = stateBadgeHtml role.enabled "llm-role"
-        defaultBadge = if role.isDefault
+  where
+    roleId = get #id role
+    toolsText :: Text
+    toolsText = case decodeTools role.tools of
+        [] -> "(none)"
+        names -> Text.intercalate ", " names
+    enabledBadge = stateBadgeHtml role.enabled "llm-role"
+    defaultBadge =
+        if role.isDefault
             then [hsx|<span class="badge status-ack" data-testid="llm-role-default">default</span>|]
             else mempty
-        toggleForm = inlinePostFormHtml (pathTo (ToggleLlmRoleAction roleId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "llm-role-toggle") False
-        toggleLabel :: Text
-        toggleLabel = if role.enabled then "Disable" else "Enable"
-        defaultForm = if role.isDefault || not role.enabled
+    toggleForm = inlinePostFormHtml (pathTo (ToggleLlmRoleAction roleId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "llm-role-toggle") False
+    toggleLabel :: Text
+    toggleLabel = if role.enabled then "Disable" else "Enable"
+    defaultForm =
+        if role.isDefault || not role.enabled
             then mempty
             else inlinePostFormHtml (pathTo (SetDefaultLlmRoleAction roleId)) "Set default" "btn btn-sm btn-outline-primary" (Just "llm-role-set-default") False
-        deleteForm = if role.isDefault
+    deleteForm =
+        if role.isDefault
             then mempty
             else inlinePostFormHtml (pathTo (DeleteLlmRoleAction roleId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-role-delete") True
 
@@ -210,7 +220,8 @@ decodeTools :: Aeson.Value -> [Text]
 decodeTools value = fromMaybe [] (Aeson.decode (Aeson.encode value))
 
 templateRowHtml :: TemplateRow -> Html
-templateRowHtml row = [hsx|
+templateRowHtml row =
+    [hsx|
     <tr data-testid="llm-template">
         <td>{row.name}</td>
         <td data-testid="llm-template-version">v{row.version}</td>
@@ -224,18 +235,22 @@ templateRowHtml row = [hsx|
         </td>
     </tr>
 |]
-    where
-        activeBadge = if row.active
+  where
+    activeBadge =
+        if row.active
             then [hsx|<span class="badge status-resolved" data-testid="llm-template-active">active</span>|]
             else mempty
-        activateForm = if row.active
+    activateForm =
+        if row.active
             then mempty
             else inlinePostFormHtml (pathTo (ActivateLlmTemplateAction row.templateId)) "Activate" "btn btn-sm btn-outline-primary" (Just "llm-template-activate") False
-        deleteForm = if row.active
+    deleteForm =
+        if row.active
             then mempty
             else inlinePostFormHtml (pathTo (DeleteLlmTemplateAction row.templateId)) "Delete" "btn btn-sm btn-outline-danger" (Just "llm-template-delete") False
 counterRowHtml :: CounterRow -> Html
-counterRowHtml row = [hsx|
+counterRowHtml row =
+    [hsx|
     <tr data-testid="llm-counter">
         <td>{row.provider}</td>
         <td>{show row.day}</td>
@@ -247,7 +262,8 @@ counterRowHtml row = [hsx|
 
 -- One labelled checkbox per status/severity flag in the auto-analysis form.
 flagCheckbox :: Text -> [Text] -> Text -> Text -> Html
-flagCheckbox fieldName selected testIdBase value = [hsx|
+flagCheckbox fieldName selected testIdBase value =
+    [hsx|
     <div class="form-check">
         <input name={fieldName} value={value} type="checkbox" class="form-check-input" checked={value `elem` selected} data-testid={testIdBase <> "-" <> value}/>
         <label class="form-check-label">{value}</label>

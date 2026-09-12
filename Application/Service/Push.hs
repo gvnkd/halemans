@@ -1,46 +1,46 @@
-module Application.Service.Push
-( VapidKeys (..)
-, loadVapidKeys
-, vapidPublicKey
-, sendPush
-, PushResult (..)
-, signVapidJwt
-, encryptPayload
-, b64urlEncode
-, b64urlDecode
-, pointFromBytes
-, pointToBytes
-, os2ip
-, i2osp
+module Application.Service.Push (
+    VapidKeys (..),
+    loadVapidKeys,
+    vapidPublicKey,
+    sendPush,
+    PushResult (..),
+    signVapidJwt,
+    encryptPayload,
+    b64urlEncode,
+    b64urlDecode,
+    pointFromBytes,
+    pointToBytes,
+    os2ip,
+    i2osp,
 ) where
 
-import IHP.Prelude hiding (first)
-import Generated.Types (PushSubscription, endpoint, p256dh, auth)
 import Data.Aeson (object, (.=))
-import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
-import qualified Data.ByteString as BS
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Base64.URL as B64URL
-import Data.Bits (shiftR, shiftL, (.&.))
+import Data.Aeson.Types (parseMaybe)
+import Data.Bits (shiftL, shiftR, (.&.))
 import Data.ByteArray (convert)
-import "cryptonite" Crypto.PubKey.ECC.Types (CurveName (SEC_p256r1), getCurveByName, Point (..))
-import "cryptonite" Crypto.PubKey.ECC.DH (generatePrivate, calculatePublic, getShared)
-import "cryptonite" Crypto.PubKey.ECC.ECDSA (PrivateKey (..), Signature (..), sign)
-import "cryptonite" Crypto.Hash (SHA256 (..))
-import qualified "cryptonite" Crypto.KDF.HKDF as HKDF
-import "cryptonite" Crypto.Cipher.AES (AES128)
-import "cryptonite" Crypto.Cipher.Types (cipherInit, aeadInit, AEADMode (AEAD_GCM), aeadSimpleEncrypt, AuthTag (..))
-import "cryptonite" Crypto.Error (CryptoFailable (..))
-import "cryptonite" Crypto.Random (getRandomBytes)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base64.URL as B64URL
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import Generated.Types (PushSubscription, auth, endpoint, p256dh)
+import IHP.Prelude hiding (first)
 import qualified Network.HTTP.Client as HTTP
 import qualified Network.HTTP.Client.TLS as TLS
 import Network.HTTP.Types (status201, status202, status404, status410)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
+import "cryptonite" Crypto.Cipher.AES (AES128)
+import "cryptonite" Crypto.Cipher.Types (AEADMode (AEAD_GCM), AuthTag (..), aeadInit, aeadSimpleEncrypt, cipherInit)
+import "cryptonite" Crypto.Error (CryptoFailable (..))
+import "cryptonite" Crypto.Hash (SHA256 (..))
+import qualified "cryptonite" Crypto.KDF.HKDF as HKDF
+import "cryptonite" Crypto.PubKey.ECC.DH (calculatePublic, generatePrivate, getShared)
+import "cryptonite" Crypto.PubKey.ECC.ECDSA (PrivateKey (..), Signature (..), sign)
+import "cryptonite" Crypto.PubKey.ECC.Types (CurveName (SEC_p256r1), Point (..), getCurveByName)
+import "cryptonite" Crypto.Random (getRandomBytes)
 
 -- Hand-rolled VAPID (RFC 8292) + Web Push payload encryption (RFC 8291,
 -- aes128gcm content coding). The Hackage `web-push` library (0.3, 2020)
@@ -74,11 +74,14 @@ loadVapidKeys = do
                             priv <- o Aeson..: "privateKey"
                             pure (pub, priv)
                     case parsed of
-                        Just (pub, priv) -> Just <$> pure VapidKeys
-                            { vapidPublicKeyB64Url = pub
-                            , vapidPrivateScalar = os2ip (b64urlDecode priv)
-                            , vapidSubject = subject
-                            }
+                        Just (pub, priv) ->
+                            Just
+                                <$> pure
+                                    VapidKeys
+                                        { vapidPublicKeyB64Url = pub
+                                        , vapidPrivateScalar = os2ip (b64urlDecode priv)
+                                        , vapidSubject = subject
+                                        }
                         Nothing -> pure Nothing
 
 vapidPublicKey :: IO (Maybe Text)
@@ -97,47 +100,56 @@ sendPush keys subscription payload = do
         Right body -> do
             jwt <- signVapidJwt keys endpoint
             request <- HTTP.parseRequest (cs endpoint)
-            let request' = request
-                    { HTTP.method = "POST"
-                    , HTTP.requestBody = HTTP.RequestBodyLBS (BL.fromStrict body)
-                    , HTTP.requestHeaders =
-                        [ ("Authorization", cs jwt)
-                        , ("TTL", "86400")
-                        , ("Content-Encoding", "aes128gcm")
-                        , ("Content-Type", "application/octet-stream")
-                        ]
-                    }
+            let request' =
+                    request
+                        { HTTP.method = "POST"
+                        , HTTP.requestBody = HTTP.RequestBodyLBS (BL.fromStrict body)
+                        , HTTP.requestHeaders =
+                            [ ("Authorization", cs jwt)
+                            , ("TTL", "86400")
+                            , ("Content-Encoding", "aes128gcm")
+                            , ("Content-Type", "application/octet-stream")
+                            ]
+                        }
             response <- HTTP.httpLbs request' manager
             let status = HTTP.responseStatus response
-            pure $ if
-                | status == status201 || status == status202 -> PushDelivered
-                | status == status404 || status == status410 -> PushSubscriptionGone
-                | otherwise -> PushFailed (tshow status)
+            pure $
+                if
+                    | status == status201 || status == status202 -> PushDelivered
+                    | status == status404 || status == status410 -> PushSubscriptionGone
+                    | otherwise -> PushFailed (tshow status)
 
 -- RFC 8292: ES256-signed JWT with aud = push service origin.
 signVapidJwt :: VapidKeys -> Text -> IO Text
 signVapidJwt keys endpoint = do
     now <- getCurrentTime
     let header = b64urlEncode (BL.toStrict (Aeson.encode (object ["typ" .= ("JWT" :: Text), "alg" .= ("ES256" :: Text)])))
-        claims = b64urlEncode (BL.toStrict (Aeson.encode (object
-            [ "aud" .= originOf endpoint
-            , "exp" .= (floor (utcTimeToPOSIXSeconds (addUTCTime 43200 now)) :: Integer)
-            , "sub" .= keys.vapidSubject
-            ])))
+        claims =
+            b64urlEncode
+                ( BL.toStrict
+                    ( Aeson.encode
+                        ( object
+                            [ "aud" .= originOf endpoint
+                            , "exp" .= (floor (utcTimeToPOSIXSeconds (addUTCTime 43200 now)) :: Integer)
+                            , "sub" .= keys.vapidSubject
+                            ]
+                        )
+                    )
+                )
         signingInput = header <> "." <> claims
     signature <- sign privateKey SHA256 (cs signingInput :: ByteString)
     let signatureBytes = i2osp 32 signature.sign_r <> i2osp 32 signature.sign_s
     pure (signingInput <> "." <> b64urlEncode signatureBytes)
-    where
-        privateKey = PrivateKey { private_curve = curve, private_d = keys.vapidPrivateScalar }
-        curve = getCurveByName SEC_p256r1
+  where
+    privateKey = PrivateKey{private_curve = curve, private_d = keys.vapidPrivateScalar}
+    curve = getCurveByName SEC_p256r1
 
 originOf :: Text -> Text
 originOf endpoint =
     let afterScheme = fromMaybe endpoint (Text.stripPrefix "https://" endpoint <|> Text.stripPrefix "http://" endpoint)
         hostPort = Text.takeWhile (/= '/') afterScheme
         scheme = if "https://" `Text.isPrefixOf` endpoint then "https://" else "http://"
-    in scheme <> hostPort
+     in scheme <> hostPort
 
 -- RFC 8291 payload encryption, single record, aes128gcm (RFC 8188) body.
 encryptPayload :: PushSubscription -> BL.ByteString -> IO (Either Text ByteString)
@@ -167,19 +179,21 @@ encryptPayload subscription payload = do
                         CryptoPassed aead -> do
                             let plaintext = BL.toStrict payload <> BS.singleton 0x02
                                 (tag, ciphertext) = aeadSimpleEncrypt aead ("" :: ByteString) plaintext 16
-                                body = salt
-                                    <> BS.pack [0, 0, 16, 0] -- rs = 4096
-                                    <> BS.singleton 65
-                                    <> pointToBytes serverPublic
-                                    <> ciphertext
-                                    <> convert tag
+                                body =
+                                    salt
+                                        <> BS.pack [0, 0, 16, 0] -- rs = 4096
+                                        <> BS.singleton 65
+                                        <> pointToBytes serverPublic
+                                        <> ciphertext
+                                        <> convert tag
                             pure (Right body)
 
 pointFromBytes :: ByteString -> Maybe Point
 pointFromBytes bytes = case BS.uncons bytes of
-    Just (0x04, rest) | BS.length rest == 64 ->
-        let (x, y) = BS.splitAt 32 rest
-        in Just (Point (os2ip x) (os2ip y))
+    Just (0x04, rest)
+        | BS.length rest == 64 ->
+            let (x, y) = BS.splitAt 32 rest
+             in Just (Point (os2ip x) (os2ip y))
     _ -> Nothing
 
 pointToBytes :: Point -> ByteString
@@ -194,9 +208,9 @@ b64urlEncode = cs . B64URL.encodeUnpadded
 
 b64urlDecode :: Text -> ByteString
 b64urlDecode input = B64URL.decodeLenient (cs padded)
-    where
-        padded = input <> cs (replicate padding '=')
-        padding = (4 - Text.length input `mod` 4) `mod` 4
+  where
+    padded = input <> cs (replicate padding '=')
+    padding = (4 - Text.length input `mod` 4) `mod` 4
 
 os2ip :: ByteString -> Integer
 os2ip = BS.foldl' (\acc byte -> acc `shiftL` 8 + fromIntegral byte) 0

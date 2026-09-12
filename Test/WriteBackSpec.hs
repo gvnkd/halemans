@@ -1,15 +1,15 @@
 module Test.WriteBackSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
+import Application.Service.WriteBack
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
-import qualified Data.Vector as Vector
 import qualified Data.Text as Text
-import Application.Service.WriteBack
+import qualified Data.Vector as Vector
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
 import Test.Helpers (atTime)
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.WriteBack" do
@@ -25,8 +25,9 @@ spec = describe "Application.Service.WriteBack" do
 
     describe "silenceMatchersFor" do
         it "builds one equality matcher per label" do
-            let alert = newRecord @Alert
-                    |> set #labels (object ["alertname" .= ("cpu" :: Text), "host" .= ("dev-host-01" :: Text)])
+            let alert =
+                    newRecord @Alert
+                        |> set #labels (object ["alertname" .= ("cpu" :: Text), "host" .= ("dev-host-01" :: Text)])
             case silenceMatchersFor alert of
                 Aeson.Array matchers -> do
                     length matchers `shouldBe` 2

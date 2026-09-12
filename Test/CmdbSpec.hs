@@ -1,10 +1,10 @@
 module Test.CmdbSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import qualified Data.Text as Text
 import Application.Service.Cmdb
+import qualified Data.Text as Text
+import IHP.Prelude
 import Test.Helpers (atTime)
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Cmdb" do

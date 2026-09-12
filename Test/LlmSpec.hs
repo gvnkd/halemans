@@ -1,19 +1,19 @@
 module Test.LlmSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import qualified Data.Text as Text
-import qualified Data.Aeson as Aeson
-import Data.Aeson ((.:))
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson.Key as Key
 import Application.Service.Llm
+import Application.Service.Llm.AutoAnalyze
+import Application.Service.Llm.Budget
 import Application.Service.Llm.Output
 import Application.Service.Llm.Prompt
-import Application.Service.Llm.Budget
-import Application.Service.Llm.AutoAnalyze
-import Application.Service.Llm.ToolCache (isFailureText, freshEnough)
+import Application.Service.Llm.ToolCache (freshEnough, isFailureText)
+import Data.Aeson ((.:))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.Text as Text
+import IHP.Prelude
 import Test.Helpers (atTime)
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Milestone 4 LLM services" do
@@ -27,22 +27,30 @@ spec = describe "Milestone 4 LLM services" do
 
     describe "Llm.chatCompletionPayload" do
         it "omits null optional request fields" do
-            let encoded = cs (Aeson.encode (chatCompletionPayload
-                    (LlmProviderConfig "default" "http://llm.example" "m" Nothing False)
-                    (Prompt [userMessage "hi"] []))) :: Text
+            let encoded =
+                    cs
+                        ( Aeson.encode
+                            ( chatCompletionPayload
+                                (LlmProviderConfig "default" "http://llm.example" "m" Nothing False)
+                                (Prompt [userMessage "hi"] [])
+                            )
+                        ) ::
+                        Text
             "messages" `Text.isInfixOf` encoded `shouldBe` True
             "tool_call_id" `Text.isInfixOf` encoded `shouldBe` False
             "tool_calls" `Text.isInfixOf` encoded `shouldBe` False
             "\"tools\"" `Text.isInfixOf` encoded `shouldBe` False
 
     describe "Output.parseCompletionOutput" do
-        let fenced = Text.intercalate "\n"
-                [ "The disk is nearly full."
-                , ""
-                , "```json"
-                , "{\"probable_cause\": \"disk full\", \"confidence\": 0.9, \"suggested_actions\": [\"free space\"], \"references\": [\"runbook-1\"]}"
-                , "```"
-                ]
+        let fenced =
+                Text.intercalate
+                    "\n"
+                    [ "The disk is nearly full."
+                    , ""
+                    , "```json"
+                    , "{\"probable_cause\": \"disk full\", \"confidence\": 0.9, \"suggested_actions\": [\"free space\"], \"references\": [\"runbook-1\"]}"
+                    , "```"
+                    ]
         it "splits markdown from a well-formed fenced json block" do
             let parsed = parseCompletionOutput fenced
             parsed.markdown `shouldBe` "The disk is nearly full."
@@ -65,7 +73,8 @@ spec = describe "Milestone 4 LLM services" do
 
     describe "Prompt.renderTemplate" do
         it "replaces named placeholders" do
-            renderTemplate "Alert: {{alert.title}} on {{alert.host}}"
+            renderTemplate
+                "Alert: {{alert.title}} on {{alert.host}}"
                 [("alert.title", "CPU hot"), ("alert.host", "web-1")]
                 `shouldBe` "Alert: CPU hot on web-1"
         it "leaves unknown placeholders untouched" do
@@ -76,42 +85,48 @@ spec = describe "Milestone 4 LLM services" do
                 `shouldBe` "e|e"
 
     describe "Prompt.fitPrompt" do
-        let template = Text.intercalate "\n"
-                [ "Title: {{alert.title}}"
-                , "Desc: {{alert.description}}"
-                , "Events: {{events}}"
-                , "Similar: {{similar_alerts}}"
-                , "CMDB: {{cmdb_excerpt}}"
-                , "Jira: {{jira_links}}"
-                ]
-            inputs = emptyInputs
-                { piTitle = "t"
-                , piDescription = Text.replicate 400 "d"
-                , piEvents = Text.replicate 400 "e"
-                , piSimilarAlerts = Text.replicate 400 "s"
-                , piCmdbExcerpt = Text.replicate 400 "c"
-                , piJiraLinks = Text.replicate 400 "j"
-                }
+        let template =
+                Text.intercalate
+                    "\n"
+                    [ "Title: {{alert.title}}"
+                    , "Desc: {{alert.description}}"
+                    , "Events: {{events}}"
+                    , "Similar: {{similar_alerts}}"
+                    , "CMDB: {{cmdb_excerpt}}"
+                    , "Jira: {{jira_links}}"
+                    ]
+            inputs =
+                emptyInputs
+                    { piTitle = "t"
+                    , piDescription = Text.replicate 400 "d"
+                    , piEvents = Text.replicate 400 "e"
+                    , piSimilarAlerts = Text.replicate 400 "s"
+                    , piCmdbExcerpt = Text.replicate 400 "c"
+                    , piJiraLinks = Text.replicate 400 "j"
+                    }
         it "leaves prompts within budget untouched" do
-            let small = emptyInputs { piTitle = "t", piDescription = "short" }
+            let small = emptyInputs{piTitle = "t", piDescription = "short"}
             fitPrompt 100 template small `shouldBe` renderTemplate template (bindingsFor small)
         it "truncates in the documented order (similar_alerts first)" do
             let rendered = fitPrompt 120 template inputs
             Text.length rendered `shouldSatisfy` (<= charBudgetForTokens 120)
             "Title: t" `Text.isInfixOf` rendered `shouldBe` True
         it "never exceeds the hard cap even when everything must go" do
-            let huge = inputs { piTitle = Text.replicate 5000 "t" }
+            let huge = inputs{piTitle = Text.replicate 5000 "t"}
             Text.length (fitPrompt 10 template huge) `shouldSatisfy` (<= charBudgetForTokens 10)
         it "marks truncation points and keeps the title" do
             let rendered = fitPrompt 120 template inputs
             truncationMarker `Text.isInfixOf` rendered `shouldBe` True
             "Title: t" `Text.isInfixOf` rendered `shouldBe` True
         it "truncates similar_alerts before events" do
-            let narrow = inputs
-                    { piDescription = "short", piCmdbExcerpt = "short", piJiraLinks = "short"
-                    , piSimilarAlerts = Text.replicate 200 "s"
-                    , piEvents = Text.replicate 200 "e"
-                    }
+            let narrow =
+                    inputs
+                        { piDescription = "short"
+                        , piCmdbExcerpt = "short"
+                        , piJiraLinks = "short"
+                        , piSimilarAlerts = Text.replicate 200 "s"
+                        , piEvents = Text.replicate 200 "e"
+                        }
                 rendered = fitPrompt 60 template narrow
             -- the budget forces similar_alerts out entirely while events survive
             "ss" `Text.isInfixOf` rendered `shouldBe` False
@@ -158,7 +173,7 @@ spec = describe "Milestone 4 LLM services" do
             allowedByRules defaultRules "resolved" "critical" (Just "dev") `shouldBe` False
             allowedByRules defaultRules "closed" "critical" (Just "dev") `shouldBe` False
         it "a disabled gate allows nothing" do
-            allowedByRules defaultRules { aaEnabled = False } "firing" "critical" (Just "dev") `shouldBe` False
+            allowedByRules defaultRules{aaEnabled = False} "firing" "critical" (Just "dev") `shouldBe` False
         it "custom severity/status lists are honoured" do
             let rules = AutoAnalyzeRules True ["firing", "resolved"] ["critical", "high"] []
             allowedByRules rules "resolved" "high" (Just "dev") `shouldBe` True
@@ -168,7 +183,7 @@ spec = describe "Milestone 4 LLM services" do
             allowedByRules defaultRules "firing" "info" (Just "prod") `shouldBe` True
             allowedByRules defaultRules "firing" "info" Nothing `shouldBe` True
         it "a non-empty env scope matches only listed envs" do
-            let rules = defaultRules { aaEnvironments = ["dev", "staging"] }
+            let rules = defaultRules{aaEnvironments = ["dev", "staging"]}
             allowedByRules rules "firing" "critical" (Just "dev") `shouldBe` True
             allowedByRules rules "firing" "critical" (Just "prod") `shouldBe` False
             allowedByRules rules "firing" "critical" Nothing `shouldBe` False

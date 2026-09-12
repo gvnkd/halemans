@@ -1,21 +1,21 @@
-module Application.Service.Llm.AutoAnalyze
-( AutoAnalyzeRules (..)
-, defaultRules
-, rulesFromRow
-, currentRules
-, autoAnalyzeAllowed
-, allowedByRules
-, allStatuses
-, allSeverities
+module Application.Service.Llm.AutoAnalyze (
+    AutoAnalyzeRules (..),
+    defaultRules,
+    rulesFromRow,
+    currentRules,
+    autoAnalyzeAllowed,
+    allowedByRules,
+    allStatuses,
+    allSeverities,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport (ModelContext)
-import IHP.QueryBuilder (query)
-import IHP.Fetch (fetch)
-import Generated.Types (Alert, Alert' (..), LlmAutoAnalyzeConfig, LlmAutoAnalyzeConfig' (..))
-import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Helper.Json (stringList)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import Generated.Types (Alert, Alert' (..), LlmAutoAnalyzeConfig, LlmAutoAnalyzeConfig' (..))
+import IHP.Fetch (fetch)
+import IHP.ModelSupport (ModelContext)
+import IHP.Prelude
+import IHP.QueryBuilder (query)
 
 -- Auto-analysis gate (milestone 10 §5): which alert statuses/severities/envs
 -- get an LLM analysis enqueued automatically (ingest of new alerts + the
@@ -29,15 +29,17 @@ data AutoAnalyzeRules = AutoAnalyzeRules
     , aaStatuses :: [Text]
     , aaSeverities :: [Text]
     , aaEnvironments :: [Text]
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 defaultRules :: AutoAnalyzeRules
-defaultRules = AutoAnalyzeRules
-    { aaEnabled = True
-    , aaStatuses = ["firing", "ack"]
-    , aaSeverities = allSeverities
-    , aaEnvironments = []
-    }
+defaultRules =
+    AutoAnalyzeRules
+        { aaEnabled = True
+        , aaStatuses = ["firing", "ack"]
+        , aaSeverities = allSeverities
+        , aaEnvironments = []
+        }
 
 allStatuses :: [Text]
 allStatuses = ["firing", "ack", "stalled", "resolved"]
@@ -46,12 +48,13 @@ allSeverities :: [Text]
 allSeverities = ["critical", "high", "warning", "info"]
 
 rulesFromRow :: LlmAutoAnalyzeConfig -> AutoAnalyzeRules
-rulesFromRow row = AutoAnalyzeRules
-    { aaEnabled = row.enabled
-    , aaStatuses = stringList row.statuses
-    , aaSeverities = stringList row.severities
-    , aaEnvironments = stringList row.environments
-    }
+rulesFromRow row =
+    AutoAnalyzeRules
+        { aaEnabled = row.enabled
+        , aaStatuses = stringList row.statuses
+        , aaSeverities = stringList row.severities
+        , aaEnvironments = stringList row.environments
+        }
 
 currentRules :: (?modelContext :: ModelContext) => IO AutoAnalyzeRules
 currentRules = do
@@ -69,5 +72,5 @@ allowedByRules rules status severity env =
         && status `elem` rules.aaStatuses
         && severity `elem` rules.aaSeverities
         && envAllowed
-    where
-        envAllowed = null rules.aaEnvironments || maybe False (`elem` rules.aaEnvironments) env
+  where
+    envAllowed = null rules.aaEnvironments || maybe False (`elem` rules.aaEnvironments) env

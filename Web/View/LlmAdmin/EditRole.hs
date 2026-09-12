@@ -1,6 +1,7 @@
 module Web.View.LlmAdmin.EditRole where
-import Web.View.Prelude
+
 import Web.View.LlmAdmin.RoleForm (roleFormFields)
+import Web.View.Prelude
 
 data EditRoleView = EditRoleView
     { role :: LlmAgentRole
@@ -8,7 +9,8 @@ data EditRoleView = EditRoleView
     }
 
 instance View EditRoleView where
-    html EditRoleView { .. } = [hsx|
+    html EditRoleView{..} =
+        [hsx|
         <h1>Edit agent role</h1>
         <p class="text-muted">{role.name} is {stateText}. Enable/default actions live on the roles list.</p>
         <form method="POST" action={UpdateLlmRoleAction (get #id role)} data-testid="llm-role-form">
@@ -17,6 +19,6 @@ instance View EditRoleView where
             <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
-        where
-            stateText :: Text
-            stateText = if role.enabled then "enabled" else "disabled"
+      where
+        stateText :: Text
+        stateText = if role.enabled then "enabled" else "disabled"

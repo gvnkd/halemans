@@ -1,13 +1,15 @@
 module Web.View.AssetsAdmin.Edit where
-import Web.View.Prelude
+
 import Web.View.AssetsAdmin.Form (assetsConfigFormFields)
+import Web.View.Prelude
 
 data EditView = EditView
     { config :: AssetsConfig
     }
 
 instance View EditView where
-    html EditView { .. } = [hsx|
+    html EditView{..} =
+        [hsx|
         <h1>Edit Assets info source</h1>
         <p class="text-muted">{config.name} is {stateText}. Enabling/disabling happens from the list.</p>
         <form method="POST" action={UpdateAssetsConfigAction (get #id config)} data-testid="assets-config-form">
@@ -16,6 +18,6 @@ instance View EditView where
             <a href={AssetsAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
-        where
-            stateText :: Text
-            stateText = if config.enabled then "enabled" else "disabled"
+      where
+        stateText :: Text
+        stateText = if config.enabled then "enabled" else "disabled"

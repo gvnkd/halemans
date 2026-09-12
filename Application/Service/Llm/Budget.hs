@@ -1,18 +1,18 @@
-module Application.Service.Llm.Budget
-( budgetExceeded
-, rateLimitDelaySeconds
-, dedupeWindowSeconds
-, withinDedupeWindow
-, dailyTokenBudget
-, rateLimitPerMinute
-, promptTokenBudget
-, backoffSeconds
+module Application.Service.Llm.Budget (
+    budgetExceeded,
+    rateLimitDelaySeconds,
+    dedupeWindowSeconds,
+    withinDedupeWindow,
+    dailyTokenBudget,
+    rateLimitPerMinute,
+    promptTokenBudget,
+    backoffSeconds,
 ) where
 
+import qualified Data.Text as Text
 import IHP.Prelude
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
-import qualified Data.Text as Text
 
 -- Cost & rate controls (design_docs/milestone_4.md §6). The pure predicates
 -- here are unit-tested directly; the job supplies DB state (today's counter
@@ -28,11 +28,11 @@ rateLimitDelaySeconds :: Int -> UTCTime -> [UTCTime] -> Maybe Int
 rateLimitDelaySeconds perMinute now recent =
     let windowStart = addUTCTime (-60) now
         inWindow = takeWhile (> windowStart) recent
-    in if length inWindow < perMinute
-        then Nothing
-        else case reverse inWindow of
-            [] -> Nothing
-            (oldest:_) -> Just (max 1 (ceiling (diffUTCTime (addUTCTime 60 oldest) now)))
+     in if length inWindow < perMinute
+            then Nothing
+            else case reverse inWindow of
+                [] -> Nothing
+                (oldest : _) -> Just (max 1 (ceiling (diffUTCTime (addUTCTime 60 oldest) now)))
 
 withinDedupeWindow :: Int -> UTCTime -> UTCTime -> Bool
 withinDedupeWindow windowSeconds now priorCreatedAt =
@@ -57,11 +57,11 @@ backoffSeconds = do
     raw <- lookupEnv "HALEMANS_LLM_BACKOFF_SECONDS"
     pure case raw of
         Just raw -> case mapM (readMaybe . cs) (Text.splitOn "," (cs raw)) of
-            Just parsed@(_:_) -> parsed
+            Just parsed@(_ : _) -> parsed
             _ -> defaultBackoff
         Nothing -> defaultBackoff
-    where
-        defaultBackoff = [60, 60]
+  where
+    defaultBackoff = [60, 60]
 
 envInt :: String -> Int -> IO Int
 envInt name fallback = do

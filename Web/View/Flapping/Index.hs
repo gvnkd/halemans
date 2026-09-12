@@ -1,7 +1,8 @@
 module Web.View.Flapping.Index where
-import Web.View.Prelude
+
 import Application.Service.Flapping (FlapReport (..), FlapSubject (..))
 import Web.View.Fragments (severityBadgeHtml)
+import Web.View.Prelude
 
 data IndexView = IndexView
     { reports :: [FlapReport]
@@ -11,7 +12,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Flapping alerts</h1>
         <form method="GET" action={FlappingAction} class="row g-2 align-items-end mb-4" data-testid="flapping-form">
             <div class="col-auto">
@@ -37,7 +39,8 @@ instance View IndexView where
 
 resultsTable :: [FlapReport] -> Html
 resultsTable [] = [hsx|<p class="text-muted" data-testid="flapping-empty">No flapping alerts in the selected window.</p>|]
-resultsTable reports = [hsx|
+resultsTable reports =
+    [hsx|
     <table class="table" data-testid="flapping-table">
         <thead>
             <tr>
@@ -66,7 +69,7 @@ renderReportRow report =
     let subject = report.subject
         rate = show (fromIntegral (round (report.flapRatePerHour * 100) :: Int) / (100 :: Double)) :: Text
         flapCount = show report.flapCount :: Text
-    in [hsx|
+     in [hsx|
     <tr data-testid="flapping-row">
         <td><a href={pathTo (ShowAlertAction subject.latestAlertId)}>{subject.title}</a></td>
         <td><code>{subject.fingerprint}</code></td>
@@ -92,9 +95,9 @@ windowOption selected value =
             720 -> "30d"
             other -> show other <> "h"
         valueText = show value :: Text
-    in if value == selected
-        then [hsx|<option value={valueText} selected="selected">{label}</option>|]
-        else [hsx|<option value={valueText}>{label}</option>|]
+     in if value == selected
+            then [hsx|<option value={valueText} selected="selected">{label}</option>|]
+            else [hsx|<option value={valueText}>{label}</option>|]
 
 formatSeconds :: Maybe Double -> Text
 formatSeconds Nothing = "-"

@@ -1,9 +1,9 @@
 module Test.MarkdownSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import qualified Data.Text as Text
 import Application.Helper.View (renderMarkdownText)
+import qualified Data.Text as Text
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Markdown rendering (LLM analysis card)" do

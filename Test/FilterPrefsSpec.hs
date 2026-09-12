@@ -1,11 +1,11 @@
 module Test.FilterPrefsSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import Data.Aeson (object, (.=), toJSON)
 import Application.Helper.FilterPrefs (filterPrefsFor)
 import Application.Service.AlertList
-import Web.View.Environments.Show (EnvFilters (..), emptyEnvFilters, envFiltersToValue, envFiltersFromValue, envPrefsAreDefault)
+import Data.Aeson (object, toJSON, (.=))
+import IHP.Prelude
+import Test.Hspec
+import Web.View.Environments.Show (EnvFilters (..), emptyEnvFilters, envFiltersFromValue, envFiltersToValue, envPrefsAreDefault)
 
 spec :: Spec
 spec = describe "filter prefs" do
@@ -21,36 +21,38 @@ spec = describe "filter prefs" do
 
     describe "alertFilters json roundtrip" do
         it "roundtrips a fully populated record" do
-            let filters = AlertListFilters
-                    { alfSeverities = ["critical", "high"]
-                    , alfStatuses = ["firing"]
-                    , alfEnvs = ["prod"]
-                    , alfHost = Just "web-01"
-                    , alfService = Just "nginx"
-                    , alfTitle = Just "disk"
-                    , alfGroup = Just "grp"
-                    , alfSort = "severity"
-                    , alfDir = "asc"
-                    }
+            let filters =
+                    AlertListFilters
+                        { alfSeverities = ["critical", "high"]
+                        , alfStatuses = ["firing"]
+                        , alfEnvs = ["prod"]
+                        , alfHost = Just "web-01"
+                        , alfService = Just "nginx"
+                        , alfTitle = Just "disk"
+                        , alfGroup = Just "grp"
+                        , alfSort = "severity"
+                        , alfDir = "asc"
+                        }
             alertFiltersFromValue (alertFiltersToValue filters) `shouldBe` Just filters
         it "roundtrips the defaults" do
             alertFiltersFromValue (alertFiltersToValue defaultAlertListFilters) `shouldBe` Just defaultAlertListFilters
         it "falls back to the default sort on an unknown column" do
             let stored = object ["sort" .= ("bogus" :: Text), "dir" .= ("asc" :: Text)]
-            alertFiltersFromValue stored `shouldBe` Just defaultAlertListFilters { alfDir = "asc" }
+            alertFiltersFromValue stored `shouldBe` Just defaultAlertListFilters{alfDir = "asc"}
         it "rejects non-objects" do
             alertFiltersFromValue (toJSON ("nope" :: Text)) `shouldBe` Nothing
 
     describe "envFilters json roundtrip" do
         it "roundtrips filters and view mode" do
-            let filters = EnvFilters
-                    { filterSeverities = ["warning"]
-                    , filterStatuses = []
-                    , filterHost = Just "db-01"
-                    , filterService = Nothing
-                    , filterText = Just "cpu"
-                    , filterGroup = Nothing
-                    }
+            let filters =
+                    EnvFilters
+                        { filterSeverities = ["warning"]
+                        , filterStatuses = []
+                        , filterHost = Just "db-01"
+                        , filterService = Nothing
+                        , filterText = Just "cpu"
+                        , filterGroup = Nothing
+                        }
             envFiltersFromValue (envFiltersToValue filters "grouped") `shouldBe` Just (filters, "grouped")
         it "treats empty filters with flat view as default" do
             envPrefsAreDefault (emptyEnvFilters, "flat") `shouldBe` True

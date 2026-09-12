@@ -1,44 +1,43 @@
-module Application.Service.Live
-( Scope (..)
-, liveBroadcastLoop
-, ensureBroadcaster
-, liveConnectionCount
+module Application.Service.Live (
+    Scope (..),
+    liveBroadcastLoop,
+    ensureBroadcaster,
+    liveConnectionCount,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.QueryBuilder (query, filterWhere, orderByAsc, orderByDesc, limit)
-import IHP.FrameworkConfig (FrameworkConfig (..))
-import IHP.RequestVault ()
-import Generated.Types
-import IHP.WebSocket
-import qualified IHP.PGListener as PGListener
-import qualified Network.WebSockets as WS
-import qualified Data.Aeson as Aeson
-import Data.Aeson.Types (parseMaybe, Parser)
+import Application.Helper.DashboardConfig (DashboardCard (..), clauseValue, decodeDashboardConfig, matchCardAlert)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters)
+import qualified Application.Service.Assets.Cache as AssetsCache
+import Application.Service.DashboardCards (ExpandedCard (..), expandDashboardCards, expandedDomId)
+import Application.Service.Llm.Queue (latestJobErrors)
+import Application.Service.Timeline (headTimelineGroup, timelineHiddenKind)
+import qualified Control.Exception.Safe as Exception
 import Data.Aeson (object, (.=))
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser, parseMaybe)
+import qualified Data.ByteString.Lazy as BL
+import Data.IORef
+import qualified Data.Text as Text
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDV4
-import Data.IORef
-import System.IO.Unsafe (unsafePerformIO)
-import qualified Control.Exception.Safe as Exception
-import IHP.HSX.Markup (renderMarkupText)
-import IHP.HSX.Markup (Markup)
-import qualified Data.ByteString.Lazy as BL
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.FrameworkConfig (FrameworkConfig (..))
+import IHP.HSX.Markup (Markup, renderMarkupText)
+import IHP.ModelSupport
+import qualified IHP.PGListener as PGListener
+import IHP.Prelude
+import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
+import IHP.RequestVault ()
+import IHP.WebSocket
 import Network.Wai (Request)
+import qualified Network.WebSockets as WS
+import System.IO.Unsafe (unsafePerformIO)
+import Web.View.Dashboard.Index (EnvCard (..), cardDomId, computeEnvCards, renderCard)
+import Web.View.Dashboards.Show (fetchCardData, renderCardSection)
 import Web.View.Fragments
-import Web.View.Dashboard.Index (computeEnvCards, EnvCard (..), renderCard, cardDomId)
-import Web.View.Dashboards.Show (renderCardSection, fetchCardData)
-import Application.Helper.DashboardConfig (decodeDashboardConfig, matchCardAlert, clauseValue, DashboardCard (..))
-import Application.Service.DashboardCards (expandDashboardCards, expandedDomId, ExpandedCard (..))
-import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters)
-import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
-import qualified Data.Text as Text
-import Application.Service.Llm.Queue (latestJobErrors)
-import Application.Service.Timeline (timelineHiddenKind, headTimelineGroup)
-import qualified Application.Service.Assets.Cache as AssetsCache
 
 -- Websocket fan-out (milestone_1.md §7): one PG LISTEN subscription per
 -- process; each browser connection registers its scope in the registry and
@@ -69,9 +68,9 @@ liveConnectionCount :: IO Int
 liveConnectionCount = length <$> readIORef registry
 
 -- | Connection loop of the /ws WSApp (see Web.Controller.Live).
-liveBroadcastLoop
-    :: (?request :: Request, ?modelContext :: ModelContext, ?connection :: WS.Connection)
-    => IO ()
+liveBroadcastLoop ::
+    (?request :: Request, ?modelContext :: ModelContext, ?connection :: WS.Connection) =>
+    IO ()
 liveBroadcastLoop = do
     connectionId <- UUIDV4.nextRandom
     scopeRef <- newIORef []
@@ -94,9 +93,15 @@ liveBroadcastLoop = do
 isResetFrame :: LByteString -> Bool
 isResetFrame message = fromMaybe False do
     value <- Aeson.decode message
-    parseMaybe (Aeson.withObject "frame" (\o -> do
-        scopeType <- o Aeson..: "type" :: Parser Text
-        pure (scopeType == "reset"))) value
+    parseMaybe
+        ( Aeson.withObject
+            "frame"
+            ( \o -> do
+                scopeType <- o Aeson..: "type" :: Parser Text
+                pure (scopeType == "reset")
+            )
+        )
+        value
 
 parseScope :: LByteString -> Maybe Scope
 parseScope message = do
@@ -150,9 +155,9 @@ parseLiveEvent bytes = do
         kind <- o Aeson..: "kind"
         title <- o Aeson..:? "title"
         severity <- o Aeson..:? "severity"
-        pure LiveEvent { leAlertId = alertId, leGroupId = groupId, leEnv = env, leKind = kind, leTitle = title, leSeverity = severity }
-    where
-        parseUuid raw = maybe (fail "bad uuid") pure (UUID.fromText raw)
+        pure LiveEvent{leAlertId = alertId, leGroupId = groupId, leEnv = env, leKind = kind, leTitle = title, leSeverity = severity}
+  where
+    parseUuid raw = maybe (fail "bad uuid") pure (UUID.fromText raw)
 
 broadcast :: (?request :: Request) => ModelContext -> PGListener.Notification -> IO ()
 broadcast modelContext notification = do
@@ -219,35 +224,39 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         matches <- matchesFilters scopeFilters alert
-        pure [ if matches
-            then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "alerts-tbody"
-            else object [ "id" .= alertRowDomId alert, "mode" .= ("remove" :: Text) ]
+        pure
+            [ if matches
+                then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "alerts-tbody"
+                else object ["id" .= alertRowDomId alert, "mode" .= ("remove" :: Text)]
             ]
     (ScopeEnv name scopeFilters, Just alertId, _)
         | event.leEnv == Just name -> do
             alert <- fetch (Id alertId)
             matches <- matchesEnvFilters scopeFilters alert
-            pure [ if matches
-                then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "env-alerts-tbody"
-                else object [ "id" .= alertRowDomId alert, "mode" .= ("remove" :: Text) ]
+            pure
+                [ if matches
+                    then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "env-alerts-tbody"
+                    else object ["id" .= alertRowDomId alert, "mode" .= ("remove" :: Text)]
                 ]
         | otherwise -> pure []
     (ScopeAlert alertUuid, Just alertId, _)
         | alertId == alertUuid -> do
             alert <- fetch (Id alertId)
-            latestEvents <- query @AlertEvent
-                |> filterWhere (#alertId, Id alertId)
-                |> orderByDesc #createdAt
-                |> limit 50
-                |> fetch
+            latestEvents <-
+                query @AlertEvent
+                    |> filterWhere (#alertId, Id alertId)
+                    |> orderByDesc #createdAt
+                    |> limit 50
+                    |> fetch
             -- Panel-only kinds (milestone_8.md §4: "assets" refreshes the
             -- context panels without touching status badge or timeline).
             if event.leKind == "assets"
                 then contextPanelUpdates alert
                 else do
-                    panelUpdates <- if event.leKind `elem` ["enriched", "writeback", "writeback_failed"]
-                        then contextPanelUpdates alert
-                        else pure []
+                    panelUpdates <-
+                        if event.leKind `elem` ["enriched", "writeback", "writeback_failed"]
+                            then contextPanelUpdates alert
+                            else pure []
                     -- Internal-error events (enrichment_failed etc.) never
                     -- reach the timeline; visible kinds update the leading
                     -- aggregated group in place via its stable dom id.
@@ -260,7 +269,10 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                     pure
                         ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
                           , fragment alertDetailsDomId (alertDetailsCardHtml alert) "replace" ""
-                          ] ++ timelineUpdates ++ panelUpdates )
+                          ]
+                            ++ timelineUpdates
+                            ++ panelUpdates
+                        )
         | otherwise -> pure []
     -- Group events (kind "group", milestone_2.md §9): the group card header
     -- for group-scoped connections, the env page group row for env scopes
@@ -273,10 +285,11 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeEnv name _, _, Just groupId)
         | event.leEnv == Just name -> do
             group <- fetch (Id groupId)
-            members <- query @Alert
-                |> filterWhere (#groupId, Just (Id groupId))
-                |> orderByDesc #lastSeenAt
-                |> fetch
+            members <-
+                query @Alert
+                    |> filterWhere (#groupId, Just (Id groupId))
+                    |> orderByDesc #lastSeenAt
+                    |> fetch
             pure [fragment (groupRowDomId group) (groupRowHtml (group, members)) "replace" ""]
         | otherwise -> pure []
     -- Alert events also refresh the member row on an open group card.
@@ -299,14 +312,16 @@ matchesEnvFilters filters alert = do
             Just groupId -> do
                 group <- fetch groupId
                 pure (Text.isInfixOf (Text.toLower pattern) (Text.toLower group.groupKey))
-    pure (and
-        [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
-        , null filters.alfStatuses || alert.status `elem` filters.alfStatuses
-        , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
-        , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
-        , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
-        , groupOk
-        ])
+    pure
+        ( and
+            [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
+            , null filters.alfStatuses || alert.status `elem` filters.alfStatuses
+            , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost
+            , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
+            , maybe True (\pattern -> Text.isInfixOf (Text.toLower pattern) (Text.toLower alert.title)) filters.alfTitle
+            , groupOk
+            ]
+        )
 
 cardMatches :: LiveEvent -> EnvCard -> Bool
 cardMatches event card = event.leEnv == card.cardEnvName
@@ -316,34 +331,40 @@ cardMatches event card = event.leEnv == card.cardEnvName
 contextPanelUpdates :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => Alert -> IO [Aeson.Value]
 contextPanelUpdates alert = do
     cmdbEntry <- case (alert.hostId, alert.serviceId) of
-        (Just hostId, _) -> query @CmdbEntry
-            |> filterWhere (#hostId, Just hostId)
-            |> fetchOneOrNothing
-        (Nothing, Just serviceId) -> query @CmdbEntry
-            |> filterWhere (#serviceId, Just serviceId)
-            |> fetchOneOrNothing
+        (Just hostId, _) ->
+            query @CmdbEntry
+                |> filterWhere (#hostId, Just hostId)
+                |> fetchOneOrNothing
+        (Nothing, Just serviceId) ->
+            query @CmdbEntry
+                |> filterWhere (#serviceId, Just serviceId)
+                |> fetchOneOrNothing
         (Nothing, Nothing) -> pure Nothing
-    jiraLinks <- query @JiraLink
-        |> filterWhere (#alertId, get #id alert)
-        |> orderByAsc #createdAt
-        |> fetch
+    jiraLinks <-
+        query @JiraLink
+            |> filterWhere (#alertId, get #id alert)
+            |> orderByAsc #createdAt
+            |> fetch
     linkedAssets <- AssetsCache.linkedAssetsForAlert alert
     assetConfigs <- forM linkedAssets \(_, object) -> fetch object.configId
     let linkedAssetEntries = zipWith (\(link, object) config -> (link, object, config)) linkedAssets assetConfigs
-    agentRoles <- query @LlmAgentRole
-        |> filterWhere (#enabled, True)
-        |> orderByAsc #name
-        |> fetch
-    latestAttempt <- query @WriteBackAttempt
-        |> filterWhere (#alertId, get #id alert)
-        |> orderByDesc #createdAt
-        |> limit 1
-        |> fetchOneOrNothing
-    analyses <- query @LlmAnalysis
-        |> filterWhere (#alertId, get #id alert)
-        |> orderByDesc #createdAt
-        |> limit 10
-        |> fetch
+    agentRoles <-
+        query @LlmAgentRole
+            |> filterWhere (#enabled, True)
+            |> orderByAsc #name
+            |> fetch
+    latestAttempt <-
+        query @WriteBackAttempt
+            |> filterWhere (#alertId, get #id alert)
+            |> orderByDesc #createdAt
+            |> limit 1
+            |> fetchOneOrNothing
+    analyses <-
+        query @LlmAnalysis
+            |> filterWhere (#alertId, get #id alert)
+            |> orderByDesc #createdAt
+            |> limit 10
+            |> fetch
     llmJobErrors <- latestJobErrors (map (get #id) analyses)
     pure
         [ fragment cmdbPanelDomId (cmdbPanelHtml alert cmdbEntry) "replace" ""
@@ -355,4 +376,4 @@ contextPanelUpdates alert = do
 
 fragment :: Text -> Markup -> Text -> Text -> Aeson.Value
 fragment domId html mode parent =
-    object [ "id" .= domId, "html" .= renderMarkupText html, "mode" .= mode, "parent" .= parent ]
+    object ["id" .= domId, "html" .= renderMarkupText html, "mode" .= mode, "parent" .= parent]

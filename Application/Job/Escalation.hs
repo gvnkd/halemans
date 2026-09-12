@@ -1,17 +1,17 @@
 module Application.Job.Escalation (runDueTrackers) where
 
-import IHP.Prelude
+import Application.Pipeline.Escalation (DueDecision (..), EscalationStep (..), TrackerAdvance (..), decideDueTracker, stepsFromJSON)
+import Application.Service.Notify (currentOnCall, notifyUsers, teamMemberIds)
+import Control.Monad (void)
+import Data.Aeson (Value, object, (.=))
+import Generated.Types
+import IHP.Fetch (fetch)
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.Job.Types
 import IHP.ModelSupport
+import IHP.Prelude
 import IHP.QueryBuilder
-import IHP.Fetch (fetch)
 import IHP.TypedSql (sqlExecTyped, typedSql)
-import Generated.Types
-import Data.Aeson (Value, object, (.=))
-import Control.Monad (void)
-import Application.Pipeline.Escalation (stepsFromJSON, decideDueTracker, DueDecision (..), TrackerAdvance (..), EscalationStep (..))
-import Application.Service.Notify (notifyUsers, currentOnCall, teamMemberIds)
 
 -- Drives due escalation steps (design_docs/milestone_2.md §6): every 30s,
 -- scan active trackers past deadline; notify the step target, append
@@ -22,11 +22,14 @@ instance Job EscalationJob where
         runDueTrackers
 
         now <- getCurrentTime
-        next <- newRecord @EscalationJob
-            |> set #runAt (addUTCTime 30 now)
-            |> createRecord
+        next <-
+            newRecord @EscalationJob
+                |> set #runAt (addUTCTime 30 now)
+                |> createRecord
         let nextId = get #id next
-        _ <- sqlExecTyped [typedSql|
+        _ <-
+            sqlExecTyped
+                [typedSql|
             DELETE FROM escalation_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}
         |]
@@ -39,10 +42,11 @@ instance Job EscalationJob where
 -- integration suite.
 runDueTrackers :: (?modelContext :: ModelContext) => IO ()
 runDueTrackers = do
-    due <- query @EscalationTracker
-        |> filterWhere (#status, "active" :: Text)
-        |> filterWhereSql (#nextDeadline, "<= NOW()")
-        |> fetch
+    due <-
+        query @EscalationTracker
+            |> filterWhere (#status, "active" :: Text)
+            |> filterWhereSql (#nextDeadline, "<= NOW()")
+            |> fetch
     forM_ due fireTracker
 
 fireTracker :: (?modelContext :: ModelContext) => EscalationTracker -> IO ()
@@ -52,24 +56,30 @@ fireTracker tracker = do
     policy <- fetch tracker.policyId
     let steps = stepsFromJSON policy.steps
     case decideDueTracker now steps tracker.currentStep alert.status alert.suppressed of
-        EscalateCancel -> void $ tracker
-            |> set #status "cancelled"
-            |> set #updatedAt now
-            |> updateRecord
+        EscalateCancel ->
+            void $
+                tracker
+                    |> set #status "cancelled"
+                    |> set #updatedAt now
+                    |> updateRecord
         EscalateNotify step advance -> do
             targets <- resolveStepTargets step
             notifyUsers alert targets
             recordEscalatedEvent tracker step targets
             case advance of
-                MarkDone -> void $ tracker
-                    |> set #status "done"
-                    |> set #updatedAt now
-                    |> updateRecord
-                AdvanceTo nextStep deadline -> void $ tracker
-                    |> set #currentStep nextStep
-                    |> set #nextDeadline (Just deadline)
-                    |> set #updatedAt now
-                    |> updateRecord
+                MarkDone ->
+                    void $
+                        tracker
+                            |> set #status "done"
+                            |> set #updatedAt now
+                            |> updateRecord
+                AdvanceTo nextStep deadline ->
+                    void $
+                        tracker
+                            |> set #currentStep nextStep
+                            |> set #nextDeadline (Just deadline)
+                            |> set #updatedAt now
+                            |> updateRecord
 
 resolveStepTargets :: (?modelContext :: ModelContext) => EscalationStep -> IO [Id User]
 resolveStepTargets step = case (step.esTargetTeamId, step.esTargetUserId) of
@@ -83,15 +93,17 @@ resolveStepTargets step = case (step.esTargetTeamId, step.esTargetUserId) of
 
 recordEscalatedEvent :: (?modelContext :: ModelContext) => EscalationTracker -> EscalationStep -> [Id User] -> IO ()
 recordEscalatedEvent tracker step targets = do
-    let payload :: Value = object
-            [ "step" .= tracker.currentStep
-            , "policyId" .= tshow tracker.policyId
-            , "targets" .= map (tshow :: Id User -> Text) targets
-            ]
-    _ <- newRecord @AlertEvent
-        |> set #alertId tracker.alertId
-        |> set #userId Nothing
-        |> set #kind "escalated"
-        |> set #payload payload
-        |> createRecord
+    let payload :: Value =
+            object
+                [ "step" .= tracker.currentStep
+                , "policyId" .= tshow tracker.policyId
+                , "targets" .= map (tshow :: Id User -> Text) targets
+                ]
+    _ <-
+        newRecord @AlertEvent
+            |> set #alertId tracker.alertId
+            |> set #userId Nothing
+            |> set #kind "escalated"
+            |> set #payload payload
+            |> createRecord
     pure ()

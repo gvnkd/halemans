@@ -1,30 +1,30 @@
-module Application.Service.WriteBack
-( enqueueForAction
-, executeAttempt
-, backoffSeconds
-, maxWriteBackAttempts
-, silenceMatchersFor
-, silenceEndsAt
-, zabbixActionBits
+module Application.Service.WriteBack (
+    enqueueForAction,
+    executeAttempt,
+    backoffSeconds,
+    maxWriteBackAttempts,
+    silenceMatchersFor,
+    silenceEndsAt,
+    zabbixActionBits,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types
-import Data.Aeson (Value, object, (.=))
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.Aeson.Key as Key
-import qualified Application.Connector.Zabbix as Zabbix
 import qualified Application.Connector.Alertmanager as Am
+import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (publishAlertUpdate)
 import Control.Monad (void)
+import Data.Aeson (Value, object, (.=))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
-import Text.Read (readMaybe)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
 import System.Environment (lookupEnv)
+import Text.Read (readMaybe)
 
 -- Hybrid write-back (design_docs/milestone_3.md §6): user-initiated
 -- ack/unack/close inserts a write_back_attempts row and enqueues a
@@ -54,10 +54,11 @@ zabbixActionBits = \case
 -- | One equality matcher per alert label.
 silenceMatchersFor :: Alert -> Value
 silenceMatchersFor alert = case alert.labels of
-    Aeson.Object labels -> Aeson.toJSON
-        [ object ["name" .= Key.toText name, "value" .= value, "isRegex" .= False]
-        | (name, Aeson.String value) <- KeyMap.toList labels
-        ]
+    Aeson.Object labels ->
+        Aeson.toJSON
+            [ object ["name" .= Key.toText name, "value" .= value, "isRegex" .= False]
+            | (name, Aeson.String value) <- KeyMap.toList labels
+            ]
     _ -> Aeson.toJSON ([] :: [Value])
 
 -- | Silence horizon: ack uses the ack expiry (or 24h), close always 24h (§6).
@@ -65,8 +66,8 @@ silenceEndsAt :: UTCTime -> Text -> Alert -> UTCTime
 silenceEndsAt now action alert = case action of
     "ack" -> fromMaybe fallback alert.ackExpiresAt
     _ -> fallback
-    where
-        fallback = addUTCTime 86400 now
+  where
+    fallback = addUTCTime 86400 now
 
 writeBackEnabled :: Source -> Bool
 writeBackEnabled source =
@@ -78,26 +79,28 @@ enqueueForAction alert action = do
         source <- fetch sourceId
         if not (writeBackEnabled source)
             then pure ()
-            else if source.type_ == "webhook"
-                then void do
-                    newRecord @WriteBackAttempt
-                        |> set #alertId (get #id alert)
-                        |> set #action action
-                        |> set #sourceId sourceId
-                        |> set #status "done"
-                        |> set #lastError (Just "unsupported: generic webhook sources have no write-back")
-                        |> createRecord
-                else do
-                    attempt <- newRecord @WriteBackAttempt
-                        |> set #alertId (get #id alert)
-                        |> set #action action
-                        |> set #sourceId sourceId
-                        |> set #status "queued"
-                        |> createRecord
-                    void do
-                        newRecord @WriteBackJob
-                            |> set #attemptId (get #id attempt)
+            else
+                if source.type_ == "webhook"
+                    then void do
+                        newRecord @WriteBackAttempt
+                            |> set #alertId (get #id alert)
+                            |> set #action action
+                            |> set #sourceId sourceId
+                            |> set #status "done"
+                            |> set #lastError (Just "unsupported: generic webhook sources have no write-back")
                             |> createRecord
+                    else do
+                        attempt <-
+                            newRecord @WriteBackAttempt
+                                |> set #alertId (get #id alert)
+                                |> set #action action
+                                |> set #sourceId sourceId
+                                |> set #status "queued"
+                                |> createRecord
+                        void do
+                            newRecord @WriteBackJob
+                                |> set #attemptId (get #id attempt)
+                                |> createRecord
 
 executeAttempt :: (?modelContext :: ModelContext) => WriteBackAttempt -> IO ()
 executeAttempt attempt = do
@@ -107,42 +110,48 @@ executeAttempt attempt = do
     result <- dispatch now alert source attempt
     case result of
         Right silenceId -> do
-            _ <- attempt
-                |> set #status "done"
-                |> set #attempts (attempt.attempts + 1)
-                |> set #silenceId silenceId
-                |> set #updatedAt now
-                |> updateRecord
+            _ <-
+                attempt
+                    |> set #status "done"
+                    |> set #attempts (attempt.attempts + 1)
+                    |> set #silenceId silenceId
+                    |> set #updatedAt now
+                    |> updateRecord
             publishAlertUpdate alert "writeback"
         Left err -> do
             let attempts = attempt.attempts + 1
             maxAttempts <- maxAttemptsConfigured
             if attempts >= maxAttempts
                 then do
-                    _ <- attempt
-                        |> set #status "failed"
-                        |> set #attempts attempts
-                        |> set #lastError (Just err)
-                        |> set #updatedAt now
-                        |> updateRecord
+                    _ <-
+                        attempt
+                            |> set #status "failed"
+                            |> set #attempts attempts
+                            |> set #lastError (Just err)
+                            |> set #updatedAt now
+                            |> updateRecord
                     void do
                         newRecord @AlertEvent
                             |> set #alertId (get #id alert)
                             |> set #userId Nothing
                             |> set #kind "writeback_failed"
-                            |> set #payload (object
-                                [ "source" .= get #name source
-                                , "action" .= attempt.action
-                                , "error" .= err
-                                ])
+                            |> set
+                                #payload
+                                ( object
+                                    [ "source" .= get #name source
+                                    , "action" .= attempt.action
+                                    , "error" .= err
+                                    ]
+                                )
                             |> createRecord
                     publishAlertUpdate alert "writeback"
                 else do
-                    _ <- attempt
-                        |> set #attempts attempts
-                        |> set #lastError (Just err)
-                        |> set #updatedAt now
-                        |> updateRecord
+                    _ <-
+                        attempt
+                            |> set #attempts attempts
+                            |> set #lastError (Just err)
+                            |> set #updatedAt now
+                            |> updateRecord
                     retryAfter <- retryDelay attempts
                     void do
                         newRecord @WriteBackJob
@@ -188,25 +197,27 @@ dispatch now alert source attempt = case source.type_ of
 amDispatch :: (?modelContext :: ModelContext) => UTCTime -> Alert -> Source -> Maybe Text -> WriteBackAttempt -> Text -> IO (Either Text (Maybe Text))
 amDispatch now alert source token attempt apiPrefix = case attempt.action of
     "unack" -> do
-        prior <- query @WriteBackAttempt
-            |> filterWhere (#alertId, get #id alert)
-            |> filterWhere (#sourceId, get #id source)
-            |> filterWhere (#status, "done" :: Text)
-            |> orderByDesc #createdAt
-            |> fetch
+        prior <-
+            query @WriteBackAttempt
+                |> filterWhere (#alertId, get #id alert)
+                |> filterWhere (#sourceId, get #id source)
+                |> filterWhere (#status, "done" :: Text)
+                |> orderByDesc #createdAt
+                |> fetch
         case mapMaybe (.silenceId) prior of
             [] -> pure (Right Nothing) -- nothing to expire
-            (silenceId:_) -> do
+            (silenceId : _) -> do
                 result <- Am.silenceDelete source.baseUrl token apiPrefix silenceId
                 pure (fmap (const Nothing) result)
     action -> do
-        let body = object
-                [ "matchers" .= silenceMatchersFor alert
-                , "startsAt" .= now
-                , "endsAt" .= silenceEndsAt now action alert
-                , "createdBy" .= ("halemans" :: Text)
-                , "comment" .= (action <> " via Halemans (silence-based write-back)" :: Text)
-                ]
+        let body =
+                object
+                    [ "matchers" .= silenceMatchersFor alert
+                    , "startsAt" .= now
+                    , "endsAt" .= silenceEndsAt now action alert
+                    , "createdBy" .= ("halemans" :: Text)
+                    , "comment" .= (action <> " via Halemans (silence-based write-back)" :: Text)
+                    ]
         result <- Am.silenceCreate source.baseUrl token apiPrefix body
         pure (fmap Just result)
 

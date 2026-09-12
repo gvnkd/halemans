@@ -1,11 +1,13 @@
 module Web.View.Dashboards.Index where
-import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, inlinePostFormHtml)
 
-data IndexView = IndexView { dashboards :: [Dashboard] }
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml)
+import Web.View.Prelude
+
+data IndexView = IndexView {dashboards :: [Dashboard]}
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Dashboards" newButton}
         <table class="table" data-testid="dashboards-table">
             <thead>
@@ -16,11 +18,12 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = [hsx|<a href={NewDashboardAction} class="btn btn-sm btn-primary" data-testid="new-dashboard">New dashboard</a>|]
+      where
+        newButton = [hsx|<a href={NewDashboardAction} class="btn btn-sm btn-primary" data-testid="new-dashboard">New dashboard</a>|]
 
 renderRow :: Dashboard -> Html
-renderRow dashboard = [hsx|
+renderRow dashboard =
+    [hsx|
     <tr data-testid="dashboard-row">
         <td><a href={ShowDashboardAction dashboard.id} data-testid="dashboard-link">{dashboard.name}</a></td>
         <td>{defaultBadge}</td>
@@ -37,10 +40,12 @@ renderRow dashboard = [hsx|
         </td>
     </tr>
 |]
-    where
-        defaultBadge = if dashboard.isDefault
+  where
+    defaultBadge =
+        if dashboard.isDefault
             then [hsx|<span class="badge status-ack" data-testid="dashboard-default">default</span>|]
             else mempty
-        defaultButton = if dashboard.isDefault
+    defaultButton =
+        if dashboard.isDefault
             then mempty
             else inlinePostFormHtml (pathTo (SetDefaultDashboardAction dashboard.id)) "Set default" "btn btn-sm btn-outline-secondary" (Just "set-default-dashboard") False

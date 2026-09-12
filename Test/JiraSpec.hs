@@ -1,12 +1,12 @@
 module Test.JiraSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types hiding (JiraConfig)
 import Application.Service.Jira
-import qualified Data.Aeson as Aeson
 import Application.Service.Jira.Related (parseRelevantKeys)
+import qualified Data.Aeson as Aeson
+import Generated.Types hiding (JiraConfig)
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Jira" do
@@ -20,36 +20,42 @@ spec = describe "Application.Service.Jira" do
 
     describe "jqlForAlert" do
         it "matches host labels and check text, open tickets only" do
-            let alert = newRecord @Alert
-                    |> set #host (Just "dev-host-01")
-                    |> set #checkName (Just "halemans test trigger")
-            jqlForAlert ["DEV"] alert `shouldBe`
-                "project = DEV AND statusCategory != Done AND (labels ~ \"dev-host-01\" OR text ~ \"halemans test trigger\")"
+            let alert =
+                    newRecord @Alert
+                        |> set #host (Just "dev-host-01")
+                        |> set #checkName (Just "halemans test trigger")
+            jqlForAlert ["DEV"] alert
+                `shouldBe` "project = DEV AND statusCategory != Done AND (labels ~ \"dev-host-01\" OR text ~ \"halemans test trigger\")"
         it "falls back to a title text search without a subject" do
-            let alert = newRecord @Alert
-                    |> set #title "disk full"
-            jqlForAlert ["OPS"] alert `shouldBe`
-                "project = OPS AND statusCategory != Done AND (text ~ \"disk full\")"
+            let alert =
+                    newRecord @Alert
+                        |> set #title "disk full"
+            jqlForAlert ["OPS"] alert
+                `shouldBe` "project = OPS AND statusCategory != Done AND (text ~ \"disk full\")"
         it "OR-es several configured projects" do
-            let alert = newRecord @Alert
-                    |> set #host (Just "dev-host-01")
-            jqlForAlert ["DEV", "OPS"] alert `shouldBe`
-                "project in (DEV, OPS) AND statusCategory != Done AND (labels ~ \"dev-host-01\")"
+            let alert =
+                    newRecord @Alert
+                        |> set #host (Just "dev-host-01")
+            jqlForAlert ["DEV", "OPS"] alert
+                `shouldBe` "project in (DEV, OPS) AND statusCategory != Done AND (labels ~ \"dev-host-01\")"
         it "drops the project clause when no projects are configured" do
-            let alert = newRecord @Alert
-                    |> set #host (Just "dev-host-01")
-            jqlForAlert [] alert `shouldBe`
-                "statusCategory != Done AND (labels ~ \"dev-host-01\")"
+            let alert =
+                    newRecord @Alert
+                        |> set #host (Just "dev-host-01")
+            jqlForAlert [] alert
+                `shouldBe` "statusCategory != Done AND (labels ~ \"dev-host-01\")"
         it "escapes double quotes and backslashes inside string literals" do
-            let alert = newRecord @Alert
-                    |> set #checkName (Just "ESET \"Efs\" CPU usage > 20%")
-            jqlForAlert ["DEV"] alert `shouldBe`
-                "project = DEV AND statusCategory != Done AND (text ~ \"ESET \\\"Efs\\\" CPU usage > 20%\")"
+            let alert =
+                    newRecord @Alert
+                        |> set #checkName (Just "ESET \"Efs\" CPU usage > 20%")
+            jqlForAlert ["DEV"] alert
+                `shouldBe` "project = DEV AND statusCategory != Done AND (text ~ \"ESET \\\"Efs\\\" CPU usage > 20%\")"
         it "quotes multi-word hosts in the labels clause" do
-            let alert = newRecord @Alert
-                    |> set #host (Just "prod db 01")
-            jqlForAlert ["DEV"] alert `shouldBe`
-                "project = DEV AND statusCategory != Done AND (labels ~ \"prod db 01\")"
+            let alert =
+                    newRecord @Alert
+                        |> set #host (Just "prod db 01")
+            jqlForAlert ["DEV"] alert
+                `shouldBe` "project = DEV AND statusCategory != Done AND (labels ~ \"prod db 01\")"
 
     describe "parseRelevantKeys" do
         it "reads the fenced json verdict and keeps candidate keys only" do

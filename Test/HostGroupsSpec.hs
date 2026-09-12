@@ -1,13 +1,13 @@
 module Test.HostGroupsSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
-import Application.Service.HostGroups
 import Application.Connector.Zabbix (ZabbixGroup (..))
-import Data.Aeson (object, (.=), toJSON)
+import Application.Service.HostGroups
+import Data.Aeson (object, toJSON, (.=))
 import qualified Data.Aeson as Aeson
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.HostGroups" do

@@ -1,9 +1,11 @@
 module Web.View.LlmAdmin.RoleForm (roleFormFields) where
-import Web.View.Prelude
+
 import qualified Data.Text as Text
+import Web.View.Prelude
 
 roleFormFields :: Maybe LlmAgentRole -> [Text] -> Html
-roleFormFields role toolNames = [hsx|
+roleFormFields role toolNames =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Name</label>
         <input name="name" type="text" class="form-control" value={field (.name)} data-testid="llm-role-name" required="required"/>
@@ -21,10 +23,10 @@ roleFormFields role toolNames = [hsx|
         <input name="tools" type="text" class="form-control" value={toolsText} data-testid="llm-role-tools"/>
     </div>
 |]
-    where
-        field :: (LlmAgentRole -> Text) -> Text
-        field getter = maybe "" getter role
-        templateName :: Text
-        templateName = maybe "alert_enrichment" (.promptTemplateName) role
-        toolsText :: Text
-        toolsText = Text.intercalate ", " toolNames
+  where
+    field :: (LlmAgentRole -> Text) -> Text
+    field getter = maybe "" getter role
+    templateName :: Text
+    templateName = maybe "alert_enrichment" (.promptTemplateName) role
+    toolsText :: Text
+    toolsText = Text.intercalate ", " toolNames

@@ -1,24 +1,24 @@
 module Application.Job.LlmAnalysis where
 
-import IHP.Prelude
-import IHP.Job.Types
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import IHP.TypedSql (sqlQueryTyped, sqlExecTyped, typedSql)
-import Generated.Types
+import Application.Helper.Ingest (publishAlertUpdate)
+import Application.Service.Llm
+import qualified Application.Service.Llm.Budget as Budget
+import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
+import Application.Service.Llm.Prompt (BuiltPrompt (..), buildPromptForAlert)
+import Application.Service.Llm.Roles (resolveAgentRole, templateNameForRole, toolsForRole)
+import Application.Service.Llm.Tools (executeToolCall, runWithToolLoop, toolDefinitions)
+import Control.Exception (SomeException, try)
+import Control.Monad (void)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
-import Control.Monad (void)
-import Control.Exception (SomeException, try)
-import Application.Service.Llm
-import Application.Service.Llm.DbConfig (currentLlmConfig)
-import Application.Service.Llm.Prompt (buildPromptForAlert, BuiltPrompt (..))
-import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
-import Application.Service.Llm.Tools (toolDefinitions, executeToolCall, runWithToolLoop)
-import Application.Service.Llm.Roles (resolveAgentRole, templateNameForRole, toolsForRole)
-import qualified Application.Service.Llm.Budget as Budget
-import Application.Helper.Ingest (publishAlertUpdate)
+import Generated.Types
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.Job.Types
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 
 -- LLM enrichment job (design_docs/milestone_4.md §4/§6). One-shot per
 -- llm_analyses row; soft-fails only (D8) — the analysis result never feeds
@@ -68,16 +68,17 @@ runAnalysis job analysis alert config = do
         Nothing -> failAnalysis analysis alert "no active prompt template" "llm_failed"
         Just built -> do
             now <- getCurrentTime
-            _ <- analysis
-                |> set #status "running"
-                |> set #provider config.providerName
-                |> set #model config.model
-                |> set #promptTemplateId (Just built.templateId)
-                |> set #promptVersion (Just built.templateVersion)
-                |> set #promptHash built.hash
-                |> set #agentRoleId (fmap (get #id) role)
-                |> set #updatedAt now
-                |> updateRecord
+            _ <-
+                analysis
+                    |> set #status "running"
+                    |> set #provider config.providerName
+                    |> set #model config.model
+                    |> set #promptTemplateId (Just built.templateId)
+                    |> set #promptVersion (Just built.templateVersion)
+                    |> set #promptHash built.hash
+                    |> set #agentRoleId (fmap (get #id) role)
+                    |> set #updatedAt now
+                    |> updateRecord
             dedupeWindow <- Budget.dedupeWindowSeconds
             prior <- findDedupeSource (get #id analysis) built.hash (addUTCTime (fromIntegral (-dedupeWindow)) now)
             case prior of
@@ -93,15 +94,16 @@ runAnalysis job analysis alert config = do
                                 Nothing -> callProvider job analysis alert config role built
 
 findDedupeSource :: (?modelContext :: ModelContext) => Id LlmAnalysis -> Text -> UTCTime -> IO (Maybe LlmAnalysis)
-findDedupeSource selfId hash cutoff = query @LlmAnalysis
-    |> filterWhere (#promptHash, hash)
-    |> filterWhereNot (#id, selfId)
-    |> filterWhere (#status, "done" :: Text)
-    |> filterWhereSql (#dedupedFrom, "IS NULL")
-    |> filterWhereSql (#createdAt, ">= " <> sqlQuote cutoff)
-    |> orderByDesc #createdAt
-    |> limit 1
-    |> fetchOneOrNothing
+findDedupeSource selfId hash cutoff =
+    query @LlmAnalysis
+        |> filterWhere (#promptHash, hash)
+        |> filterWhereNot (#id, selfId)
+        |> filterWhere (#status, "done" :: Text)
+        |> filterWhereSql (#dedupedFrom, "IS NULL")
+        |> filterWhereSql (#createdAt, ">= " <> sqlQuote cutoff)
+        |> orderByDesc #createdAt
+        |> limit 1
+        |> fetchOneOrNothing
 
 sqlQuote :: UTCTime -> Text
 sqlQuote time = "'" <> tshow time <> "'"
@@ -112,32 +114,37 @@ sqlQuote time = "'" <> tshow time <> "'"
 copyDeduped :: (?modelContext :: ModelContext) => LlmAnalysis -> Alert -> LlmAnalysis -> IO ()
 copyDeduped analysis alert prior = do
     now <- getCurrentTime
-    _ <- analysis
-        |> set #status "done"
-        |> set #resultMd prior.resultMd
-        |> set #result prior.result
-        |> set #tokensIn prior.tokensIn
-        |> set #tokensOut prior.tokensOut
-        |> set #dedupedFrom (Just (get #id prior))
-        |> set #updatedAt now
-        |> updateRecord
+    _ <-
+        analysis
+            |> set #status "done"
+            |> set #resultMd prior.resultMd
+            |> set #result prior.result
+            |> set #tokensIn prior.tokensIn
+            |> set #tokensOut prior.tokensOut
+            |> set #dedupedFrom (Just (get #id prior))
+            |> set #updatedAt now
+            |> updateRecord
     publishAlertUpdate alert "enriched"
 
 checkBudget :: (?modelContext :: ModelContext) => Text -> IO Bool
 checkBudget provider = do
     cap <- Budget.dailyTokenBudget
-    rows <- sqlQueryTyped [typedSql|
+    rows <-
+        sqlQueryTyped
+            [typedSql|
         SELECT tokens_in, tokens_out FROM llm_budget_counters
         WHERE provider = ${provider} AND day = CURRENT_DATE
     |]
     pure case rows of
         [] -> False
-        (row:_) -> Budget.budgetExceeded cap (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
+        (row : _) -> Budget.budgetExceeded cap (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
 
 checkRateLimit :: (?modelContext :: ModelContext) => Text -> UTCTime -> IO (Maybe Int)
 checkRateLimit provider now = do
     perMinute <- Budget.rateLimitPerMinute
-    recent <- sqlQueryTyped [typedSql|
+    recent <-
+        sqlQueryTyped
+            [typedSql|
         SELECT updated_at FROM llm_analyses
         WHERE provider = ${provider} AND status = 'done' AND deduped_from IS NULL
             AND updated_at > NOW() - INTERVAL '60 seconds'
@@ -173,9 +180,10 @@ callProvider job analysis alert config role built = do
             -- Fresh requeued job rows reset attempts_count, so the retry
             -- budget counts llm_analysis_jobs rows for this analysis instead
             -- (the original enqueue counts as the first attempt).
-            attempts <- query @LlmAnalysisJob
-                |> filterWhere (#analysisId, get #id analysis)
-                |> fetch
+            attempts <-
+                query @LlmAnalysisJob
+                    |> filterWhere (#analysisId, get #id analysis)
+                    |> fetch
             if length attempts <= length backoffs
                 then requeue analysis job (backoffs !! (length attempts - 1))
                 else failAnalysis analysis alert err "llm_failed"
@@ -183,15 +191,16 @@ callProvider job analysis alert config role built = do
         Right (completion, toolLog) -> do
             let parsed = parseCompletionOutput completion.content
             now <- getCurrentTime
-            _ <- analysis
-                |> set #status "done"
-                |> set #resultMd (Just parsed.markdown)
-                |> set #result parsed.structured
-                |> set #tokensIn completion.tokensIn
-                |> set #tokensOut completion.tokensOut
-                |> set #toolCalls (if null toolLog then Nothing else Just (Aeson.toJSON toolLog))
-                |> set #updatedAt now
-                |> updateRecord
+            _ <-
+                analysis
+                    |> set #status "done"
+                    |> set #resultMd (Just parsed.markdown)
+                    |> set #result parsed.structured
+                    |> set #tokensIn completion.tokensIn
+                    |> set #tokensOut completion.tokensOut
+                    |> set #toolCalls (if null toolLog then Nothing else Just (Aeson.toJSON toolLog))
+                    |> set #updatedAt now
+                    |> updateRecord
             recordUsage config.providerName completion
             publishAlertUpdate alert "enriched"
 
@@ -203,7 +212,8 @@ recordUsage provider completion = do
     let tokensIn = fromIntegral (fromMaybe 0 completion.tokensIn) :: Int64
         tokensOut = fromIntegral (fromMaybe 0 completion.tokensOut) :: Int64
     void do
-        sqlExecTyped [typedSql|
+        sqlExecTyped
+            [typedSql|
             INSERT INTO llm_budget_counters (provider, day, tokens_in, tokens_out, requests)
             VALUES (${provider}, CURRENT_DATE, ${tokensIn}, ${tokensOut}, 1)
             ON CONFLICT (provider, day) DO UPDATE SET

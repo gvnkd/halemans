@@ -1,8 +1,8 @@
 module Application.Helper.View where
 
-import IHP.ViewPrelude
-import Data.Time.Format (formatTime, defaultTimeLocale)
 import qualified CMark
+import Data.Time.Format (defaultTimeLocale, formatTime)
+import IHP.ViewPrelude
 
 -- Here you can add functions which are available in all your views
 
@@ -11,11 +11,11 @@ import qualified CMark
 -- with an offset label (UTC+4) on load and for WS-injected fragments.
 utcTimeHtml :: UTCTime -> Html
 utcTimeHtml t = [hsx|<time class="utc-time" datetime={iso}>{fallback}</time>|]
-    where
-        iso :: Text
-        iso = cs (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" t)
-        fallback :: Text
-        fallback = cs (formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" t) <> " UTC"
+  where
+    iso :: Text
+    iso = cs (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" t)
+    fallback :: Text
+    fallback = cs (formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" t) <> " UTC"
 
 maybeUtcTimeHtml :: Maybe UTCTime -> Html
 maybeUtcTimeHtml = maybe mempty utcTimeHtml

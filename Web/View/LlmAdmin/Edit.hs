@@ -1,13 +1,15 @@
 module Web.View.LlmAdmin.Edit where
-import Web.View.Prelude
+
 import Application.Service.Llm.Prompt (templateSlotNames)
+import Web.View.Prelude
 
 data EditView = EditView
     { template :: LlmPromptTemplate
     }
 
 instance View EditView where
-    html EditView { .. } = [hsx|
+    html EditView{..} =
+        [hsx|
         <h1>Edit prompt template</h1>
         <p class="text-muted">
             {template.name} v{template.version} — saving creates v{template.version + 1} (inactive until activated).
@@ -26,5 +28,5 @@ instance View EditView where
             <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
         </form>
     |]
-        where
-            placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]
+      where
+        placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]

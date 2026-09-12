@@ -1,10 +1,10 @@
-module Application.Pipeline.Blackouts
-( blackoutWindowActive
-, blackoutApplies
+module Application.Pipeline.Blackouts (
+    blackoutWindowActive,
+    blackoutApplies,
 ) where
 
-import IHP.Prelude
 import Generated.Types
+import IHP.Prelude
 
 -- | One-shot windows only (design_docs/01_highlevel.md §18).
 blackoutWindowActive :: UTCTime -> Blackout -> Bool
@@ -13,17 +13,18 @@ blackoutWindowActive now blackout =
 
 -- | Does the blackout cover an alert carrying these inventory refs?
 -- Scope is exactly one of environment/host/service (enforced at creation).
-blackoutApplies
-    :: UTCTime
-    -> Maybe (Id Environment)
-    -> Maybe (Id Host)
-    -> Maybe (Id Service)
-    -> Blackout
-    -> Bool
+blackoutApplies ::
+    UTCTime ->
+    Maybe (Id Environment) ->
+    Maybe (Id Host) ->
+    Maybe (Id Service) ->
+    Blackout ->
+    Bool
 blackoutApplies now environmentId hostId serviceId blackout =
     blackoutWindowActive now blackout && scopeMatches
-    where
-        scopeMatches = or
+  where
+    scopeMatches =
+        or
             [ isJust blackout.environmentId && blackout.environmentId == environmentId
             , isJust blackout.hostId && blackout.hostId == hostId
             , isJust blackout.serviceId && blackout.serviceId == serviceId

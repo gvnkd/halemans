@@ -1,6 +1,7 @@
 module Web.View.Audit.Index where
-import Web.View.Prelude
+
 import qualified Data.Aeson as Aeson
+import Web.View.Prelude
 
 data IndexView = IndexView
     { exports :: [AuditExport]
@@ -8,7 +9,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Audit exports</h1>
         <form method="GET" action={ExportAuditAction} class="row g-2 align-items-end mb-4" data-testid="export-form">
             <div class="col-auto">
@@ -57,7 +59,7 @@ renderExportRow users export =
             Nothing -> "system"
         scope = cs (Aeson.encode export.scope) :: Text
         rowCount = show export.rowCount :: Text
-    in [hsx|
+     in [hsx|
     <tr data-testid="audit-export-row">
         <td>{utcTimeHtml export.createdAt}</td>
         <td>{who}</td>

@@ -1,22 +1,23 @@
 module Test.PushSpec where
 
-import Test.Hspec
-import IHP.Prelude
 import Application.Service.Push
 import qualified Data.ByteString as BS
-import "cryptonite" Crypto.PubKey.ECC.Types (CurveName (SEC_p256r1), getCurveByName, Point (..))
-import "cryptonite" Crypto.PubKey.ECC.ECDSA (PublicKey (..), Signature (..), verify)
-import "cryptonite" Crypto.PubKey.ECC.DH (calculatePublic)
-import "cryptonite" Crypto.Hash (SHA256 (..))
 import qualified Data.Text as Text
+import IHP.Prelude
+import Test.Hspec
+import "cryptonite" Crypto.Hash (SHA256 (..))
+import "cryptonite" Crypto.PubKey.ECC.DH (calculatePublic)
+import "cryptonite" Crypto.PubKey.ECC.ECDSA (PublicKey (..), Signature (..), verify)
+import "cryptonite" Crypto.PubKey.ECC.Types (CurveName (SEC_p256r1), Point (..), getCurveByName)
 
 spec :: Spec
 spec = describe "Application.Service.Push" do
-    let keys = VapidKeys
-            { vapidPublicKeyB64Url = ""
-            , vapidPrivateScalar = 0x1f3a8b2c
-            , vapidSubject = "mailto:test@halemans.local"
-            }
+    let keys =
+            VapidKeys
+                { vapidPublicKeyB64Url = ""
+                , vapidPrivateScalar = 0x1f3a8b2c
+                , vapidSubject = "mailto:test@halemans.local"
+                }
 
     describe "b64url" do
         it "round-trips" do
@@ -44,9 +45,9 @@ spec = describe "Application.Service.Push" do
             let signatureBytes = b64urlDecode signatureB64
             BS.length signatureBytes `shouldBe` 64
             let (r, s) = BS.splitAt 32 signatureBytes
-            let signature = Signature { sign_r = os2ip r, sign_s = os2ip s }
+            let signature = Signature{sign_r = os2ip r, sign_s = os2ip s}
             let curve = getCurveByName SEC_p256r1
-            let publicKey = PublicKey { public_curve = curve, public_q = calculatePublic curve keys.vapidPrivateScalar }
+            let publicKey = PublicKey{public_curve = curve, public_q = calculatePublic curve keys.vapidPrivateScalar}
             verify SHA256 publicKey signature (cs (header <> "." <> claims) :: ByteString) `shouldBe` True
 
         it "sets aud to the endpoint origin" do

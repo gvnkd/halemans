@@ -1,11 +1,13 @@
 module Web.View.FieldMappings.Index where
-import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml, enabledBadgeHtml, inlinePostFormHtml)
 
-data IndexView = IndexView { mappings :: [FieldMapping] }
+import Web.View.Fragments (editDeleteActionsHtml, enabledBadgeHtml, inlinePostFormHtml, pageHeaderHtml)
+import Web.View.Prelude
+
+data IndexView = IndexView {mappings :: [FieldMapping]}
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Field mappings" headerActions}
         <p class="text-secondary">
             Facet override chain: for each facet the first mapping (by ascending rank) that yields a
@@ -39,8 +41,9 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            headerActions = [hsx|
+      where
+        headerActions =
+            [hsx|
                 <div>
                     {inlinePostFormHtml (pathTo RecomputeFacetsAction) "Recompute facets" "btn btn-sm btn-outline-warning" (Just "recompute-facets") False}
                     <a href={NewFieldMappingAction} class="btn btn-sm btn-primary" data-testid="new-field-mapping">New mapping</a>
@@ -48,7 +51,8 @@ instance View IndexView where
             |]
 
 renderMapping :: FieldMapping -> Html
-renderMapping mapping = [hsx|
+renderMapping mapping =
+    [hsx|
     <tr data-testid="field-mapping-row">
         <td data-testid="field-mapping-facet">{mapping.facet}</td>
         <td>{mapping.rank}</td>

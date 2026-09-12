@@ -1,40 +1,40 @@
-module Application.Service.Jira
-( JiraIssue (..)
-, JiraComment (..)
-, JiraConfig (..)
-, apiUrl
-, jqlForAlert
-, jqlSubjectTerms
-, jqlStringLiteral
-, projectClause
-, searchIssues
-, getIssue
-, getIssueComments
-, createIssue
-, upsertLink
-, issueUrl
-, createTicketWithConfig
-, sourceProjectOverride
-, connectionOk
+module Application.Service.Jira (
+    JiraIssue (..),
+    JiraComment (..),
+    JiraConfig (..),
+    apiUrl,
+    jqlForAlert,
+    jqlSubjectTerms,
+    jqlStringLiteral,
+    projectClause,
+    searchIssues,
+    getIssue,
+    getIssueComments,
+    createIssue,
+    upsertLink,
+    issueUrl,
+    createTicketWithConfig,
+    sourceProjectOverride,
+    connectionOk,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport
-import IHP.QueryBuilder
-import IHP.Fetch (fetch, fetchOneOrNothing)
-import Generated.Types hiding (JiraConfig)
-import Data.Aeson (Value, object, (.=), (.:), (.:?), (.!=))
-import Data.Aeson.Types (parseMaybe)
+import qualified Application.Service.Http as Http
+import Control.Exception (SomeException, try)
+import Control.Lens ((&), (.~), (^.))
+import Data.Aeson (Value, object, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.Vector as Vector
-import qualified Data.Text as Text
-import qualified Network.Wreq as Wreq
-import qualified Application.Service.Http as Http
-import Control.Lens ((&), (^.), (.~))
-import Control.Exception (try, SomeException)
+import Data.Aeson.Types (parseMaybe)
 import Data.Functor ((<&>))
+import qualified Data.Text as Text
+import qualified Data.Vector as Vector
+import Generated.Types hiding (JiraConfig)
+import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.ModelSupport
+import IHP.Prelude
+import IHP.QueryBuilder
+import qualified Network.Wreq as Wreq
 
 -- Jira REST v3 client (design_docs/milestone_3.md §5). Auto-link on alert
 -- creation, 5-min status sync, manual ticket creation; never auto-creates.
@@ -45,7 +45,8 @@ data JiraConfig = JiraConfig
     , project :: Text
     , projects :: [Text]
     , apiVersion :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 apiUrl :: JiraConfig -> Text -> Text
 apiUrl config path =
@@ -72,7 +73,8 @@ data JiraIssue = JiraIssue
     , issueStatusCategory :: Text
     , issueLabels :: [Text]
     , issueDescription :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON JiraIssue where
     parseJSON = Aeson.withObject "JiraIssue" \o -> do
@@ -92,7 +94,7 @@ instance Aeson.FromJSON JiraIssue where
                     Nothing -> pure ""
                 pure (name, categoryKey)
             Nothing -> pure ("", "")
-        pure JiraIssue { .. }
+        pure JiraIssue{..}
 
 -- Description bodies are plain text on v2/Server (and our mock) but ADF
 -- documents on v3/Cloud; extract the text nodes in document order.
@@ -105,7 +107,7 @@ descriptionText (Aeson.Object o) =
         children = case KeyMap.lookup "content" o of
             Just (Aeson.Array arr) -> Text.concat (map descriptionText (Vector.toList arr))
             _ -> ""
-    in own <> children
+     in own <> children
 descriptionText _ = ""
 
 -- One issue comment (GET /issue/{key}/comment); body goes through the same
@@ -114,7 +116,8 @@ data JiraComment = JiraComment
     { commentAuthor :: Text
     , commentCreated :: Text
     , commentBody :: Text
-    } deriving (Eq, Show)
+    }
+    deriving (Eq, Show)
 
 instance Aeson.FromJSON JiraComment where
     parseJSON = Aeson.withObject "JiraComment" \o -> do
@@ -125,7 +128,7 @@ instance Aeson.FromJSON JiraComment where
         commentCreated <- o .:? "created" .!= ""
         rawBody <- o .:? "body"
         let commentBody = maybe "" descriptionText rawBody
-        pure JiraComment { .. }
+        pure JiraComment{..}
 
 -- Multi-project JQL (milestone 10): several projects from jira_configs are
 -- OR-ed via `project in (...)`; an empty list drops the project clause
@@ -138,22 +141,24 @@ jqlForAlert projects alert =
 -- related-tasks JQL (any status — historical tickets included).
 jqlSubjectTerms :: Alert -> Text
 jqlSubjectTerms alert = Text.intercalate " OR " terms
-    where
-        subjectTerms = mapMaybe (\term -> term)
+  where
+    subjectTerms =
+        mapMaybe
+            (\term -> term)
             [ alert.host <&> (\host -> "labels ~ " <> jqlStringLiteral host)
             , alert.checkName <&> (\check -> "text ~ " <> jqlStringLiteral check)
             ]
-        terms = if null subjectTerms then ["text ~ " <> jqlStringLiteral alert.title] else subjectTerms
+    terms = if null subjectTerms then ["text ~ " <> jqlStringLiteral alert.title] else subjectTerms
 
 -- JQL string literal: quoting is mandatory for multi-word values (hosts
 -- with spaces, check names), and embedded double quotes/backslashes must
 -- be escaped or Jira rejects the whole query with a 400.
 jqlStringLiteral :: Text -> Text
 jqlStringLiteral text = "\"" <> Text.concatMap escape text <> "\""
-    where
-        escape '"' = "\\\""
-        escape '\\' = "\\\\"
-        escape c = Text.singleton c
+  where
+    escape '"' = "\\\""
+    escape '\\' = "\\\\"
+    escape c = Text.singleton c
 
 projectClause :: [Text] -> Text
 projectClause [] = ""
@@ -165,9 +170,10 @@ authOpts config = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> c
 
 searchIssues :: JiraConfig -> Text -> Int -> IO (Either Text [JiraIssue])
 searchIssues config jql maxResults = do
-    let opts = authOpts config
-            & Wreq.param "jql" .~ [jql]
-            & Wreq.param "maxResults" .~ [tshow maxResults]
+    let opts =
+            authOpts config
+                & Wreq.param "jql" .~ [jql]
+                & Wreq.param "maxResults" .~ [tshow maxResults]
     result <- try (Http.getFollowing opts (cs (apiUrl config "/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -199,14 +205,16 @@ getIssueComments config key = do
 
 createIssue :: JiraConfig -> Text -> Text -> Text -> IO (Either Text Text)
 createIssue config issueType summary description = do
-    let body = object
-            [ "fields" .= object
-                [ "project" .= object ["key" .= config.project]
-                , "summary" .= summary
-                , "description" .= description
-                , "issuetype" .= object ["name" .= issueType]
+    let body =
+            object
+                [ "fields"
+                    .= object
+                        [ "project" .= object ["key" .= config.project]
+                        , "summary" .= summary
+                        , "description" .= description
+                        , "issuetype" .= object ["name" .= issueType]
+                        ]
                 ]
-            ]
     result <- try (Http.postFollowing (authOpts config) (cs (apiUrl config "/issue")) body)
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
@@ -229,21 +237,28 @@ issueUrl config key = Text.dropWhileEnd (== '/') config.baseUrl <> "/browse/" <>
 upsertLink :: (?modelContext :: ModelContext) => JiraConfig -> Id Alert -> Text -> JiraIssue -> IO JiraLink
 upsertLink config alertId origin issue = do
     now <- getCurrentTime
-    existing <- query @JiraLink
-        |> filterWhere (#alertId, alertId)
-        |> filterWhere (#ticketKey, issue.issueKey)
-        |> fetchOneOrNothing
-    let applyFields record = record
-            |> set #summary issue.issueSummary
-            |> set #status issue.issueStatus
-            |> set #url (issueUrl config issue.issueKey)
-            |> set #syncedAt now
+    existing <-
+        query @JiraLink
+            |> filterWhere (#alertId, alertId)
+            |> filterWhere (#ticketKey, issue.issueKey)
+            |> fetchOneOrNothing
+    let applyFields record =
+            record
+                |> set #summary issue.issueSummary
+                |> set #status issue.issueStatus
+                |> set #url (issueUrl config issue.issueKey)
+                |> set #syncedAt now
     case existing of
         Just link -> updateRecord (applyFields link)
-        Nothing -> createRecord (applyFields (newRecord @JiraLink
-            |> set #alertId alertId
-            |> set #ticketKey issue.issueKey
-            |> set #origin origin))
+        Nothing ->
+            createRecord
+                ( applyFields
+                    ( newRecord @JiraLink
+                        |> set #alertId alertId
+                        |> set #ticketKey issue.issueKey
+                        |> set #origin origin
+                    )
+                )
 
 -- Config-explicit ticket creation (milestone 10): the caller picks the
 -- config and target project; DB resolution lives in
@@ -259,15 +274,16 @@ createTicketWithConfig config alertId issueType summary body = do
                 Right issue -> Right <$> upsertLink config alertId "manual" issue
                 Left _ -> do
                     now <- getCurrentTime
-                    link <- newRecord @JiraLink
-                        |> set #alertId alertId
-                        |> set #ticketKey key
-                        |> set #summary summary
-                        |> set #status ""
-                        |> set #url (issueUrl config key)
-                        |> set #origin "manual"
-                        |> set #syncedAt now
-                        |> createRecord
+                    link <-
+                        newRecord @JiraLink
+                            |> set #alertId alertId
+                            |> set #ticketKey key
+                            |> set #summary summary
+                            |> set #status ""
+                            |> set #url (issueUrl config key)
+                            |> set #origin "manual"
+                            |> set #syncedAt now
+                            |> createRecord
                     pure (Right link)
 
 -- JiraSyncJob body lives in Application.Service.Jira.DbConfig (needs DB

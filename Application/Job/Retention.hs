@@ -1,15 +1,15 @@
 module Application.Job.Retention where
 
-import IHP.Prelude
+import Control.Monad (void)
+import Data.Int (Int64)
+import Generated.Types
+import IHP.Fetch (fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.Job.Types
 import IHP.ModelSupport
+import IHP.Prelude
 import IHP.QueryBuilder
-import IHP.Fetch (fetchOneOrNothing)
 import IHP.TypedSql (sqlExecTyped, typedSql)
-import Generated.Types
-import Data.Int (Int64)
-import Control.Monad (void)
 
 -- Retention (design_docs/milestone_5.md §3): daily batched prune of
 -- raw_events older than retention_configs.raw_events_days. Batches commit
@@ -18,9 +18,10 @@ import Control.Monad (void)
 instance Job RetentionJob where
     perform _job = do
         pruneTerminalJobRows
-        maybeConfig <- query @RetentionConfig
-            |> orderByDesc #updatedAt
-            |> fetchOneOrNothing
+        maybeConfig <-
+            query @RetentionConfig
+                |> orderByDesc #updatedAt
+                |> fetchOneOrNothing
         case maybeConfig of
             Nothing -> putStrLn ("retention: no retention_configs row, skipping" :: Text)
             Just config
@@ -28,11 +29,14 @@ instance Job RetentionJob where
                 | otherwise -> pruneRawEvents config
 
         now <- getCurrentTime
-        next <- newRecord @RetentionJob
-            |> set #runAt (addUTCTime 86400 now)
-            |> createRecord
+        next <-
+            newRecord @RetentionJob
+                |> set #runAt (addUTCTime 86400 now)
+                |> createRecord
         let nextId = get #id next
-        _ <- sqlExecTyped [typedSql|
+        _ <-
+            sqlExecTyped
+                [typedSql|
             DELETE FROM retention_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}
         |]
@@ -47,9 +51,10 @@ pruneRawEvents config = do
     let cutoff = addUTCTime (fromIntegral (-config.rawEventsDays) * 86400) startedAt
     (batches, rows) <- deleteBatches cutoff 0 0
     now <- getCurrentTime
-    _ <- config
-        |> set #lastRunAt (Just now)
-        |> updateRecord
+    _ <-
+        config
+            |> set #lastRunAt (Just now)
+            |> updateRecord
     putStrLn ("retention: pruned " <> tshow rows <> " raw_events in " <> tshow batches <> " batches (" <> tshow (diffUTCTime now startedAt) <> ")" :: Text)
     pure ()
   where
@@ -62,7 +67,9 @@ pruneRawEvents config = do
 -- | One committed batch. The inner SELECT keeps the giant first-run prune
 -- from holding one transaction (milestone_5.md §13).
 deleteBatch :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
-deleteBatch cutoff = sqlExecTyped [typedSql|
+deleteBatch cutoff =
+    sqlExecTyped
+        [typedSql|
     DELETE FROM raw_events
     WHERE id IN (SELECT id FROM raw_events WHERE received_at < ${cutoff} LIMIT 1000)
 |]
@@ -74,10 +81,14 @@ deleteBatch cutoff = sqlExecTyped [typedSql|
 pruneTerminalJobRows :: (?modelContext :: ModelContext) => IO ()
 pruneTerminalJobRows = do
     cutoff <- addUTCTime (-86400) <$> getCurrentTime
-    counts <- mapM (pruneTable cutoff)
-        [ pruneEnrichAlertJobs, pruneWriteBackJobs
-        , prunePushNotificationJobs, pruneLlmAnalysisJobs
-        ]
+    counts <-
+        mapM
+            (pruneTable cutoff)
+            [ pruneEnrichAlertJobs
+            , pruneWriteBackJobs
+            , prunePushNotificationJobs
+            , pruneLlmAnalysisJobs
+            ]
     let total = sum counts
     when (total > 0) do
         putStrLn ("retention: pruned " <> tshow total <> " terminal job rows" :: Text)
@@ -88,7 +99,9 @@ pruneTerminalJobRows = do
         pure (deleted + rest)
 
 pruneEnrichAlertJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
-pruneEnrichAlertJobs cutoff = sqlExecTyped [typedSql|
+pruneEnrichAlertJobs cutoff =
+    sqlExecTyped
+        [typedSql|
     DELETE FROM enrich_alert_jobs
     WHERE id IN (SELECT id FROM enrich_alert_jobs
         WHERE updated_at < ${cutoff}
@@ -97,7 +110,9 @@ pruneEnrichAlertJobs cutoff = sqlExecTyped [typedSql|
 |]
 
 pruneWriteBackJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
-pruneWriteBackJobs cutoff = sqlExecTyped [typedSql|
+pruneWriteBackJobs cutoff =
+    sqlExecTyped
+        [typedSql|
     DELETE FROM write_back_jobs
     WHERE id IN (SELECT id FROM write_back_jobs
         WHERE updated_at < ${cutoff}
@@ -106,7 +121,9 @@ pruneWriteBackJobs cutoff = sqlExecTyped [typedSql|
 |]
 
 prunePushNotificationJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
-prunePushNotificationJobs cutoff = sqlExecTyped [typedSql|
+prunePushNotificationJobs cutoff =
+    sqlExecTyped
+        [typedSql|
     DELETE FROM push_notification_jobs
     WHERE id IN (SELECT id FROM push_notification_jobs
         WHERE updated_at < ${cutoff}
@@ -115,7 +132,9 @@ prunePushNotificationJobs cutoff = sqlExecTyped [typedSql|
 |]
 
 pruneLlmAnalysisJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
-pruneLlmAnalysisJobs cutoff = sqlExecTyped [typedSql|
+pruneLlmAnalysisJobs cutoff =
+    sqlExecTyped
+        [typedSql|
     DELETE FROM llm_analysis_jobs
     WHERE id IN (SELECT id FROM llm_analysis_jobs
         WHERE updated_at < ${cutoff}

@@ -1,17 +1,17 @@
-module Application.Pipeline.Escalation
-( EscalationStep (..)
-, stepsFromJSON
-, stepDeadline
-, DueDecision (..)
-, TrackerAdvance (..)
-, decideDueTracker
+module Application.Pipeline.Escalation (
+    EscalationStep (..),
+    stepsFromJSON,
+    stepDeadline,
+    DueDecision (..),
+    TrackerAdvance (..),
+    decideDueTracker,
 ) where
 
-import IHP.Prelude
 import Data.Aeson (Value (..))
 import qualified Data.Aeson as Aeson
-import qualified Data.Vector as Vector
 import Data.Aeson.Types (parseMaybe)
+import qualified Data.Vector as Vector
+import IHP.Prelude
 
 -- Pure escalation-step arithmetic (design_docs/milestone_2.md §6). DB rows
 -- are decoded upstream; this module never touches the DB.
@@ -29,13 +29,14 @@ data EscalationStep = EscalationStep
 -- Malformed entries are dropped.
 stepsFromJSON :: Value -> [EscalationStep]
 stepsFromJSON (Array steps) = mapMaybe (parseMaybe parseStep) (Vector.toList steps)
-    where
-        parseStep = Aeson.withObject "escalation step" \o -> do
-            afterSeconds <- o Aeson..: "after_seconds"
-            targetTeamId <- o Aeson..:? "target_team_id"
-            targetUserId <- o Aeson..:? "target_user_id"
-            unlessStatus <- o Aeson..:? "unless_status"
-            pure EscalationStep
+  where
+    parseStep = Aeson.withObject "escalation step" \o -> do
+        afterSeconds <- o Aeson..: "after_seconds"
+        targetTeamId <- o Aeson..:? "target_team_id"
+        targetUserId <- o Aeson..:? "target_user_id"
+        unlessStatus <- o Aeson..:? "unless_status"
+        pure
+            EscalationStep
                 { esAfterSeconds = afterSeconds
                 , esTargetTeamId = targetTeamId
                 , esTargetUserId = targetUserId
@@ -66,10 +67,10 @@ decideDueTracker now steps currentStep alertStatus suppressed
     | alertStatus /= "firing" = EscalateCancel
     | otherwise = case drop currentStep steps of
         [] -> EscalateCancel
-        (step:_)
+        (step : _)
             | Just alertStatus == step.esUnlessStatus -> EscalateCancel
             | otherwise -> EscalateNotify step (advance currentStep)
-    where
-        advance index = case drop (index + 1) steps of
-            (nextStep:_) -> AdvanceTo (index + 1) (stepDeadline now nextStep)
-            [] -> MarkDone
+  where
+    advance index = case drop (index + 1) steps of
+        (nextStep : _) -> AdvanceTo (index + 1) (stepDeadline now nextStep)
+        [] -> MarkDone

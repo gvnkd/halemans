@@ -1,12 +1,12 @@
 module Web.Controller.Admin where
 
-import Web.Controller.Prelude
-import Web.View.Admin.Index
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
-import Data.Time.Clock (getCurrentTime)
 import Control.Monad (void)
+import Data.Time.Clock (getCurrentTime)
 import IHP.ModelSupport (withTransaction)
 import IHP.TypedSql (sqlExecTyped, typedSql)
+import Web.Controller.Prelude
+import Web.View.Admin.Index
 
 instance Controller AdminController where
     beforeAction = ensureIsUser
@@ -15,16 +15,17 @@ instance Controller AdminController where
         requirePrivilege "admin"
         metrics <- jobTypeMetrics
         failures <- recentFailedJobs
-        tokens <- query @ApiToken
-            |> orderByDesc #createdAt
-            |> fetch
+        tokens <-
+            query @ApiToken
+                |> orderByDesc #createdAt
+                |> fetch
         apiTokens <- forM tokens \token -> do
             owner <- fetch token.userId
             pure (token, owner.email)
-        render IndexView { .. }
+        render IndexView{..}
 
     -- Admins can revoke any user's token (design_docs/milestone_6.md §4).
-    action AdminRevokeApiTokenAction { apiTokenId } = do
+    action AdminRevokeApiTokenAction{apiTokenId} = do
         requirePrivilege "admin"
         token <- fetch apiTokenId
         now <- getCurrentTime

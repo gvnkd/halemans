@@ -1,11 +1,13 @@
 module Web.View.Integrations.JiraEdit where
-import Web.View.Prelude
-import Web.View.Integrations.Form (jiraConfigFormFields)
 
-data JiraEditView = JiraEditView { config :: JiraConfig }
+import Web.View.Integrations.Form (jiraConfigFormFields)
+import Web.View.Prelude
+
+data JiraEditView = JiraEditView {config :: JiraConfig}
 
 instance View JiraEditView where
-    html JiraEditView { .. } = [hsx|
+    html JiraEditView{..} =
+        [hsx|
         <h1>Edit Jira connection</h1>
         <form method="POST" action={UpdateJiraConfigAction config.id} data-testid="jira-config-edit-form" class="maxw-500">
             {jiraConfigFormFields (Just config)}

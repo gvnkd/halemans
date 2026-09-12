@@ -1,11 +1,13 @@
 module Web.View.Teams.Index where
-import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, editDeleteActionsHtml)
 
-data IndexView = IndexView { teamsWithMembers :: [(Team, [(User, Text)])] }
+import Web.View.Fragments (editDeleteActionsHtml, pageHeaderHtml)
+import Web.View.Prelude
+
+data IndexView = IndexView {teamsWithMembers :: [(Team, [(User, Text)])]}
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Teams" newButton}
         <table class="table" data-testid="teams-table">
             <thead>
@@ -21,11 +23,12 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = [hsx|<a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">New team</a>|]
+      where
+        newButton = [hsx|<a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">New team</a>|]
 
 renderTeam :: (Team, [(User, Text)]) -> Html
-renderTeam (team, members) = [hsx|
+renderTeam (team, members) =
+    [hsx|
     <tr data-testid="team-row">
         <td>{team.name}</td>
         <td>{team.description}</td>
@@ -35,7 +38,8 @@ renderTeam (team, members) = [hsx|
         </td>
     </tr>
 |]
-    where
-        memberList = forEach members \(user, role) -> [hsx|
+  where
+    memberList = forEach members \(user, role) ->
+        [hsx|
             <span class="badge bg-secondary">{user.email} ({role})</span>
         |]

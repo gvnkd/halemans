@@ -1,10 +1,12 @@
 module Web.View.FieldMappings.New where
+
 import Web.View.Prelude
 
 data NewView = NewView
 
 instance View NewView where
-    html NewView = [hsx|
+    html NewView =
+        [hsx|
         <h1>New field mapping</h1>
         <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form" class="maxw-600">
             {fieldMappingFormFields "" 100 "field" "" True}
@@ -13,7 +15,8 @@ instance View NewView where
     |]
 
 fieldMappingFormFields :: Text -> Int -> Text -> Text -> Bool -> Html
-fieldMappingFormFields facet rank kind key enabled = [hsx|
+fieldMappingFormFields facet rank kind key enabled =
+    [hsx|
     <div class="mb-3">
         <label class="form-label">Facet name</label>
         <input name="facet" type="text" class="form-control" value={facet} placeholder="env" data-testid="mapping-facet" required="required"/>
@@ -39,6 +42,7 @@ fieldMappingFormFields facet rank kind key enabled = [hsx|
 |]
 
 kindOption :: Text -> Text -> Html
-kindOption selected value = if value == selected
-    then [hsx|<option value={value} selected="selected">{value}</option>|]
-    else [hsx|<option value={value}>{value}</option>|]
+kindOption selected value =
+    if value == selected
+        then [hsx|<option value={value} selected="selected">{value}</option>|]
+        else [hsx|<option value={value}>{value}</option>|]

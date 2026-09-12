@@ -1,11 +1,11 @@
 module Test.SourceHealthSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (newRecord)
-import Generated.Types
 import Application.Service.SourceHealth
 import Data.Aeson (object, (.=))
+import Generated.Types
+import IHP.ModelSupport (newRecord)
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.SourceHealth" do

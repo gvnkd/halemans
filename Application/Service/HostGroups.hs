@@ -1,24 +1,24 @@
-module Application.Service.HostGroups
-( HostGroupScope (..)
-, hostGroupScope
-, teamHostGroups
-, teamHostGroupNames
-, parseHostGroupsInput
-, hostGroupsToJson
-, replaceHostGroupCache
+module Application.Service.HostGroups (
+    HostGroupScope (..),
+    hostGroupScope,
+    teamHostGroups,
+    teamHostGroupNames,
+    parseHostGroupsInput,
+    hostGroupsToJson,
+    replaceHostGroupCache,
 ) where
 
-import IHP.Prelude
-import IHP.ModelSupport (ModelContext, Id' (..), newRecord, createRecord)
-import IHP.HaskellSupport (set)
-import IHP.TypedSql (sqlExecTyped, typedSql)
-import Generated.Types
 import Application.Connector.Zabbix (ZabbixGroup (..))
+import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
-import qualified Data.Text as Text
 import Data.List (nub)
-import Control.Monad (void)
+import qualified Data.Text as Text
+import Generated.Types
+import IHP.HaskellSupport (set)
+import IHP.ModelSupport (Id' (..), ModelContext, createRecord, newRecord)
+import IHP.Prelude
+import IHP.TypedSql (sqlExecTyped, typedSql)
 
 -- | Per-source fetch scope (source.config.hostGroupScope): "all" (default)
 -- ingests every zabbix trigger event; "teams" restricts event.get to the
@@ -47,9 +47,11 @@ teamHostGroupNames = nub . concatMap teamHostGroups
 -- | Form input: comma- and/or newline-separated names.
 parseHostGroupsInput :: Text -> [Text]
 parseHostGroupsInput input =
-    [name | part <- Text.split (\c -> c == ',' || c == '\n') input
-          , let name = Text.strip part
-          , name /= ""]
+    [ name
+    | part <- Text.split (\c -> c == ',' || c == '\n') input
+    , let name = Text.strip part
+    , name /= ""
+    ]
 
 hostGroupsToJson :: [Text] -> Aeson.Value
 hostGroupsToJson = Aeson.toJSON
@@ -61,10 +63,11 @@ replaceHostGroupCache :: (?modelContext :: ModelContext) => Id' "sources" -> [Za
 replaceHostGroupCache sourceId groups = do
     void $ sqlExecTyped [typedSql| DELETE FROM zabbix_host_groups WHERE source_id = ${sourceId} |]
     forM_ groups \group -> do
-        _ <- newRecord @ZabbixHostGroup
-            |> set #sourceId sourceId
-            |> set #name group.groupName
-            |> set #groupId group.groupId
-            |> createRecord
+        _ <-
+            newRecord @ZabbixHostGroup
+                |> set #sourceId sourceId
+                |> set #name group.groupName
+                |> set #groupId group.groupId
+                |> createRecord
         pure ()
     pure (length groups)

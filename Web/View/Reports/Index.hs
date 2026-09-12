@@ -1,4 +1,5 @@
 module Web.View.Reports.Index where
+
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -14,7 +15,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         <h1>Reports</h1>
         <form method="GET" action={ReportsAction} class="row g-2 align-items-end mb-4" data-testid="reports-form">
             <div class="col-auto">
@@ -45,7 +47,8 @@ instance View IndexView where
     |]
 
 chartPanel :: Text -> Text -> Text -> Html
-chartPanel testId title svg = [hsx|
+chartPanel testId title svg =
+    [hsx|
     <div class="card mb-4" data-testid={testId}>
         <div class="card-body report-chart">
             <h5 class="card-title">{title}</h5>
@@ -62,13 +65,13 @@ windowOption selected value =
             720 -> "30d"
             other -> show other <> "h"
         valueText = show value :: Text
-    in if value == selected
-        then [hsx|<option value={valueText} selected="selected">{label}</option>|]
-        else [hsx|<option value={valueText}>{label}</option>|]
+     in if value == selected
+            then [hsx|<option value={valueText} selected="selected">{label}</option>|]
+            else [hsx|<option value={valueText}>{label}</option>|]
 
 envOption :: Maybe Text -> Text -> Html
 envOption selected value =
     let label = if value == "" then "All environments" else value
-    in if Just value == selected || (value == "" && isNothing selected)
-        then [hsx|<option value={value} selected="selected">{label}</option>|]
-        else [hsx|<option value={value}>{label}</option>|]
+     in if Just value == selected || (value == "" && isNothing selected)
+            then [hsx|<option value={value} selected="selected">{label}</option>|]
+            else [hsx|<option value={value}>{label}</option>|]

@@ -1,13 +1,13 @@
 module Web.Controller.Teams where
 
-import Web.Controller.Prelude
-import Web.View.Teams.Index
-import Web.View.Teams.New
-import Web.View.Teams.Edit
+import Application.Service.HostGroups (hostGroupsToJson, teamHostGroups)
 import qualified Data.Aeson as Aeson
 import Data.List (nub, sort)
 import IHP.TypedSql (sqlExecTyped, typedSql)
-import Application.Service.HostGroups (hostGroupsToJson, teamHostGroups)
+import Web.Controller.Prelude
+import Web.View.Teams.Edit
+import Web.View.Teams.Index
+import Web.View.Teams.New
 
 instance Controller TeamsController where
     beforeAction = ensureIsUser
@@ -16,32 +16,31 @@ instance Controller TeamsController where
         requirePrivilege "manage_users"
         teams <- query @Team |> orderByAsc #name |> fetch
         members <- forM teams \team -> do
-            rows <- query @TeamMember
-                |> filterWhere (#teamId, get #id team)
-                |> fetch
+            rows <-
+                query @TeamMember
+                    |> filterWhere (#teamId, get #id team)
+                    |> fetch
             forM rows \row -> do
                 user <- fetch row.userId
                 pure (user, row.teamRole)
-        render IndexView { teamsWithMembers = zip teams members }
-
+        render IndexView{teamsWithMembers = zip teams members}
     action NewTeamAction = do
         requirePrivilege "manage_users"
         users <- query @User |> orderByAsc #email |> fetch
         availableGroups <- cachedHostGroupNames
-        render NewView { users, currentRoles = [], availableGroups }
-
+        render NewView{users, currentRoles = [], availableGroups}
     action CreateTeamAction = do
         requirePrivilege "manage_users"
-        team <- newRecord @Team
-            |> set #name (param @Text "name")
-            |> set #description (param @Text "description")
-            |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
-            |> createRecord
+        team <-
+            newRecord @Team
+                |> set #name (param @Text "name")
+                |> set #description (param @Text "description")
+                |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
+                |> createRecord
         saveMembers team
         setSuccessMessage "Team created"
         redirectTo TeamsAction
-
-    action EditTeamAction { teamId } = do
+    action EditTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
         users <- query @User |> orderByAsc #email |> fetch
@@ -49,9 +48,8 @@ instance Controller TeamsController where
         availableGroups <- cachedHostGroupNames
         let currentRoles = map (\row -> (row.userId, row.teamRole)) rows
             hostGroups = teamHostGroups team
-        render EditView { team, users, currentRoles, hostGroups, availableGroups }
-
-    action UpdateTeamAction { teamId } = do
+        render EditView{team, users, currentRoles, hostGroups, availableGroups}
+    action UpdateTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
         let dashboardConfig = paramOrNothing @Text "defaultDashboardConfig"
@@ -59,26 +57,26 @@ instance Controller TeamsController where
             Just raw | raw /= "" -> case Aeson.decode (cs raw) of
                 Nothing -> do
                     setErrorMessage "Default dashboard config is not valid JSON"
-                    redirectTo EditTeamAction { teamId }
+                    redirectTo EditTeamAction{teamId}
                 Just config -> do
                     updateTeam team (Just config)
                     redirectTo TeamsAction
             _ -> do
                 updateTeam team Nothing
                 redirectTo TeamsAction
-        where
-            updateTeam team config = do
-                updated <- team
+      where
+        updateTeam team config = do
+            updated <-
+                team
                     |> set #name (param @Text "name")
                     |> set #description (param @Text "description")
                     |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
                     |> set #defaultDashboardConfig config
                     |> updateRecord
-                _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
-                saveMembers updated
-                setSuccessMessage "Team updated"
-
-    action DeleteTeamAction { teamId } = do
+            _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
+            saveMembers updated
+            setSuccessMessage "Team updated"
+    action DeleteTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
         _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
@@ -106,18 +104,22 @@ saveMembers team = do
             Just role | role `elem` ["member", "lead"] -> Just (get #id user, role)
             _ -> Nothing
     let selected = catMaybes picks
-        ordered = map fst (filter (\(_, role) -> role == "lead") selected)
-            ++ map fst (filter (\(_, role) -> role /= "lead") selected)
+        ordered =
+            map fst (filter (\(_, role) -> role == "lead") selected)
+                ++ map fst (filter (\(_, role) -> role /= "lead") selected)
     forM_ selected \(userId, role) -> do
-        _ <- newRecord @TeamMember
-            |> set #teamId (get #id team)
-            |> set #userId userId
-            |> set #teamRole role
-            |> createRecord
+        _ <-
+            newRecord @TeamMember
+                |> set #teamId (get #id team)
+                |> set #userId userId
+                |> set #teamRole role
+                |> createRecord
         pure ()
     let membersJson = Aeson.toJSON (map (tshow :: Id User -> Text) ordered)
         teamId = get #id team
-    _ <- sqlExecTyped [typedSql|
+    _ <-
+        sqlExecTyped
+            [typedSql|
         INSERT INTO on_call_schedules (team_id, members)
         VALUES (${teamId}, ${membersJson})
         ON CONFLICT (team_id) DO UPDATE SET members = EXCLUDED.members, updated_at = NOW()

@@ -1,6 +1,7 @@
 module Web.View.Sources.Index where
+
+import Web.View.Fragments (enabledBadgeHtml, inlinePostFormHtml, pageHeaderHtml)
 import Web.View.Prelude
-import Web.View.Fragments (pageHeaderHtml, inlinePostFormHtml, enabledBadgeHtml)
 
 data IndexView = IndexView
     { sources :: [Source]
@@ -8,7 +9,8 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
-    html IndexView { .. } = [hsx|
+    html IndexView{..} =
+        [hsx|
         {pageHeaderHtml "Sources" newButton}
         <table class="table" data-testid="sources-table">
             <thead>
@@ -32,16 +34,19 @@ instance View IndexView where
             </tbody>
         </table>
     |]
-        where
-            newButton = if canManage
+      where
+        newButton =
+            if canManage
                 then [hsx|<a href={NewSourceAction} class="btn btn-sm btn-primary" data-testid="new-source">New source</a>|]
                 else mempty
-            actionsHeader = if canManage
+        actionsHeader =
+            if canManage
                 then [hsx|<th></th>|]
                 else mempty
 
 renderSourceRow :: Bool -> Source -> Html
-renderSourceRow canManage source = [hsx|
+renderSourceRow canManage source =
+    [hsx|
     <tr data-source-type={sourceType} data-testid="source-row">
         <td>{source.name}</td>
         <td>{sourceType}</td>
@@ -57,24 +62,28 @@ renderSourceRow canManage source = [hsx|
         {actions}
     </tr>
 |]
-    where
-        sourceType :: Text
-        sourceType = get #type_ source
-        enabledBadge = enabledBadgeHtml source.enabled
-        healthBadge = if source.consecutiveFailures > 0
+  where
+    sourceType :: Text
+    sourceType = get #type_ source
+    enabledBadge = enabledBadgeHtml source.enabled
+    healthBadge =
+        if source.consecutiveFailures > 0
             then [hsx|<span class="badge bg-danger">failing</span>|]
             else [hsx|<span class="badge bg-success">healthy</span>|]
-        actions = if not canManage
+    actions =
+        if not canManage
             then mempty
-            else [hsx|
+            else
+                [hsx|
                 <td>
                     <a href={EditSourceAction source.id} class="btn btn-sm btn-outline-secondary" data-testid="edit-source">Edit</a>
                     {inlinePostFormHtml (pathTo (ToggleSourceAction source.id)) toggleLabel "btn btn-sm btn-outline-warning" (Just "toggle-source") False}
                     {syncButton}
                 </td>
             |]
-        syncButton = if sourceType == "zabbix"
+    syncButton =
+        if sourceType == "zabbix"
             then inlinePostFormHtml (pathTo (SyncHostGroupsAction source.id)) "Sync host groups" "btn btn-sm btn-outline-secondary" (Just "sync-host-groups") False
             else mempty
-        toggleLabel :: Text
-        toggleLabel = if source.enabled then "Disable" else "Enable"
+    toggleLabel :: Text
+    toggleLabel = if source.enabled then "Disable" else "Enable"

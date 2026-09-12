@@ -1,5 +1,5 @@
-module Test.Helpers
-( atTime
+module Test.Helpers (
+    atTime,
 ) where
 
 import IHP.Prelude

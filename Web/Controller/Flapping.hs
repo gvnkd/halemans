@@ -1,12 +1,12 @@
 module Web.Controller.Flapping where
 
-import Web.Controller.Prelude
-import Web.View.Flapping.Index
 import Application.Service.Flapping
-import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Text.Read (readMaybe)
 import Data.List (groupBy, maximumBy)
 import Data.Ord (comparing)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
+import Text.Read (readMaybe)
+import Web.Controller.Prelude
+import Web.View.Flapping.Index
 
 -- Flapping alerts report (design_docs/milestone_11.md §4): on-demand admin
 -- analysis of alert_events + alert-row succession per fingerprint.
@@ -22,7 +22,9 @@ instance Controller FlappingController where
             -- Look back one max-gap past the window so a loud edge just
             -- before the window still pairs with an in-window resolve.
             from = addUTCTime (negate (fromIntegral (windowHours * 3600 + maxGapSeconds))) now
-        rows <- sqlQueryTyped [typedSql|
+        rows <-
+            sqlQueryTyped
+                [typedSql|
             WITH window_events AS (
                 SELECT e.alert_id, e.kind, e.payload, e.created_at
                 FROM alert_events e
@@ -56,21 +58,21 @@ instance Controller FlappingController where
             ORDER BY e.fingerprint, e.edge_at |]
         let grouped = groupBy (\a b -> get #fingerprint a == get #fingerprint b) rows
             subjects = map (\group -> (subjectOf group, mapMaybe edgeOf group)) grouped
-            params = FlapParams { minFlaps, maxGapSeconds, windowSeconds = windowHours * 3600 }
+            params = FlapParams{minFlaps, maxGapSeconds, windowSeconds = windowHours * 3600}
             reports = detectFlapping params subjects
-        render IndexView { .. }
+        render IndexView{..}
       where
         subjectOf group =
             let latest = maximumBy (comparing (get #edge_at)) group
-            in FlapSubject
-                { fingerprint = fromMaybe "" (get #fingerprint latest)
-                , latestAlertId = get #id latest
-                , title = get #title latest
-                , severity = get #severity latest
-                , effectiveEnv = get #env latest
-                , host = get #host latest
-                , sourceName = get #source_name latest
-                }
+             in FlapSubject
+                    { fingerprint = fromMaybe "" (get #fingerprint latest)
+                    , latestAlertId = get #id latest
+                    , title = get #title latest
+                    , severity = get #severity latest
+                    , effectiveEnv = get #env latest
+                    , host = get #host latest
+                    , sourceName = get #source_name latest
+                    }
         -- UNION ALL subquery columns decode as Maybe (typedSql inference).
         edgeOf row = do
             at <- get #edge_at row

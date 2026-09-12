@@ -1,16 +1,16 @@
 module Web.Controller.Api where
 
-import Web.Controller.Prelude
-import Application.Service.Api.Auth (withApiToken, apiError)
-import Application.Service.Api.RateLimit (LimitClass (..))
+import Application.Service.Api.Alerts (AlertFilters (..), alertDetail, defaultFilters, listAlertsPage)
+import Application.Service.Api.Auth (apiError, withApiToken)
 import Application.Service.Api.Cursor (decodeCursor)
-import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage, alertDetail)
-import Application.Service.Api.Encode (encodeAlertSummary, encodeAlertDetail, encodeEnvCard)
-import Web.View.Dashboard.Index (computeEnvCards)
-import Network.HTTP.Types (status400, status404)
+import Application.Service.Api.Encode (encodeAlertDetail, encodeAlertSummary, encodeEnvCard)
+import Application.Service.Api.RateLimit (LimitClass (..))
 import Data.Aeson (object, (.=))
 import Data.Time.Format.ISO8601 (iso8601ParseM)
+import Network.HTTP.Types (status400, status404)
 import Text.Read (readMaybe)
+import Web.Controller.Prelude
+import Web.View.Dashboard.Index (computeEnvCards)
 
 -- Read-only JSON API (design_docs/milestone_6.md §3). Keyset pagination on
 -- (last_seen_at desc, id desc); the cursor is an opaque base64 of the last
@@ -22,17 +22,17 @@ instance Controller ApiController where
             Left badParam -> apiError status400 "bad_request" ("invalid " <> badParam <> " parameter")
             Right filters -> do
                 (alerts, nextCursor) <- listAlertsPage filters
-                renderJson (object
-                    [ "alerts" .= map encodeAlertSummary alerts
-                    , "next_cursor" .= nextCursor
-                    ])
-
-    action ApiAlertAction { alertId } = withApiToken LimitApi "alerts:read" \_ _ -> do
+                renderJson
+                    ( object
+                        [ "alerts" .= map encodeAlertSummary alerts
+                        , "next_cursor" .= nextCursor
+                        ]
+                    )
+    action ApiAlertAction{alertId} = withApiToken LimitApi "alerts:read" \_ _ -> do
         detail <- alertDetail alertId
         case detail of
             Nothing -> apiError status404 "not_found" "unknown alert id"
             Just found -> renderJson (encodeAlertDetail found)
-
     action ApiEnvironmentsAction = withApiToken LimitApi "alerts:read" \_ _ -> do
         (cards, unassigned) <- computeEnvCards
         renderJson (object ["environments" .= map encodeEnvCard (cards ++ maybeToList unassigned)])
@@ -63,18 +63,19 @@ parseListParams = do
         afSince <- since
         afUntil <- until
         afCursor <- cursor
-        pure AlertFilters
-            { afEnvironment = textParam "environment"
-            , afStatus = textParam "status"
-            , afSeverity = textParam "severity"
-            , afFingerprint = textParam "fingerprint"
-            , afHost = textParam "host"
-            , afService = textParam "service"
-            , afSince
-            , afUntil
-            , afCursor
-            , afLimit
-            }
+        pure
+            AlertFilters
+                { afEnvironment = textParam "environment"
+                , afStatus = textParam "status"
+                , afSeverity = textParam "severity"
+                , afFingerprint = textParam "fingerprint"
+                , afHost = textParam "host"
+                , afService = textParam "service"
+                , afSince
+                , afUntil
+                , afCursor
+                , afLimit
+                }
 
 parseTimeParam :: (?request :: Request, ?respond :: Respond) => Text -> UTCTime -> IO (Either Text UTCTime)
 parseTimeParam name fallback = case paramOrNothing @Text (cs name) of

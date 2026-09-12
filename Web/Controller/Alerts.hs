@@ -1,24 +1,24 @@
 module Web.Controller.Alerts where
 
+import qualified Application.Helper.FilterPrefs as FilterPrefs
+import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
+import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, validSortColumns)
+import qualified Application.Service.AlertList as AlertList
+import qualified Application.Service.Assets.Cache as AssetsCache
+import qualified Application.Service.Cmdb.DbConfig as Cmdb
+import qualified Application.Service.Facets as Facets
+import qualified Application.Service.Jira.DbConfig as Jira
+import Application.Service.Llm.Queue (latestJobErrors)
+import Control.Monad (void)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import Data.Aeson.Types (parseMaybe)
+import qualified Data.List as List
+import IHP.TypedSql (sqlQueryTyped, typedSql)
+import Network.HTTP.Types.URI (renderQuery)
 import Web.Controller.Prelude
 import Web.View.Alerts.Index
 import Web.View.Alerts.Show
-import Application.Pipeline.Actions (ackAlert, unackAlert, closeAlert, addComment)
-import Application.Service.Llm.Queue (latestJobErrors)
-import qualified Application.Service.AlertList as AlertList
-import Application.Service.AlertList (AlertListFilters (..), validSortColumns, defaultAlertListFilters)
-import qualified Application.Helper.FilterPrefs as FilterPrefs
-import Network.HTTP.Types.URI (renderQuery)
-import qualified Data.List as List
-import qualified Application.Service.Cmdb.DbConfig as Cmdb
-import qualified Application.Service.Jira.DbConfig as Jira
-import Data.Aeson.Types (parseMaybe)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
-import qualified Application.Service.Assets.Cache as AssetsCache
-import qualified Application.Service.Facets as Facets
-import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Control.Monad (void)
 
 alertFilterQueryKeys :: [ByteString]
 alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "group", "sort", "dir"]
@@ -40,13 +40,14 @@ instance Controller AlertsController where
             FilterPrefs.saveFilterPrefs currentUser "alerts" (AlertList.alertFiltersToValue filters)
             renderAlertList filters
         | otherwise = case FilterPrefs.filterPrefsFor currentUser.settings "alerts" >>= AlertList.alertFiltersFromValue of
-            Just stored | stored /= defaultAlertListFilters ->
-                redirectToPath (pathTo AlertsAction <> cs (renderQuery True (baseItems stored)))
+            Just stored
+                | stored /= defaultAlertListFilters ->
+                    redirectToPath (pathTo AlertsAction <> cs (renderQuery True (baseItems stored)))
             _ -> renderAlertList defaultAlertListFilters
-        where
-            filtersFromParams =
-                let requestedSort = fromMaybe "last_seen_at" (nonEmptyParam "sort")
-                in AlertListFilters
+      where
+        filtersFromParams =
+            let requestedSort = fromMaybe "last_seen_at" (nonEmptyParam "sort")
+             in AlertListFilters
                     { alfSeverities = paramList @Text "severity"
                     , alfStatuses = paramList @Text "status"
                     , alfEnvs = paramList @Text "env"
@@ -57,64 +58,72 @@ instance Controller AlertsController where
                     , alfSort = if requestedSort `elem` validSortColumns then requestedSort else "last_seen_at"
                     , alfDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
                     }
-            renderAlertList filters = do
-                alerts <- AlertList.listAlerts filters 200
-                counts <- AlertList.countBySeverity filters
-                -- Filter options: inventory names plus override-only names
-                -- that exist solely as materialized env facets.
-                inventoryNames <- map (.name) <$> (query @Environment |> orderByAsc #name |> fetch)
-                facetNames <- AlertList.effectiveEnvNames
-                let envNames = List.sort (List.nub (inventoryNames ++ facetNames))
-                render IndexView { .. }
-
-    action ShowAlertAction { alertId } = do
+        renderAlertList filters = do
+            alerts <- AlertList.listAlerts filters 200
+            counts <- AlertList.countBySeverity filters
+            -- Filter options: inventory names plus override-only names
+            -- that exist solely as materialized env facets.
+            inventoryNames <- map (.name) <$> (query @Environment |> orderByAsc #name |> fetch)
+            facetNames <- AlertList.effectiveEnvNames
+            let envNames = List.sort (List.nub (inventoryNames ++ facetNames))
+            render IndexView{..}
+    action ShowAlertAction{alertId} = do
         alert <- fetch alertId
-        events <- query @AlertEvent
-            |> filterWhere (#alertId, alertId)
-            |> orderByAsc #createdAt
-            |> fetch
-        comments <- query @Comment
-            |> filterWhere (#alertId, alertId)
-            |> orderByAsc #createdAt
-            |> fetch
+        events <-
+            query @AlertEvent
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
+        comments <-
+            query @Comment
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
         commentAuthors <- forM comments \comment -> fetch comment.userId
         eventActors <- forM (mapMaybe (.userId) events) \userId -> fetch userId
         cmdbEntry <- case (alert.hostId, alert.serviceId) of
-            (Just hostId, _) -> query @CmdbEntry
-                |> filterWhere (#hostId, Just hostId)
-                |> fetchOneOrNothing
-            (Nothing, Just serviceId) -> query @CmdbEntry
-                |> filterWhere (#serviceId, Just serviceId)
-                |> fetchOneOrNothing
+            (Just hostId, _) ->
+                query @CmdbEntry
+                    |> filterWhere (#hostId, Just hostId)
+                    |> fetchOneOrNothing
+            (Nothing, Just serviceId) ->
+                query @CmdbEntry
+                    |> filterWhere (#serviceId, Just serviceId)
+                    |> fetchOneOrNothing
             (Nothing, Nothing) -> pure Nothing
-        jiraLinks <- query @JiraLink
-            |> filterWhere (#alertId, alertId)
-            |> orderByAsc #createdAt
-            |> fetch
+        jiraLinks <-
+            query @JiraLink
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
         linkedAssets <- AssetsCache.linkedAssetsForAlert alert
         assetConfigs <- forM linkedAssets \(_, object) -> fetch object.configId
         let linkedAssetEntries = zipWith (\(link, object) config -> (link, object, config)) linkedAssets assetConfigs
-        agentRoles <- query @LlmAgentRole
-            |> filterWhere (#enabled, True)
-            |> orderByAsc #name
-            |> fetch
-        writeBackAttempts <- query @WriteBackAttempt
-            |> filterWhere (#alertId, alertId)
-            |> orderByDesc #createdAt
-            |> limit 5
-            |> fetch
-        analyses <- query @LlmAnalysis
-            |> filterWhere (#alertId, alertId)
-            |> orderByDesc #createdAt
-            |> limit 10
-            |> fetch
+        agentRoles <-
+            query @LlmAgentRole
+                |> filterWhere (#enabled, True)
+                |> orderByAsc #name
+                |> fetch
+        writeBackAttempts <-
+            query @WriteBackAttempt
+                |> filterWhere (#alertId, alertId)
+                |> orderByDesc #createdAt
+                |> limit 5
+                |> fetch
+        analyses <-
+            query @LlmAnalysis
+                |> filterWhere (#alertId, alertId)
+                |> orderByDesc #createdAt
+                |> limit 10
+                |> fetch
         llmJobErrors <- latestJobErrors (map (get #id) analyses)
         feedback <- case analyses of
             [] -> pure []
-            _ -> query @LlmFeedback
-                |> filterWhereIn (#analysisId, map (get #id) analyses)
-                |> filterWhere (#userId, get #id currentUser)
-                |> fetch
+            _ ->
+                query @LlmFeedback
+                    |> filterWhereIn (#analysisId, map (get #id) analyses)
+                    |> filterWhere (#userId, get #id currentUser)
+                    |> fetch
         canAck <- currentUserHasPrivilege "ack"
         canClose <- currentUserHasPrivilege "close"
         -- Ticket creation is only offered when the alert's source opts into
@@ -122,39 +131,34 @@ instance Controller AlertsController where
         jiraWritable <- case alert.sourceId of
             Nothing -> pure False
             Just sourceId -> sourceConfigBool "jiraWritable" <$> fetch sourceId
-        render ShowView { .. }
-
-    action AckAlertAction { alertId } = do
+        render ShowView{..}
+    action AckAlertAction{alertId} = do
         requirePrivilege "ack"
         alert <- fetch alertId
         let comment = paramOrNothing @Text "comment"
             timeoutMinutes = paramOrNothing @Int "timeoutMinutes"
         _ <- ackAlert currentUser alert comment timeoutMinutes
-        redirectTo ShowAlertAction { alertId }
-
-    action UnackAlertAction { alertId } = do
+        redirectTo ShowAlertAction{alertId}
+    action UnackAlertAction{alertId} = do
         requirePrivilege "ack"
         alert <- fetch alertId
         _ <- unackAlert (Just currentUser) alert "manual unack"
-        redirectTo ShowAlertAction { alertId }
-
-    action CloseAlertAction { alertId } = do
+        redirectTo ShowAlertAction{alertId}
+    action CloseAlertAction{alertId} = do
         requirePrivilege "close"
         alert <- fetch alertId
         let reason = paramOrNothing @Text "reason"
         _ <- closeAlert (Just currentUser) alert reason
-        redirectTo ShowAlertAction { alertId }
-
-    action CreateCommentAction { alertId } = do
+        redirectTo ShowAlertAction{alertId}
+    action CreateCommentAction{alertId} = do
         requirePrivilege "view"
         alert <- fetch alertId
         let body = param @Text "body"
         unless (null body) do
             _ <- addComment currentUser alert body
             pure ()
-        redirectTo ShowAlertAction { alertId }
-
-    action RefreshCmdbAction { alertId } = do
+        redirectTo ShowAlertAction{alertId}
+    action RefreshCmdbAction{alertId} = do
         requirePrivilege "view"
         alert <- fetch alertId
         forM_ alert.sourceId \sourceId -> do
@@ -163,11 +167,11 @@ instance Controller AlertsController where
             case result of
                 Left err -> setErrorMessage ("CMDB refresh failed: " <> err)
                 Right _ -> setSuccessMessage "CMDB cache refreshed"
-        redirectTo ShowAlertAction { alertId }
+        redirectTo ShowAlertAction{alertId}
 
     -- Manual assets refresh (milestone_8.md §5): any view user, same shape
     -- as the CMDB refresh; bypasses the negative-cache TTL.
-    action RefreshAssetsAction { alertId } = do
+    action RefreshAssetsAction{alertId} = do
         requirePrivilege "view"
         alert <- fetch alertId
         result <- AssetsCache.refreshAssetsForAlert alert
@@ -177,9 +181,8 @@ instance Controller AlertsController where
                 -- Facet recompute on manual refresh (milestone_9.md §3).
                 void (Facets.materializeFacets alert)
                 setSuccessMessage "Assets cache refreshed"
-        redirectTo ShowAlertAction { alertId }
-
-    action CreateJiraTicketAction { alertId } = do
+        redirectTo ShowAlertAction{alertId}
+    action CreateJiraTicketAction{alertId} = do
         requirePrivilege "ack"
         alert <- fetch alertId
         case alert.sourceId of
@@ -198,9 +201,8 @@ instance Controller AlertsController where
                         case result of
                             Left err -> setErrorMessage ("Jira ticket creation failed: " <> err)
                             Right link -> setSuccessMessage ("Linked " <> link.ticketKey)
-        redirectTo ShowAlertAction { alertId }
-
-    action DeleteJiraLinkAction { alertId, jiraLinkId } = do
+        redirectTo ShowAlertAction{alertId}
+    action DeleteJiraLinkAction{alertId, jiraLinkId} = do
         requirePrivilege "ack"
         link <- fetch jiraLinkId
         if link.origin == "manual" && link.alertId == alertId
@@ -208,38 +210,41 @@ instance Controller AlertsController where
                 deleteRecord link
                 setSuccessMessage ("Unlinked " <> link.ticketKey)
             else setErrorMessage "Only manual links can be removed"
-        redirectTo ShowAlertAction { alertId }
+        redirectTo ShowAlertAction{alertId}
 
     -- Manual re-analyze (milestone_4.md §4): advisory and non-destructive, so
     -- "view" privilege suffices. Appends a fresh analysis row; the card shows
     -- the latest done.
-    action ReanalyzeAlertAction { alertId } = do
+    action ReanalyzeAlertAction{alertId} = do
         requirePrivilege "view"
         _ <- fetch alertId :: IO Alert
         let roleId = paramOrNothing @(Id LlmAgentRole) "roleId"
-        analysis <- newRecord @LlmAnalysis
-            |> set #alertId alertId
-            |> set #agentRoleId roleId
-            |> createRecord
-        _ <- newRecord @LlmAnalysisJob
-            |> set #analysisId (get #id analysis)
-            |> createRecord
+        analysis <-
+            newRecord @LlmAnalysis
+                |> set #alertId alertId
+                |> set #agentRoleId roleId
+                |> createRecord
+        _ <-
+            newRecord @LlmAnalysisJob
+                |> set #analysisId (get #id analysis)
+                |> createRecord
         setSuccessMessage "LLM analysis queued"
-        redirectTo ShowAlertAction { alertId }
+        redirectTo ShowAlertAction{alertId}
 
     -- 👍/👎 feedback (milestone_4.md D6): one vote per user per analysis,
     -- re-vote updates in place.
-    action LlmFeedbackAction { alertId, analysisId } = do
+    action LlmFeedbackAction{alertId, analysisId} = do
         requirePrivilege "view"
         analysis <- fetch analysisId
         if analysis.alertId /= alertId
             then setErrorMessage "Analysis does not belong to this alert"
             else do
                 let score = param @Int "score"
-                existing <- query @LlmFeedback
-                    |> filterWhere (#analysisId, analysisId)
-                    |> filterWhere (#userId, get #id currentUser)
-                    |> fetchOneOrNothing
+                existing <-
+                    query @LlmFeedback
+                        |> filterWhere (#analysisId, analysisId)
+                        |> filterWhere (#userId, get #id currentUser)
+                        |> fetchOneOrNothing
                 case existing of
                     Just vote -> void (vote |> set #score score |> updateRecord)
                     Nothing -> void do
@@ -248,4 +253,4 @@ instance Controller AlertsController where
                             |> set #userId (get #id currentUser)
                             |> set #score score
                             |> createRecord
-        redirectTo ShowAlertAction { alertId }
+        redirectTo ShowAlertAction{alertId}

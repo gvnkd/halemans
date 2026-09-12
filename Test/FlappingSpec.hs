@@ -1,15 +1,15 @@
 module Test.FlappingSpec where
 
-import Test.Hspec
-import IHP.Prelude
-import IHP.ModelSupport (Id' (..))
+import Application.Service.Flapping
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Data.UUID as UUID
-import Application.Service.Flapping
+import IHP.ModelSupport (Id' (..))
+import IHP.Prelude
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Flapping" do
-    let params = FlapParams { minFlaps = 3, maxGapSeconds = 1800, windowSeconds = 3600 }
+    let params = FlapParams{minFlaps = 3, maxGapSeconds = 1800, windowSeconds = 3600}
 
     describe "detectFlapping" do
         it "ignores fingerprints without edges" do
@@ -78,12 +78,13 @@ quiet :: Double -> FlapEdge
 quiet seconds = FlapEdge (t seconds) Quiet
 
 testSubject :: FlapSubject
-testSubject = FlapSubject
-    { fingerprint = "test:fingerprint"
-    , latestAlertId = Id UUID.nil
-    , title = "test alert"
-    , severity = "warning"
-    , effectiveEnv = Just "dev"
-    , host = Just "host-01"
-    , sourceName = Just "test-source"
-    }
+testSubject =
+    FlapSubject
+        { fingerprint = "test:fingerprint"
+        , latestAlertId = Id UUID.nil
+        , title = "test alert"
+        , severity = "warning"
+        , effectiveEnv = Just "dev"
+        , host = Just "host-01"
+        , sourceName = Just "test-source"
+        }

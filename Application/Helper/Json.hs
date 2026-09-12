@@ -1,11 +1,11 @@
-module Application.Helper.Json
-( stringList
+module Application.Helper.Json (
+    stringList,
 ) where
 
-import IHP.Prelude
 import Data.Aeson (Value)
-import Data.Aeson.Types (parseMaybe)
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
+import IHP.Prelude
 
 -- Decode a jsonb column holding a JSON array of strings; anything else
 -- (null, object, wrong element type) decodes to [].

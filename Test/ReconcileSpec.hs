@@ -1,9 +1,9 @@
 module Test.ReconcileSpec where
 
-import Test.Hspec
-import IHP.Prelude
 import Application.Service.Reconcile
+import IHP.Prelude
 import Test.Helpers (atTime)
+import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Reconcile" do
