@@ -10,6 +10,9 @@ instance View (NewView User) where
             <div class="d-flex align-items-center">
                 <div class="w-100">
                     <div class="mx-auto mb-5 maxw-400">
+                        <div class="text-center mb-3">
+                            <img src={assetPath "/halemans-glyph.png"} alt="" class="login-glyph"/>
+                        </div>
                         <h5>Halemans — sign in</h5>
                         {renderForm user}
                     </div>

@@ -49,7 +49,7 @@ navigation =
 <nav class="navbar navbar-expand-lg" data-testid="nav">
     <div class="container-fluid">
         <div class="d-flex flex-column">
-            <a class="navbar-brand" href={DashboardAction}>Halemans</a>
+            <a class="navbar-brand" href={DashboardAction}><img src={assetPath "/halemans-glyph.png"} alt="" class="navbar-glyph"/>Halemans</a>
             <span class="badge app-version-badge" data-testid="app-version">v{appVersion}</span>
         </div>
         <ul class="navbar-nav me-auto">
@@ -138,7 +138,14 @@ metaTags =
     [hsx|
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"/>
+    <meta name="description" content="Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks"/>
+    <meta name="theme-color" content="#2a2a3c"/>
     <meta property="og:title" content="Halemans"/>
+    <meta property="og:type" content="website"/>
+    <meta property="og:description" content="Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks"/>
+    <meta property="og:image" content={assetPath "/halemans-app-icon-512.png"}/>
+    <meta name="twitter:card" content="summary"/>
+    <link rel="manifest" href={assetPath "/manifest.webmanifest"}/>
     <link rel="icon" href={assetPath "/favicon.ico"} sizes="any"/>
     <link rel="icon" type="image/png" sizes="32x32" href={assetPath "/halemans-favicon-32.png"}/>
     <link rel="icon" type="image/png" sizes="16x16" href={assetPath "/halemans-favicon-16.png"}/>

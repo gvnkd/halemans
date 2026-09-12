@@ -312,3 +312,7 @@ a:hover { color: var(--accent-hover); }
 .member-email { min-width: 220px; }
 .resize-vertical { resize: vertical; }
 .w-5rem { width: 5rem; }
+
+/* branding (milestone 12 §5) */
+.navbar-glyph { width: 24px; height: 24px; margin-right: 0.5rem; vertical-align: -0.35em; }
+.login-glyph { width: 64px; height: 64px; }

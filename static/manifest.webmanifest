@@ -1,0 +1,13 @@
+{
+    "name": "Halemans",
+    "short_name": "Halemans",
+    "description": "Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks",
+    "start_url": "/",
+    "display": "standalone",
+    "theme_color": "#2a2a3c",
+    "background_color": "#1e1e2e",
+    "icons": [
+        { "src": "/halemans-app-icon-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "/halemans-app-icon-512.png", "sizes": "512x512", "type": "image/png" }
+    ]
+}
