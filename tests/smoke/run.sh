@@ -48,9 +48,21 @@ assert_alert_card() {
     local title="$1" prefix="$2" id
     id=$(alert_id_by_fingerprint_prefix "$prefix" "$title")
     if [ -z "$id" ]; then
+        echo "  assert-fail: no alert row titled '$title' with fingerprint prefix '$prefix'; newest matching rows:" >&2
+        psql "$DATABASE_URL" -tA -c "SELECT title, status, created_at FROM alerts WHERE fingerprint LIKE '$prefix%' ORDER BY created_at DESC LIMIT 3" >&2
         return 1
     fi
-    curl -sf -b "$COOKIES" "$APP_URL/alerts/$id" | grep -q "$title"
+    local body status
+    body=$(curl -s -b "$COOKIES" -w '\n%{http_code}' "$APP_URL/alerts/$id")
+    status=$(printf '%s' "$body" | tail -1)
+    if [ "$status" != "200" ]; then
+        echo "  assert-fail: GET /alerts/$id returned HTTP $status" >&2
+        return 1
+    fi
+    if ! printf '%s' "$body" | grep -q "$title"; then
+        echo "  assert-fail: card /alerts/$id does not render title '$title'" >&2
+        return 1
+    fi
 }
 
 scenario() { printf 'scenario: %s\n' "$1"; }

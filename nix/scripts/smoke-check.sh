@@ -17,7 +17,7 @@ failure_summary() {
     echo >&2
     echo "================ FAILURE SUMMARY ================" >&2
     if [ -f "$T/smoke.log" ]; then
-        awk '/^scenario:/ { scen=$0 } /^  FAIL / { if (scen != "") print scen; print }' "$T/smoke.log" >&2 || true
+        awk '/^scenario:/ { scen=$0 } /^  PASS/ { diag="" } /^  (assert-fail|timeout waiting)/ { diag=diag $0 "\n" } /^  FAIL / { if (scen != "") print scen; printf "%s", diag; diag=""; print }' "$T/smoke.log" >&2 || true
         grep -E '^smoke: [0-9]+ failure' "$T/smoke.log" >&2 || true
     fi
     if [ -f "$T/playwright.log" ]; then
