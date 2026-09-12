@@ -166,7 +166,7 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 
 ## CI
 
-`.github/workflows/nix-flake-check.yml` runs `nix flake check --impure -L` on every push/PR to `master` and `dev`, using the digitallyinduced Cachix cache and Magic Nix Cache. All changes land on `dev` (never tagged); releases merge `dev` → `master` and are tagged `vX.Y.Z` only after the suite is green on the merge.
+`.github/workflows/nix-flake-check.yml` runs `nix flake check --impure -L` on every push to `master`, using the digitallyinduced Cachix cache and Magic Nix Cache. All changes land on `dev` (never tagged); releases merge `dev` → `master` and are tagged `vX.Y.Z` only after the suite is green on the merge.
 
 ## License
 

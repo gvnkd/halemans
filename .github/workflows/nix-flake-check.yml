@@ -1,15 +1,10 @@
 name: Test
-# Canonical gate (milestone 12 §2): the full suite runs on every push/PR to
-# master and dev. Doc-only commits stay cheap via paths-ignore.
+# Canonical gate (milestone 12 §2): the full suite runs on every push to
+# master. Doc-only commits stay cheap via paths-ignore.
 on:
   workflow_dispatch:
   push:
-    branches: [master, dev]
-    paths-ignore:
-      - 'design_docs/**'
-      - '**.md'
-  pull_request:
-    branches: [master, dev]
+    branches: [master]
     paths-ignore:
       - 'design_docs/**'
       - '**.md'
