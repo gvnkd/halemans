@@ -142,7 +142,8 @@ with sync_playwright() as pw:
             assert overflow is None, f"env card clips content at {width}px viewport: {overflow}"
 
     @check("environment page renders alerts and accepts filters")
-    def _():        page.goto(f"{APP}/env/dev")
+    def _():
+        page.goto(f"{APP}/env/dev")
         page.get_by_test_id("env-alerts-table").wait_for()
         severity_filter = page.get_by_test_id("filter-severity")
         severity_filter.get_by_role("button").click()
