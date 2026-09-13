@@ -353,7 +353,7 @@ a:hover { color: var(--accent-hover); }
 .report-chart svg { display: block; width: 100%; height: auto; }
 .report-chart .chart-text { fill: var(--text); }
 .report-chart .chart-text-muted { fill: var(--text-muted); }
-.report-chart .chart-text-c { text-anchor: middle; }
+.report-chart .chart-text-c text { text-anchor: middle; }
 .report-chart .chart-grid { stroke: var(--border); fill: none; }
 .report-chart .chart-bar-accent { fill: var(--accent); }
 .report-chart .chart-sev-critical { fill: var(--severity-critical); }
