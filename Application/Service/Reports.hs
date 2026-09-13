@@ -133,12 +133,16 @@ vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> day
         , datum.barValue > 0
         ]
     valueLabels =
-        [ (D.p2 (xCenter i, colH datum.barValue + 4), chartText "chart-text-muted" 0.5 0 datum.barValueText)
+        [ (D.p2 (xCenter i, colH datum.barValue + 4 + descent), baselineTextC fontSizePx "chart-text-muted" datum.barValueText)
         | (i, datum) <- indexed
         , datum.barValue > 0
         ]
     dayLabels = zipWith mkDay [0 ..] rows
-    mkDay i datum = (D.p2 (xCenter i, negate bottomGap), chartTextSized dayFontSize "chart-text-muted" 0.5 1 datum.barLabel)
+    mkDay i datum = (D.p2 (xCenter i, negate (bottomGap + capHeight)), baselineTextC dayFontSize "chart-text-muted" datum.barLabel)
+    -- Inter vertical metrics (fractions of em): digits ride on the baseline
+    -- up to cap height; the em box extends a descent below it
+    capHeight = 0.73 * dayFontSize
+    descent = 0.25 * fontSizePx
     baseline = (D.p2 (padding, 0), D.alignL (D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid"))
 
 emptyChart :: Double -> Chart
@@ -171,6 +175,17 @@ chartTextSized sizePx cls ax ay content =
     D.alignedText ax ay (cs content)
         D.# D.fontSizeL sizePx
         D.# DS.svgClass (cs cls)
+
+-- Centered text anchored on the alphabetic baseline. alignedText's vertical
+-- anchors become dominant-baseline="text-before-edge"/"text-after-edge",
+-- which Firefox positions differently than Chrome (volume-chart labels drift
+-- up and overlap bars); every engine agrees on the alphabetic baseline.
+-- Horizontal centering comes from the chart-text-c rule in app.css.
+baselineTextC :: Double -> Text -> Text -> Chart
+baselineTextC sizePx cls content =
+    D.baselineText (cs content)
+        D.# D.fontSizeL sizePx
+        D.# DS.svgClass (cs cls <> " chart-text-c")
 
 severityCssClass :: Text -> Text
 severityCssClass severity = case Text.toLower severity of
