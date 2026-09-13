@@ -40,10 +40,10 @@ computeEnvCards = do
     hourly <-
         sqlQueryTyped
             [typedSql|
-        SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env_name, date_trunc('hour', a.created_at) AS hour, count(*)
+        SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env_name, date_trunc('hour', a.last_seen_at) AS hour, count(*)
         FROM alerts a
-        WHERE a.created_at > now() - interval '24 hours'
-        GROUP BY coalesce(nullif(a.facets ->> 'env', ''), a.env), date_trunc('hour', a.created_at)
+        WHERE a.last_seen_at > now() - interval '24 hours'
+        GROUP BY coalesce(nullif(a.facets ->> 'env', ''), a.env), date_trunc('hour', a.last_seen_at)
         ORDER BY hour
     |]
     environments <- QB.query @Environment |> orderByAsc #name |> Fetch.fetch

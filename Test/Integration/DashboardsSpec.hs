@@ -337,6 +337,33 @@ m9Spec = describe "resolved facets (milestone 9)" do
         (summaryB.csFiring, summaryB.csResolved, summaryB.csWorstSeverity) `shouldBe` (1, 0, Just "critical")
         summaryA.csHourly `shouldSatisfy` (not . null)
 
+    it "summary hourly buckets key on last_seen_at, not created_at" do
+        suffix <- tshow <$> nextRandom
+        let host = "m9hour-host-" <> suffix
+            envA = "m9hour-a-" <> suffix
+        source <- integrationSource "webhook" ("m9hour-" <> suffix) "" (object [])
+        let eventIn env fp = (testEventIn env fp Firing :: NormalizedEvent){host = Just host, severity = "warning"}
+        Just alertId <- ingest source (eventIn envA ("itest:" <> suffix <> "-a"))
+        void (sqlExecTyped [typedSql| UPDATE alerts SET created_at = NOW() - INTERVAL '3 days' WHERE id = ${alertId} |])
+        cards <- case decodeDashboardConfig
+            ( Aeson.toJSON
+                [ object
+                    [ "match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]]
+                    , "summary" .= True
+                    ]
+                ]
+            ) of
+            Left err -> expectationFailure (cs err) >> error "unreachable"
+            Right decoded -> pure decoded
+        [summaryCard] <- expandDashboardCards cards
+        summary <- runCardSummary summaryCard.ecCard
+        summary.csFiring `shouldBe` 1
+        summary.csHourly `shouldSatisfy` (not . null)
+        (envCards, _) <- computeEnvCards
+        case find (\card -> card.cardEnvName == Just envA) envCards of
+            Nothing -> expectationFailure "no overview card for the backdated alert's env"
+            Just card -> card.cardHourly `shouldSatisfy` (not . null)
+
     it "sortBy orders the cards a template expands into" do
         suffix <- tshow <$> nextRandom
         let host = "m9srt-host-" <> suffix

@@ -148,12 +148,12 @@ runCardSummary card = do
         cutoff = addUTCTime (-24 * 3600) now
         hourOf alert = posixSecondsToUTCTime (fromIntegral (seconds - seconds `mod` 3600))
           where
-            seconds = floor (utcTimeToPOSIXSeconds alert.createdAt) :: Int
+            seconds = floor (utcTimeToPOSIXSeconds alert.lastSeenAt) :: Int
         hourly =
             Map.toAscList
                 ( Map.fromListWith
                     (+)
-                    [(hourOf alert, 1) | alert <- alerts, alert.createdAt > cutoff]
+                    [(hourOf alert, 1) | alert <- alerts, alert.lastSeenAt > cutoff]
                 )
     pure
         CardSummary
