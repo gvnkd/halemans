@@ -11,6 +11,7 @@ data IndexView = IndexView
     , breakdownTitle :: Text
     , volumeSvg :: Text
     , volumeTitle :: Text
+    , volumeBucket :: Text
     , mttrSvg :: Text
     }
 
@@ -30,6 +31,12 @@ instance View IndexView where
                 <select name="env" class="form-select" data-testid="reports-env">
                     {envOption selectedEnv ""}
                     {forEach envs (envOption selectedEnv)}
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">Volume bucket</label>
+                <select name="bucket" class="form-select" data-testid="reports-bucket">
+                    {forEach ["", "hour", "day"] (bucketOption volumeBucket)}
                 </select>
             </div>
             <div class="col-auto">
@@ -68,6 +75,17 @@ windowOption selected value =
      in if value == selected
             then [hsx|<option value={valueText} selected="selected">{label}</option>|]
             else [hsx|<option value={valueText}>{label}</option>|]
+
+bucketOption :: Text -> Text -> Html
+bucketOption selected value =
+    let label = case value of
+            "" -> "Auto" :: Text
+            "hour" -> "Per hour"
+            "day" -> "Per day"
+            other -> other
+     in if value == selected
+            then [hsx|<option value={value} selected="selected">{label}</option>|]
+            else [hsx|<option value={value}>{label}</option>|]
 
 envOption :: Maybe Text -> Text -> Html
 envOption selected value =
