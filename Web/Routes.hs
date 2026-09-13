@@ -206,6 +206,10 @@ POST /sources/{sourceId}/sync-host-groups  SyncHostGroupsAction
 GET  /admin    AdminAction
 POST /admin/api-tokens/{apiTokenId}/revoke    AdminRevokeApiTokenAction
 POST /admin/purge-alerts    AdminPurgeAlertsAction
+GET  /admin/database                            AdminDatabaseAction
+POST /admin/database/analyze                    AdminDbAnalyzeAction
+POST /admin/database/vacuum                     AdminDbVacuumAction
+POST /admin/database/tables/{tableName}/analyze AdminDbAnalyzeTableAction
 |]
 
 [routes|AuditController

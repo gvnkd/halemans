@@ -75,6 +75,7 @@ navigation =
                     <li><a class="dropdown-item" href={AssetsAdminAction}>Assets</a></li>
                     <li><a class="dropdown-item" href={LlmQueueAction}>LLM queue</a></li>
                     <li><a class="dropdown-item" href={AdminAction}>Jobs</a></li>
+                    <li><a class="dropdown-item" href={AdminDatabaseAction}>Database</a></li>
                     <li><a class="dropdown-item" href={AuditExportsAction}>Audit exports</a></li>
                     <li><a class="dropdown-item" href={FlappingAction}>Flapping</a></li>
                 </ul>

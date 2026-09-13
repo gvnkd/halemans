@@ -1,11 +1,13 @@
 module Web.Controller.Admin where
 
+import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
 import Control.Monad (void)
 import Data.Time.Clock (getCurrentTime)
 import IHP.ModelSupport (withTransaction)
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Web.Controller.Prelude
+import Web.View.Admin.Database
 import Web.View.Admin.Index
 
 instance Controller AdminController where
@@ -53,3 +55,24 @@ instance Controller AdminController where
             void $ sqlExecTyped [typedSql| DELETE FROM alert_groups |]
         setSuccessMessage "All alerts purged"
         redirectTo AdminAction
+    action AdminDatabaseAction = do
+        requirePrivilege "admin"
+        stats <- fetchDatabaseStats
+        render DatabaseView{..}
+    action AdminDbAnalyzeAction = do
+        requirePrivilege "admin"
+        analyzeDatabase
+        setSuccessMessage "ANALYZE completed"
+        redirectTo AdminDatabaseAction
+    action AdminDbVacuumAction = do
+        requirePrivilege "admin"
+        vacuumAnalyzeDatabase
+        setSuccessMessage "VACUUM ANALYZE completed"
+        redirectTo AdminDatabaseAction
+    action AdminDbAnalyzeTableAction{tableName} = do
+        requirePrivilege "admin"
+        ok <- analyzeTable tableName
+        if ok
+            then setSuccessMessage ("ANALYZE " <> tableName <> " completed")
+            else setErrorMessage ("Unknown table: " <> tableName)
+        redirectTo AdminDatabaseAction

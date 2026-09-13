@@ -130,6 +130,10 @@ data AdminController
     = AdminAction
     | AdminRevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     | AdminPurgeAlertsAction
+    | AdminDatabaseAction
+    | AdminDbAnalyzeAction
+    | AdminDbVacuumAction
+    | AdminDbAnalyzeTableAction {tableName :: !Text}
     deriving (Eq, Show, Data)
 
 data AuditController

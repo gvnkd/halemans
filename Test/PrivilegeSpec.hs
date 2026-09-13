@@ -1,5 +1,6 @@
 module Test.PrivilegeSpec where
 
+import Application.Service.DatabaseStats (DatabaseStats (..), TableStats (..), analyzeTable, fetchDatabaseStats)
 import qualified Config
 import Control.Exception (bracket_)
 import qualified Data.Text as Text
@@ -46,6 +47,16 @@ spec = around withTestApp do
             withUser user do
                 response <- callAction AdminAction
                 responseStatus response `shouldBe` status200
+                dbResponse <- callAction AdminDatabaseAction
+                responseStatus dbResponse `shouldBe` status200
+    describe "database maintenance" do
+        it "reports stats for real tables" \mockContext -> withCtx mockContext do
+            stats <- fetchDatabaseStats
+            stats.databaseName `shouldSatisfy` ("test_db_" `Text.isPrefixOf`)
+            map (.tableName) stats.tables `shouldContain` ["users"]
+        it "analyzes known tables and rejects unknown names" \mockContext -> withCtx mockContext do
+            analyzeTable "users" `shouldReturn` True
+            analyzeTable "users; DROP TABLE users" `shouldReturn` False
 
 -- | Existential wrapper so the matrix can hold actions of different
 -- controller types. The controller value is kept (not the IO) so
@@ -173,6 +184,10 @@ deniedCases =
       ("AdminAction", mkDenied AdminAction)
     , ("AdminRevokeApiTokenAction", mkDenied (AdminRevokeApiTokenAction nil))
     , ("AdminPurgeAlertsAction", mkDenied AdminPurgeAlertsAction)
+    , ("AdminDatabaseAction", mkDenied AdminDatabaseAction)
+    , ("AdminDbAnalyzeAction", mkDenied AdminDbAnalyzeAction)
+    , ("AdminDbVacuumAction", mkDenied AdminDbVacuumAction)
+    , ("AdminDbAnalyzeTableAction", mkDenied (AdminDbAnalyzeTableAction "users"))
     , ("ExportAuditAction", mkDenied ExportAuditAction)
     ]
 
