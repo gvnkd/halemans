@@ -32,7 +32,7 @@ data BarDatum = BarDatum
 
 data StackedBarDatum = StackedBarDatum
     { sbdLabel :: Text
-    , sbdSegments :: [(Text, Double)] -- (css class, value), bottom-to-top
+    , sbdSegments :: [(Text, Text, Double)] -- (css class, series name, value), bottom-to-top
     , sbdTotal :: Int64
     }
 
@@ -70,7 +70,7 @@ volumeChartSvg rows = stackedVbarChartSvg 1800 (map mk rows)
     mk (bucket, segments) =
         StackedBarDatum
             { sbdLabel = bucket
-            , sbdSegments = [(severityCssClass severity, fromIntegral n) | (severity, n) <- sortOn (severityRank . fst) segments]
+            , sbdSegments = [(severityCssClass severity, severity, fromIntegral n) | (severity, n) <- sortOn (severityRank . fst) segments]
             , sbdTotal = sum (map snd segments)
             }
 
@@ -116,7 +116,7 @@ hbarChartSvg w rows = renderChartSvg w h (D.vsep rowGap (map row rows))
 
 stackedVbarChartSvg :: Double -> [StackedBarDatum] -> Text
 stackedVbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
-stackedVbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> dayLabels <> [baseline]))
+stackedVbarChartSvg w rows = foldl injectTitle (renderChartSvg w h (D.position (bars <> valueLabels <> dayLabels <> [baseline]))) tooltips
   where
     padding = 8
     plotH = 180
@@ -136,13 +136,31 @@ stackedVbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels
     maxLabelChars = maximum (map (Text.length . sbdLabel) rows)
     dayFontSize = max 7 (min fontSizePx (slot * 0.9 / (0.55 * fromIntegral maxLabelChars)))
     indexed = zip [0 ..] rows
-    -- each segment sits on the accumulated height of the segments below it
+    -- each segment sits on the accumulated height of the segments below it;
+    -- the svgId marks the rect so injectTitle can graft a <title> (native
+    -- hover tooltip with the exact count) onto it after rendering
+    segments i datum = (visible, zip3 visible (scanl (+) 0 heights) heights)
+      where
+        visible = filter (\(_, _, value) -> value > 0) datum.sbdSegments
+        heights = map (\(_, _, value) -> colH value) visible
+    segId i j = "volseg-" <> show i <> "-" <> show j
     bars =
-        [ (D.p2 (xCenter i, yBase), D.alignB (bar barW segH cls))
+        [ (D.p2 (xCenter i, yBase), D.alignB (bar barW segH cls) D.# DS.svgId (cs (segId i j)))
         | (i, datum) <- indexed
-        , let segments = filter ((> 0) . snd) datum.sbdSegments
-              heights = map (colH . snd) segments
-        , ((cls, _), yBase, segH) <- zip3 segments (scanl (+) 0 heights) heights
+        , let (_, placed) = segments i datum
+        , (j, ((cls, _, _), yBase, segH)) <- zip [0 ..] placed
+        ]
+    -- every segment of a bar carries the same tooltip: the full severity
+    -- breakdown of that bar, one line per severity, total last. Newlines
+    -- render as line breaks in native <title> tooltips.
+    barTip datum =
+        Text.intercalate "\n" $
+            [name <> ": " <> show (round value :: Int) | (_, name, value) <- datum.sbdSegments, value > 0]
+                <> ["total: " <> show datum.sbdTotal]
+    tooltips =
+        [ (segId i j, barTip datum)
+        | (i, datum) <- indexed
+        , (j, _) <- zip [0 ..] (fst (segments i datum))
         ]
     valueLabels =
         [ (D.p2 (xCenter i, colH (fromIntegral datum.sbdTotal) + 4 + descent), baselineTextC fontSizePx "chart-text-muted" (show datum.sbdTotal))
@@ -156,6 +174,27 @@ stackedVbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels
     capHeight = 0.73 * dayFontSize
     descent = 0.25 * fontSizePx
     baseline = (D.p2 (padding, 0), D.alignL (D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid"))
+
+-- Insert a <title> as the first child of the <g id="..."> that diagrams-svg
+-- emits around each stacked-bar segment, so browsers show a native tooltip
+-- on hover. String surgery is safe here: the SVG is our own output and the
+-- marker ids are unique.
+injectTitle :: Text -> (Text, Text) -> Text
+injectTitle svg (marker, tip) =
+    case Text.breakOn ("id=\"" <> marker <> "\"") svg of
+        (before, rest)
+            | not (Text.null rest) ->
+                let (tag, after) = Text.breakOn ">" rest
+                 in before <> tag <> "><title>" <> escapeXml tip <> "</title>" <> Text.drop 1 after
+        _ -> svg
+
+escapeXml :: Text -> Text
+escapeXml = Text.concatMap escape
+  where
+    escape '&' = "&amp;"
+    escape '<' = "&lt;"
+    escape '>' = "&gt;"
+    escape c = Text.singleton c
 
 emptyChart :: Double -> Chart
 emptyChart w = chartText "chart-text-muted" 0.5 0.5 "no data"

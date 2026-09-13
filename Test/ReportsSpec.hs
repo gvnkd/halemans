@@ -26,6 +26,8 @@ spec = describe "Application.Service.Reports" do
             svg `shouldSatisfy` Text.isInfixOf "chart-sev-critical"
             -- value label above a stacked bar shows the bucket total
             svg `shouldSatisfy` Text.isInfixOf ">9<"
+            -- hover tooltip lists every severity in the bar plus the total
+            svg `shouldSatisfy` Text.isInfixOf "<title>critical: 4\nwarning: 5\ntotal: 9</title>"
 
         it "renders the mttr chart as inline SVG" do
             let svg = mttrChartSvg [("critical", 300)]
