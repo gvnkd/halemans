@@ -249,12 +249,13 @@
     document.addEventListener('turbolinks:load', init);
 })();
 
-// Local-datetime range inputs (/reports from/to): the visible input is a
-// flatpickr calendar with free text allowed (relative expressions like
-// "now() - 7d" pass through untouched). The canonical value lives in a
-// hidden form field: local datetimes are converted to UTC ISO on edit, UTC
-// ISO values from the server are shown in browser-local time — the same
-// local-timezone convention as the <time data-utc> rendering above.
+// Local-datetime range inputs (/reports from/to): the visible input is free
+// text (relative expressions like "now() - 7d" pass through untouched); the
+// flatpickr calendar hangs off the icon button next to it and writes the
+// picked date into the input. The canonical value lives in a hidden form
+// field: local datetimes are converted to UTC ISO on edit, UTC ISO values
+// from the server are shown in browser-local time — the same local-timezone
+// convention as the <time data-utc> rendering above.
 (function () {
     var ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?Z$/;
     var LOCAL = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/;
@@ -338,14 +339,30 @@
             input.onchange = function () { syncHidden(input, hidden); };
             input.oninput = function () { syncHidden(input, hidden); };
             if (typeof window.flatpickr === 'function') {
-                if (input._flatpickr) input._flatpickr.destroy();
-                window.flatpickr(input, { enableTime: true, time_24hr: true, allowInput: true, dateFormat: 'Y-m-d H:i' });
-                // IHP's morphdom special-cases .flatpickr-input nodes and
-                // overwrites the value after a form morph, racing the local-
-                // time conversion above; dropping the marker class keeps the
-                // default value sync (canonical value is rendered server-side
-                // into the value attribute) and lets this init own display.
-                input.classList.remove('flatpickr-input');
+                // the calendar must NOT be attached to the text input:
+                // flatpickr parses the input value on Enter/blur and clears
+                // it when the text is an expression it cannot parse
+                var toggle = form.querySelector('button[data-calendar-toggle="' + input.getAttribute('data-local-datetime') + '"]');
+                if (toggle) {
+                    if (toggle._flatpickr) toggle._flatpickr.destroy();
+                    window.flatpickr(toggle, {
+                        enableTime: true,
+                        time_24hr: true,
+                        dateFormat: 'Y-m-d H:i',
+                        onChange: function (dates) {
+                            if (!dates.length) return;
+                            input.value = toLocalText(dates[0]);
+                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    });
+                    // flatpickr init sets type="text" on its element, which
+                    // turns a <button> into a form submit button — restore it
+                    toggle.type = 'button';
+                    // IHP's morphdom special-cases .flatpickr-input nodes and
+                    // overwrites the value after a form morph; dropping the
+                    // marker class lets this init own display
+                    toggle.classList.remove('flatpickr-input');
+                }
             }
         });
         var presets = document.querySelectorAll('select[data-window-preset]');

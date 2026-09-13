@@ -40,12 +40,18 @@ instance View IndexView where
             <div class="col-auto">
                 <label class="form-label">From</label>
                 <input type="hidden" name="from" value={rangeFrom}/>
-                <input class="form-control" placeholder="now() - 7d or pick a date" value={rangeFrom} data-local-datetime="from" data-testid="reports-from"/>
+                <div class="input-group">
+                    <input class="form-control" placeholder="now() - 7d or pick a date" value={rangeFrom} data-local-datetime="from" data-testid="reports-from"/>
+                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="from" data-testid="reports-from-calendar" aria-label="Pick from date">{calendarIcon}</button>
+                </div>
             </div>
             <div class="col-auto">
                 <label class="form-label">To</label>
                 <input type="hidden" name="to" value={rangeTo}/>
-                <input class="form-control" placeholder="now() or pick a date" value={rangeTo} data-local-datetime="to" data-testid="reports-to"/>
+                <div class="input-group">
+                    <input class="form-control" placeholder="now() or pick a date" value={rangeTo} data-local-datetime="to" data-testid="reports-to"/>
+                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="to" data-testid="reports-to-calendar" aria-label="Pick to date">{calendarIcon}</button>
+                </div>
             </div>
             <div class="col-auto">
                 <label class="form-label">Environment</label>
@@ -111,6 +117,14 @@ bucketOption selected value =
      in if value == selected
             then [hsx|<option value={value} selected="selected">{label}</option>|]
             else [hsx|<option value={value}>{label}</option>|]
+
+calendarIcon :: Html
+calendarIcon =
+    [hsx|
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/>
+    </svg>
+|]
 
 envOption :: Maybe Text -> Text -> Html
 envOption selected value =
