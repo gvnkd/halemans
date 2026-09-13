@@ -66,16 +66,33 @@ instance Controller ReportsController where
                 ORDER BY n DESC
                 LIMIT 12 |]
         -- Bucket granularity picked via the `bucket` param; default follows
-        -- the window (24h -> hour, longer -> day)
-        volumeRows <-
-            sqlQueryTyped
-                [typedSql|
-            SELECT date_trunc(${bucketKind}::text, coalesce(a.started_at, a.first_seen_at)) AS bucket, count(*) AS n
-            FROM alerts a
-            WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
-                AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
-            GROUP BY 1
-            ORDER BY 1 |]
+        -- the window (24h -> hour, longer -> day). "hour" is NOT a timeline:
+        -- it profiles the hour of day (0-23) across the whole window, so the
+        -- chart answers "at which time of day do alerts fire".
+        hourRows <-
+            if bucketKind == "hour"
+                then
+                    sqlQueryTyped
+                        [typedSql|
+                SELECT extract(hour from coalesce(a.started_at, a.first_seen_at))::int AS hour_of_day, count(*) AS n
+                FROM alerts a
+                WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                    AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
+                GROUP BY 1
+                ORDER BY 1 |]
+                else pure []
+        dayRows <-
+            if bucketKind == "day"
+                then
+                    sqlQueryTyped
+                        [typedSql|
+                SELECT date_trunc('day', coalesce(a.started_at, a.first_seen_at)) AS bucket, count(*) AS n
+                FROM alerts a
+                WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                    AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
+                GROUP BY 1
+                ORDER BY 1 |]
+                else pure []
         mttrRows <-
             sqlQueryTyped
                 [typedSql|
@@ -95,17 +112,23 @@ instance Controller ReportsController where
             knownEnvs = [env | Just env <- envRows]
             breakdownSvg = Reports.envChartSvg (map (\row -> (fromMaybe "unknown" (get #label row), get #n row)) breakdownRows)
             breakdownTitle = if isJust selectedEnv then "Alerts by host" else "Alerts by environment"
-            bucketLabel = cs . TimeFormat.formatTime TimeFormat.defaultTimeLocale (if bucketKind == "hour" then "%H:%M" else "%m-%d")
-            counts = Map.fromList (mapMaybe (\row -> (,get #n row) <$> get #bucket row) volumeRows)
-            stepSeconds = if bucketKind == "hour" then 3600 else 86400
-            buckets = takeWhile (< now) (iterate (addUTCTime stepSeconds) (truncateBucket stepSeconds from))
-            volumeSvg = Reports.volumeChartSvg [(bucketLabel bucket, Map.findWithDefault 0 bucket counts) | bucket <- buckets]
+            hourCounts = Map.fromList (mapMaybe (\row -> (,get #n row) <$> get #hour_of_day row) hourRows)
+            hourLabel :: Int -> Text
+            hourLabel h = (if h < 10 then "0" else "") <> show h <> ":00"
+            dayCounts = Map.fromList (mapMaybe (\row -> (,get #n row) <$> get #bucket row) dayRows)
+            dayBuckets = takeWhile (< now) (iterate (addUTCTime 86400) (truncateBucket 86400 from))
+            dayLabel = cs . TimeFormat.formatTime TimeFormat.defaultTimeLocale "%m-%d"
+            volumeSvg =
+                Reports.volumeChartSvg $
+                    if bucketKind == "hour"
+                        then [(hourLabel h, Map.findWithDefault 0 h hourCounts) | h <- [0 .. 23]]
+                        else [(dayLabel bucket, Map.findWithDefault 0 bucket dayCounts) | bucket <- dayBuckets]
             volumeTitle = if bucketKind == "hour" then "Alert volume per hour" else "Alert volume per day"
             mttrSvg = Reports.mttrChartSvg (map (\row -> (get #severity row, fromMaybe 0 (get #avg_seconds row))) mttrRows)
         render IndexView{..}
 
--- Align a timestamp down to its bucket boundary (hour for the 24h window,
--- day otherwise) so chart slots are positional in time, not in row order.
+-- Align a timestamp down to its day boundary so chart slots are positional
+-- in time, not in row order.
 truncateBucket :: NominalDiffTime -> UTCTime -> UTCTime
 truncateBucket step t = t{utctDayTime = fromIntegral (seconds `div` stepSeconds * stepSeconds)}
   where
