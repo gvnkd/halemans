@@ -4,8 +4,7 @@ import Web.View.Fragments (filterMultiSelect)
 import Web.View.Prelude
 
 data IndexView = IndexView
-    { windowHours :: Int
-    , rangeFrom :: Text
+    { rangeFrom :: Text
     , rangeTo :: Text
     , envs :: [Text]
     , selectedEnv :: Maybe Text
@@ -28,8 +27,14 @@ instance View IndexView where
         <form method="GET" action={ReportsAction} class="row g-2 align-items-end mb-4" data-testid="reports-form">
             <div class="col-auto">
                 <label class="form-label">Window</label>
-                <select name="windowHours" class="form-select" data-testid="reports-window">
-                    {forEach [24, 168, 720] (windowOption windowHours)}
+                <!-- preset only: unnamed (never submitted); app.js copies the
+                     picked expression into from/to and resets this to Custom
+                     on any manual from/to edit -->
+                <select class="form-select" data-window-preset="" data-testid="reports-window">
+                    <option value="" selected="selected">Custom</option>
+                    <option value="now() - 24h">24h</option>
+                    <option value="now() - 168h">7d</option>
+                    <option value="now() - 720h">30d</option>
                 </select>
             </div>
             <div class="col-auto">
@@ -95,18 +100,6 @@ chartPanel testId title svg =
         </div>
     </div>
 |]
-
-windowOption :: Int -> Int -> Html
-windowOption selected value =
-    let label = case value of
-            24 -> "24h" :: Text
-            168 -> "7d"
-            720 -> "30d"
-            other -> show other <> "h"
-        valueText = show value :: Text
-     in if value == selected
-            then [hsx|<option value={valueText} selected="selected">{label}</option>|]
-            else [hsx|<option value={valueText}>{label}</option>|]
 
 bucketOption :: Text -> Text -> Html
 bucketOption selected value =

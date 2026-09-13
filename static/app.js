@@ -282,6 +282,41 @@
         }
     }
 
+    function wireWindowPreset(select) {
+        var form = select.form;
+        if (!form) return;
+        var fromHidden = form.querySelector('input[type="hidden"][name="from"]');
+        var toHidden = form.querySelector('input[type="hidden"][name="to"]');
+        var fromInput = form.querySelector('input[data-local-datetime="from"]');
+        var toInput = form.querySelector('input[data-local-datetime="to"]');
+        if (!fromHidden || !toHidden || !fromInput || !toInput) return;
+
+        // reflect the current from/to in the preset select (Custom when the
+        // range doesn't exactly match a preset expression)
+        var values = Array.prototype.map.call(select.options, function (o) { return o.value; });
+        var toIsNow = toHidden.value === '' || toHidden.value === 'now()';
+        select.value = toIsNow && values.indexOf(fromHidden.value) !== -1 ? fromHidden.value : '';
+
+        var applyingPreset = false;
+        select.onchange = function () {
+            if (!select.value) return;
+            applyingPreset = true;
+            fromInput.value = select.value;
+            toInput.value = 'now()';
+            fromInput.dispatchEvent(new Event('input', { bubbles: true }));
+            toInput.dispatchEvent(new Event('input', { bubbles: true }));
+            applyingPreset = false;
+        };
+        // any manual from/to edit (typing or calendar pick) resets the
+        // preset to Custom
+        var resetOnEdit = function (event) {
+            if (applyingPreset) return;
+            if (event.target && event.target.hasAttribute && event.target.hasAttribute('data-local-datetime')) select.value = '';
+        };
+        form.oninput = resetOnEdit;
+        form.onchange = resetOnEdit;
+    }
+
     var init = function () {
         var inputs = document.querySelectorAll('input[data-local-datetime]');
         Array.prototype.forEach.call(inputs, function (input) {
@@ -313,6 +348,8 @@
                 input.classList.remove('flatpickr-input');
             }
         });
+        var presets = document.querySelectorAll('select[data-window-preset]');
+        Array.prototype.forEach.call(presets, wireWindowPreset);
     };
     document.addEventListener('DOMContentLoaded', init);
     document.addEventListener('turbolinks:load', init);

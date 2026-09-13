@@ -6,7 +6,6 @@ import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..))
 import qualified Data.Time.Format as TimeFormat
 import IHP.TypedSql (sqlQueryTyped, typedSql)
-import Text.Read (readMaybe)
 import Web.Controller.Prelude
 import Web.View.Reports.Index
 
@@ -17,20 +16,21 @@ instance Controller ReportsController where
 
     action ReportsAction = do
         now <- getCurrentTime
-        let windowHours = clampWindow (intParam 168 "windowHours")
-            -- Explicit from/to (relative "now() - 7d" or absolute) override
-            -- the window; windowHours is the fallback for an empty/invalid
-            -- `from`, `to` defaults to now
-            rangeFrom = fromMaybe "" (paramOrNothing @Text "from" >>= nonEmptyText)
+        let
+            -- from/to accept relative "now() - 7d" expressions or absolute
+            -- timestamps; empty/invalid `from` falls back to 7d, `to` to now.
+            -- The field is pre-filled so the Window preset select can match
+            -- it client-side (the preset itself is never submitted)
+            rangeFrom = fromMaybe "now() - 168h" (paramOrNothing @Text "from" >>= nonEmptyText)
             rangeTo = fromMaybe "" (paramOrNothing @Text "to" >>= nonEmptyText)
-            from = fromMaybe (addUTCTime (negate (fromIntegral windowHours * 3600)) now) (resolveTimeExpr now rangeFrom)
+            from = fromMaybe (addUTCTime (negate (7 * 86400)) now) (resolveTimeExpr now rangeFrom)
             to = fromMaybe now (resolveTimeExpr now rangeTo)
             envFilter = fromMaybe "" (paramOrNothing @Text "env")
             selectedEnv = if envFilter == "" then Nothing else Just envFilter
             volumeBucket = case paramOrNothing @Text "bucket" of
                 Just bucket | bucket `elem` ["hour", "day"] -> bucket
                 _ -> ""
-            bucketKind = if volumeBucket == "" then (if windowHours == 24 then "hour" else "day") else volumeBucket
+            bucketKind = if volumeBucket == "" then (if diffUTCTime to from <= 86400 then "hour" else "day") else volumeBucket
             severities = paramList @Text "severity"
         -- Selector options: every effective env ever seen (unbounded by window)
         envRows <-
@@ -164,14 +164,6 @@ truncateBucket step t = t{utctDayTime = fromIntegral (seconds `div` stepSeconds 
   where
     seconds = floor (utctDayTime t) :: Integer
     stepSeconds = floor step :: Integer
-
-clampWindow :: Int -> Int
-clampWindow hours
-    | hours `elem` [24, 168, 720] = hours
-    | otherwise = 168
-
-intParam :: (?request :: Request) => Int -> ByteString -> Int
-intParam fallback name = fromMaybe fallback (paramOrNothing @Text name >>= readMaybe . cs)
 
 nonEmptyText :: Text -> Maybe Text
 nonEmptyText value = if value == "" then Nothing else Just value

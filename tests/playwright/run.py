@@ -1230,17 +1230,26 @@ with sync_playwright() as pw:
             panel.wait_for()
             assert panel.locator("svg").count() > 0, f"no <svg> in {test_id}"
         # real navigations: server-rendered state is what we're asserting
-        page.goto(f"{APP}/reports?windowHours=24")
+        page.goto(f"{APP}/reports?from=now()%20-%2024h")
         page.get_by_test_id("report-volume").wait_for()
-        assert page.get_by_test_id("reports-window").input_value() == "24"
+        assert page.get_by_test_id("reports-window").input_value() == "now() - 24h"
         for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
             assert page.get_by_test_id(test_id).locator("svg").count() > 0, f"no <svg> in {test_id} after re-render"
         # env selector: one env turns the env card into a per-host breakdown
-        page.goto(f"{APP}/reports?windowHours=24&env=dev")
+        page.goto(f"{APP}/reports?env=dev")
         page.get_by_test_id("report-env").wait_for()
         assert page.get_by_test_id("reports-env").input_value() == "dev"
         env_card = page.get_by_test_id("report-env")
         assert "Alerts by host" in env_card.inner_text(), env_card.inner_text()
+        # window preset: fills from/to; manual edit resets it to Custom
+        page.goto(f"{APP}/reports")
+        page.get_by_test_id("report-volume").wait_for()
+        assert page.get_by_test_id("reports-window").input_value() == "now() - 168h", "default 7d prefill not matched"
+        page.get_by_test_id("reports-window").select_option("now() - 24h")
+        assert page.get_by_test_id("reports-from").input_value() == "now() - 24h"
+        assert page.get_by_test_id("reports-to").input_value() == "now()"
+        page.get_by_test_id("reports-from").fill("now() - 3d")
+        assert page.get_by_test_id("reports-window").input_value() == "", "preset not reset after manual edit"
 
     browser.close()
 
