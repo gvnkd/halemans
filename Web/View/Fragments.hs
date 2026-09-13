@@ -814,16 +814,23 @@ rollupSuppressedBadge count
     | count > 0 = [hsx|<span class="count status-suppressed" data-testid="count-suppressed" title="muted by blackout">{count} suppressed</span>|]
     | otherwise = mempty
 
--- Hour bucket as `<time> [count]`: the count sits in a colored rounded
--- square so pairs don't run together visually.
+-- Hour bucket as `HH [count]`: the count sits in a colored rounded square
+-- so pairs don't run together visually. The hour goes through the same
+-- client-side localizer as utcTimeHtml, with data-tz-format="hour" keeping
+-- the compact HH shape in the user's/browser timezone.
 rollupHourBucket :: (UTCTime, Int) -> Html
 rollupHourBucket (hour, count) =
     [hsx|
     <span class="hourly-bucket">
-        <span class="hourly-hour">{formatTime defaultTimeLocale "%H:%M" hour}</span>
+        <time class="utc-time" datetime={iso} data-tz-format="hour">{fallback}</time>
         <span class="hourly-count-badge">{count}</span>
     </span>
 |]
+  where
+    iso :: Text
+    iso = cs (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" hour)
+    fallback :: Text
+    fallback = cs (formatTime defaultTimeLocale "%H" hour)
 
 -- Generic widgets shared across CRUD/list views (v1.23.0 cleanup): page
 -- headers, one-button POST forms, row actions, badges, card panels and JSON

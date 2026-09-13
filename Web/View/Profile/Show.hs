@@ -1,6 +1,7 @@
 module Web.View.Profile.Show where
 
 import Application.Helper.Theme (themes)
+import Application.Helper.Timezone (timezones)
 import Application.Service.Api.Token (allScopes)
 import qualified Data.Text as Text
 import Web.View.Fragments (inlinePostFormHtml)
@@ -10,6 +11,7 @@ data ShowView = ShowView
     { subscriptions :: [PushSubscription]
     , pushPublicKey :: Maybe Text
     , currentTheme :: Text
+    , currentTimezone :: Maybe Text
     , apiTokens :: [ApiToken]
     , newToken :: Maybe Text
     }
@@ -24,6 +26,15 @@ instance View ShowView where
         <div class="theme-picker mb-3" data-testid="theme-picker">
             {forEach themes themeButton}
         </div>
+
+        <h2>Timezone</h2>
+        <form method="POST" action={UpdateTimezoneAction} class="mb-3" data-testid="timezone-form">
+            <select name="timezone" class="form-select w-auto" data-autosubmit="" data-testid="timezone-select">
+                <option value="" selected={isNothing currentTimezone}>Browser default</option>
+                {forEach timezones timezoneOption}
+            </select>
+            <p class="form-text mb-0">Timestamps render in this timezone; the default follows your browser.</p>
+        </form>
 
         <h2>API tokens</h2>
         {newTokenBanner}
@@ -65,6 +76,8 @@ instance View ShowView where
     |]
       where
         themeButton theme = themeChoiceButton currentTheme theme
+        timezoneOption timezone =
+            [hsx|<option value={timezone} selected={currentTimezone == Just timezone}>{timezone}</option>|]
         newTokenBanner = case newToken of
             Nothing -> mempty
             Just plaintext ->

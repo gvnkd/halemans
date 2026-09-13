@@ -1,6 +1,7 @@
 module Web.Controller.Profile where
 
 import Application.Helper.Theme (isValidTheme, themeFromSettings, themes)
+import Application.Helper.Timezone (isValidTimezone, timezoneFromSettings)
 import Application.Service.Api.Token (allScopes, newApiToken)
 import Application.Service.Push (vapidPublicKey)
 import Control.Monad (void)
@@ -34,6 +35,27 @@ instance Controller ProfileController where
                         |> updateRecord
                 renderJson (object ["ok" .= True])
             else renderJson (object ["ok" .= False, "error" .= ("unknown theme" :: Text)])
+
+    -- Timezone preference for timestamp rendering (IANA name); empty value
+    -- removes the key, meaning "browser default". Plain form POST, so this
+    -- redirects back to the profile page.
+    action UpdateTimezoneAction = do
+        let timezone = paramOrNothing @Text "timezone" |> fromMaybe "" |> Text.strip
+        if Text.null timezone || isValidTimezone timezone
+            then do
+                let merged = case currentUser.settings of
+                        Aeson.Object o
+                            | Text.null timezone -> Aeson.Object (KeyMap.delete "timezone" o)
+                            | otherwise -> Aeson.Object (KeyMap.insert "timezone" (Aeson.String timezone) o)
+                        _ -> object ["timezone" .= timezone]
+                _ <-
+                    currentUser
+                        |> set #settings merged
+                        |> updateRecord
+                redirectTo ProfileAction
+            else do
+                setErrorMessage ("Unknown timezone: " <> timezone)
+                redirectTo ProfileAction
 
     -- API token management (design_docs/milestone_6.md §4): the plaintext is
     -- rendered exactly once, straight from the POST (no redirect, no flash).
@@ -74,4 +96,5 @@ renderProfile newToken = do
             |> fetch
     pushPublicKey <- vapidPublicKey
     let currentTheme = themeFromSettings currentUser.settings
+        currentTimezone = timezoneFromSettings currentUser.settings
     render ShowView{..}

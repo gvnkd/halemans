@@ -47,6 +47,7 @@ data BlackoutsController
 data ProfileController
     = ProfileAction
     | UpdateThemeAction
+    | UpdateTimezoneAction
     | CreateApiTokenAction
     | RevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     deriving (Eq, Show)

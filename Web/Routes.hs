@@ -85,6 +85,7 @@ POST /blackouts/{blackoutId}/delete  DeleteBlackoutAction
 [routes|ProfileController
 GET  /profile         ProfileAction
 POST /profile/theme   UpdateThemeAction
+POST /profile/timezone UpdateTimezoneAction
 POST /profile/api-tokens                          CreateApiTokenAction
 POST /profile/api-tokens/{apiTokenId}/revoke      RevokeApiTokenAction
 |]

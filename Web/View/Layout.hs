@@ -4,6 +4,7 @@ import Application.Helper.Controller ()
 
 -- CurrentUserRecord instance for currentUserOrNothing
 import Application.Helper.Theme (bsTheme, themeFromSettings)
+import Application.Helper.Timezone (timezoneFromSettings)
 import Application.Helper.View
 import Application.Version (appVersion)
 import Generated.Types
@@ -16,7 +17,7 @@ defaultLayout :: Html -> Html
 defaultLayout inner =
     [hsx|
 <!DOCTYPE html>
-<html lang="en" data-theme={activeTheme} data-bs-theme={activeBsTheme}>
+<html lang="en" data-theme={activeTheme} data-bs-theme={activeBsTheme} data-tz={activeTimezone}>
     <head>
         {metaTags}
 
@@ -45,6 +46,12 @@ defaultLayout inner =
         Nothing -> "dark"
     activeBsTheme :: Text
     activeBsTheme = bsTheme activeTheme
+    -- Fixed offset from users.settings.timezone ("" = browser default);
+    -- app.js reads data-tz when localizing <time class="utc-time"> elements.
+    activeTimezone :: Text
+    activeTimezone = case currentUserOrNothing of
+        Just user -> fromMaybe "" (timezoneFromSettings user.settings)
+        Nothing -> ""
 
 navigation :: Html
 navigation =

@@ -35,6 +35,7 @@ import qualified Test.StateMachineSpec
 import qualified Test.ThemeSpec
 import qualified Test.TimeRangeSpec
 import qualified Test.TimelineSpec
+import qualified Test.TimezoneSpec
 import qualified Test.VersionSpec
 import qualified Test.WriteBackSpec
 
@@ -52,6 +53,7 @@ main = hspec do
     Test.ReconcileSpec.spec
     Test.DashboardConfigSpec.spec
     Test.ThemeSpec.spec
+    Test.TimezoneSpec.spec
     Test.LlmSpec.spec
     Test.SourceHealthSpec.spec
     Test.AuditExportSpec.spec

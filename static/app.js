@@ -72,10 +72,24 @@
 })();
 
 // Localized timestamps: views render <time data-utc datetime="…Z"> with a
-// UTC fallback text; here we rewrite to browser-local time with an offset
-// label like (UTC+4). MutationObserver catches WS/turbolinks DOM inserts.
+// UTC fallback text; here we rewrite to local time with an offset label like
+// (UTC+4). The zone is the user's configured profile timezone
+// (<html data-tz>, fixed offset "UTC±N") or the browser zone when unset.
+// Elements with data-tz-format="hour" (dashboard hourly buckets) render as
+// HH only. MutationObserver catches WS/turbolinks DOM inserts.
 (function () {
     function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+    // "UTC+3" -> "Etc/GMT-3" (IANA Etc signs are inverted); null for
+    // anything unexpected, falling back to the browser zone.
+    function configuredTz() {
+        var tz = document.documentElement.getAttribute('data-tz');
+        if (!tz) return null;
+        if (tz === 'UTC') return 'UTC';
+        var m = tz.match(/^UTC([+-])(\d{1,2})$/);
+        if (!m) return null;
+        return 'Etc/GMT' + (m[1] === '+' ? '-' : '+') + parseInt(m[2], 10);
+    }
 
     function offsetLabel(d) {
         var mins = -d.getTimezoneOffset();
@@ -86,9 +100,36 @@
         return 'UTC' + sign + hours + (rest ? ':' + pad(rest) : '');
     }
 
+    function tzParts(d, tz) {
+        if (!tz) return null;
+        try {
+            var fmt = new Intl.DateTimeFormat('en-US', {
+                timeZone: tz, hourCycle: 'h23',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+            var raw = fmt.formatToParts(d);
+            var out = {};
+            for (var i = 0; i < raw.length; ++i) out[raw[i].type] = raw[i].value;
+            return out;
+        } catch (e) { return null; }
+    }
+
     function localize(el) {
         var d = new Date(el.getAttribute('datetime'));
         if (isNaN(d.getTime())) return;
+        var label = document.documentElement.getAttribute('data-tz') || null;
+        var p = tzParts(d, configuredTz());
+        if (el.getAttribute('data-tz-format') === 'hour') {
+            el.textContent = p ? p.hour : pad(d.getHours());
+            return;
+        }
+        if (p) {
+            el.textContent = p.year + '-' + p.month + '-' + p.day
+                + ' ' + p.hour + ':' + p.minute + ':' + p.second
+                + ' (' + (label || 'UTC') + ')';
+            return;
+        }
         el.textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
             + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds())
             + ' (' + offsetLabel(d) + ')';

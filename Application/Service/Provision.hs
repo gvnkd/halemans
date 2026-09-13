@@ -22,6 +22,7 @@ module Application.Service.Provision (
 import Application.Connector.Zabbix (ZabbixGroup)
 import Application.Helper.DashboardConfig (decodeDashboardConfig)
 import Application.Helper.Theme (isValidTheme)
+import Application.Helper.Timezone (isValidTimezone)
 import Application.Pipeline.Grouping (parseAlertField)
 import Application.Service.HostGroups (replaceHostGroupCache)
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
@@ -214,6 +215,7 @@ instance FromJSON UserItem where
         roles <- o .:? "roles" .!= []
         settings <- o .:? "settings" .!= Aeson.object []
         validateTheme settings
+        validateTimezone settings
         pure UserItem{..}
 
 validateTheme :: Value -> Parser ()
@@ -224,6 +226,16 @@ validateTheme settings = case settings of
             | isValidTheme theme -> pure ()
             | otherwise -> fail ("unknown theme \"" <> cs theme <> "\" (valid: latte frappe macchiato dracula light dark)")
         Just _ -> fail "settings.theme must be a string"
+    _ -> fail "settings must be an object"
+
+validateTimezone :: Value -> Parser ()
+validateTimezone settings = case settings of
+    Aeson.Object o -> case KeyMap.lookup "timezone" o of
+        Nothing -> pure ()
+        Just (Aeson.String timezone)
+            | isValidTimezone timezone -> pure ()
+            | otherwise -> fail ("unknown timezone \"" <> cs timezone <> "\" (fixed offset like \"UTC+3\" / \"UTC-4\")")
+        Just _ -> fail "settings.timezone must be a string"
     _ -> fail "settings must be an object"
 
 instance FromJSON WebhookTokenItem where
