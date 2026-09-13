@@ -20,9 +20,12 @@ spec = describe "Application.Service.Reports" do
             svg `shouldSatisfy` Text.isInfixOf "prod"
 
         it "renders the volume chart as inline SVG" do
-            let svg = volumeChartSvg [("09-10", 3), ("09-11", 9)]
+            let svg = volumeChartSvg [("09-10", [("critical", 3)]), ("09-11", [("critical", 4), ("warning", 5)])]
             svg `shouldSatisfy` Text.isInfixOf "<svg"
             svg `shouldSatisfy` Text.isInfixOf "09-11"
+            svg `shouldSatisfy` Text.isInfixOf "chart-sev-critical"
+            -- value label above a stacked bar shows the bucket total
+            svg `shouldSatisfy` Text.isInfixOf ">9<"
 
         it "renders the mttr chart as inline SVG" do
             let svg = mttrChartSvg [("critical", 300)]

@@ -1,17 +1,21 @@
 module Web.View.Reports.Index where
 
+import Web.View.Fragments (filterMultiSelect)
 import Web.View.Prelude
 
 data IndexView = IndexView
     { windowHours :: Int
     , envs :: [Text]
     , selectedEnv :: Maybe Text
+    , severities :: [Text]
+    , severityOptions :: [Text]
     , severitySvg :: Text
     , breakdownSvg :: Text
     , breakdownTitle :: Text
     , volumeSvg :: Text
     , volumeTitle :: Text
     , volumeBucket :: Text
+    , volumeSeverities :: [Text]
     , mttrSvg :: Text
     }
 
@@ -39,11 +43,20 @@ instance View IndexView where
                     {forEach ["", "hour", "day"] (bucketOption volumeBucket)}
                 </select>
             </div>
+            <div class="col-auto d-flex align-items-end">
+                {filterMultiSelect "severity" "severity" severityOptions severities}
+            </div>
             <div class="col-auto">
                 <button type="submit" class="btn btn-primary" data-testid="reports-submit">Render</button>
             </div>
         </form>
-        {chartPanel "report-volume" volumeTitle volumeSvg}
+        <div class="card mb-4" data-testid="report-volume">
+            <div class="card-body report-chart">
+                <h5 class="card-title">{volumeTitle}</h5>
+                {volumeLegend}
+                {preEscapedToHtml volumeSvg}
+            </div>
+        </div>
         <div class="row">
             <div class="col-lg-6">
                 {chartPanel "report-severity" "Alerts by severity" severitySvg}
@@ -52,6 +65,13 @@ instance View IndexView where
             <div class="col-lg-6">{chartPanel "report-env" breakdownTitle breakdownSvg}</div>
         </div>
     |]
+      where
+        volumeLegend =
+            if null volumeSeverities
+                then mempty
+                else [hsx|<div class="mb-2" data-testid="report-volume-legend">{forEach volumeSeverities legendBadge}</div>|]
+        legendBadge severity =
+            [hsx|<span class={"badge severity-badge severity-" <> severity <> " me-1"}>{severity}</span>|]
 
 chartPanel :: Text -> Text -> Text -> Html
 chartPanel testId title svg =

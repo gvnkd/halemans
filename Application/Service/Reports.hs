@@ -5,6 +5,7 @@ module Application.Service.Reports (
     mttrChartSvg,
     formatDuration,
     severityCssClass,
+    severityRank,
     truncateLabel,
 ) where
 
@@ -27,6 +28,12 @@ data BarDatum = BarDatum
     , barValue :: Double
     , barValueText :: Text
     , barClass :: Text
+    }
+
+data StackedBarDatum = StackedBarDatum
+    { sbdLabel :: Text
+    , sbdSegments :: [(Text, Double)] -- (css class, value), bottom-to-top
+    , sbdTotal :: Int64
     }
 
 fontSizePx :: Double
@@ -54,15 +61,17 @@ envChartSvg rows = hbarChartSvg 900 (map mk rows)
             , barClass = "chart-bar-accent"
             }
 
-volumeChartSvg :: [(Text, Int64)] -> Text
-volumeChartSvg rows = vbarChartSvg 1800 (map mk rows)
+-- Volume chart: one bar per bucket, segments stacked by severity in
+-- canonical severity order (critical at the bottom). The label above a bar
+-- shows the bucket total.
+volumeChartSvg :: [(Text, [(Text, Int64)])] -> Text
+volumeChartSvg rows = stackedVbarChartSvg 1800 (map mk rows)
   where
-    mk (bucket, n) =
-        BarDatum
-            { barLabel = bucket
-            , barValue = fromIntegral n
-            , barValueText = show n
-            , barClass = "chart-bar-accent"
+    mk (bucket, segments) =
+        StackedBarDatum
+            { sbdLabel = bucket
+            , sbdSegments = [(severityCssClass severity, fromIntegral n) | (severity, n) <- sortOn (severityRank . fst) segments]
+            , sbdTotal = sum (map snd segments)
             }
 
 mttrChartSvg :: [(Text, Double)] -> Text
@@ -105,9 +114,9 @@ hbarChartSvg w rows = renderChartSvg w h (D.vsep rowGap (map row rows))
     valueBox datum = D.alignL (chartText "chart-text-muted" 0 0.5 datum.barValueText) D.<> D.alignL (D.strutX valueCol)
     scaled datum = if maxVal <= 0 then 0 else max 2 (datum.barValue / maxVal * barArea)
 
-vbarChartSvg :: Double -> [BarDatum] -> Text
-vbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
-vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> dayLabels <> [baseline]))
+stackedVbarChartSvg :: Double -> [StackedBarDatum] -> Text
+stackedVbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
+stackedVbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> dayLabels <> [baseline]))
   where
     padding = 8
     plotH = 180
@@ -119,26 +128,29 @@ vbarChartSvg w rows = renderChartSvg w h (D.position (bars <> valueLabels <> day
     n = length rows
     slot = plotW / fromIntegral n
     barW = min 60 (slot * 0.7)
-    maxVal = maximum (map barValue rows)
+    maxVal = maximum (map (fromIntegral . sbdTotal) rows)
     colH value = if maxVal <= 0 then 0 else max 2 (value / maxVal * plotH)
     xCenter i = padding + slot * (fromIntegral i + 0.5)
     -- horizontal labels only: shrink the font until the longest label fits
     -- its slot (avg glyph width ≈ 0.55 em), never rotate
-    maxLabelChars = maximum (map (Text.length . barLabel) rows)
+    maxLabelChars = maximum (map (Text.length . sbdLabel) rows)
     dayFontSize = max 7 (min fontSizePx (slot * 0.9 / (0.55 * fromIntegral maxLabelChars)))
     indexed = zip [0 ..] rows
+    -- each segment sits on the accumulated height of the segments below it
     bars =
-        [ (D.p2 (xCenter i, 0), D.alignB (bar barW (colH datum.barValue) datum.barClass))
+        [ (D.p2 (xCenter i, yBase), D.alignB (bar barW segH cls))
         | (i, datum) <- indexed
-        , datum.barValue > 0
+        , let segments = filter ((> 0) . snd) datum.sbdSegments
+              heights = map (colH . snd) segments
+        , ((cls, _), yBase, segH) <- zip3 segments (scanl (+) 0 heights) heights
         ]
     valueLabels =
-        [ (D.p2 (xCenter i, colH datum.barValue + 4 + descent), baselineTextC fontSizePx "chart-text-muted" datum.barValueText)
+        [ (D.p2 (xCenter i, colH (fromIntegral datum.sbdTotal) + 4 + descent), baselineTextC fontSizePx "chart-text-muted" (show datum.sbdTotal))
         | (i, datum) <- indexed
-        , datum.barValue > 0
+        , datum.sbdTotal > 0
         ]
     dayLabels = zipWith mkDay [0 ..] rows
-    mkDay i datum = (D.p2 (xCenter i, negate (bottomGap + capHeight)), baselineTextC dayFontSize "chart-text-muted" datum.barLabel)
+    mkDay i datum = (D.p2 (xCenter i, negate (bottomGap + capHeight)), baselineTextC dayFontSize "chart-text-muted" datum.sbdLabel)
     -- Inter vertical metrics (fractions of em): digits ride on the baseline
     -- up to cap height; the em box extends a descent below it
     capHeight = 0.73 * dayFontSize
@@ -197,6 +209,13 @@ severityCssClass severity = case Text.toLower severity of
     "info" -> "chart-sev-info"
     "information" -> "chart-sev-info"
     _ -> "chart-sev-other"
+
+-- Canonical severity ordering (most severe first); drives stacked-bar
+-- segment order and severity option lists. Unknown severities sort last.
+severityRank :: Text -> Int
+severityRank severity = fromMaybe 99 (lookup (Text.toLower severity) ranks)
+  where
+    ranks = zip ["critical", "disaster", "high", "average", "warning", "info", "information"] [0 ..]
 
 truncateLabel :: Int -> Text -> Text
 truncateLabel maxChars label

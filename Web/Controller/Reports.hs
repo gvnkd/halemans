@@ -24,6 +24,7 @@ instance Controller ReportsController where
                 Just bucket | bucket `elem` ["hour", "day"] -> bucket
                 _ -> ""
             bucketKind = if volumeBucket == "" then (if windowHours == 24 then "hour" else "day") else volumeBucket
+            severities = paramList @Text "severity"
         -- Selector options: every effective env ever seen (unbounded by window)
         envRows <-
             sqlQueryTyped
@@ -32,6 +33,13 @@ instance Controller ReportsController where
             FROM alerts a
             WHERE coalesce(nullif(a.facets ->> 'env', ''), a.env) IS NOT NULL
             ORDER BY 1 |]
+        -- Severity selector options: every severity ever seen (unbounded by window)
+        severityOptionRows <-
+            sqlQueryTyped
+                [typedSql|
+            SELECT DISTINCT a.severity
+            FROM alerts a
+            ORDER BY 1 |]
         severityRows <-
             sqlQueryTyped
                 [typedSql|
@@ -39,6 +47,7 @@ instance Controller ReportsController where
             FROM alerts a
             WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
+                AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
             GROUP BY a.severity
             ORDER BY n DESC |]
         -- No env selected: breakdown by environment. One env selected:
@@ -51,6 +60,7 @@ instance Controller ReportsController where
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                     AND coalesce(nullif(a.facets ->> 'env', ''), a.env) IS NOT NULL
+                    AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
                 GROUP BY 1
                 ORDER BY n DESC
                 LIMIT 12 |]
@@ -62,6 +72,7 @@ instance Controller ReportsController where
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                     AND a.host IS NOT NULL
                     AND coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter}
+                    AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
                 GROUP BY a.host
                 ORDER BY n DESC
                 LIMIT 12 |]
@@ -74,11 +85,12 @@ instance Controller ReportsController where
                 then
                     sqlQueryTyped
                         [typedSql|
-                SELECT extract(hour from coalesce(a.started_at, a.first_seen_at))::int AS hour_of_day, count(*) AS n
+                SELECT extract(hour from coalesce(a.started_at, a.first_seen_at))::int AS hour_of_day, a.severity, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
-                GROUP BY 1
+                    AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                GROUP BY 1, 2
                 ORDER BY 1 |]
                 else pure []
         dayRows <-
@@ -86,11 +98,12 @@ instance Controller ReportsController where
                 then
                     sqlQueryTyped
                         [typedSql|
-                SELECT date_trunc('day', coalesce(a.started_at, a.first_seen_at)) AS bucket, count(*) AS n
+                SELECT date_trunc('day', coalesce(a.started_at, a.first_seen_at)) AS bucket, a.severity, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
-                GROUP BY 1
+                    AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                GROUP BY 1, 2
                 ORDER BY 1 |]
                 else pure []
         mttrRows <-
@@ -102,6 +115,7 @@ instance Controller ReportsController where
                 AND a.resolved_at >= a.started_at
                 AND coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
+                AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
             GROUP BY a.severity
             ORDER BY avg_seconds DESC |]
         let severitySvg = Reports.severityChartSvg (map (\row -> (get #severity row, get #n row)) severityRows)
@@ -110,19 +124,22 @@ instance Controller ReportsController where
                 Just env | env `notElem` knownEnvs -> env : knownEnvs
                 _ -> knownEnvs
             knownEnvs = [env | Just env <- envRows]
+            -- keep manually-typed/unknown selections visible in the dropdown
+            severityOptions = sortOn Reports.severityRank (nub (severityOptionRows <> severities))
             breakdownSvg = Reports.envChartSvg (map (\row -> (fromMaybe "unknown" (get #label row), get #n row)) breakdownRows)
             breakdownTitle = if isJust selectedEnv then "Alerts by host" else "Alerts by environment"
-            hourCounts = Map.fromList (mapMaybe (\row -> (,get #n row) <$> get #hour_of_day row) hourRows)
+            hourCounts = Map.fromListWith (<>) (mapMaybe (\row -> (,[(get #severity row, get #n row)]) <$> get #hour_of_day row) hourRows)
             hourLabel :: Int -> Text
             hourLabel h = (if h < 10 then "0" else "") <> show h <> ":00"
-            dayCounts = Map.fromList (mapMaybe (\row -> (,get #n row) <$> get #bucket row) dayRows)
+            dayCounts = Map.fromListWith (<>) (mapMaybe (\row -> (,[(get #severity row, get #n row)]) <$> get #bucket row) dayRows)
             dayBuckets = takeWhile (< now) (iterate (addUTCTime 86400) (truncateBucket 86400 from))
             dayLabel = cs . TimeFormat.formatTime TimeFormat.defaultTimeLocale "%m-%d"
-            volumeSvg =
-                Reports.volumeChartSvg $
-                    if bucketKind == "hour"
-                        then [(hourLabel h, Map.findWithDefault 0 h hourCounts) | h <- [0 .. 23]]
-                        else [(dayLabel bucket, Map.findWithDefault 0 bucket dayCounts) | bucket <- dayBuckets]
+            volumeData =
+                if bucketKind == "hour"
+                    then [(hourLabel h, Map.findWithDefault [] h hourCounts) | h <- [0 .. 23]]
+                    else [(dayLabel bucket, Map.findWithDefault [] bucket dayCounts) | bucket <- dayBuckets]
+            volumeSeverities = sortOn Reports.severityRank (nub (concatMap (map fst . snd) volumeData))
+            volumeSvg = Reports.volumeChartSvg volumeData
             volumeTitle = if bucketKind == "hour" then "Alert volume per hour" else "Alert volume per day"
             mttrSvg = Reports.mttrChartSvg (map (\row -> (get #severity row, fromMaybe 0 (get #avg_seconds row))) mttrRows)
         render IndexView{..}
