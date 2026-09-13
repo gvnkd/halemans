@@ -1,6 +1,7 @@
 module Web.Controller.Reports where
 
 import qualified Application.Service.Reports as Reports
+import Application.Service.TimeRange (resolveTimeExpr)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..))
 import qualified Data.Time.Format as TimeFormat
@@ -17,7 +18,13 @@ instance Controller ReportsController where
     action ReportsAction = do
         now <- getCurrentTime
         let windowHours = clampWindow (intParam 168 "windowHours")
-            from = addUTCTime (negate (fromIntegral windowHours * 3600)) now
+            -- Explicit from/to (relative "now() - 7d" or absolute) override
+            -- the window; windowHours is the fallback for an empty/invalid
+            -- `from`, `to` defaults to now
+            rangeFrom = fromMaybe "" (paramOrNothing @Text "from" >>= nonEmptyText)
+            rangeTo = fromMaybe "" (paramOrNothing @Text "to" >>= nonEmptyText)
+            from = fromMaybe (addUTCTime (negate (fromIntegral windowHours * 3600)) now) (resolveTimeExpr now rangeFrom)
+            to = fromMaybe now (resolveTimeExpr now rangeTo)
             envFilter = fromMaybe "" (paramOrNothing @Text "env")
             selectedEnv = if envFilter == "" then Nothing else Just envFilter
             volumeBucket = case paramOrNothing @Text "bucket" of
@@ -46,6 +53,7 @@ instance Controller ReportsController where
             SELECT a.severity, count(*) AS n
             FROM alerts a
             WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
             GROUP BY a.severity
@@ -59,6 +67,7 @@ instance Controller ReportsController where
                 SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS label, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND coalesce(nullif(a.facets ->> 'env', ''), a.env) IS NOT NULL
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
                 GROUP BY 1
@@ -70,6 +79,7 @@ instance Controller ReportsController where
                 SELECT a.host AS label, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND a.host IS NOT NULL
                     AND coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter}
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
@@ -88,6 +98,7 @@ instance Controller ReportsController where
                 SELECT extract(hour from coalesce(a.started_at, a.first_seen_at))::int AS hour_of_day, a.severity, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
                 GROUP BY 1, 2
@@ -101,6 +112,7 @@ instance Controller ReportsController where
                 SELECT date_trunc('day', coalesce(a.started_at, a.first_seen_at)) AS bucket, a.severity, count(*) AS n
                 FROM alerts a
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
                 GROUP BY 1, 2
@@ -114,6 +126,7 @@ instance Controller ReportsController where
             WHERE a.resolved_at IS NOT NULL AND a.started_at IS NOT NULL
                 AND a.resolved_at >= a.started_at
                 AND coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
             GROUP BY a.severity
@@ -132,7 +145,7 @@ instance Controller ReportsController where
             hourLabel :: Int -> Text
             hourLabel h = (if h < 10 then "0" else "") <> show h <> ":00"
             dayCounts = Map.fromListWith (<>) (mapMaybe (\row -> (,[(get #severity row, get #n row)]) <$> get #bucket row) dayRows)
-            dayBuckets = takeWhile (< now) (iterate (addUTCTime 86400) (truncateBucket 86400 from))
+            dayBuckets = takeWhile (< to) (iterate (addUTCTime 86400) (truncateBucket 86400 from))
             dayLabel = cs . TimeFormat.formatTime TimeFormat.defaultTimeLocale "%m-%d"
             volumeData =
                 if bucketKind == "hour"
@@ -159,3 +172,6 @@ clampWindow hours
 
 intParam :: (?request :: Request) => Int -> ByteString -> Int
 intParam fallback name = fromMaybe fallback (paramOrNothing @Text name >>= readMaybe . cs)
+
+nonEmptyText :: Text -> Maybe Text
+nonEmptyText value = if value == "" then Nothing else Just value

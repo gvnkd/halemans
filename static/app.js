@@ -249,6 +249,75 @@
     document.addEventListener('turbolinks:load', init);
 })();
 
+// Local-datetime range inputs (/reports from/to): the visible input is a
+// flatpickr calendar with free text allowed (relative expressions like
+// "now() - 7d" pass through untouched). The canonical value lives in a
+// hidden form field: local datetimes are converted to UTC ISO on edit, UTC
+// ISO values from the server are shown in browser-local time — the same
+// local-timezone convention as the <time data-utc> rendering above.
+(function () {
+    var ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?Z$/;
+    var LOCAL = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/;
+
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+    function toLocalText(d) {
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+            + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function toUtcText(value) {
+        var d = new Date(value.replace(' ', 'T'));
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    }
+
+    function syncHidden(input, hidden) {
+        var v = input.value.trim();
+        if (LOCAL.test(v)) {
+            var utc = toUtcText(v);
+            hidden.value = utc || v;
+        } else {
+            hidden.value = v;
+        }
+    }
+
+    var init = function () {
+        var inputs = document.querySelectorAll('input[data-local-datetime]');
+        Array.prototype.forEach.call(inputs, function (input) {
+            if (input.dataset.init) return;
+            var form = input.form;
+            if (!form) return;
+            var hidden = form.querySelector('input[type="hidden"][name="' + input.getAttribute('data-local-datetime') + '"]');
+            if (!hidden) return;
+            input.dataset.init = '1';
+            if (ISO_Z.test(hidden.value)) {
+                var d = new Date(hidden.value);
+                input.value = isNaN(d.getTime()) ? hidden.value : toLocalText(d);
+            } else {
+                input.value = hidden.value;
+            }
+            // property handlers (not addEventListener): morphdom keeps the
+            // node across form submits and re-runs this init, so listeners
+            // would otherwise accumulate
+            input.onchange = function () { syncHidden(input, hidden); };
+            input.oninput = function () { syncHidden(input, hidden); };
+            if (typeof window.flatpickr === 'function') {
+                if (input._flatpickr) input._flatpickr.destroy();
+                window.flatpickr(input, { enableTime: true, time_24hr: true, allowInput: true, dateFormat: 'Y-m-d H:i' });
+                // IHP's morphdom special-cases .flatpickr-input nodes and
+                // overwrites the value after a form morph, racing the local-
+                // time conversion above; dropping the marker class keeps the
+                // default value sync (canonical value is rendered server-side
+                // into the value attribute) and lets this init own display.
+                input.classList.remove('flatpickr-input');
+            }
+        });
+    };
+    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('turbolinks:load', init);
+})();
+
 // CSP-friendly replacements for inline handlers (milestone 12 §8):
 // [data-autosubmit] inputs submit their form on change; forms with
 // [data-confirm] ask before submitting.

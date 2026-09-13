@@ -5,6 +5,8 @@ import Web.View.Prelude
 
 data IndexView = IndexView
     { windowHours :: Int
+    , rangeFrom :: Text
+    , rangeTo :: Text
     , envs :: [Text]
     , selectedEnv :: Maybe Text
     , severities :: [Text]
@@ -29,6 +31,16 @@ instance View IndexView where
                 <select name="windowHours" class="form-select" data-testid="reports-window">
                     {forEach [24, 168, 720] (windowOption windowHours)}
                 </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">From</label>
+                <input type="hidden" name="from" value={rangeFrom}/>
+                <input class="form-control" placeholder="now() - 7d or pick a date" value={rangeFrom} data-local-datetime="from" data-testid="reports-from"/>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">To</label>
+                <input type="hidden" name="to" value={rangeTo}/>
+                <input class="form-control" placeholder="now() or pick a date" value={rangeTo} data-local-datetime="to" data-testid="reports-to"/>
             </div>
             <div class="col-auto">
                 <label class="form-label">Environment</label>

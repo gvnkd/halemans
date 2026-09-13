@@ -33,6 +33,7 @@ import qualified Test.ReportsSpec
 import qualified Test.SourceHealthSpec
 import qualified Test.StateMachineSpec
 import qualified Test.ThemeSpec
+import qualified Test.TimeRangeSpec
 import qualified Test.TimelineSpec
 import qualified Test.VersionSpec
 import qualified Test.WriteBackSpec
@@ -68,5 +69,6 @@ main = hspec do
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec
     Test.ReportsSpec.spec
+    Test.TimeRangeSpec.spec
     Test.PrivilegeSpec.spec
     Test.LiveSpec.spec
