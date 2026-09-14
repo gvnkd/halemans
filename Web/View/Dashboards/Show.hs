@@ -3,9 +3,11 @@ module Web.View.Dashboards.Show where
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
+import Application.Service.DynTable
 import qualified Data.Text as Text
 import Network.HTTP.Types (urlEncode)
-import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), RollupCard (..), alertsTableHtml, rollupCardHtml, severityBadgeHtml, statusBadgeHtml)
+import Web.View.DynTable (DynTable (..), dynTableHtml)
+import Web.View.Fragments (RollupCard (..), alertRowHtmlCols, alertStaticColumns, rollupCardHtml, severityBadgeHtml, statusBadgeHtml)
 import Web.View.Prelude
 
 data ShowView = ShowView
@@ -68,17 +70,7 @@ renderCardSection dashboardId (expanded, result) = case result of
         (True, Just size) -> Just ("flex: 0 0 " <> tshow size.csWidth <> "px")
         _ -> Nothing
     cardBody = case result of
-        FlatCard alerts ->
-            alertsTableHtml
-                AlertsTable
-                    { atTestId = Nothing
-                    , atTbodyId = tbodyId
-                    , atLiveScope = Nothing
-                    , atLiveFilters = Nothing
-                    , atTableClass = "table table-sm"
-                    , atSorting = Nothing
-                    , atContent = FlatAlerts alerts
-                    }
+        FlatCard alerts -> staticAlertsTable tbodyId alerts
         GroupedCard groups ->
             [hsx|
                 {forEach groups (renderGroup domId)}
@@ -153,17 +145,47 @@ renderGroup cardId group =
 |]
   where
     groupId = cardId <> "-group-" <> Text.replace " " "_" group.cgValue
-    membersTable =
-        alertsTableHtml
-            AlertsTable
-                { atTestId = Nothing
-                , atTbodyId = groupId <> "-tbody"
-                , atLiveScope = Nothing
-                , atLiveFilters = Nothing
-                , atTableClass = "table table-sm"
-                , atSorting = Nothing
-                , atContent = FlatAlerts group.cgAlerts
-                }
+    membersTable = staticAlertsTable (groupId <> "-tbody") group.cgAlerts
 
 severityChip :: Text -> Html
 severityChip severity = severityBadgeHtml severity Nothing
+
+-- Embedded card tables are presentational only: no picker/pager (the card
+-- limit already caps the rows), plain headers, no wrapping form.
+staticAlertsTable :: Text -> [Alert] -> Html
+staticAlertsTable tbodyId alerts =
+    dynTableHtml
+        DynTable
+            { dtTestId = Nothing
+            , dtTbodyId = tbodyId
+            , dtLiveScope = Nothing
+            , dtLiveFilters = Nothing
+            , dtTableClass = "table table-sm"
+            , dtConfig =
+                TableConfig
+                    { cfgName = tbodyId
+                    , cfgColumns = alertStaticColumns
+                    , cfgDefaultVisible = defaultAlertListColumns
+                    , cfgDefaultSort = "last_seen_at"
+                    , cfgDefaultDir = "desc"
+                    , cfgPageSizes = []
+                    , cfgDefaultPageSize = defaultAlertListPageSize
+                    , cfgColumnPicker = False
+                    , cfgPager = False
+                    }
+            , dtState =
+                TableState
+                    { tsSort = "last_seen_at"
+                    , tsDir = "desc"
+                    , tsPage = 1
+                    , tsPageSize = max 1 (length alerts)
+                    , tsVisible = defaultAlertListColumns
+                    , tsFilters = []
+                    }
+            , dtBasePath = ""
+            , dtResetUrl = Nothing
+            , dtExtraItems = []
+            , dtTotal = fromIntegral (length alerts)
+            , dtRows = alerts
+            , dtRowHtml = \visible alert -> alertRowHtmlCols Nothing (map colKey visible) alert
+            }

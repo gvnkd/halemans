@@ -210,7 +210,7 @@ m9Spec = describe "resolved facets (milestone 9)" do
             perform job
             -- /alerts env filter matches the override, not the raw env
             -- (dev-DB tolerant: other runs may leave PROD-overridden alerts)
-            let idsFor envName = map (get #id) <$> listAlerts defaultAlertListFilters{alfEnvs = [envName]} 500
+            let idsFor envName = map (get #id) <$> listAlerts defaultAlertListFilters{alfEnvs = [envName], alfPageSize = 500}
             prodIds <- idsFor "PROD"
             prodIds `shouldContain` [alertId]
             idsFor "m9-override-raw" `shouldReturn` []

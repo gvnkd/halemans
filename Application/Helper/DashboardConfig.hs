@@ -7,6 +7,10 @@ module Application.Helper.DashboardConfig (
     SortTarget (..),
     AlertSortKey (..),
     validAlertSortColumns,
+    alertListColumnKeys,
+    defaultAlertListColumns,
+    alertListPageSizes,
+    defaultAlertListPageSize,
     parseAlertSortKey,
     alertSortKeyText,
     alertSortNaturalDir,
@@ -166,6 +170,22 @@ data AlertSortKey = AlertSortKey
 -- card config never drift apart.
 validAlertSortColumns :: [Text]
 validAlertSortColumns = ["status", "severity", "title", "env", "host", "occurrences", "last_seen_at"]
+
+-- | Every column the /alerts dynamic table can render (display + filter +
+-- sort wiring); a subset of these is sortable (validAlertSortColumns).
+alertListColumnKeys :: [Text]
+alertListColumnKeys = ["status", "severity", "title", "env", "host", "service", "occurrences", "last_seen_at", "group"]
+
+-- | Columns a fresh /alerts visit shows; the column picker persists
+-- deviations per user. service/group start hidden (filter-only legacy).
+defaultAlertListColumns :: [Text]
+defaultAlertListColumns = ["status", "severity", "title", "env", "host", "occurrences", "last_seen_at"]
+
+alertListPageSizes :: [Int]
+alertListPageSizes = [25, 50, 100, 200]
+
+defaultAlertListPageSize :: Int
+defaultAlertListPageSize = 50
 
 parseAlertSortKey :: Text -> Maybe AlertSortKey
 parseAlertSortKey raw = do

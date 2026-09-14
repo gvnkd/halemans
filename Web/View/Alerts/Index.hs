@@ -1,11 +1,11 @@
 module Web.View.Alerts.Index where
 
-import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import Application.Helper.DashboardConfig (alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize)
 import Application.Service.AlertList (AlertListFilters (..), alertFiltersToValue)
+import Application.Service.DynTable
 import qualified Data.Aeson as Aeson
-import qualified Data.List as List
-import Network.HTTP.Types.URI (renderQuery)
-import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), AlertsTableSorting (..), alertsTableHtml, filterMultiSelect, filterTextInput, nextSortDir)
+import Web.View.DynTable (DynTable (..), dynTableHtml)
+import Web.View.Fragments (alertListColumns, alertRowHtmlCols, alertSeverityOptions)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -13,6 +13,10 @@ data IndexView = IndexView
     , filters :: AlertListFilters
     , counts :: [(Text, Int64)]
     , envNames :: [Text]
+    , total :: Int64
+    , groupKeys :: [(Id AlertGroup, Text)]
+    -- ^ Group keys for the visible page, fetched only when the group
+    -- column is shown.
     }
 
 instance View IndexView where
@@ -20,56 +24,72 @@ instance View IndexView where
         [hsx|
         <h1>Alerts</h1>
         {severityCounts}
-        <form method="GET" action={AlertsAction} class="row g-2 mb-3" data-testid="alerts-filters">
-            {filterMultiSelect "severity" "severity" severities filters.alfSeverities}
-            {filterMultiSelect "status" "status" statuses filters.alfStatuses}
-            {filterMultiSelect "env" "env" envNames filters.alfEnvs}
-            {filterTextInput "host" "host" filters.alfHost hostSuggestions}
-            {filterTextInput "service" "service" filters.alfService serviceSuggestions}
-            {filterTextInput "q" "title contains" filters.alfTitle titleSuggestions}
-            <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.alfGroup} data-testid="alerts-filter-group" data-autosubmit=""/></div>
-            <input type="hidden" name="sort" value={filters.alfSort}/>
-            <input type="hidden" name="dir" value={filters.alfDir}/>
-            <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="alerts-filters-reset">Reset</a></div>
-        </form>
         {table}
     |]
       where
         table =
-            alertsTableHtml
-                AlertsTable
-                    { atTestId = Just "alerts-table"
-                    , atTbodyId = "alerts-tbody"
-                    , atLiveScope = Just "alerts"
+            dynTableHtml
+                DynTable
+                    { dtTestId = Just "alerts-table"
+                    , dtTbodyId = "alerts-tbody"
+                    , dtLiveScope = Just "alerts"
                     , -- Canonical filter state for the WS subscription: the URL can
                       -- be stale after turbolinks followed the prefs redirect
                       -- without a pushState, so the client reads THESE, not
                       -- location.search.
-                      atLiveFilters = Just liveFilters
-                    , atTableClass = "table"
-                    , atSorting =
-                        Just
-                            AlertsTableSorting
-                                { atsSort = filters.alfSort
-                                , atsDir = filters.alfDir
-                                , atsUrl = sortUrl
-                                }
-                    , atContent = FlatAlerts alerts
+                      dtLiveFilters = Just liveFilters
+                    , dtTableClass = "table"
+                    , dtConfig = tableConfig
+                    , dtState = tableState
+                    , dtBasePath = pathTo AlertsAction
+                    , dtResetUrl = Just resetUrl
+                    , dtExtraItems = []
+                    , dtTotal = total
+                    , dtRows = alerts
+                    , dtRowHtml = rowHtml
                     }
+        rowHtml visible alert =
+            alertRowHtmlCols (alert.groupId >>= (`lookup` groupKeys)) (map colKey visible) alert
         liveFilters :: Text
         liveFilters = cs (Aeson.encode (alertFiltersToValue filters))
-        severities = ["critical", "high", "warning", "info"]
-        statuses = ["firing", "ack", "resolved", "stalled", "closed"]
         resetUrl :: Text
         resetUrl = pathTo AlertsAction <> "?reset=1"
-        hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
-        serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
-        titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
+
+        tableConfig =
+            TableConfig
+                { cfgName = "alerts"
+                , cfgColumns = alertListColumns (Just envNames) alerts
+                , cfgDefaultVisible = defaultAlertListColumns
+                , cfgDefaultSort = "last_seen_at"
+                , cfgDefaultDir = "desc"
+                , cfgPageSizes = alertListPageSizes
+                , cfgDefaultPageSize = defaultAlertListPageSize
+                , cfgColumnPicker = True
+                , cfgPager = True
+                }
+
+        tableState =
+            TableState
+                { tsSort = filters.alfSort
+                , tsDir = filters.alfDir
+                , tsPage = filters.alfPage
+                , tsPageSize = filters.alfPageSize
+                , tsVisible = filters.alfColumns
+                , tsFilters =
+                    [("severity", filters.alfSeverities), ("status", filters.alfStatuses), ("env", filters.alfEnvs)]
+                        ++ single "host" filters.alfHost
+                        ++ single "service" filters.alfService
+                        ++ single "q" filters.alfTitle
+                        ++ single "group" filters.alfGroup
+                        ++ single "occ_min" (tshow <$> filters.alfMinOccurrences)
+                        ++ single "seen" filters.alfSeenWithin
+                }
+        single param = maybe [] (\value -> [(param, [value])])
 
         severityCounts =
             [hsx|
                 <div class="mb-2" data-testid="severity-counts">
-                    {forEach severities countBadge}
+                    {forEach alertSeverityOptions countBadge}
                 </div>
             |]
         countBadge severity =
@@ -77,11 +97,6 @@ instance View IndexView where
                 <span class={"badge severity-badge severity-" <> severity <> " me-1"} data-testid={"count-" <> severity}>{severity} {countFor severity}</span>
             |]
         countFor severity = fromMaybe 0 (lookup severity counts)
-
-        sortUrl :: Text -> Text
-        sortUrl column = pathTo AlertsAction <> cs (renderQuery True (queryItems column))
-          where
-            queryItems col = baseItems filters{alfSort = col, alfDir = nextSortDir filters.alfSort filters.alfDir col}
 
 baseItems :: AlertListFilters -> [(ByteString, Maybe ByteString)]
 baseItems f =
@@ -93,3 +108,7 @@ baseItems f =
         ++ maybe [] (\value -> [("q", Just (cs value))]) f.alfTitle
         ++ maybe [] (\value -> [("group", Just (cs value))]) f.alfGroup
         ++ [("sort", Just (cs f.alfSort)), ("dir", Just (cs f.alfDir))]
+        ++ map (\col -> ("cols", Just (cs col))) f.alfColumns
+        ++ [("pageSize", Just (cs (tshow f.alfPageSize)))]
+        ++ maybe [] (\value -> [("occ_min", Just (cs (tshow value)))]) f.alfMinOccurrences
+        ++ maybe [] (\value -> [("seen", Just (cs value))]) f.alfSeenWithin

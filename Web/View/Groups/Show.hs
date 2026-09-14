@@ -1,12 +1,17 @@
 module Web.View.Groups.Show where
 
-import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), alertsTableHtml, groupHeaderHtml)
+import Application.Helper.DashboardConfig (defaultAlertListColumns, defaultAlertListPageSize)
+import Application.Service.DynTable
+import Web.View.DynTable (DynTable (..), dynTableHtml)
+import Web.View.Fragments (alertBaseColumns, alertRowHtmlCols, groupHeaderHtml)
 import Web.View.Prelude
 
 data ShowView = ShowView
     { group :: AlertGroup
     , members :: [Alert]
     , canAck :: Bool
+    , sortColumn :: Text
+    , sortDir :: Text
     }
 
 instance View ShowView where
@@ -20,16 +25,43 @@ instance View ShowView where
     |]
       where
         membersTable =
-            alertsTableHtml
-                AlertsTable
-                    { atTestId = Just "group-members-table"
-                    , atTbodyId = "group-members-tbody"
-                    , atLiveScope = Nothing
-                    , atLiveFilters = Nothing
-                    , atTableClass = "table"
-                    , atSorting = Nothing
-                    , atContent = FlatAlerts members
+            dynTableHtml
+                DynTable
+                    { dtTestId = Just "group-members-table"
+                    , dtTbodyId = "group-members-tbody"
+                    , dtLiveScope = Nothing
+                    , dtLiveFilters = Nothing
+                    , dtTableClass = "table"
+                    , dtConfig = tableConfig
+                    , dtState = tableState
+                    , dtBasePath = pathTo (ShowGroupAction group.id)
+                    , dtResetUrl = Nothing
+                    , dtExtraItems = []
+                    , dtTotal = fromIntegral (length members)
+                    , dtRows = members
+                    , dtRowHtml = \visible alert -> alertRowHtmlCols Nothing (map colKey visible) alert
                     }
+        tableConfig =
+            TableConfig
+                { cfgName = "group-members"
+                , cfgColumns = alertBaseColumns
+                , cfgDefaultVisible = defaultAlertListColumns
+                , cfgDefaultSort = "last_seen_at"
+                , cfgDefaultDir = "desc"
+                , cfgPageSizes = []
+                , cfgDefaultPageSize = defaultAlertListPageSize
+                , cfgColumnPicker = False
+                , cfgPager = False
+                }
+        tableState =
+            TableState
+                { tsSort = sortColumn
+                , tsDir = sortDir
+                , tsPage = 1
+                , tsPageSize = max 1 (length members)
+                , tsVisible = defaultAlertListColumns
+                , tsFilters = []
+                }
         hasFiring = any (\alert -> alert.status == "firing") members
         ackButton =
             if canAck && hasFiring

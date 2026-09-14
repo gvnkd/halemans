@@ -152,7 +152,9 @@ renderCardDetail dashboard expandedCard = do
                 (key : _) -> (key.askColumn, alertSortDisplayDir key)
                 [] -> ("last_seen_at", "desc")
     alerts <- runCardQuery effectiveCard
-    render CardView{dashboard, expandedCard, alerts, sortColumn, sortDir}
+    let requestedCols = [c | c <- alertListColumnKeys, c `elem` paramList @Text "cols"]
+        visibleCols = if null requestedCols then defaultAlertListColumns else requestedCols
+    render CardView{dashboard, expandedCard, alerts, sortColumn, sortDir, visibleCols}
 
 ownDashboards :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Respond, CurrentUserRecord ~ User) => IO [Dashboard]
 ownDashboards =

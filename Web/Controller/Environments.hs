@@ -1,7 +1,9 @@
 module Web.Controller.Environments where
 
-import Application.Helper.DashboardConfig (quoteSqlText)
+import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize, validAlertSortColumns)
 import qualified Application.Helper.FilterPrefs as FilterPrefs
+import qualified Application.Service.AlertList as AlertList
+import Application.Service.DynTable (pageCountFor)
 import Network.HTTP.Types.URI (renderQuery)
 import Web.Controller.Prelude
 import Web.View.Environments.Show
@@ -25,14 +27,26 @@ instance Controller EnvironmentsController where
             _ -> renderEnv environmentName emptyEnvFilters "flat"
       where
         filtersFromParams =
-            EnvFilters
-                { filterSeverities = paramList @Text "severity"
-                , filterStatuses = paramList @Text "status"
-                , filterHost = nonEmptyParam "host"
-                , filterService = nonEmptyParam "service"
-                , filterText = nonEmptyParam "q"
-                , filterGroup = nonEmptyParam "group"
-                }
+            let requestedSort = fromMaybe "last_seen_at" (nonEmptyParam "sort")
+                requestedCols = [c | c <- alertListColumnKeys, c `elem` paramList @Text "cols"]
+                requestedPageSize = fromMaybe defaultAlertListPageSize (paramOrNothing @Int "pageSize")
+             in EnvFilters
+                    { filterSeverities = paramList @Text "severity"
+                    , filterStatuses = paramList @Text "status"
+                    , filterHost = nonEmptyParam "host"
+                    , filterService = nonEmptyParam "service"
+                    , filterText = nonEmptyParam "q"
+                    , filterGroup = nonEmptyParam "group"
+                    , filterSort = if requestedSort `elem` validAlertSortColumns then requestedSort else "last_seen_at"
+                    , filterDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
+                    , filterCols = if null requestedCols then defaultAlertListColumns else requestedCols
+                    , filterPage = max 1 (fromMaybe 1 (paramOrNothing @Int "page"))
+                    , filterPageSize = if requestedPageSize `elem` alertListPageSizes then requestedPageSize else defaultAlertListPageSize
+                    , filterOccMin = paramOrNothing @Int "occ_min"
+                    , filterSeenWithin = case nonEmptyParam "seen" of
+                        Just window | isJust (AlertList.parseRelativeWindow window) -> Just window
+                        _ -> Nothing
+                    }
 
 renderEnv :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> EnvFilters -> Text -> IO ResponseReceived
 renderEnv environmentName filters viewMode = do
@@ -42,30 +56,18 @@ renderEnv environmentName filters viewMode = do
         query @Environment
             |> filterWhere (#name, environmentName)
             |> fetchOneOrNothing
-    groupFilterIds <- case filters.filterGroup of
-        Nothing -> pure Nothing
-        Just pat -> do
-            matchingGroups <-
-                query @AlertGroup
-                    |> filterWhereILike (#groupKey, "%" <> pat <> "%")
-                    |> fetch
-            pure (Just (map (Just . get #id) matchingGroups))
-    -- Membership and host/service filters match on the EFFECTIVE value:
-    -- a facet named env/host/service overrides the raw column. The
-    -- filterWhereSql fragment is spliced behind `facets IS NOT NULL AND`
-    -- (facets is NOT NULL by schema) because the builder only appends.
-    alerts <-
-        query @Alert
-            |> filterWhereSql (#facets, "IS NOT NULL AND coalesce(nullif(alerts.facets ->> 'env', ''), alerts.env) = " <> quoteSqlText environmentName)
-            |> applyList filters.filterSeverities (\values -> filterWhereIn (#severity, values))
-            |> applyList filters.filterStatuses (\values -> filterWhereIn (#status, values))
-            |> applyMaybe filters.filterHost (\value -> filterWhereSql (#facets, "IS NOT NULL AND coalesce(nullif(alerts.facets ->> 'host', ''), alerts.host) = " <> quoteSqlText value))
-            |> applyMaybe filters.filterService (\value -> filterWhereSql (#facets, "IS NOT NULL AND coalesce(nullif(alerts.facets ->> 'service', ''), alerts.service) = " <> quoteSqlText value))
-            |> applyMaybe filters.filterText (\value -> filterWhereILike (#title, "%" <> value <> "%"))
-            |> applyMaybe groupFilterIds (\ids -> filterWhereIn (#groupId, ids))
-            |> orderByDesc #lastSeenAt
-            |> limit 200
-            |> fetch
+    -- The flat list reuses the /alerts query engine (typedSql, dynamic
+    -- sort, offset pagination); unlike /alerts, an empty status selection
+    -- shows ALL statuses here, closed included (alfIncludeClosed).
+    total <- AlertList.countAlerts alertFilters
+    let effAlertFilters = alertFilters{AlertList.alfPage = min alertFilters.alfPage (pageCountFor total alertFilters.alfPageSize)}
+    alerts <- AlertList.listAlerts effAlertFilters
+    groupKeys <- case filters.filterCols of
+        cols
+            | "group" `elem` cols && not (null alerts) ->
+                map (\group -> (get #id group, group.groupKey))
+                    <$> (query @AlertGroup |> filterWhereIn (#id, mapMaybe (.groupId) alerts) |> fetch)
+        _ -> pure []
     groups <-
         if viewMode == "grouped"
             then case environment of
@@ -92,15 +94,26 @@ renderEnv environmentName filters viewMode = do
                 |> filterWhereSql (#endsAt, "> NOW()")
                 |> orderByDesc #startsAt
                 |> fetch
-    render ShowView{..}
+    render ShowView{filters = filters{filterPage = effAlertFilters.alfPage}, ..}
+  where
+    alertFilters =
+        AlertList.AlertListFilters
+            { alfSeverities = filters.filterSeverities
+            , alfStatuses = filters.filterStatuses
+            , alfEnvs = [environmentName]
+            , alfHost = filters.filterHost
+            , alfService = filters.filterService
+            , alfTitle = filters.filterText
+            , alfGroup = filters.filterGroup
+            , alfSort = filters.filterSort
+            , alfDir = filters.filterDir
+            , alfColumns = filters.filterCols
+            , alfPage = filters.filterPage
+            , alfPageSize = filters.filterPageSize
+            , alfMinOccurrences = filters.filterOccMin
+            , alfSeenWithin = filters.filterSeenWithin
+            , alfIncludeClosed = True
+            }
 
 envFilterQueryKeys :: [ByteString]
-envFilterQueryKeys = ["severity", "status", "host", "service", "q", "group", "view"]
-
-applyMaybe :: Maybe value -> (value -> query -> query) -> query -> query
-applyMaybe Nothing _ query' = query'
-applyMaybe (Just value) f query' = f value query'
-
-applyList :: [value] -> ([value] -> query -> query) -> query -> query
-applyList [] _ query' = query'
-applyList values f query' = f values query'
+envFilterQueryKeys = ["severity", "status", "host", "service", "q", "group", "view", "sort", "dir", "cols", "page", "pageSize", "occ_min", "seen"]
