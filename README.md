@@ -29,6 +29,85 @@ Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, serve
 
 Full design: [`design_docs/01_highlevel.md`](design_docs/01_highlevel.md); per-milestone notes in `design_docs/milestone_*.md`.
 
+## Grouping rules
+
+Grouping rules cluster related alerts into **alert groups** (`alert_groups` table). A group has a human-readable `group_key` (also used as its title), a rollup status, a worst-severity and a member count. Groups surface in the UI on the `/alerts` list (the optional `Group` column), on a dedicated group page (`/groups/:id`, with a one-click "ack group" action), in the environment view's grouped mode, and as live WebSocket updates.
+
+Rules are managed in **Admin → Grouping rules** (`/admin/grouping-rules`) and require the `manage_rules` privilege.
+
+### How grouping works
+
+1. When a new alert lands in the pipeline (after normalize/dedupe/blackout), enabled rules are evaluated in ascending `position` order — **first match wins**. A rule with an empty match expression matches everything, so keep catch-all rules at the highest position numbers.
+2. On match, the rule's **group key template** is rendered against the alert. The alert's `group_id` is set to the group with that key (created on demand, with the alert's effective env as the group's environment) and `grouped_by_version` records the rule version at match time.
+3. Alerts with no subject at all (no env, host or service) are **never grouped** — their rendered key would be all dashes and would collapse unrelated alerts together.
+4. **Regroup replay:** facet extraction runs after ingest, so rules referencing facets (a facet glob in the match, or `{facet:...}` in the template) are re-evaluated once enrichment materializes the facets. An alert that no longer matches any rule keeps its group — regrouping only ever moves alerts *into* groups, never out.
+5. Whenever membership changes the group's rollup is recomputed: `worst_severity` = max member severity (critical > high > warning > info), `member_count`, and status = `firing` if any live member fires, else `stalled`, else `ack`, else `resolved` (all members resolved/closed; `resolved_at` is stamped on the transition).
+
+### Rule fields
+
+| Field | Meaning |
+|---|---|
+| `name` | Display name (admin list only; not part of the key). |
+| `position` | Evaluation order, ascending. Lower runs first; first match wins. |
+| `enabled` | Disabled rules are skipped entirely. |
+| `match` | Conjunction (AND only) of field-equals, label globs and facet globs. Empty matches everything. |
+| `group_key_template` | Template rendered into the group's key. |
+| `version` | Bumped automatically on every edit; stored on grouped alerts as `grouped_by_version`. |
+
+**Editing a rule never ungroups existing alerts.** Already-grouped alerts keep their group and their old `grouped_by_version`; the bump exists so a future replay can tell which alerts predate the edit. New alerts get the new behavior immediately.
+
+### Match expressions
+
+The admin form edits the match as two comma-separated inputs; in the DB the match is jsonb of the shape:
+
+```json
+{
+  "fields": {"env": "prod", "severity": "critical"},
+  "labels": {"component": "db-*"},
+  "facets": {"DB Cluster": "ib*"}
+}
+```
+
+- **Field equals** — exact match against `env`, `host`, `service`, `check`, `severity` or `status`. For `env`/`host`/`service` the **effective** value is compared: a materialized facet with the same name overrides the raw column. `check`, `severity` and `status` always compare raw.
+- **Label globs** — shell-style glob against the alert's `labels` map: `*` matches any run of characters, `?` exactly one, everything else is literal. A missing label fails the clause.
+- **Facet globs** — same glob syntax against the materialized `facets` map (facet names are case-sensitive, e.g. `DB Cluster`). Editable via the match jsonb; the two-input admin form covers fields and labels.
+
+All clauses must hold (AND). Example: `fields={"env":"prod"}`, `labels={"component":"db-*"}` matches only prod alerts whose `component` label starts with `db-`.
+
+### Group key templates
+
+Literal text with `{placeholders}`:
+
+| Placeholder | Renders as |
+|---|---|
+| `{env}` `{host}` `{service}` | Effective field value (facet override wins). |
+| `{check}` `{severity}` `{status}` | Raw field value. |
+| `{label:<name>}` | Value of the alert label `<name>`. |
+| `{facet:<name>}` | Value of the materialized facet `<name>`. |
+
+A missing/empty subject renders as `-`. Examples:
+
+| Template | Sample key |
+|---|---|
+| `{env}/{host}` | `prod/web-01` |
+| `{env}/{host}/{check}` | `prod/web-01/CPU load` |
+| `db-{facet:DB Cluster}` | `db-ib-prod-1` (or `db--` before enrichment resolves the facet) |
+
+Alerts whose template renders the same key share one group — the key *is* the grouping identity. Choose placeholders so alerts that should be handled together render equal keys.
+
+### Preview
+
+`/admin/grouping-rules/:id/preview` evaluates the rule against the 100 most recent alerts and lists which would match plus the key each would render — use it to sanity-check a template before it goes live. Preview is read-only; it doesn't change any alert.
+
+### Filtering by group (the `group` filter)
+
+The alerts list (`/alerts`) and the environment page both accept a `group` filter:
+
+- **UI:** the `Group` column is hidden by default, but its filter input stays in the table toolbar (alongside the legacy `service` filter). Typing a substring filters immediately; enabling the `Group` column in the column picker moves the input into the column's filter row and shows each alert's group key in the cell (linking to the group page).
+- **URL:** `/alerts?group=db-prod` — substring, case-insensitive (`ILIKE '%db-prod%'` against `alert_groups.group_key`). Empty value = filter off. Combines freely with `severity`, `status`, `env`, `host`, `service`, `q`, `occ_min`, `seen`, sorting and pagination, e.g. `/alerts?group=db-&severity=critical&seen=24h`.
+- **Live updates:** the filter is part of the WebSocket subscription payload, so new/updated rows respect it in real time.
+- **Group rollup pages:** clicking a group key opens `/groups/:id` with the member list; **Ack group** acks every member in one action (audit-logged as `group ack`).
+
 ## Quick start (development)
 
 Requires Nix with flakes.
