@@ -70,7 +70,9 @@ The admin form edits the match as two comma-separated inputs; in the DB the matc
 
 - **Field equals** — exact match against `env`, `host`, `service`, `check`, `severity` or `status`. For `env`/`host`/`service` the **effective** value is compared: a materialized facet with the same name overrides the raw column. `check`, `severity` and `status` always compare raw.
 - **Label globs** — shell-style glob against the alert's `labels` map: `*` matches any run of characters, `?` exactly one, everything else is literal. A missing label fails the clause.
-- **Facet globs** — same glob syntax against the materialized `facets` map (facet names are case-sensitive, e.g. `DB Cluster`). Editable via the match jsonb; the two-input admin form covers fields and labels.
+- **Facet globs** — same glob syntax against the materialized `facets` map (facet names are case-sensitive, e.g. `DB Cluster`).
+
+The admin form edits all three as comma-separated inputs (`name=value, name=value`); the underlying jsonb has the same three keys.
 
 All clauses must hold (AND). Example: `fields={"env":"prod"}`, `labels={"component":"db-*"}` matches only prod alerts whose `component` label starts with `db-`.
 
@@ -97,7 +99,7 @@ Alerts whose template renders the same key share one group — the key *is* the 
 
 ### Preview
 
-`/admin/grouping-rules/:id/preview` evaluates the rule against the 100 most recent alerts and lists which would match plus the key each would render — use it to sanity-check a template before it goes live. Preview is read-only; it doesn't change any alert.
+`/admin/grouping-rules/:id/preview` evaluates the rule against the 100 most recent alerts and lists which would match plus the key each would render — use it to sanity-check a template before it goes live. Available from the rule list (Preview button per row) and from the edit form; a *new* rule must be saved first since the preview runs against a stored rule. Preview is read-only; it doesn't change any alert.
 
 ### Filtering by group (the `group` filter)
 
