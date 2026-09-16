@@ -6,6 +6,7 @@
         flake-parts.follows = "ihp/flake-parts";
         devenv.follows = "ihp/devenv";
         systems.follows = "ihp/systems";
+        nix-gitlab-ci.url = "gitlab:TECHNOFAB/nix-gitlab-ci/3.1.2?dir=lib";
         devenv-root = {
             url = "file+file:///dev/null";
             flake = false;
@@ -16,7 +17,7 @@
         flake-parts.lib.mkFlake { inherit inputs; } {
 
             systems = import systems;
-            imports = [ ihp.flakeModules.default ];
+            imports = [ ihp.flakeModules.default inputs.nix-gitlab-ci.flakeModule ];
 
             # Name of the cachix cache CI pushes to; read by local tooling.
             flake.cachix.push = "halemans";
@@ -24,6 +25,28 @@
             perSystem = { pkgs, config, lib, ... }: {
                 # Smoke check (milestone 0 §6) lives in ./nix/checks.nix.
                 checks = import ./nix/checks.nix { inherit pkgs lib config self; ihpLib = inputs.ihp.packages.${pkgs.system}.ihp-env-var-backwards-compat; };
+
+                # GitLab CI pipelines, consumed by the nix-gitlab-ci component
+                # in .gitlab-ci.yml (generates the real pipeline via nix).
+                ci.pipelines."default" = {
+                    stages = [ "test" "build" ];
+                    jobs."flake-check" = {
+                        stage = "test";
+                        script = [ "nix flake check --impure" ];
+                    };
+                    # Builds packages.docker-image (tarball) and pushes to the
+                    # GitLab container registry via skopeo — no docker daemon needed.
+                    jobs."docker-push" = {
+                        stage = "build";
+                        nix.deps = [ pkgs.nix pkgs.skopeo ];
+                        rules = [ { "if" = "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"; } ];
+                        script = [
+                            "nix build .#docker-image -o image"
+                            "skopeo copy --insecure-policy --dest-creds \"$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD\" docker-archive:./image \"docker://$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA\""
+                            "skopeo copy --insecure-policy --dest-creds \"$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD\" docker-archive:./image \"docker://$CI_REGISTRY_IMAGE:latest\""
+                        ];
+                    };
+                };
 
                 packages = let
                     prodServer = config.packages.optimized-prod-server;
