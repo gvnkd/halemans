@@ -81,6 +81,7 @@ instance View IndexView where
                         ++ single "service" filters.alfService
                         ++ single "q" filters.alfTitle
                         ++ single "group" filters.alfGroup
+                        ++ [("muted", filters.alfMuted) | not (null filters.alfMuted)]
                         ++ single "occ_min" (tshow <$> filters.alfMinOccurrences)
                         ++ single "seen" filters.alfSeenWithin
                 }
@@ -107,6 +108,7 @@ baseItems f =
         ++ maybe [] (\value -> [("service", Just (cs value))]) f.alfService
         ++ maybe [] (\value -> [("q", Just (cs value))]) f.alfTitle
         ++ maybe [] (\value -> [("group", Just (cs value))]) f.alfGroup
+        ++ map (\value -> ("muted", Just (cs value))) f.alfMuted
         ++ [("sort", Just (cs f.alfSort)), ("dir", Just (cs f.alfDir))]
         ++ map (\col -> ("cols", Just (cs col))) f.alfColumns
         ++ [("pageSize", Just (cs (tshow f.alfPageSize)))]

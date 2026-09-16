@@ -105,6 +105,7 @@ renderEnv environmentName filters viewMode = do
             , alfService = filters.filterService
             , alfTitle = filters.filterText
             , alfGroup = filters.filterGroup
+            , alfMuted = []
             , alfSort = filters.filterSort
             , alfDir = filters.filterDir
             , alfColumns = filters.filterCols

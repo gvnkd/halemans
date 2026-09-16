@@ -30,6 +30,7 @@ spec = describe "filter prefs" do
                         , alfService = Just "nginx"
                         , alfTitle = Just "disk"
                         , alfGroup = Just "grp"
+                        , alfMuted = ["source"]
                         , alfSort = "severity"
                         , alfDir = "asc"
                         , alfColumns = ["status", "severity", "title", "group"]

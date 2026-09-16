@@ -875,6 +875,31 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             stillMuted.suppressed `shouldBe` True
             stillMuted.suppressedBy `shouldBe` Just "blackout"
 
+        it "muted filter selects alerts by suppression owner" do
+            source <- testSource
+            void (ingest source (testEventIn "itest-env-bo4" "itest-env-bo4-bootstrap" Firing))
+            environment <- fetchEnvironment "itest-env-bo4"
+            now <- getCurrentTime
+            _ <-
+                newRecord @Blackout
+                    |> set #environmentId (Just (get #id environment))
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "integration test"
+                    |> createRecord
+            fpBlackout <- freshFingerprint
+            Just blackoutAlertId <- ingest source (testEventIn "itest-env-bo4" fpBlackout Firing)
+            fpSource <- freshFingerprint
+            Just sourceAlertId <- ingest source (testEvent fpSource Firing)
+            sourceAlert <- fetch sourceAlertId
+            void (mirrorExternalSuppress sourceAlert "zabbix" "admin" now)
+            sourceMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["source"]}
+            sourceMutedIds `shouldSatisfy` (elem sourceAlertId)
+            sourceMutedIds `shouldSatisfy` (notElem blackoutAlertId)
+            blackoutMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["blackout"]}
+            blackoutMutedIds `shouldSatisfy` (elem blackoutAlertId)
+            blackoutMutedIds `shouldSatisfy` (notElem sourceAlertId)
+
         it "JiraSyncJob reflects status drift from jira" do
             ensureMockJiraConfig
             source <- integrationSource "zabbix" "itest-m3-jirasync" "" (object [])
