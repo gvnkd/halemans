@@ -206,10 +206,14 @@ initialHistoryDays source =
 -- actions wins.
 reconcileAcks :: (?modelContext :: ModelContext) => Source -> Text -> IO ()
 reconcileAcks source token = do
+    -- Stalled alerts are included: a stalled alert can still be
+    -- suppressed/unsuppressed on the zabbix side, and the mirror is the only
+    -- path that learns about it (the event cursor already passed). The cost
+    -- is a few more ids in the single batched event.get, no extra calls.
     alerts <-
         query @Alert
             |> filterWhere (#sourceId, Just (get #id source))
-            |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+            |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
             |> fetch
     let eventIds = mapMaybe (.externalId) alerts
     unless (null eventIds) do
