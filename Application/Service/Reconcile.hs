@@ -2,6 +2,8 @@ module Application.Service.Reconcile (
     shouldMirror,
     mirrorExternalAck,
     mirrorExternalUnack,
+    mirrorExternalSuppress,
+    mirrorExternalUnsuppress,
     lastAckWasExternal,
 ) where
 
@@ -63,6 +65,47 @@ mirrorExternalUnack alert source actor sourceAt
         restartTrackersFor (get #id alert)
         forM_ alert.groupId (void . recomputeGroupRollup)
         publishAlertUpdate updated "unack"
+        pure updated
+
+-- | Source-side suppression (zabbix event.acknowledge action 32): mute the
+-- alert via the suppressed overlay owned by the source. Never clobbers
+-- blackout ownership — a blackout-muted alert stays blackout-owned so
+-- blackout expiry keeps restoring it.
+mirrorExternalSuppress :: (?modelContext :: ModelContext) => Alert -> Text -> Text -> UTCTime -> IO Alert
+mirrorExternalSuppress alert source actor sourceAt
+    | alert.suppressed = pure alert
+    | otherwise = do
+        now <- getCurrentTime
+        updated <-
+            alert
+                |> set #suppressed True
+                |> set #suppressedBy (Just "source")
+                |> set #updatedAt now
+                |> updateRecord
+        recordExternal alert "suppress" source actor sourceAt
+        cancelTrackersFor (get #id alert)
+        forM_ alert.groupId (void . recomputeGroupRollup)
+        publishAlertUpdate updated "suppressed"
+        pure updated
+
+-- | Source-side unsuppress (action 64): clears the overlay only when the
+-- source owns it; blackout-owned alerts keep their muting until the blackout
+-- expiry job clears them.
+mirrorExternalUnsuppress :: (?modelContext :: ModelContext) => Alert -> Text -> Text -> UTCTime -> IO Alert
+mirrorExternalUnsuppress alert source actor sourceAt
+    | not alert.suppressed || alert.suppressedBy /= Just "source" = pure alert
+    | otherwise = do
+        now <- getCurrentTime
+        updated <-
+            alert
+                |> set #suppressed False
+                |> set #suppressedBy Nothing
+                |> set #updatedAt now
+                |> updateRecord
+        recordExternal alert "unsuppress" source actor sourceAt
+        restartTrackersFor (get #id alert)
+        forM_ alert.groupId (void . recomputeGroupRollup)
+        publishAlertUpdate updated "unsuppressed"
         pure updated
 
 recordExternal :: (?modelContext :: ModelContext) => Alert -> Text -> Text -> Text -> UTCTime -> IO ()

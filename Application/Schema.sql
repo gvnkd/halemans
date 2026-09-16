@@ -63,6 +63,7 @@ CREATE TABLE alerts (
     host_id UUID DEFAULT NULL,
     service_id UUID DEFAULT NULL,
     suppressed BOOLEAN NOT NULL DEFAULT false,
+    suppressed_by TEXT DEFAULT NULL,
     acknowledged_by UUID DEFAULT NULL,
     acknowledged_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
     ack_comment TEXT DEFAULT NULL,

@@ -50,7 +50,7 @@ import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.PollerControl (ensurePollerForSourceType)
 import Application.Service.Provision (ProvisionError (..), applyProvisionConfig)
-import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack)
+import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalSuppress, mirrorExternalUnack, mirrorExternalUnsuppress)
 import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Application.Service.WriteBack (executeAttempt)
 import Data.Aeson ((.=))
@@ -147,6 +147,7 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         Just alertId <- ingest source (testEventIn "itest-env-bo1" fp Firing)
         alert <- fetch alertId
         alert.suppressed `shouldBe` True
+        alert.suppressedBy `shouldBe` Just "blackout"
         events <- eventKinds alertId
         events `shouldSatisfy` ("suppressed" `elem`)
         events `shouldSatisfy` (not . ("notified" `elem`))
@@ -818,6 +819,61 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             wasExternal `shouldBe` True
             unacked <- mirrorExternalUnack acked "zabbix" "admin" now
             unacked.status `shouldBe` "firing"
+
+        it "external suppress mirror mutes as source-owned and survives blackout expiry and refires" do
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            alert <- fetch alertId
+            now <- getCurrentTime
+            muted <- mirrorExternalSuppress alert "zabbix" "admin" now
+            muted.suppressed `shouldBe` True
+            muted.suppressedBy `shouldBe` Just "source"
+            -- blackout expiry job must not clear source-owned muting
+            unsuppressExpired
+            stillMuted <- fetch alertId
+            stillMuted.suppressed `shouldBe` True
+            stillMuted.suppressedBy `shouldBe` Just "source"
+            -- a refire recomputes the blackout overlay; it must not clear
+            -- or re-own source muting either
+            void (ingest source (testEvent fp Firing))
+            refired <- fetch alertId
+            refired.suppressed `shouldBe` True
+            refired.suppressedBy `shouldBe` Just "source"
+            unmuted <- mirrorExternalUnsuppress refired "zabbix" "admin" now
+            unmuted.suppressed `shouldBe` False
+            unmuted.suppressedBy `shouldBe` Nothing
+            externalEvents <-
+                query @AlertEvent
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#kind, "external" :: Text)
+                    |> fetch
+            let actions = map (payloadText "action" . (.payload)) externalEvents
+            actions `shouldSatisfy` (elem (Just "suppress"))
+            actions `shouldSatisfy` (elem (Just "unsuppress"))
+
+        it "source suppress/unsuppress never clobbers blackout ownership" do
+            source <- testSource
+            void (ingest source (testEventIn "itest-env-bo-src" "itest-env-bo-src-bootstrap" Firing))
+            environment <- fetchEnvironment "itest-env-bo-src"
+            now <- getCurrentTime
+            _ <-
+                newRecord @Blackout
+                    |> set #environmentId (Just (get #id environment))
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "integration test"
+                    |> createRecord
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEventIn "itest-env-bo-src" fp Firing)
+            alert <- fetch alertId
+            alert.suppressed `shouldBe` True
+            alert.suppressedBy `shouldBe` Just "blackout"
+            stillBlackout <- mirrorExternalSuppress alert "zabbix" "admin" now
+            stillBlackout.suppressedBy `shouldBe` Just "blackout"
+            stillMuted <- mirrorExternalUnsuppress stillBlackout "zabbix" "admin" now
+            stillMuted.suppressed `shouldBe` True
+            stillMuted.suppressedBy `shouldBe` Just "blackout"
 
         it "JiraSyncJob reflects status drift from jira" do
             ensureMockJiraConfig

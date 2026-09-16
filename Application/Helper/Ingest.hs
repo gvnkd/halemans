@@ -94,6 +94,7 @@ ingest source event = do
                         |> set #hostId hostRef
                         |> set #serviceId serviceRef
                         |> set #suppressed suppressedNow
+                        |> set #suppressedBy (if suppressedNow then Just "blackout" else Nothing)
             -- Facet materialization at ingest (milestone_9.md §3): field/label
             -- mappings resolve immediately; attr facets land via EnrichAlertJob.
             facets <- Facets.computeFacetsValue [] built
@@ -180,14 +181,24 @@ applyTransition ::
     Transition ->
     IO Alert
 applyTransition now eventEnv environmentRef hostRef serviceRef suppressedNow alert transition = do
-    let base =
+    -- Source-muted alerts (suppressed_by = 'source') are owned by the
+    -- source's suppress/unsuppress actions: the blackout overlay recomputed
+    -- on every event must neither clear nor re-flag them.
+    let ownedBySource = alert.suppressedBy == Just "source"
+        effectiveSuppressed = ownedBySource || suppressedNow
+        effectiveSuppressedBy
+            | ownedBySource = alert.suppressedBy
+            | suppressedNow = Just "blackout"
+            | otherwise = Nothing
+        base =
             alert
                 |> set #lastSeenAt now
                 |> set #env (eventEnv <|> alert.env)
                 |> set #environmentId (environmentRef <|> alert.environmentId)
                 |> set #hostId (hostRef <|> alert.hostId)
                 |> set #serviceId (serviceRef <|> alert.serviceId)
-                |> set #suppressed suppressedNow
+                |> set #suppressed effectiveSuppressed
+                |> set #suppressedBy effectiveSuppressedBy
                 |> set #updatedAt now
     let transitioned = case (transition.applied, transition.trigger) of
             (True, Refire) ->
@@ -222,9 +233,9 @@ applyTransition now eventEnv environmentRef hostRef serviceRef suppressedNow ale
                         , "trigger" .= show transition.trigger
                         ]
     recordEvent (get #id alert) transition.eventKind payload
-    when (suppressedNow && not alert.suppressed) do
+    when (effectiveSuppressed && not alert.suppressed && not ownedBySource) do
         recordEvent (get #id alert) "suppressed" (object ["note" .= ("covered by active blackout" :: Text)])
-    when (alert.suppressed && not suppressedNow) do
+    when (alert.suppressed && not effectiveSuppressed) do
         recordEvent (get #id alert) "unsuppressed" (object ["note" .= ("blackout expired or removed" :: Text)])
     pure updated
 

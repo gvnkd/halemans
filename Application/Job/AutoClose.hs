@@ -140,12 +140,17 @@ unsuppressExpired = do
             |> filterWhereSql (#startsAt, "<= NOW()")
             |> filterWhereSql (#endsAt, "> NOW()")
             |> fetch
-    forM_ suppressed \alert -> do
+    -- Source-owned muting (suppressed_by = 'source') is cleared only by the
+    -- source's unsuppress action, never by blackout expiry. Legacy NULL
+    -- counts as blackout-owned.
+    let blackoutOwned alert = alert.suppressedBy /= Just "source"
+    forM_ (filter blackoutOwned suppressed) \alert -> do
         let covered = any (blackoutApplies now alert.environmentId alert.hostId alert.serviceId) activeBlackouts
         unless covered do
             updated <-
                 alert
                     |> set #suppressed False
+                    |> set #suppressedBy Nothing
                     |> set #updatedAt now
                     |> updateRecord
             _ <-

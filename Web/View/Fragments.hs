@@ -98,8 +98,12 @@ alertRowHtmlCols groupKey cols alert =
     textCell value = [hsx|{fromMaybe "" value}|]
     suppressedMarker =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" title="under blackout">muted</span>|]
+            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>muted</span>|]
             else mempty
+    suppressedTitle :: Text
+    suppressedTitle = case alert.suppressedBy of
+        Just "source" -> "muted at source"
+        _ -> "under blackout"
     groupBadge = case alert.groupId of
         Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">group</a>|]
         Nothing -> mempty
@@ -348,8 +352,12 @@ alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsD
         |]
     suppressedBadge =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed">suppressed</span>|]
+            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>suppressed</span>|]
             else mempty
+    suppressedTitle :: Text
+    suppressedTitle = case alert.suppressedBy of
+        Just "source" -> "muted at source"
+        _ -> "under blackout"
     body =
         [hsx|
             <dl class="alert-details-grid" data-testid="alert-details">
