@@ -1,0 +1,12 @@
+.git
+.devenv
+dist-newstyle
+build
+result
+tmp
+node_modules
+tests
+design_docs
+images
+*.md
+!README.md

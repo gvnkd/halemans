@@ -1,0 +1,751 @@
+cabal-version:       2.2
+name:                halemans
+version:             2.6.0
+synopsis:            Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks
+description:         Halemans collects alerts from Zabbix, Grafana, Alertmanager and
+                     generic webhooks into a single dashboard, enriches them with CMDB
+                     (Confluence, Jira Assets), Jira and LLM context, and provides
+                     facets, custom dashboards, reports and a read-only JSON API.
+license:             MIT
+license-file:        LICENSE
+author:              Sergey Bubnov
+maintainer:          omgbebebe@gmail.com
+copyright:           (c) 2026 Sergey Bubnov
+build-type:          Simple
+
+library
+    default-language: GHC2021
+    hs-source-dirs: . Config build
+    build-depends:
+        base
+        , ihp
+        , ihp-hsx
+        , ihp-typed-sql
+        , ihp-pglistener
+        , wai
+        , wai-request-params
+        , warp
+        , network
+        , network-uri
+        , text
+        , bytestring
+        , containers
+        , unordered-containers
+        , vector
+        , time
+        , uuid
+        , aeson
+        , aeson-pretty
+        , lens
+        , wreq
+        , http-client
+        , http-client-tls
+        , http-types
+        , fast-logger
+        , cryptonite
+        , memory
+        , pwstore-fast
+        , base64-bytestring
+        , safe-exceptions
+        , websockets
+        , cmark
+        , diagrams-core
+        , diagrams-lib
+        , diagrams-svg
+        , svg-builder
+        , basic-prelude
+        , deepseq
+        , data-default
+        , scientific
+        , string-conversions
+        , postgresql-simple
+        , postgresql-types
+        , hasql
+        , hasql-dynamic-statements
+        , hasql-implicits
+        , hasql-mapping
+        , hasql-postgresql-types
+        , hasql-pool
+        , hasql-transaction
+        , template-haskell
+        , directory
+        , filepath
+        , process
+    exposed-modules:
+        -- BEGIN GENERATED MODULES (docker/prepare-cabal-build.sh refreshes this list)
+        Application.Connector.Alertmanager
+        Application.Connector.Grafana
+        Application.Connector.Zabbix
+        Application.Helper.Controller
+        Application.Helper.DashboardConfig
+        Application.Helper.FilterPrefs
+        Application.Helper.Ingest
+        Application.Helper.Json
+        Application.Helper.RuleForm
+        Application.Helper.Theme
+        Application.Helper.Timezone
+        Application.Helper.View
+        Application.Job.AutoClose
+        Application.Job.EnrichAlert
+        Application.Job.Escalation
+        Application.Job.FacetBackfill
+        Application.Job.JiraSync
+        Application.Job.LlmAnalysis
+        Application.Job.PollGrafana
+        Application.Job.PollZabbix
+        Application.Job.PushNotification
+        Application.Job.Retention
+        Application.Job.SourceHealth
+        Application.Job.WriteBack
+        Application.Pipeline.Actions
+        Application.Pipeline.Blackouts
+        Application.Pipeline.Escalation
+        Application.Pipeline.Grouping
+        Application.Pipeline.StateMachine
+        Application.Script.EnqueuePollers
+        Application.Script.GenPassword
+        Application.Script.Prelude
+        Application.Service.AlertList
+        Application.Service.Api.Alerts
+        Application.Service.Api.Auth
+        Application.Service.Api.Cursor
+        Application.Service.Api.Encode
+        Application.Service.Api.Metrics
+        Application.Service.Api.RateLimit
+        Application.Service.Api.Token
+        Application.Service.Assets
+        Application.Service.Assets.Aql
+        Application.Service.Assets.Attrs
+        Application.Service.Assets.Cache
+        Application.Service.Assets.Errors
+        Application.Service.Assets.Icons
+        Application.Service.Assets.Types
+        Application.Service.AuditExport
+        Application.Service.Cmdb
+        Application.Service.Cmdb.DbConfig
+        Application.Service.DashboardCards
+        Application.Service.DatabaseStats
+        Application.Service.DynTable
+        Application.Service.Escalation
+        Application.Service.Facets
+        Application.Service.Flapping
+        Application.Service.Groups
+        Application.Service.HostGroups
+        Application.Service.Http
+        Application.Service.Jira
+        Application.Service.Jira.DbConfig
+        Application.Service.Jira.Related
+        Application.Service.JobMetrics
+        Application.Service.Live
+        Application.Service.Llm
+        Application.Service.Llm.AutoAnalyze
+        Application.Service.Llm.Budget
+        Application.Service.Llm.DbConfig
+        Application.Service.Llm.Output
+        Application.Service.Llm.Prompt
+        Application.Service.Llm.Queue
+        Application.Service.Llm.Roles
+        Application.Service.Llm.ToolCache
+        Application.Service.Llm.Tools
+        Application.Service.Log
+        Application.Service.Notify
+        Application.Service.PollerControl
+        Application.Service.Provision
+        Application.Service.Push
+        Application.Service.Reconcile
+        Application.Service.Reports
+        Application.Service.SecurityHeaders
+        Application.Service.SourceHealth
+        Application.Service.Timeline
+        Application.Service.TimeRange
+        Application.Service.WriteBack
+        Application.Version
+        Config
+        Web.Controller.Admin
+        Web.Controller.Alerts
+        Web.Controller.Api
+        Web.Controller.AssetsAdmin
+        Web.Controller.AssetsIcons
+        Web.Controller.Audit
+        Web.Controller.Blackouts
+        Web.Controller.Dashboard
+        Web.Controller.Dashboards
+        Web.Controller.Environments
+        Web.Controller.EscalationPolicies
+        Web.Controller.FieldMappings
+        Web.Controller.Flapping
+        Web.Controller.GroupingRules
+        Web.Controller.Groups
+        Web.Controller.Hooks
+        Web.Controller.Integrations
+        Web.Controller.Live
+        Web.Controller.LlmAdmin
+        Web.Controller.Metrics
+        Web.Controller.NotificationRules
+        Web.Controller.Prelude
+        Web.Controller.Profile
+        Web.Controller.PushSubscriptions
+        Web.Controller.Reports
+        Web.Controller.Sessions
+        Web.Controller.Sources
+        Web.Controller.Teams
+        Web.FrontController
+        Web.Routes
+        Web.Types
+        Web.View.Admin.Database
+        Web.View.Admin.Index
+        Web.View.Alerts.Index
+        Web.View.Alerts.Show
+        Web.View.AssetsAdmin.Edit
+        Web.View.AssetsAdmin.Form
+        Web.View.AssetsAdmin.Index
+        Web.View.AssetsAdmin.New
+        Web.View.Audit.Index
+        Web.View.Blackouts.Edit
+        Web.View.Blackouts.Form
+        Web.View.Blackouts.Index
+        Web.View.Blackouts.New
+        Web.View.Dashboard.Index
+        Web.View.Dashboards.Card
+        Web.View.Dashboards.Edit
+        Web.View.Dashboards.Form
+        Web.View.Dashboards.Index
+        Web.View.Dashboards.New
+        Web.View.Dashboards.Show
+        Web.View.DynTable
+        Web.View.Environments.Show
+        Web.View.EscalationPolicies.Edit
+        Web.View.EscalationPolicies.Index
+        Web.View.EscalationPolicies.New
+        Web.View.FieldMappings.Edit
+        Web.View.FieldMappings.Index
+        Web.View.FieldMappings.New
+        Web.View.Flapping.Index
+        Web.View.Fragments
+        Web.View.GroupingRules.Edit
+        Web.View.GroupingRules.Index
+        Web.View.GroupingRules.New
+        Web.View.GroupingRules.Preview
+        Web.View.Groups.Show
+        Web.View.Integrations.CmdbEdit
+        Web.View.Integrations.CmdbNew
+        Web.View.Integrations.Form
+        Web.View.Integrations.Index
+        Web.View.Integrations.JiraEdit
+        Web.View.Integrations.JiraNew
+        Web.View.Layout
+        Web.View.LlmAdmin.Edit
+        Web.View.LlmAdmin.EditProvider
+        Web.View.LlmAdmin.EditRole
+        Web.View.LlmAdmin.Index
+        Web.View.LlmAdmin.New
+        Web.View.LlmAdmin.NewProvider
+        Web.View.LlmAdmin.NewRole
+        Web.View.LlmAdmin.Queue
+        Web.View.LlmAdmin.RoleForm
+        Web.View.NotificationRules.Edit
+        Web.View.NotificationRules.Index
+        Web.View.NotificationRules.New
+        Web.View.Prelude
+        Web.View.Profile.Show
+        Web.View.Reports.Index
+        Web.View.Sessions.New
+        Web.View.Sources.Edit
+        Web.View.Sources.Form
+        Web.View.Sources.Index
+        Web.View.Sources.New
+        Web.View.Teams.Edit
+        Web.View.Teams.Index
+        Web.View.Teams.New
+        WorkerMain
+        Generated.ActualTypes
+        Generated.ActualTypes.Alert
+        Generated.ActualTypes.AlertEvent
+        Generated.ActualTypes.AlertGroup
+        Generated.ActualTypes.ApiToken
+        Generated.ActualTypes.AssetAlertLink
+        Generated.ActualTypes.AssetsConfig
+        Generated.ActualTypes.AssetsIconCache
+        Generated.ActualTypes.AssetsObject
+        Generated.ActualTypes.AuditExport
+        Generated.ActualTypes.AutoCloseJob
+        Generated.ActualTypes.Blackout
+        Generated.ActualTypes.CmdbConfig
+        Generated.ActualTypes.CmdbEntry
+        Generated.ActualTypes.Comment
+        Generated.ActualTypes.Dashboard
+        Generated.ActualTypes.EnrichAlertJob
+        Generated.ActualTypes.Environment
+        Generated.ActualTypes.EscalationJob
+        Generated.ActualTypes.EscalationPolicy
+        Generated.ActualTypes.EscalationTracker
+        Generated.ActualTypes.FacetBackfillJob
+        Generated.ActualTypes.FieldMapping
+        Generated.ActualTypes.GroupingRule
+        Generated.ActualTypes.Host
+        Generated.ActualTypes.JiraConfig
+        Generated.ActualTypes.JiraLink
+        Generated.ActualTypes.JiraSyncJob
+        Generated.ActualTypes.LlmAgentRole
+        Generated.ActualTypes.LlmAnalysis
+        Generated.ActualTypes.LlmAnalysisJob
+        Generated.ActualTypes.LlmAutoAnalyzeConfig
+        Generated.ActualTypes.LlmBudgetCounter
+        Generated.ActualTypes.LlmConfig
+        Generated.ActualTypes.LlmFeedback
+        Generated.ActualTypes.LlmPromptTemplate
+        Generated.ActualTypes.LlmToolCache
+        Generated.ActualTypes.LlmToolCacheConfig
+        Generated.ActualTypes.NotificationRule
+        Generated.ActualTypes.OnCallSchedule
+        Generated.ActualTypes.PollGrafanaJob
+        Generated.ActualTypes.PollZabbixJob
+        Generated.ActualTypes.PrimaryKeys
+        Generated.ActualTypes.PushNotificationJob
+        Generated.ActualTypes.PushSubscription
+        Generated.ActualTypes.RawEvent
+        Generated.ActualTypes.RetentionConfig
+        Generated.ActualTypes.RetentionJob
+        Generated.ActualTypes.Role
+        Generated.ActualTypes.Service
+        Generated.ActualTypes.Source
+        Generated.ActualTypes.SourceHealthJob
+        Generated.ActualTypes.Team
+        Generated.ActualTypes.TeamMember
+        Generated.ActualTypes.User
+        Generated.ActualTypes.UserRole
+        Generated.ActualTypes.WebhookToken
+        Generated.ActualTypes.WriteBackAttempt
+        Generated.ActualTypes.WriteBackJob
+        Generated.ActualTypes.ZabbixHostGroup
+        Generated.Alert
+        Generated.AlertEvent
+        Generated.AlertGroup
+        Generated.ApiToken
+        Generated.AssetAlertLink
+        Generated.AssetsConfig
+        Generated.AssetsIconCache
+        Generated.AssetsObject
+        Generated.AuditExport
+        Generated.AutoCloseJob
+        Generated.Blackout
+        Generated.CmdbConfig
+        Generated.CmdbEntry
+        Generated.Comment
+        Generated.Dashboard
+        Generated.EnrichAlertJob
+        Generated.Enums
+        Generated.Environment
+        Generated.EscalationJob
+        Generated.EscalationPolicy
+        Generated.EscalationTracker
+        Generated.FacetBackfillJob
+        Generated.FieldMapping
+        Generated.GroupingRule
+        Generated.Host
+        Generated.JiraConfig
+        Generated.JiraLink
+        Generated.JiraSyncJob
+        Generated.LlmAgentRole
+        Generated.LlmAnalysis
+        Generated.LlmAnalysisJob
+        Generated.LlmAutoAnalyzeConfig
+        Generated.LlmBudgetCounter
+        Generated.LlmConfig
+        Generated.LlmFeedback
+        Generated.LlmPromptTemplate
+        Generated.LlmToolCache
+        Generated.LlmToolCacheConfig
+        Generated.NotificationRule
+        Generated.OnCallSchedule
+        Generated.PollGrafanaJob
+        Generated.PollZabbixJob
+        Generated.PushNotificationJob
+        Generated.PushSubscription
+        Generated.RawEvent
+        Generated.RetentionConfig
+        Generated.RetentionJob
+        Generated.Role
+        Generated.Service
+        Generated.Source
+        Generated.SourceHealthJob
+        Generated.Statements
+        Generated.Statements.CreateAlert
+        Generated.Statements.CreateAlertEvent
+        Generated.Statements.CreateAlertGroup
+        Generated.Statements.CreateApiToken
+        Generated.Statements.CreateAssetAlertLink
+        Generated.Statements.CreateAssetsConfig
+        Generated.Statements.CreateAssetsIconCache
+        Generated.Statements.CreateAssetsObject
+        Generated.Statements.CreateAuditExport
+        Generated.Statements.CreateAutoCloseJob
+        Generated.Statements.CreateBlackout
+        Generated.Statements.CreateCmdbConfig
+        Generated.Statements.CreateCmdbEntry
+        Generated.Statements.CreateComment
+        Generated.Statements.CreateDashboard
+        Generated.Statements.CreateEnrichAlertJob
+        Generated.Statements.CreateEnvironment
+        Generated.Statements.CreateEscalationJob
+        Generated.Statements.CreateEscalationPolicy
+        Generated.Statements.CreateEscalationTracker
+        Generated.Statements.CreateFacetBackfillJob
+        Generated.Statements.CreateFieldMapping
+        Generated.Statements.CreateGroupingRule
+        Generated.Statements.CreateHost
+        Generated.Statements.CreateJiraConfig
+        Generated.Statements.CreateJiraLink
+        Generated.Statements.CreateJiraSyncJob
+        Generated.Statements.CreateLlmAgentRole
+        Generated.Statements.CreateLlmAnalysis
+        Generated.Statements.CreateLlmAnalysisJob
+        Generated.Statements.CreateLlmAutoAnalyzeConfig
+        Generated.Statements.CreateLlmBudgetCounter
+        Generated.Statements.CreateLlmConfig
+        Generated.Statements.CreateLlmFeedback
+        Generated.Statements.CreateLlmPromptTemplate
+        Generated.Statements.CreateLlmToolCache
+        Generated.Statements.CreateLlmToolCacheConfig
+        Generated.Statements.CreateManyAlert
+        Generated.Statements.CreateManyAlertEvent
+        Generated.Statements.CreateManyAlertGroup
+        Generated.Statements.CreateManyApiToken
+        Generated.Statements.CreateManyAssetAlertLink
+        Generated.Statements.CreateManyAssetsConfig
+        Generated.Statements.CreateManyAssetsIconCache
+        Generated.Statements.CreateManyAssetsObject
+        Generated.Statements.CreateManyAuditExport
+        Generated.Statements.CreateManyAutoCloseJob
+        Generated.Statements.CreateManyBlackout
+        Generated.Statements.CreateManyCmdbConfig
+        Generated.Statements.CreateManyCmdbEntry
+        Generated.Statements.CreateManyComment
+        Generated.Statements.CreateManyDashboard
+        Generated.Statements.CreateManyEnrichAlertJob
+        Generated.Statements.CreateManyEnvironment
+        Generated.Statements.CreateManyEscalationJob
+        Generated.Statements.CreateManyEscalationPolicy
+        Generated.Statements.CreateManyEscalationTracker
+        Generated.Statements.CreateManyFacetBackfillJob
+        Generated.Statements.CreateManyFieldMapping
+        Generated.Statements.CreateManyGroupingRule
+        Generated.Statements.CreateManyHost
+        Generated.Statements.CreateManyJiraConfig
+        Generated.Statements.CreateManyJiraLink
+        Generated.Statements.CreateManyJiraSyncJob
+        Generated.Statements.CreateManyLlmAgentRole
+        Generated.Statements.CreateManyLlmAnalysis
+        Generated.Statements.CreateManyLlmAnalysisJob
+        Generated.Statements.CreateManyLlmAutoAnalyzeConfig
+        Generated.Statements.CreateManyLlmBudgetCounter
+        Generated.Statements.CreateManyLlmConfig
+        Generated.Statements.CreateManyLlmFeedback
+        Generated.Statements.CreateManyLlmPromptTemplate
+        Generated.Statements.CreateManyLlmToolCache
+        Generated.Statements.CreateManyLlmToolCacheConfig
+        Generated.Statements.CreateManyNotificationRule
+        Generated.Statements.CreateManyOnCallSchedule
+        Generated.Statements.CreateManyPollGrafanaJob
+        Generated.Statements.CreateManyPollZabbixJob
+        Generated.Statements.CreateManyPushNotificationJob
+        Generated.Statements.CreateManyPushSubscription
+        Generated.Statements.CreateManyRawEvent
+        Generated.Statements.CreateManyRetentionConfig
+        Generated.Statements.CreateManyRetentionJob
+        Generated.Statements.CreateManyRole
+        Generated.Statements.CreateManyService
+        Generated.Statements.CreateManySource
+        Generated.Statements.CreateManySourceHealthJob
+        Generated.Statements.CreateManyTeam
+        Generated.Statements.CreateManyTeamMember
+        Generated.Statements.CreateManyUser
+        Generated.Statements.CreateManyUserRole
+        Generated.Statements.CreateManyWebhookToken
+        Generated.Statements.CreateManyWriteBackAttempt
+        Generated.Statements.CreateManyWriteBackJob
+        Generated.Statements.CreateManyZabbixHostGroup
+        Generated.Statements.CreateNotificationRule
+        Generated.Statements.CreateOnCallSchedule
+        Generated.Statements.CreatePollGrafanaJob
+        Generated.Statements.CreatePollZabbixJob
+        Generated.Statements.CreatePushNotificationJob
+        Generated.Statements.CreatePushSubscription
+        Generated.Statements.CreateRawEvent
+        Generated.Statements.CreateRetentionConfig
+        Generated.Statements.CreateRetentionJob
+        Generated.Statements.CreateRole
+        Generated.Statements.CreateService
+        Generated.Statements.CreateSource
+        Generated.Statements.CreateSourceHealthJob
+        Generated.Statements.CreateTeam
+        Generated.Statements.CreateTeamMember
+        Generated.Statements.CreateUser
+        Generated.Statements.CreateUserRole
+        Generated.Statements.CreateWebhookToken
+        Generated.Statements.CreateWriteBackAttempt
+        Generated.Statements.CreateWriteBackJob
+        Generated.Statements.CreateZabbixHostGroup
+        Generated.Statements.FetchAlert
+        Generated.Statements.FetchAlertEvent
+        Generated.Statements.FetchAlertGroup
+        Generated.Statements.FetchApiToken
+        Generated.Statements.FetchAssetAlertLink
+        Generated.Statements.FetchAssetsConfig
+        Generated.Statements.FetchAssetsIconCache
+        Generated.Statements.FetchAssetsObject
+        Generated.Statements.FetchAuditExport
+        Generated.Statements.FetchAutoCloseJob
+        Generated.Statements.FetchBlackout
+        Generated.Statements.FetchCmdbConfig
+        Generated.Statements.FetchCmdbEntry
+        Generated.Statements.FetchComment
+        Generated.Statements.FetchDashboard
+        Generated.Statements.FetchEnrichAlertJob
+        Generated.Statements.FetchEnvironment
+        Generated.Statements.FetchEscalationJob
+        Generated.Statements.FetchEscalationPolicy
+        Generated.Statements.FetchEscalationTracker
+        Generated.Statements.FetchFacetBackfillJob
+        Generated.Statements.FetchFieldMapping
+        Generated.Statements.FetchGroupingRule
+        Generated.Statements.FetchHost
+        Generated.Statements.FetchJiraConfig
+        Generated.Statements.FetchJiraLink
+        Generated.Statements.FetchJiraSyncJob
+        Generated.Statements.FetchLlmAgentRole
+        Generated.Statements.FetchLlmAnalysis
+        Generated.Statements.FetchLlmAnalysisJob
+        Generated.Statements.FetchLlmAutoAnalyzeConfig
+        Generated.Statements.FetchLlmBudgetCounter
+        Generated.Statements.FetchLlmConfig
+        Generated.Statements.FetchLlmFeedback
+        Generated.Statements.FetchLlmPromptTemplate
+        Generated.Statements.FetchLlmToolCache
+        Generated.Statements.FetchLlmToolCacheConfig
+        Generated.Statements.FetchNotificationRule
+        Generated.Statements.FetchOnCallSchedule
+        Generated.Statements.FetchPollGrafanaJob
+        Generated.Statements.FetchPollZabbixJob
+        Generated.Statements.FetchPushNotificationJob
+        Generated.Statements.FetchPushSubscription
+        Generated.Statements.FetchRawEvent
+        Generated.Statements.FetchRetentionConfig
+        Generated.Statements.FetchRetentionJob
+        Generated.Statements.FetchRole
+        Generated.Statements.FetchService
+        Generated.Statements.FetchSource
+        Generated.Statements.FetchSourceHealthJob
+        Generated.Statements.FetchTeam
+        Generated.Statements.FetchTeamMember
+        Generated.Statements.FetchUser
+        Generated.Statements.FetchUserRole
+        Generated.Statements.FetchWebhookToken
+        Generated.Statements.FetchWriteBackAttempt
+        Generated.Statements.FetchWriteBackJob
+        Generated.Statements.FetchZabbixHostGroup
+        Generated.Statements.RowDecoderAlert
+        Generated.Statements.RowDecoderAlertEvent
+        Generated.Statements.RowDecoderAlertGroup
+        Generated.Statements.RowDecoderApiToken
+        Generated.Statements.RowDecoderAssetAlertLink
+        Generated.Statements.RowDecoderAssetsConfig
+        Generated.Statements.RowDecoderAssetsIconCache
+        Generated.Statements.RowDecoderAssetsObject
+        Generated.Statements.RowDecoderAuditExport
+        Generated.Statements.RowDecoderAutoCloseJob
+        Generated.Statements.RowDecoderBlackout
+        Generated.Statements.RowDecoderCmdbConfig
+        Generated.Statements.RowDecoderCmdbEntry
+        Generated.Statements.RowDecoderComment
+        Generated.Statements.RowDecoderDashboard
+        Generated.Statements.RowDecoderEnrichAlertJob
+        Generated.Statements.RowDecoderEnvironment
+        Generated.Statements.RowDecoderEscalationJob
+        Generated.Statements.RowDecoderEscalationPolicy
+        Generated.Statements.RowDecoderEscalationTracker
+        Generated.Statements.RowDecoderFacetBackfillJob
+        Generated.Statements.RowDecoderFieldMapping
+        Generated.Statements.RowDecoderGroupingRule
+        Generated.Statements.RowDecoderHost
+        Generated.Statements.RowDecoderJiraConfig
+        Generated.Statements.RowDecoderJiraLink
+        Generated.Statements.RowDecoderJiraSyncJob
+        Generated.Statements.RowDecoderLlmAgentRole
+        Generated.Statements.RowDecoderLlmAnalysis
+        Generated.Statements.RowDecoderLlmAnalysisJob
+        Generated.Statements.RowDecoderLlmAutoAnalyzeConfig
+        Generated.Statements.RowDecoderLlmBudgetCounter
+        Generated.Statements.RowDecoderLlmConfig
+        Generated.Statements.RowDecoderLlmFeedback
+        Generated.Statements.RowDecoderLlmPromptTemplate
+        Generated.Statements.RowDecoderLlmToolCache
+        Generated.Statements.RowDecoderLlmToolCacheConfig
+        Generated.Statements.RowDecoderNotificationRule
+        Generated.Statements.RowDecoderOnCallSchedule
+        Generated.Statements.RowDecoderPollGrafanaJob
+        Generated.Statements.RowDecoderPollZabbixJob
+        Generated.Statements.RowDecoderPushNotificationJob
+        Generated.Statements.RowDecoderPushSubscription
+        Generated.Statements.RowDecoderRawEvent
+        Generated.Statements.RowDecoderRetentionConfig
+        Generated.Statements.RowDecoderRetentionJob
+        Generated.Statements.RowDecoderRole
+        Generated.Statements.RowDecoderService
+        Generated.Statements.RowDecoderSource
+        Generated.Statements.RowDecoderSourceHealthJob
+        Generated.Statements.RowDecoderTeam
+        Generated.Statements.RowDecoderTeamMember
+        Generated.Statements.RowDecoderUser
+        Generated.Statements.RowDecoderUserRole
+        Generated.Statements.RowDecoderWebhookToken
+        Generated.Statements.RowDecoderWriteBackAttempt
+        Generated.Statements.RowDecoderWriteBackJob
+        Generated.Statements.RowDecoderZabbixHostGroup
+        Generated.Statements.UpdateAlert
+        Generated.Statements.UpdateAlertEvent
+        Generated.Statements.UpdateAlertGroup
+        Generated.Statements.UpdateApiToken
+        Generated.Statements.UpdateAssetAlertLink
+        Generated.Statements.UpdateAssetsConfig
+        Generated.Statements.UpdateAssetsIconCache
+        Generated.Statements.UpdateAssetsObject
+        Generated.Statements.UpdateAuditExport
+        Generated.Statements.UpdateAutoCloseJob
+        Generated.Statements.UpdateBlackout
+        Generated.Statements.UpdateCmdbConfig
+        Generated.Statements.UpdateCmdbEntry
+        Generated.Statements.UpdateComment
+        Generated.Statements.UpdateDashboard
+        Generated.Statements.UpdateEnrichAlertJob
+        Generated.Statements.UpdateEnvironment
+        Generated.Statements.UpdateEscalationJob
+        Generated.Statements.UpdateEscalationPolicy
+        Generated.Statements.UpdateEscalationTracker
+        Generated.Statements.UpdateFacetBackfillJob
+        Generated.Statements.UpdateFieldMapping
+        Generated.Statements.UpdateGroupingRule
+        Generated.Statements.UpdateHost
+        Generated.Statements.UpdateJiraConfig
+        Generated.Statements.UpdateJiraLink
+        Generated.Statements.UpdateJiraSyncJob
+        Generated.Statements.UpdateLlmAgentRole
+        Generated.Statements.UpdateLlmAnalysis
+        Generated.Statements.UpdateLlmAnalysisJob
+        Generated.Statements.UpdateLlmAutoAnalyzeConfig
+        Generated.Statements.UpdateLlmBudgetCounter
+        Generated.Statements.UpdateLlmConfig
+        Generated.Statements.UpdateLlmFeedback
+        Generated.Statements.UpdateLlmPromptTemplate
+        Generated.Statements.UpdateLlmToolCache
+        Generated.Statements.UpdateLlmToolCacheConfig
+        Generated.Statements.UpdateNotificationRule
+        Generated.Statements.UpdateOnCallSchedule
+        Generated.Statements.UpdatePollGrafanaJob
+        Generated.Statements.UpdatePollZabbixJob
+        Generated.Statements.UpdatePushNotificationJob
+        Generated.Statements.UpdatePushSubscription
+        Generated.Statements.UpdateRawEvent
+        Generated.Statements.UpdateRetentionConfig
+        Generated.Statements.UpdateRetentionJob
+        Generated.Statements.UpdateRole
+        Generated.Statements.UpdateService
+        Generated.Statements.UpdateSource
+        Generated.Statements.UpdateSourceHealthJob
+        Generated.Statements.UpdateTeam
+        Generated.Statements.UpdateTeamMember
+        Generated.Statements.UpdateUser
+        Generated.Statements.UpdateUserRole
+        Generated.Statements.UpdateWebhookToken
+        Generated.Statements.UpdateWriteBackAttempt
+        Generated.Statements.UpdateWriteBackJob
+        Generated.Statements.UpdateZabbixHostGroup
+        Generated.Team
+        Generated.TeamMember
+        Generated.Types
+        Generated.User
+        Generated.UserRole
+        Generated.WebhookToken
+        Generated.WriteBackAttempt
+        Generated.WriteBackJob
+        Generated.ZabbixHostGroup
+        -- END GENERATED MODULES
+    default-extensions:
+        OverloadedStrings
+        NoImplicitPrelude
+        ImplicitParams
+        Rank2Types
+        DisambiguateRecordFields
+        NamedFieldPuns
+        DuplicateRecordFields
+        OverloadedLabels
+        FlexibleContexts
+        TypeSynonymInstances
+        FlexibleInstances
+        QuasiQuotes
+        TypeFamilies
+        PackageImports
+        ScopedTypeVariables
+        RecordWildCards
+        TypeApplications
+        DataKinds
+        InstanceSigs
+        DeriveGeneric
+        MultiParamTypeClasses
+        TypeOperators
+        DeriveDataTypeable
+        MultiWayIf
+        UndecidableInstances
+        BlockArguments
+        PartialTypeSignatures
+        LambdaCase
+        DefaultSignatures
+        EmptyDataDeriving
+        BangPatterns
+        FunctionalDependencies
+        StandaloneDeriving
+        DerivingVia
+        TemplateHaskell
+        DeepSubsumption
+        OverloadedRecordDot
+    ghc-options:
+        -Wno-unsafe
+        -Wno-name-shadowing
+        -Wno-monomorphism-restriction
+        -Wno-safe
+        -Wno-missing-local-signatures
+        -Wno-missing-home-modules
+        -Wno-partial-type-signatures
+        -Wno-unused-imports
+        -Wno-dodgy-imports
+        -Wno-unused-matches
+        -Werror=missing-fields
+        -Werror=incomplete-patterns
+
+executable RunProdServer
+    default-language: GHC2021
+    main-is: RunProdServer.hs
+    hs-source-dirs: build/exe
+    build-depends: base, halemans, ihp
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+
+executable RunJobs
+    default-language: GHC2021
+    main-is: RunJobs.hs
+    hs-source-dirs: build/exe
+    build-depends: base, halemans, ihp
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+
+executable EnqueuePollers
+    default-language: GHC2021
+    main-is: EnqueuePollers.hs
+    hs-source-dirs: build/exe
+    build-depends: base, halemans, ihp
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+
+executable GenPassword
+    default-language: GHC2021
+    main-is: GenPassword.hs
+    hs-source-dirs: build/exe
+    build-depends: base, halemans, ihp
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N

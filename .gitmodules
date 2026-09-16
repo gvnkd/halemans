@@ -1,0 +1,3 @@
+[submodule "vendor/ihp"]
+	path = vendor/ihp
+	url = https://github.com/digitallyinduced/ihp
