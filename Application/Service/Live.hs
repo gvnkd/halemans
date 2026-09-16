@@ -11,7 +11,7 @@ module Application.Service.Live (
 
 import Application.Helper.DashboardConfig (DashboardCard (..), clauseValue, decodeDashboardConfig, matchCardAlert)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
-import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters)
+import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters, seenCutoff)
 import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.DashboardCards (ExpandedCard (..), expandDashboardCards, expandedDomId)
 import Application.Service.Llm.Queue (latestJobErrors)
@@ -228,18 +228,30 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         matches <- matchesFilters scopeFilters alert
+        -- Rows re-render with the subscribed view's visible columns; the
+        -- group key is fetched only when the group column is shown.
+        groupKey <- case alert.groupId of
+            Just groupId | "group" `elem` scopeFilters.alfColumns -> do
+                group <- fetch groupId
+                pure (Just group.groupKey)
+            _ -> pure Nothing
         pure
             [ if matches
-                then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "alerts-tbody"
+                then fragment (alertRowDomId alert) (alertRowHtmlCols groupKey scopeFilters.alfColumns alert) "replaceOrPrepend" "alerts-tbody"
                 else object ["id" .= alertRowDomId alert, "mode" .= ("remove" :: Text)]
             ]
     (ScopeEnv name scopeFilters, Just alertId, _)
         | event.leEnv == Just name -> do
             alert <- fetch (Id alertId)
             matches <- matchesEnvFilters scopeFilters alert
+            groupKey <- case alert.groupId of
+                Just groupId | "group" `elem` scopeFilters.alfColumns -> do
+                    group <- fetch groupId
+                    pure (Just group.groupKey)
+                _ -> pure Nothing
             pure
                 [ if matches
-                    then fragment (alertRowDomId alert) (alertRowHtml alert) "replaceOrPrepend" "env-alerts-tbody"
+                    then fragment (alertRowDomId alert) (alertRowHtmlCols groupKey scopeFilters.alfColumns alert) "replaceOrPrepend" "env-alerts-tbody"
                     else object ["id" .= alertRowDomId alert, "mode" .= ("remove" :: Text)]
                 ]
         | otherwise -> pure []
@@ -316,6 +328,7 @@ matchesEnvFilters filters alert = do
             Just groupId -> do
                 group <- fetch groupId
                 pure (Text.isInfixOf (Text.toLower pat) (Text.toLower group.groupKey))
+    now <- getCurrentTime
     pure
         ( and
             [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
@@ -324,6 +337,8 @@ matchesEnvFilters filters alert = do
             , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
             , maybe True (\pat -> Text.isInfixOf (Text.toLower pat) (Text.toLower alert.title)) filters.alfTitle
             , groupOk
+            , maybe True (\n -> alert.occurrences >= n) filters.alfMinOccurrences
+            , alert.lastSeenAt > seenCutoff now filters.alfSeenWithin
             ]
         )
 

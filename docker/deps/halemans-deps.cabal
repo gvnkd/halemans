@@ -1,0 +1,58 @@
+cabal-version: 2.2
+name: halemans-deps
+version: 0
+build-type: Simple
+
+library
+    default-language: Haskell2010
+    build-depends:
+        base
+        , aeson
+        , aeson-pretty
+        , base64-bytestring
+        , basic-prelude
+        , bytestring
+        , cmark
+        , containers
+        , cryptonite
+        , data-default
+        , deepseq
+        , diagrams-core
+        , diagrams-lib
+        , diagrams-svg
+        , directory
+        , fast-logger
+        , filepath
+        , hasql
+        , hasql-dynamic-statements
+        , hasql-implicits
+        , hasql-mapping
+        , hasql-pool
+        , hasql-postgresql-types
+        , hasql-transaction
+        , http-client
+        , http-client-tls
+        , http-types
+        , lens
+        , memory
+        , network
+        , network-uri
+        , postgresql-simple
+        , postgresql-types
+        , process
+        , pwstore-fast
+        , safe-exceptions
+        , scientific
+        , string-conversions
+        , svg-builder
+        , template-haskell
+        , text
+        , time
+        , unordered-containers
+        , uuid
+        , vector
+        , wai
+        , wai-request-params
+        , warp
+        , websockets
+        , wreq

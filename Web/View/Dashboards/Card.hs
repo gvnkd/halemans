@@ -1,9 +1,11 @@
 module Web.View.Dashboards.Card where
 
+import Application.Helper.DashboardConfig (defaultAlertListColumns, defaultAlertListPageSize)
 import Application.Service.DashboardCards (ExpandedCard (..))
-import Network.HTTP.Types.URI (renderQuery)
+import Application.Service.DynTable
 import Web.View.Dashboards.Show (cardTitleText)
-import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), AlertsTableSorting (..), alertsTableHtml, nextSortDir)
+import Web.View.DynTable (DynTable (..), dynTableHtml)
+import Web.View.Fragments (alertBaseColumns, alertRowHtmlCols)
 import Web.View.Prelude
 
 data CardView = CardView
@@ -12,6 +14,7 @@ data CardView = CardView
     , alerts :: [Alert]
     , sortColumn :: Text
     , sortDir :: Text
+    , visibleCols :: [Text]
     }
 
 instance View CardView where
@@ -27,32 +30,47 @@ instance View CardView where
     |]
       where
         table =
-            alertsTableHtml
-                AlertsTable
-                    { atTestId = Just "dashboard-card-alerts"
-                    , atTbodyId = "dashboard-card-alerts-tbody"
-                    , atLiveScope = Nothing
-                    , atLiveFilters = Nothing
-                    , atTableClass = "table"
-                    , atSorting =
-                        Just
-                            AlertsTableSorting
-                                { atsSort = sortColumn
-                                , atsDir = sortDir
-                                , atsUrl = sortUrl
-                                }
-                    , atContent = FlatAlerts alerts
+            dynTableHtml
+                DynTable
+                    { dtTestId = Just "dashboard-card-alerts"
+                    , dtTbodyId = "dashboard-card-alerts-tbody"
+                    , dtLiveScope = Nothing
+                    , dtLiveFilters = Nothing
+                    , dtTableClass = "table"
+                    , dtConfig = tableConfig
+                    , dtState = tableState
+                    , dtBasePath = pathTo (ShowDashboardCardAction dashboard.id expandedCard.ecIndex)
+                    , dtResetUrl = Nothing
+                    , -- The pinned forEach value rides along on every widget
+                      -- link/form submission.
+                      dtExtraItems = valueItem
+                    , dtTotal = fromIntegral (length alerts)
+                    , dtRows = alerts
+                    , dtRowHtml = \visible alert -> alertRowHtmlCols Nothing (map colKey visible) alert
                     }
+        tableConfig =
+            TableConfig
+                { cfgName = "dashboard-card"
+                , cfgColumns = alertBaseColumns
+                , cfgDefaultVisible = defaultAlertListColumns
+                , cfgDefaultSort = "last_seen_at"
+                , cfgDefaultDir = "desc"
+                , cfgPageSizes = []
+                , cfgDefaultPageSize = defaultAlertListPageSize
+                , cfgColumnPicker = True
+                , cfgPager = False
+                }
+        tableState =
+            TableState
+                { tsSort = sortColumn
+                , tsDir = sortDir
+                , tsPage = 1
+                , tsPageSize = max 1 (length alerts)
+                , tsVisible = visibleCols
+                , tsFilters = []
+                }
+        valueItem = maybe [] (\value -> [("value", Just (cs value))]) expandedCard.ecValue
         emptyNote =
             if null alerts
                 then [hsx|<p class="text-secondary" data-testid="dashboard-card-empty">No matching alerts.</p>|]
                 else mempty
-        sortUrl :: Text -> Text
-        sortUrl column = pathTo (ShowDashboardCardAction dashboard.id expandedCard.ecIndex) <> cs (renderQuery True (queryItems column))
-          where
-            queryItems col =
-                valueItem
-                    ++ [ ("sort", Just (cs col))
-                       , ("dir", Just (cs (nextSortDir sortColumn sortDir col)))
-                       ]
-            valueItem = maybe [] (\value -> [("value", Just (cs value))]) expandedCard.ecValue

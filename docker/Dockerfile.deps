@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+# Precompiled Haskell toolchain + IHP dependency stack for Halemans.
+# Contains everything except the app sources: ghcup-provided GHC 9.10.3,
+# cabal, the vendored IHP monorepo packages (built), and the frozen Hackage
+# dependency universe. Rebuild only when GHC / IHP / cabal.project.freeze
+# change. Build from the repo root (vendor/ihp submodule must be checked out):
+#   git submodule update --init
+#   docker build -f docker/Dockerfile.deps -t halemans-deps .
+FROM debian:13-slim
+
+ARG GHC_VERSION=9.10.3
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential curl ca-certificates git xz-utils pkg-config \
+        libgmp-dev libnuma-dev libtinfo6 zlib1g-dev \
+        libpq-dev libicu-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GHCUP_INSTALL_BASE_PREFIX=/opt/ghcup
+ENV PATH=/opt/ghcup/.ghcup/bin:${PATH}
+RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
+        BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
+        BOOTSTRAP_HASKELL_MINIMAL=1 \
+        sh \
+    && ghcup install ghc ${GHC_VERSION} \
+    && ghcup set ghc ${GHC_VERSION} \
+    && ghcup install cabal
+
+WORKDIR /src
+COPY halemans.cabal cabal.project cabal.project.freeze ./
+COPY docker/deps/halemans-deps.cabal docker/deps/
+COPY vendor vendor
+
+# The deps layer builds without app sources: swap the app package for a
+# dummy package carrying the app's Hackage-only direct dependencies.
+# cabal configure refuses packages whose module files are absent.
+RUN sed -i 's|^packages: \.$|packages: docker/deps/halemans-deps.cabal|' cabal.project
+
+RUN cabal update && cabal build all -j$(nproc)
+
+# Schema code generator, invoked by docker/prepare-cabal-build.sh at app
+# build time.
+RUN cabal install ihp-schema-compiler:exe:build-generated-code \
+        --installdir=/usr/local/bin --overwrite-policy=always

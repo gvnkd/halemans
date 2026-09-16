@@ -3,6 +3,12 @@
 # No nix required — the halemans image (built by GitHub Actions) carries the
 # server, worker, schema bootstrap and the GenPassword tool.
 #
+# Building the app image without nix (Debian 13 + ghcup + vendored IHP):
+#   git submodule update --init
+#   docker build -f docker/Dockerfile.deps -t halemans-deps .   # rarely; IHP stack
+#   docker build -f docker/Dockerfile -t halemans .
+#   HALEMANS_IMAGE=halemans:latest docker compose up -d
+#
 # First-boot setup:
 #   cd deploy/docker
 #   cp .env.example .env            # fill in the required values
@@ -40,14 +46,19 @@ x-halemans-image: &halemans-image
 
 services:
   db:
-    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    # PostgreSQL 18. Upgrading an existing db-data volume from 16 requires
+    # pg_upgrade or dump/restore — PG18 refuses to start on a PG16 datadir.
+    image: ${POSTGRES_IMAGE:-postgres:18-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_DB: halemans
       POSTGRES_USER: halemans
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # PG18+ layout: mount the parent dir so the datadir lives in a
+      # versioned subdirectory and future pg_upgrade --link works across
+      # the mount boundary (docker-library/postgres#37).
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U halemans -d halemans"]
       interval: 5s

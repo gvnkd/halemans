@@ -1,6 +1,6 @@
 module Web.Controller.GroupingRules where
 
-import Application.Helper.RuleForm (parseMatchForm)
+import Application.Helper.RuleForm (parseMatchFormFacets)
 import Application.Pipeline.Grouping (matchAlert, matchExprFromJSON, renderTemplate)
 import Web.Controller.Prelude
 import Web.View.GroupingRules.Edit
@@ -25,7 +25,7 @@ instance Controller GroupingRulesController where
                 |> set #name (param @Text "name")
                 |> set #position (param @Int "position")
                 |> set #enabled (enabledParam)
-                |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
+                |> set #match (parseMatchFormFacets (param @Text "matchFields") (param @Text "matchLabels") (param @Text "matchFacets"))
                 |> set #groupKeyTemplate (param @Text "groupKeyTemplate")
                 |> set #createdBy (Just currentUserId)
                 |> createRecord
@@ -46,7 +46,7 @@ instance Controller GroupingRulesController where
                 |> set #name (param @Text "name")
                 |> set #position (param @Int "position")
                 |> set #enabled (enabledParam)
-                |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
+                |> set #match (parseMatchFormFacets (param @Text "matchFields") (param @Text "matchLabels") (param @Text "matchFacets"))
                 |> set #groupKeyTemplate (param @Text "groupKeyTemplate")
                 |> set #version (rule.version + 1)
                 |> updateRecord

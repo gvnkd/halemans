@@ -15,6 +15,11 @@ dist-newstyle
 *.o
 build
 gen
+# Vendored Haskell sources are only for the nix-less docker build
+# (docker/Dockerfile*). The IHP flake module enumerates every *.hs in the
+# project as an app module, so vendor/ must stay out of the nix source.
+# Tracked files stay tracked; new vendor content needs `git add -f`.
+vendor
 del
 static/prod.*
 Config/client_session_key.aes

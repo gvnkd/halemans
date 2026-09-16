@@ -1,0 +1,21 @@
+packages: .
+        vendor/minio-hs
+        vendor/ihp/ihp        vendor/ihp/ihp-hsx
+        vendor/ihp/ihp-router
+        vendor/ihp/ihp-modal
+        vendor/ihp/ihp-pagehead
+        vendor/ihp/ihp-pglistener
+        vendor/ihp/ihp-postgres-parser
+        vendor/ihp/ihp-schema-compiler
+        vendor/ihp/ihp-typed-sql
+        vendor/ihp/ihp-migrate
+        vendor/ihp/ihp-log
+        vendor/ihp/ihp-imagemagick
+        vendor/ihp/wai-asset-path
+        vendor/ihp/wai-early-return
+        vendor/ihp/wai-flash-messages
+        vendor/ihp/wai-request-params
+
+with-compiler: ghc-9.10.3
+
+index-state: 2026-09-15T17:56:20Z

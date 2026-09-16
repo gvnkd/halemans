@@ -32,6 +32,12 @@ spec = describe "filter prefs" do
                         , alfGroup = Just "grp"
                         , alfSort = "severity"
                         , alfDir = "asc"
+                        , alfColumns = ["status", "severity", "title", "group"]
+                        , alfPage = 1
+                        , alfPageSize = 100
+                        , alfMinOccurrences = Just 3
+                        , alfSeenWithin = Just "24h"
+                        , alfIncludeClosed = False
                         }
             alertFiltersFromValue (alertFiltersToValue filters) `shouldBe` Just filters
         it "roundtrips the defaults" do
@@ -45,13 +51,10 @@ spec = describe "filter prefs" do
     describe "envFilters json roundtrip" do
         it "roundtrips filters and view mode" do
             let filters =
-                    EnvFilters
+                    emptyEnvFilters
                         { filterSeverities = ["warning"]
-                        , filterStatuses = []
                         , filterHost = Just "db-01"
-                        , filterService = Nothing
                         , filterText = Just "cpu"
-                        , filterGroup = Nothing
                         }
             envFiltersFromValue (envFiltersToValue filters "grouped") `shouldBe` Just (filters, "grouped")
         it "treats empty filters with flat view as default" do

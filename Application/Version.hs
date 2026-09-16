@@ -6,7 +6,7 @@ import IHP.Prelude
 
 -- Single runtime-visible copy of the app version. The nix build filters the
 -- app source down to .hs files + Makefile (IHP NixSupport appSrcInclude), so
--- Halemans.cabal is not readable at compile time. Keep in sync with the
--- `version:` field in Halemans.cabal (guarded by Test/Main.hs).
+-- halemans.cabal is not readable at compile time. Keep in sync with the
+-- `version:` field in halemans.cabal (guarded by Test/Main.hs).
 appVersion :: Text
-appVersion = "2.5.3"
+appVersion = "2.6.0"

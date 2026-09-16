@@ -9,15 +9,15 @@ instance View NewView where
         [hsx|
         <h1>New grouping rule</h1>
         <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form" class="maxw-600">
-            {groupingRuleFormFields "" 0 True "" "" ""}
+            {groupingRuleFormFields "" 0 True "" "" "" ""}
             <button type="submit" class="btn btn-primary" data-testid="grouping-rule-submit">Create</button>
         </form>
     |]
 
 -- Shared with Edit. Text fields are the match-editor's comma-separated
 -- inputs (Application.Helper.RuleForm).
-groupingRuleFormFields :: Text -> Int -> Bool -> Text -> Text -> Text -> Html
-groupingRuleFormFields name position enabled matchFields matchLabels groupKeyTemplate =
+groupingRuleFormFields :: Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Html
+groupingRuleFormFields name position enabled matchFields matchLabels matchFacets groupKeyTemplate =
     [hsx|
     <div class="mb-3">
         <label class="form-label">Name</label>
@@ -38,6 +38,10 @@ groupingRuleFormFields name position enabled matchFields matchLabels groupKeyTem
     <div class="mb-3">
         <label class="form-label">Label globs</label>
         <input name="matchLabels" type="text" class="form-control" value={matchLabels} placeholder="component=db-*" data-testid="rule-match-labels"/>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Facet globs</label>
+        <input name="matchFacets" type="text" class="form-control" value={matchFacets} placeholder="DB Cluster=ib-*" data-testid="rule-match-facets"/>
     </div>
     <div class="mb-3">
         <label class="form-label">Group key template</label>

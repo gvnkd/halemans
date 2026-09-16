@@ -1,5 +1,6 @@
 module Web.View.Fragments (
     alertRowHtml,
+    alertRowHtmlCols,
     alertRowDomId,
     alertStatusBadgeHtml,
     alertStatusDomId,
@@ -38,21 +39,25 @@ module Web.View.Fragments (
     externalLinkFooterHtml,
     RollupCard (..),
     rollupCardHtml,
-    AlertsTable (..),
-    AlertsTableSorting (..),
-    AlertsTableContent (..),
-    alertsTableHtml,
-    nextSortDir,
+    alertBaseColumns,
+    alertStaticColumns,
+    attachColumnFilter,
+    alertSeverityOptions,
+    alertStatusOptions,
+    alertListColumns,
+    groupedAlertsTableHtml,
 ) where
 
-import Application.Helper.DashboardConfig (CardSize (..), alertSortNaturalDir)
+import Application.Helper.DashboardConfig (CardSize (..), alertSortNaturalDir, defaultAlertListColumns, validAlertSortColumns)
 import Application.Pipeline.Grouping (AlertField (..), alertFieldText, effectiveFieldText)
 import Application.Service.Assets.Attrs (configuredAttrNames, objectAttributes)
+import Application.Service.DynTable (ColumnFilter (..), FilterKind (..), TableColumn (..))
 import Application.Service.Timeline (TimelineGroup (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
+import qualified Data.List as List
 import qualified Data.Text as Text
 import Web.View.Prelude
 
@@ -63,24 +68,34 @@ alertRowDomId :: Alert -> Text
 alertRowDomId alert = "alert-row-" <> tshow (get #id alert)
 
 alertRowHtml :: Alert -> Html
-alertRowHtml alert =
+alertRowHtml = alertRowHtmlCols Nothing defaultAlertListColumns
+
+-- | Column-aware alert row for the /alerts dynamic table: one <td> per
+-- visible column key. groupKey is this alert's group key, looked up by the
+-- caller only when the (hidden by default) group column is visible.
+alertRowHtmlCols :: Maybe Text -> [Text] -> Alert -> Html
+alertRowHtmlCols groupKey cols alert =
     [hsx|
     <tr data-fingerprint={alert.fingerprint} class={rowClass} id={alertRowDomId alert}>
-        <td>
-            {statusBadgeHtml alert.status}
-            {suppressedMarker}
-        </td>
-        <td>{severityBadgeHtml alert.severity Nothing}</td>
-        <td><a href={ShowAlertAction (get #id alert)}>{alert.title}</a>{groupBadge}</td>
-        <td>{fromMaybe "" (effectiveFieldText FieldEnv alert)}</td>
-        <td>{fromMaybe "" (effectiveFieldText FieldHost alert)}</td>
-        <td>{alert.occurrences}</td>
-        <td>{utcTimeHtml alert.lastSeenAt}</td>
+        {forEach cols cellHtml}
     </tr>
 |]
   where
     rowClass :: Text
     rowClass = if alert.suppressed then "alert-row suppressed" else "alert-row"
+    cellHtml col = [hsx|<td>{cellContent col}</td>|]
+    cellContent :: Text -> Html
+    cellContent "status" = [hsx|{statusBadgeHtml alert.status}{suppressedMarker}|]
+    cellContent "severity" = severityBadgeHtml alert.severity Nothing
+    cellContent "title" = [hsx|<a href={ShowAlertAction (get #id alert)}>{alert.title}</a>{groupBadge}|]
+    cellContent "env" = textCell (effectiveFieldText FieldEnv alert)
+    cellContent "host" = textCell (effectiveFieldText FieldHost alert)
+    cellContent "service" = textCell (effectiveFieldText FieldService alert)
+    cellContent "occurrences" = [hsx|{alert.occurrences}|]
+    cellContent "last_seen_at" = utcTimeHtml alert.lastSeenAt
+    cellContent "group" = groupCell
+    cellContent _ = mempty
+    textCell value = [hsx|{fromMaybe "" value}|]
     suppressedMarker =
         if alert.suppressed
             then [hsx|<span class="badge status-suppressed" title="under blackout">muted</span>|]
@@ -88,95 +103,97 @@ alertRowHtml alert =
     groupBadge = case alert.groupId of
         Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">group</a>|]
         Nothing -> mempty
+    groupCell = case (alert.groupId, groupKey) of
+        (Just groupId, Just key) -> [hsx|<a href={ShowGroupAction groupId}>{key}</a>|]
+        _ -> [hsx|<span class="text-muted">-</span>|]
 
--- | Alerts list table shared by every page that lists alerts: /alerts, the
--- env page (flat and grouped views), the group card and the dashboard card
--- detail page. atSorting = Nothing renders plain headers for pages without a
--- sort query param. RecordWildCards pattern-match: the function field breaks
--- HasField selector magic.
-data AlertsTable = AlertsTable
-    { atTestId :: Maybe Text
-    , atTbodyId :: Text
-    , atLiveScope :: Maybe Text
-    , atLiveFilters :: Maybe Text
-    , atTableClass :: Text
-    , atSorting :: Maybe AlertsTableSorting
-    , atContent :: AlertsTableContent
-    }
+-- | Base column set for every alerts table (/alerts, env page, group card,
+-- dashboard cards): labels, sortability and natural directions. Pages that
+-- support filtering attach ColumnFilters via attachColumnFilter.
+alertBaseColumns :: [TableColumn]
+alertBaseColumns =
+    [ col "status" "Status"
+    , col "severity" "Severity"
+    , col "title" "Title"
+    , col "env" "Env"
+    , col "host" "Host"
+    , col "service" "Service"
+    , col "occurrences" "Occurrences"
+    , col "last_seen_at" "Last seen"
+    , TableColumn{colKey = "group", colLabel = "Group", colSortable = False, colNaturalDir = "asc", colFilter = Nothing}
+    ]
+  where
+    col key label =
+        TableColumn
+            { colKey = key
+            , colLabel = label
+            , colSortable = key `elem` validAlertSortColumns
+            , colNaturalDir = alertSortNaturalDir key
+            , colFilter = Nothing
+            }
 
-data AlertsTableSorting = AlertsTableSorting
-    { atsSort :: Text
-    , atsDir :: Text
-    , atsUrl :: Text -> Text
-    }
+-- | Non-sortable, filterless variant for embedded tables (dashboard cards):
+-- plain headers, no interactivity.
+alertStaticColumns :: [TableColumn]
+alertStaticColumns = map (\col -> col{colSortable = False}) alertBaseColumns
 
-data AlertsTableContent
-    = FlatAlerts [Alert]
-    | GroupedAlerts [(AlertGroup, [Alert])]
+attachColumnFilter :: Text -> ColumnFilter -> [TableColumn] -> [TableColumn]
+attachColumnFilter key cf = map (\col -> if col.colKey == key then col{colFilter = Just cf} else col)
 
-alertsTableHtml :: AlertsTable -> Html
-alertsTableHtml AlertsTable{..} =
+alertSeverityOptions :: [Text]
+alertSeverityOptions = ["critical", "high", "warning", "info"]
+
+alertStatusOptions :: [Text]
+alertStatusOptions = ["firing", "ack", "resolved", "stalled", "closed"]
+
+-- | Full filterable column set for the standalone alert list pages
+-- (/alerts and the env page flat view): multi-selects for
+-- severity/status/env, text inputs with datalist suggestions for
+-- host/service/title, the numeric "min occurrences" and relative "seen
+-- within" windows, and the group-key filter on the hidden group column.
+-- envOptions = Nothing drops the env filter (env page: env is implicit).
+alertListColumns :: Maybe [Text] -> [Alert] -> [TableColumn]
+alertListColumns envOptions alerts =
+    attachColumnFilter "severity" (multiFilterFor "severity" alertSeverityOptions)
+        . attachColumnFilter "status" (multiFilterFor "status" alertStatusOptions)
+        . attachColumnFilter "title" (textFilterFor "q" "title contains" titleSuggestions)
+        . envFilter
+        . attachColumnFilter "host" (textFilterFor "host" "host" hostSuggestions)
+        . attachColumnFilter "service" (textFilterFor "service" "service" serviceSuggestions)
+        . attachColumnFilter "occurrences" (textFilterFor "occ_min" "min N" [])
+        . attachColumnFilter "last_seen_at" (textFilterFor "seen" "e.g. 24h" [])
+        . attachColumnFilter "group" (textFilterFor "group" "group key" [])
+        $ alertBaseColumns
+  where
+    envFilter = case envOptions of
+        Just names -> attachColumnFilter "env" (multiFilterFor "env" names)
+        -- `id` is ambiguous here (generated record field selectors).
+        Nothing -> \cols -> cols
+    multiFilterFor param options = ColumnFilter{cfParam = param, cfKind = FilterMulti, cfPlaceholder = param, cfOptions = options}
+    textFilterFor param placeholder suggestions = ColumnFilter{cfParam = param, cfKind = FilterText, cfPlaceholder = placeholder, cfOptions = suggestions}
+    hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
+    serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
+    titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
+
+-- | Grouped alerts table (env page grouped view): expandable group rows,
+-- one section per group. Flat tables use Web.View.DynTable.dynTableHtml.
+groupedAlertsTableHtml :: Maybe Text -> Text -> [(AlertGroup, [Alert])] -> Html
+groupedAlertsTableHtml testId tbodyId groups =
     [hsx|
-    <table class={atTableClass} data-testid={atTestId} data-live-scope={atLiveScope} data-live-filters={atLiveFilters}>
-        {tableHead}
-        <tbody id={atTbodyId}>
-            {tableRows}
+    <table class="table" data-testid={testId}>
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>Worst severity</th>
+                <th>Group</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody id={tbodyId}>
+            {forEach groups groupRowHtml}
         </tbody>
     </table>
 |]
-  where
-    tableHead = case atContent of
-        FlatAlerts _ ->
-            [hsx|
-                <thead>
-                    <tr>
-                        {headerCell "status" "Status"}
-                        {headerCell "severity" "Severity"}
-                        {headerCell "title" "Title"}
-                        {headerCell "env" "Env"}
-                        {headerCell "host" "Host"}
-                        {headerCell "occurrences" "Occurrences"}
-                        {headerCell "last_seen_at" "Last seen"}
-                    </tr>
-                </thead>
-            |]
-        GroupedAlerts _ ->
-            [hsx|
-                <thead>
-                    <tr>
-                        <th>Status</th>
-                        <th>Worst severity</th>
-                        <th>Group</th>
-                        <th></th>
-                    </tr>
-                </thead>
-            |]
-    tableRows = case atContent of
-        FlatAlerts alerts -> forEach alerts alertRowHtml
-        GroupedAlerts groups -> forEach groups groupRowHtml
-    headerCell :: Text -> Text -> Html
-    headerCell column label = case atSorting of
-        Nothing -> [hsx|<th>{label}</th>|]
-        Just sorting -> sortableTh sorting column label
-    sortableTh :: AlertsTableSorting -> Text -> Text -> Html
-    sortableTh AlertsTableSorting{..} column label =
-        [hsx|
-            <th><a href={atsUrl column} class="text-decoration-none" data-testid={"sort-" <> column}>{label}{indicator}</a></th>
-        |]
-      where
-        indicator =
-            if atsSort == column
-                then [hsx|<span class="sort-indicator">{arrow}</span>|]
-                else mempty
-        arrow :: Text
-        arrow = if atsDir == "asc" then " ▲" else " ▼"
-
--- | Direction for a header click: toggles on the active column, otherwise
--- the column's natural direction (matches /alerts).
-nextSortDir :: Text -> Text -> Text -> Text
-nextSortDir currentSort currentDir column
-    | currentSort == column = if currentDir == "asc" then "desc" else "asc"
-    | otherwise = alertSortNaturalDir column
 
 alertStatusDomId :: Alert -> Text
 alertStatusDomId alert = "alert-status-" <> tshow (get #id alert)

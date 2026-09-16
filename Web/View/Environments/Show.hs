@@ -1,12 +1,14 @@
 module Web.View.Environments.Show where
 
-import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import Application.Helper.DashboardConfig (alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize)
+import Application.Service.AlertList (parseRelativeWindow, validColumns, validSortColumns)
+import Application.Service.DynTable
 import Data.Aeson ((.!=), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
-import qualified Data.List as List
 import Network.HTTP.Types.URI (renderQuery)
-import Web.View.Fragments (AlertsTable (..), AlertsTableContent (..), alertsTableHtml, filterMultiSelect, filterTextInput)
+import Web.View.DynTable (DynTable (..), dynTableHtml)
+import Web.View.Fragments (alertListColumns, alertRowHtmlCols, groupedAlertsTableHtml)
 import Web.View.Prelude
 
 data EnvFilters = EnvFilters
@@ -16,13 +18,36 @@ data EnvFilters = EnvFilters
     , filterService :: Maybe Text
     , filterText :: Maybe Text
     , filterGroup :: Maybe Text
+    , filterSort :: Text
+    , filterDir :: Text
+    , filterCols :: [Text]
+    , filterPage :: Int
+    , filterPageSize :: Int
+    , filterOccMin :: Maybe Int
+    , filterSeenWithin :: Maybe Text
     }
     deriving (Eq, Show)
 
 emptyEnvFilters :: EnvFilters
-emptyEnvFilters = EnvFilters [] [] Nothing Nothing Nothing Nothing
+emptyEnvFilters =
+    EnvFilters
+        { filterSeverities = []
+        , filterStatuses = []
+        , filterHost = Nothing
+        , filterService = Nothing
+        , filterText = Nothing
+        , filterGroup = Nothing
+        , filterSort = "last_seen_at"
+        , filterDir = "desc"
+        , filterCols = defaultAlertListColumns
+        , filterPage = 1
+        , filterPageSize = defaultAlertListPageSize
+        , filterOccMin = Nothing
+        , filterSeenWithin = Nothing
+        }
 
--- Persisted shape for users.settings.filters.env (view mode included).
+-- Persisted shape for users.settings.filters.env (view mode included; the
+-- page itself is deliberately not persisted).
 envFiltersToValue :: EnvFilters -> Text -> Aeson.Value
 envFiltersToValue filters viewMode =
     Aeson.object
@@ -32,6 +57,12 @@ envFiltersToValue filters viewMode =
         , "service" .= filters.filterService
         , "q" .= filters.filterText
         , "group" .= filters.filterGroup
+        , "sort" .= filters.filterSort
+        , "dir" .= filters.filterDir
+        , "cols" .= filters.filterCols
+        , "pageSize" .= filters.filterPageSize
+        , "occ_min" .= filters.filterOccMin
+        , "seen" .= filters.filterSeenWithin
         , "view" .= viewMode
         ]
 
@@ -45,15 +76,28 @@ envFiltersFromValue =
             service <- nonEmptyField o "service"
             title <- nonEmptyField o "q"
             group <- nonEmptyField o "group"
+            sort :: Text <- o Aeson..:? "sort" .!= "last_seen_at"
+            dir :: Text <- o Aeson..:? "dir" .!= "desc"
+            cols <- o Aeson..:? "cols" .!= []
+            pageSize <- o Aeson..:? "pageSize" .!= defaultAlertListPageSize
+            occMin <- o Aeson..:? "occ_min"
+            seenRaw <- o Aeson..:? "seen"
+            let seen = seenRaw >>= \w -> if isJust (parseRelativeWindow w) then Just w else Nothing
             view :: Text <- o Aeson..:? "view" .!= "flat"
             pure
-                ( EnvFilters
+                ( emptyEnvFilters
                     { filterSeverities = severities
                     , filterStatuses = statuses
                     , filterHost = host
                     , filterService = service
                     , filterText = title
                     , filterGroup = group
+                    , filterSort = if sort `elem` validSortColumns then sort else "last_seen_at"
+                    , filterDir = if dir == "asc" then "asc" else "desc"
+                    , filterCols = validColumns cols
+                    , filterPageSize = if pageSize `elem` alertListPageSizes then pageSize else defaultAlertListPageSize
+                    , filterOccMin = occMin
+                    , filterSeenWithin = seen
                     }
                 , if view == "grouped" then "grouped" else "flat"
                 )
@@ -71,6 +115,11 @@ envBaseItems f viewMode =
         ++ maybe [] (\value -> [("service", Just (cs value))]) f.filterService
         ++ maybe [] (\value -> [("q", Just (cs value))]) f.filterText
         ++ maybe [] (\value -> [("group", Just (cs value))]) f.filterGroup
+        ++ [("sort", Just (cs f.filterSort)), ("dir", Just (cs f.filterDir))]
+        ++ map (\col -> ("cols", Just (cs col))) f.filterCols
+        ++ [("pageSize", Just (cs (tshow f.filterPageSize)))]
+        ++ maybe [] (\value -> [("occ_min", Just (cs (tshow value)))]) f.filterOccMin
+        ++ maybe [] (\value -> [("seen", Just (cs value))]) f.filterSeenWithin
         ++ [("view", Just (cs viewMode))]
 
 envPrefsAreDefault :: (EnvFilters, Text) -> Bool
@@ -84,6 +133,8 @@ data ShowView = ShowView
     , blackouts :: [Blackout]
     , filters :: EnvFilters
     , viewMode :: Text
+    , total :: Int64
+    , groupKeys :: [(Id AlertGroup, Text)]
     }
 
 instance View ShowView where
@@ -92,16 +143,6 @@ instance View ShowView where
         <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters}>
             <h1>{environmentName}</h1>
             {activeBlackoutNotice}
-            <form method="GET" action={ShowEnvironmentAction environmentName} class="row g-2 mb-3" data-testid="env-filters">
-                {filterMultiSelect "severity" "severity" severities filters.filterSeverities}
-                {filterMultiSelect "status" "status" statuses filters.filterStatuses}
-                {filterTextInput "host" "host" filters.filterHost hostSuggestions}
-                {filterTextInput "service" "service" filters.filterService serviceSuggestions}
-                {filterTextInput "q" "title contains" filters.filterText titleSuggestions}
-                <div class="col-auto"><input name="group" class="form-control form-control-sm" placeholder="group key" value={fromMaybe "" filters.filterGroup} data-testid="env-filter-group" data-autosubmit=""/></div>
-                <input type="hidden" name="view" value={viewMode}/>
-                <div class="col-auto"><a href={resetUrl} class="btn btn-sm btn-outline-secondary" data-testid="env-filters-reset">Reset</a></div>
-            </form>
             <div class="mb-2" data-testid="view-toggle">
                 <a href={toggleUrl "flat"} class={toggleClass "flat"} data-testid="view-flat">Flat</a>
                 <a href={toggleUrl "grouped"} class={toggleClass "grouped"} data-testid="view-grouped">Grouped</a>
@@ -114,11 +155,6 @@ instance View ShowView where
         -- the client subscribes with THESE filters, not location.search.
         liveFilters :: Text
         liveFilters = cs (Aeson.encode (envFiltersToValue filters viewMode))
-        severities = ["critical", "high", "warning", "info"]
-        statuses = ["firing", "ack", "resolved", "stalled", "closed"]
-        hostSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldHost) alerts))
-        serviceSuggestions = List.sort (nub (mapMaybe (effectiveFieldText FieldService) alerts))
-        titleSuggestions = List.sort (nub (map (\alert -> alert.title) alerts))
         activeBlackoutNotice =
             if null blackouts
                 then mempty
@@ -129,34 +165,60 @@ instance View ShowView where
                     </div>
                 |]
         toggleUrl mode = pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (envBaseItems filters mode))
-        resetUrl :: Text
-        resetUrl = pathTo (ShowEnvironmentAction environmentName) <> "?reset=1"
         toggleClass :: Text -> Text
         toggleClass mode = if viewMode == mode then "btn btn-sm btn-secondary" else "btn btn-sm btn-outline-secondary"
         content =
             if viewMode == "grouped"
-                then groupedTable
+                then groupedAlertsTableHtml (Just "env-groups-table") "env-groups-tbody" groups
                 else flatTable
         flatTable =
-            alertsTableHtml
-                AlertsTable
-                    { atTestId = Just "env-alerts-table"
-                    , atTbodyId = "env-alerts-tbody"
+            dynTableHtml
+                DynTable
+                    { dtTestId = Just "env-alerts-table"
+                    , dtTbodyId = "env-alerts-tbody"
                     , -- The wrapper div carries the live scope/filters.
-                      atLiveScope = Nothing
-                    , atLiveFilters = Nothing
-                    , atTableClass = "table"
-                    , atSorting = Nothing
-                    , atContent = FlatAlerts alerts
+                      dtLiveScope = Nothing
+                    , dtLiveFilters = Nothing
+                    , dtTableClass = "table"
+                    , dtConfig = tableConfig
+                    , dtState = tableState
+                    , dtBasePath = pathTo (ShowEnvironmentAction environmentName)
+                    , dtResetUrl = Just resetUrl
+                    , dtExtraItems = [("view", Just (cs viewMode))]
+                    , dtTotal = total
+                    , dtRows = alerts
+                    , dtRowHtml = rowHtml
                     }
-        groupedTable =
-            alertsTableHtml
-                AlertsTable
-                    { atTestId = Just "env-groups-table"
-                    , atTbodyId = "env-groups-tbody"
-                    , atLiveScope = Nothing
-                    , atLiveFilters = Nothing
-                    , atTableClass = "table"
-                    , atSorting = Nothing
-                    , atContent = GroupedAlerts groups
-                    }
+        rowHtml visible alert =
+            alertRowHtmlCols (alert.groupId >>= (`lookup` groupKeys)) (map colKey visible) alert
+        resetUrl :: Text
+        resetUrl = pathTo (ShowEnvironmentAction environmentName) <> "?reset=1"
+        tableConfig =
+            TableConfig
+                { cfgName = "env"
+                , cfgColumns = alertListColumns Nothing alerts
+                , cfgDefaultVisible = defaultAlertListColumns
+                , cfgDefaultSort = "last_seen_at"
+                , cfgDefaultDir = "desc"
+                , cfgPageSizes = alertListPageSizes
+                , cfgDefaultPageSize = defaultAlertListPageSize
+                , cfgColumnPicker = True
+                , cfgPager = True
+                }
+        tableState =
+            TableState
+                { tsSort = filters.filterSort
+                , tsDir = filters.filterDir
+                , tsPage = filters.filterPage
+                , tsPageSize = filters.filterPageSize
+                , tsVisible = filters.filterCols
+                , tsFilters =
+                    [("severity", filters.filterSeverities), ("status", filters.filterStatuses)]
+                        ++ single "host" filters.filterHost
+                        ++ single "service" filters.filterService
+                        ++ single "q" filters.filterText
+                        ++ single "group" filters.filterGroup
+                        ++ single "occ_min" (tshow <$> filters.filterOccMin)
+                        ++ single "seen" filters.filterSeenWithin
+                }
+        single param = maybe [] (\value -> [(param, [value])])
