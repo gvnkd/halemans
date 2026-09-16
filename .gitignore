@@ -41,3 +41,4 @@ deploy/docker/provision.json
 .playwright-mcp/
 .opencode/
 .claude/
+result-*

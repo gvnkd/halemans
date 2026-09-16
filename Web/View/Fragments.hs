@@ -94,12 +94,21 @@ alertRowHtmlCols groupKey cols alert =
     cellContent "occurrences" = [hsx|{alert.occurrences}|]
     cellContent "last_seen_at" = utcTimeHtml alert.lastSeenAt
     cellContent "group" = groupCell
+    cellContent "muted" = mutedCell
     cellContent _ = mempty
     textCell value = [hsx|{fromMaybe "" value}|]
+    mutedCell =
+        if alert.suppressed
+            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>{fromMaybe "muted" alert.suppressedBy}</span>|]
+            else [hsx|<span class="text-muted">-</span>|]
     suppressedMarker =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" title="under blackout">muted</span>|]
+            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>muted</span>|]
             else mempty
+    suppressedTitle :: Text
+    suppressedTitle = case alert.suppressedBy of
+        Just "source" -> "muted at source"
+        _ -> "under blackout"
     groupBadge = case alert.groupId of
         Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">group</a>|]
         Nothing -> mempty
@@ -121,6 +130,7 @@ alertBaseColumns =
     , col "occurrences" "Occurrences"
     , col "last_seen_at" "Last seen"
     , TableColumn{colKey = "group", colLabel = "Group", colSortable = False, colNaturalDir = "asc", colFilter = Nothing}
+    , TableColumn{colKey = "muted", colLabel = "Muted", colSortable = False, colNaturalDir = "asc", colFilter = Nothing}
     ]
   where
     col key label =
@@ -151,13 +161,16 @@ alertStatusOptions = ["firing", "ack", "resolved", "stalled", "closed"]
 -- severity/status/env, text inputs with datalist suggestions for
 -- host/service/title, the numeric "min occurrences" and relative "seen
 -- within" windows, and the group-key filter on the hidden group column.
--- envOptions = Nothing drops the env filter (env page: env is implicit).
+-- envOptions = Nothing drops the env filter (env page: env is implicit);
+-- the muted-by-owner filter is /alerts-only too (the env page runs on its
+-- own EnvFilters plumbing that doesn't know the "muted" param).
 alertListColumns :: Maybe [Text] -> [Alert] -> [TableColumn]
 alertListColumns envOptions alerts =
     attachColumnFilter "severity" (multiFilterFor "severity" alertSeverityOptions)
         . attachColumnFilter "status" (multiFilterFor "status" alertStatusOptions)
         . attachColumnFilter "title" (textFilterFor "q" "title contains" titleSuggestions)
         . envFilter
+        . mutedFilter
         . attachColumnFilter "host" (textFilterFor "host" "host" hostSuggestions)
         . attachColumnFilter "service" (textFilterFor "service" "service" serviceSuggestions)
         . attachColumnFilter "occurrences" (textFilterFor "occ_min" "min N" [])
@@ -168,6 +181,9 @@ alertListColumns envOptions alerts =
     envFilter = case envOptions of
         Just names -> attachColumnFilter "env" (multiFilterFor "env" names)
         -- `id` is ambiguous here (generated record field selectors).
+        Nothing -> \cols -> cols
+    mutedFilter = case envOptions of
+        Just _ -> attachColumnFilter "muted" (multiFilterFor "muted" ["source", "blackout"])
         Nothing -> \cols -> cols
     multiFilterFor param options = ColumnFilter{cfParam = param, cfKind = FilterMulti, cfPlaceholder = param, cfOptions = options}
     textFilterFor param placeholder suggestions = ColumnFilter{cfParam = param, cfKind = FilterText, cfPlaceholder = placeholder, cfOptions = suggestions}
@@ -348,8 +364,12 @@ alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsD
         |]
     suppressedBadge =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed">suppressed</span>|]
+            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>suppressed</span>|]
             else mempty
+    suppressedTitle :: Text
+    suppressedTitle = case alert.suppressedBy of
+        Just "source" -> "muted at source"
+        _ -> "under blackout"
     body =
         [hsx|
             <dl class="alert-details-grid" data-testid="alert-details">

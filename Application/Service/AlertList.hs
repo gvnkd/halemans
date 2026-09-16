@@ -44,6 +44,8 @@ data AlertListFilters = AlertListFilters
     , alfService :: Maybe Text
     , alfTitle :: Maybe Text
     , alfGroup :: Maybe Text
+    , alfMuted :: [Text]
+    -- ^ Muted-by-owner filter: subset of ["source", "blackout"]; [] = off.
     , alfSort :: Text
     , alfDir :: Text
     , alfColumns :: [Text]
@@ -70,6 +72,7 @@ defaultAlertListFilters =
         , alfService = Nothing
         , alfTitle = Nothing
         , alfGroup = Nothing
+        , alfMuted = []
         , alfSort = "last_seen_at"
         , alfDir = "desc"
         , alfColumns = defaultAlertListColumns
@@ -117,6 +120,7 @@ listAlerts filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
+        muted = filters.alfMuted
         sort = filters.alfSort
         dir = filters.alfDir
         lim64 = fromIntegral filters.alfPageSize :: Int64
@@ -149,6 +153,7 @@ listAlerts filters = do
               AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
               AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
               AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
+              AND (cardinality(${muted}::text[]) = 0 OR (a.suppressed AND a.suppressed_by = ANY(${muted})))
               AND (${occMin} = 0 OR a.occurrences >= ${occMin})
               AND (a.last_seen_at > ${cutoff})
         ) AS sorted
@@ -173,6 +178,7 @@ countAlerts filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
+        muted = filters.alfMuted
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
@@ -189,6 +195,7 @@ countAlerts filters = do
           AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
           AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
           AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
+          AND (cardinality(${muted}::text[]) = 0 OR (a.suppressed AND a.suppressed_by = ANY(${muted})))
           AND (${occMin} = 0 OR a.occurrences >= ${occMin})
           AND (a.last_seen_at > ${cutoff})
     |]
@@ -207,6 +214,7 @@ countBySeverity filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
+        muted = filters.alfMuted
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
@@ -223,6 +231,7 @@ countBySeverity filters = do
           AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
           AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
           AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
+          AND (cardinality(${muted}::text[]) = 0 OR (a.suppressed AND a.suppressed_by = ANY(${muted})))
           AND (${occMin} = 0 OR a.occurrences >= ${occMin})
           AND (a.last_seen_at > ${cutoff})
         GROUP BY a.severity
@@ -267,6 +276,7 @@ matchesFilters filters alert = do
             , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
             , maybe True (\pat -> Text.isInfixOf (Text.toLower pat) (Text.toLower alert.title)) filters.alfTitle
             , groupOk
+            , null filters.alfMuted || (alert.suppressed && maybe False (`elem` filters.alfMuted) alert.suppressedBy)
             , maybe True (\n -> alert.occurrences >= n) filters.alfMinOccurrences
             , alert.lastSeenAt > seenCutoff now filters.alfSeenWithin
             ]
@@ -288,6 +298,7 @@ parseAlertFilters = Aeson.withObject "filters" \o -> do
     service <- nonEmptyField o "service"
     title <- nonEmptyField o "q"
     group <- nonEmptyField o "group"
+    muted :: [Text] <- o Aeson..:? "muted" .!= []
     colsRaw <- o Aeson..:? "cols" .!= []
     occMin <- o Aeson..:? "occ_min"
     seen <- o Aeson..:? "seen"
@@ -300,6 +311,7 @@ parseAlertFilters = Aeson.withObject "filters" \o -> do
             , alfService = service
             , alfTitle = title
             , alfGroup = group
+            , alfMuted = [m | m <- muted, m `elem` ["source", "blackout"]]
             , alfColumns = validColumns colsRaw
             , alfMinOccurrences = occMin
             , alfSeenWithin = seen
@@ -330,6 +342,7 @@ alertFiltersToValue filters =
         , "service" .= filters.alfService
         , "q" .= filters.alfTitle
         , "group" .= filters.alfGroup
+        , "muted" .= filters.alfMuted
         , "sort" .= filters.alfSort
         , "dir" .= filters.alfDir
         , "cols" .= filters.alfColumns
@@ -349,6 +362,7 @@ alertFiltersFromValue = parseMaybe parser
         service <- nonEmptyField o "service"
         title <- nonEmptyField o "q"
         group <- nonEmptyField o "group"
+        muted :: [Text] <- o Aeson..:? "muted" .!= []
         sort :: Text <- o Aeson..:? "sort" .!= "last_seen_at"
         dir :: Text <- o Aeson..:? "dir" .!= "desc"
         colsRaw <- o Aeson..:? "cols" .!= []
@@ -365,6 +379,7 @@ alertFiltersFromValue = parseMaybe parser
                 , alfService = service
                 , alfTitle = title
                 , alfGroup = group
+                , alfMuted = [m | m <- muted, m `elem` ["source", "blackout"]]
                 , alfSort = if sort `elem` validSortColumns then sort else "last_seen_at"
                 , alfDir = if dir == "asc" then "asc" else "desc"
                 , alfColumns = validColumns colsRaw

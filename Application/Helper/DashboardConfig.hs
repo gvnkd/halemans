@@ -174,7 +174,7 @@ validAlertSortColumns = ["status", "severity", "title", "env", "host", "occurren
 -- | Every column the /alerts dynamic table can render (display + filter +
 -- sort wiring); a subset of these is sortable (validAlertSortColumns).
 alertListColumnKeys :: [Text]
-alertListColumnKeys = ["status", "severity", "title", "env", "host", "service", "occurrences", "last_seen_at", "group"]
+alertListColumnKeys = ["status", "severity", "title", "env", "host", "service", "occurrences", "last_seen_at", "group", "muted"]
 
 -- | Columns a fresh /alerts visit shows; the column picker persists
 -- deviations per user. service/group start hidden (filter-only legacy).

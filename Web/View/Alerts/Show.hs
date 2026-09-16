@@ -73,8 +73,12 @@ instance View ShowView where
       where
         suppressedBadge =
             if alert.suppressed
-                then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed">suppressed</span>|]
+                then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>suppressed</span>|]
                 else mempty
+        suppressedTitle :: Text
+        suppressedTitle = case alert.suppressedBy of
+            Just "source" -> "muted at source"
+            _ -> "under blackout"
         actionBar = renderActionBar alert canAck canClose
         jiraPanelBody = [hsx|{jiraLinksHtml alert jiraLinks}{jiraCreateForm}|]
         -- Ticket creation only when the source opts into writable Jira

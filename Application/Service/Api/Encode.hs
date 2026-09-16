@@ -54,6 +54,7 @@ encodeAlertSummary alert =
         , "host_id" .= maybeIdValue alert.hostId
         , "service_id" .= maybeIdValue alert.serviceId
         , "suppressed" .= alert.suppressed
+        , "suppressed_by" .= alert.suppressedBy
         , "acknowledged_by" .= maybeIdValue alert.acknowledgedBy
         , "acknowledged_at" .= alert.acknowledgedAt
         , "ack_comment" .= alert.ackComment

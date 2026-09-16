@@ -5,7 +5,7 @@ import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, inges
 import Application.Pipeline.Blackouts (blackoutApplies)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
-import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalUnack, shouldMirror)
+import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalSuppress, mirrorExternalUnack, mirrorExternalUnsuppress, shouldMirror)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Control.Exception (SomeException, try)
 import Control.Monad (void)
@@ -201,12 +201,19 @@ initialHistoryDays source =
 -- alerts we already track (cursor-based event.get only returns NEW events,
 -- so acks on existing problems never show up there). LWW: source state
 -- newer than the last local action mirrors in, older never clobbers.
+-- Zabbix suppress/unsuppress (ack action bits 32/64) mirrors into the
+-- suppressed overlay as suppressed_by = 'source'; the newest of the two
+-- actions wins.
 reconcileAcks :: (?modelContext :: ModelContext) => Source -> Text -> IO ()
 reconcileAcks source token = do
+    -- Stalled alerts are included: a stalled alert can still be
+    -- suppressed/unsuppressed on the zabbix side, and the mirror is the only
+    -- path that learns about it (the event cursor already passed). The cost
+    -- is a few more ids in the single batched event.get, no extra calls.
     alerts <-
         query @Alert
             |> filterWhere (#sourceId, Just (get #id source))
-            |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+            |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
             |> fetch
     let eventIds = mapMaybe (.externalId) alerts
     unless (null eventIds) do
@@ -230,6 +237,8 @@ mirrorState alerts userNames state =
             let rows = sortOn (.ackClock) state.ackRows
                 latestUnack = lastMaybe [row | row <- rows, row.ackAction .&. 16 /= 0]
                 latestAction = lastMaybe rows
+                latestSuppress = lastMaybe [row | row <- rows, row.ackAction .&. 32 /= 0]
+                latestUnsuppress = lastMaybe [row | row <- rows, row.ackAction .&. 64 /= 0]
                 actorOf row = fromMaybe row.ackUserId (lookup row.ackUserId userNames)
             case (state.ackAcknowledged, alert.status) of
                 ("1", "firing") -> forM_ latestAction \row -> do
@@ -241,6 +250,21 @@ mirrorState alerts userNames state =
                     when (shouldMirror alert.acknowledgedAt sourceAt) do
                         void (mirrorExternalUnack alert "zabbix" (actorOf row) sourceAt)
                 _ -> pure ()
+            case (latestSuppress, latestUnsuppress) of
+                (Just sup, Just unsup)
+                    | unsup.ackClock > sup.ackClock -> mirrorUnsup alert unsup
+                    | otherwise -> mirrorSup alert sup
+                (Just sup, Nothing) -> mirrorSup alert sup
+                (Nothing, Just unsup) -> mirrorUnsup alert unsup
+                (Nothing, Nothing) -> pure ()
+  where
+    mirrorSup alert row = do
+        let sourceAt = posixSecondsToUTCTime (fromIntegral row.ackClock)
+        void (mirrorExternalSuppress alert "zabbix" (actorOf' row) sourceAt)
+    mirrorUnsup alert row = do
+        let sourceAt = posixSecondsToUTCTime (fromIntegral row.ackClock)
+        void (mirrorExternalUnsuppress alert "zabbix" (actorOf' row) sourceAt)
+    actorOf' row = fromMaybe row.ackUserId (lookup row.ackUserId userNames)
 
 lastMaybe :: [a] -> Maybe a
 lastMaybe = last

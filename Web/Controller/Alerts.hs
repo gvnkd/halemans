@@ -23,7 +23,7 @@ import Web.View.Alerts.Index
 import Web.View.Alerts.Show
 
 alertFilterQueryKeys :: [ByteString]
-alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "group", "sort", "dir", "cols", "page", "pageSize", "occ_min", "seen"]
+alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "group", "muted", "sort", "dir", "cols", "page", "pageSize", "occ_min", "seen"]
 
 -- Boolean flag in sources.config jsonb (writeBack, jiraWritable, ...).
 sourceConfigBool :: Text -> Source -> Bool
@@ -59,6 +59,7 @@ instance Controller AlertsController where
                     , alfService = nonEmptyParam "service"
                     , alfTitle = nonEmptyParam "q"
                     , alfGroup = nonEmptyParam "group"
+                    , alfMuted = [m | m <- paramList @Text "muted", m `elem` ["source", "blackout"]]
                     , alfSort = if requestedSort `elem` validSortColumns then requestedSort else "last_seen_at"
                     , alfDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
                     , alfColumns = if null requestedCols then defaultAlertListColumns else requestedCols
