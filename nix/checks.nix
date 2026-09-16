@@ -21,7 +21,7 @@ in
         nativeBuildInputs = with pkgs; [
             (config.ihp.ghcCompiler.ghcWithPackages (p: config.ihp.haskellPackages p ++ config.ihp.devHaskellPackages p ++ [p.ihp-ide p.ihp-schema-compiler]))
             gnumake
-            postgresql
+            postgresql_18
         ];
         buildPhase = ''
             export IHP_LIB=${ihpLib}
@@ -63,7 +63,7 @@ in
         nativeBuildInputs = with pkgs; [
             (config.ihp.ghcCompiler.ghcWithPackages (p: config.ihp.haskellPackages p ++ config.ihp.devHaskellPackages p ++ [p.ihp-ide p.ihp-schema-compiler]))
             gnumake
-            postgresql
+            postgresql_18
             python3
         ];
         MOCK_CONFLUENCE_PY = "${self}/nix/mocks/mock_confluence.py";
@@ -135,7 +135,9 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
     # tracked tree. The -XOverloadedRecordDot/-XOverloadedLabels flags are
     # REQUIRED: without them fourmolu parses `record.field` as composition
     # and `#label` as an operator application and "reformats" both into
-    # broken code.
+    # broken code. --no-cabal: the real halemans.cabal (added for the nix-less
+    # docker build) declares default-language GHC2021, which fourmolu would
+    # otherwise pick up and rewrite every import to post-qualified style.
     style = pkgs.stdenvNoCC.mkDerivation {
         name = "halemans-style";
         src = builtins.path { path = config.ihp.projectPath; name = "source"; };
@@ -143,7 +145,7 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
         nativeBuildInputs = [ pkgs.fourmolu pkgs.hlint pkgs.findutils pkgs.coreutils pkgs.gnugrep ];
         buildPhase = ''
             files=$(find Application Web Config Test -name '*.hs' -not -path '*/build/*'; ls *.hs 2>/dev/null || true)
-            fourmolu -o -XOverloadedRecordDot -o -XOverloadedLabels --mode check $files
+            fourmolu --no-cabal -o -XOverloadedRecordDot -o -XOverloadedLabels --mode check $files
             hlint $files
             touch $out
         '';
@@ -161,7 +163,7 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
         nativeBuildInputs = [
             pkgs.curl
             pkgs.jq
-            pkgs.postgresql
+            pkgs.postgresql_18
             pkgs.coreutils
             pkgs.gnused
             pkgs.grafana

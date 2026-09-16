@@ -69,7 +69,7 @@
                             config.packages.script-EnqueuePollers
                             config.packages.script-GenPassword
                             pkgs.busybox
-                            pkgs.postgresql
+                            pkgs.postgresql_18
                             dbInit
                         ];
                         extraCommands = ''

@@ -5,6 +5,9 @@
 # it. This module only carries Halemans-specific tweaks on top.
 { pkgs, lib, config, ... }:
 {
-    # Nothing to override yet. Kept as the home for future Halemans-specific
-    # postgres settings (extensions, tuning) so all nix code stays in ./nix/.
+    # Pin the dev/test database to PostgreSQL 18 (matches the container
+    # deployment, deploy/docker/docker-compose.yaml). Existing devenv
+    # datadirs are PG17-format: `devenv down`, remove the postgres state
+    # dir under $DEVENV_STATE, then `devenv up` to reinitialise and re-seed.
+    services.postgres.package = pkgs.postgresql_18;
 }

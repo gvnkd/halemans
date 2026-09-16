@@ -4,7 +4,7 @@
 let
     seedHalemans = pkgs.writeShellApplication {
         name = "seed-halemans";
-        runtimeInputs = [ pkgs.postgresql pkgs.coreutils halemansLib.ensureTokens halemansLib.hashPassword ];
+        runtimeInputs = [ pkgs.postgresql_18 pkgs.coreutils halemansLib.ensureTokens halemansLib.hashPassword ];
         text = builtins.readFile ./scripts/seed-halemans.sh;
     };
 
@@ -32,13 +32,13 @@ let
 
     stackStatus = pkgs.writeShellApplication {
         name = "stack-status";
-        runtimeInputs = [ pkgs.curl pkgs.postgresql ];
+        runtimeInputs = [ pkgs.curl pkgs.postgresql_18 ];
         text = builtins.readFile ./scripts/stack-status.sh;
     };
 
     smokeTest = pkgs.writeShellApplication {
         name = "smoke-test";
-        runtimeInputs = [ pkgs.curl pkgs.jq pkgs.postgresql pkgs.coreutils ];
+        runtimeInputs = [ pkgs.curl pkgs.jq pkgs.postgresql_18 pkgs.coreutils ];
         text = ''
             set -euo pipefail
             exec bash "''${DEVENV_ROOT:?}/tests/smoke/run.sh" "$@"

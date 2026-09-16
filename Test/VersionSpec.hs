@@ -8,7 +8,7 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Version" do
-    it "matches the version field in Halemans.cabal" do
-        cabalFile <- TextIO.readFile "Halemans.cabal"
+    it "matches the version field in halemans.cabal" do
+        cabalFile <- TextIO.readFile "halemans.cabal"
         let cabalVersions = [Text.dropWhile (== ' ') (Text.drop 8 l) | l <- Text.lines cabalFile, Text.take 8 l == "version:"]
         cabalVersions `shouldBe` [appVersion]

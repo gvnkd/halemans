@@ -26,7 +26,7 @@ let
     # postgres, idempotently. Used by the server wrapper (dev) and checks.smoke.
     ensureZabbixDb = pkgs.writeShellApplication {
         name = "halemans-zabbix-db-init";
-        runtimeInputs = [ pkgs.postgresql ];
+        runtimeInputs = [ pkgs.postgresql_18 ];
         text = ''
             set -euo pipefail
             # shellcheck disable=SC2034
