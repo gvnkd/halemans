@@ -11,9 +11,9 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>Edit dashboard</h1>
+        <h1>{tr "Edit dashboard"}</h1>
         <form method="POST" action={UpdateDashboardAction dashboard.id} data-testid="dashboard-form" class="maxw-600">
             {dashboardFormFields dashboard.name configText dashboard.isDefault}
-            <button type="submit" class="btn btn-primary" data-testid="dashboard-submit">Save</button>
+            <button type="submit" class="btn btn-primary" data-testid="dashboard-submit">{tr "Save"}</button>
         </form>
     |]

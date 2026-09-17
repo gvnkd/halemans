@@ -82,9 +82,9 @@ dynTableHtml DynTable{..} =
     headerCell col
         | col.colSortable =
             [hsx|
-                <th><a href={sortUrl col} class="text-decoration-none" data-testid={"sort-" <> col.colKey}>{col.colLabel}{sortIndicator col}</a></th>
+                <th><a href={sortUrl col} class="text-decoration-none" data-testid={"sort-" <> col.colKey}>{tr col.colLabel}{sortIndicator col}</a></th>
             |]
-        | otherwise = [hsx|<th>{col.colLabel}</th>|]
+        | otherwise = [hsx|<th>{tr col.colLabel}</th>|]
     sortUrl col = stateUrl state{tsSort = col.colKey, tsDir = nextSortDirFor cfg state col.colKey, tsPage = 1}
     sortIndicator col =
         if state.tsSort == col.colKey
@@ -107,7 +107,7 @@ dynTableHtml DynTable{..} =
 
     textFilter cf =
         [hsx|
-            <input name={cf.cfParam} class="form-control form-control-sm" placeholder={cf.cfPlaceholder} value={currentText cf} list={listId cf} autocomplete="off" data-autosubmit="" data-testid={"filter-" <> cf.cfParam}/>
+            <input name={cf.cfParam} class="form-control form-control-sm" placeholder={tr cf.cfPlaceholder} value={currentText cf} list={listId cf} autocomplete="off" data-autosubmit="" data-testid={"filter-" <> cf.cfParam}/>
             {suggestionList cf}
         |]
     listId cf = "filter-suggestions-" <> cf.cfParam
@@ -130,7 +130,9 @@ dynTableHtml DynTable{..} =
       where
         selected = filterValues state cf.cfParam
         buttonLabel :: Text
-        buttonLabel = Text.toLower col.colLabel <> ": " <> if null selected then "any" else tshow (length selected)
+        buttonLabel = trp "{label}: {selected}" [("label", Text.toLower (tr col.colLabel)), ("selected", selectedText)]
+        selectedText :: Text
+        selectedText = if null selected then tr "any" else tshow (length selected)
         optionItem value =
             [hsx|
                 <div class="form-check">
@@ -167,12 +169,12 @@ dynTableHtml DynTable{..} =
             else mempty
       where
         pickerLabel :: Text
-        pickerLabel = "Columns: " <> tshow (length visible) <> "/" <> tshow (length cfg.cfgColumns)
+        pickerLabel = trp "Columns: {visible}/{total}" [("visible", tshow (length visible)), ("total", tshow (length cfg.cfgColumns))]
         columnOption col =
             [hsx|
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" name="cols" value={col.colKey} id={colId col} checked={col.colKey `elem` state.tsVisible}/>
-                    <label class="form-check-label" for={colId col}>{col.colLabel}</label>
+                    <label class="form-check-label" for={colId col}>{tr col.colLabel}</label>
                 </div>
             |]
         colId col = name <> "-cols-" <> col.colKey
@@ -186,13 +188,13 @@ dynTableHtml DynTable{..} =
             FilterText ->
                 [hsx|
                 <div class="d-flex align-items-center gap-1" data-testid={testid ("filter-" <> cf.cfParam)}>
-                    <span class="text-muted small">{col.colLabel}</span>
+                    <span class="text-muted small">{tr col.colLabel}</span>
                     {textFilter cf}
                 </div>
             |]
 
     resetLink = case dtResetUrl of
-        Just url -> [hsx|<a href={url} class="btn btn-sm btn-outline-secondary" data-testid={testid "filters-reset"}>Reset</a>|]
+        Just url -> [hsx|<a href={url} class="btn btn-sm btn-outline-secondary" data-testid={testid "filters-reset"}>{tr "Reset"}</a>|]
         Nothing -> mempty
 
     tableHtml =
@@ -229,8 +231,10 @@ dynTableHtml DynTable{..} =
     lastRow = firstRow + length dtRows - 1
     rangeInfo =
         [hsx|
-            <span class="text-muted" data-testid={testid "range"}>{firstRow}–{lastRow} of {dtTotal}</span>
+            <span class="text-muted" data-testid={testid "range"}>{rangeText}</span>
         |]
+    rangeText :: Text
+    rangeText = trp "{first}–{last} of {total}" [("first", tshow firstRow), ("last", tshow lastRow), ("total", tshow dtTotal)]
 
     totalPages = pageCountFor dtTotal state.tsPageSize
     pagerNav =
@@ -277,4 +281,4 @@ dynTableHtml DynTable{..} =
       where
         sizeOption n = [hsx|<option value={sizeValue n} selected={n == state.tsPageSize}>{sizeLabel n}</option>|]
         sizeValue n = tshow n :: Text
-        sizeLabel n = tshow n <> " / page" :: Text
+        sizeLabel n = trp "{n} / page" [("n", tshow n)]

@@ -48,37 +48,37 @@ instance View ShowView where
 
             {panelHtml "jira-panel" Nothing "Jira" mempty jiraPanelBody}
 
-            <h2>Timeline</h2>
+            <h2>{tr "Timeline"}</h2>
             <ul class="timeline" id={timelineDomId} data-testid="alert-timeline">
                 {forEach (groupTimeline events) timelineGroupHtml}
             </ul>
 
-            <h2>Comments</h2>
+            <h2>{tr "Comments"}</h2>
             <ul class="comments" data-testid="alert-comments">
                 {forEach (zip comments commentAuthors) renderComment}
             </ul>
             <form method="POST" action={CreateCommentAction alert.id} data-testid="comment-form">
                 <div class="mb-2">
-                    <textarea name="body" class="form-control" placeholder="Add a comment" data-testid="comment-body"></textarea>
+                    <textarea name="body" class="form-control" placeholder={tr "Add a comment"} data-testid="comment-body"></textarea>
                 </div>
-                <button type="submit" class="btn btn-sm btn-primary" data-testid="comment-submit">Comment</button>
+                <button type="submit" class="btn btn-sm btn-primary" data-testid="comment-submit">{tr "Comment"}</button>
             </form>
 
-            <h2>Labels</h2>
+            <h2>{tr "Labels"}</h2>
             {detailsJsonHtml "alert-labels" "labels.json" (prettyJson alert.labels)}
-            <h2>Annotations</h2>
+            <h2>{tr "Annotations"}</h2>
             {detailsJsonHtml "alert-annotations" "annotations.json" (prettyJson alert.annotations)}
         </div>
     |]
       where
         suppressedBadge =
             if alert.suppressed
-                then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>suppressed</span>|]
+                then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>{tr "suppressed"}</span>|]
                 else mempty
         suppressedTitle :: Text
         suppressedTitle = case alert.suppressedBy of
-            Just "source" -> "muted at source"
-            _ -> "under blackout"
+            Just "source" -> tr "muted at source"
+            _ -> tr "under blackout"
         actionBar = renderActionBar alert canAck canClose
         jiraPanelBody = [hsx|{jiraLinksHtml alert jiraLinks}{jiraCreateForm}|]
         -- Ticket creation only when the source opts into writable Jira
@@ -101,7 +101,7 @@ renderActionBar alert canAck canClose =
   where
     ackButton =
         if canAck && alert.status `elem` ["firing", "stalled"]
-            then inlinePostFormHtml (pathTo (AckAlertAction alert.id)) "Ack" "btn btn-sm btn-warning" (Just "ack-button") False
+            then inlinePostFormHtml (pathTo (AckAlertAction alert.id)) (tr "Ack") "btn btn-sm btn-warning" (Just "ack-button") False
             else mempty
     ackTimeoutForm =
         if canAck && alert.status `elem` ["firing", "stalled"]
@@ -109,21 +109,21 @@ renderActionBar alert canAck canClose =
                 [hsx|
                 <form method="POST" action={AckAlertAction alert.id} class="d-inline" data-testid="ack-timeout-form">
                     <input type="hidden" name="timeoutMinutes" value="120"/>
-                    <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="ack-timeout-button">Ack 2h</button>
+                    <button type="submit" class="btn btn-sm btn-outline-warning" data-testid="ack-timeout-button">{tr "Ack 2h"}</button>
                 </form>
             |]
             else mempty
     unackButton =
         if canAck && alert.status == "ack"
-            then inlinePostFormHtml (pathTo (UnackAlertAction alert.id)) "Unack" "btn btn-sm btn-outline-secondary" (Just "unack-button") False
+            then inlinePostFormHtml (pathTo (UnackAlertAction alert.id)) (tr "Unack") "btn btn-sm btn-outline-secondary" (Just "unack-button") False
             else mempty
     closeForm =
         if canClose && alert.status `elem` ["ack", "stalled"]
             then
                 [hsx|
                 <form method="POST" action={CloseAlertAction alert.id} class="d-inline" data-testid="close-form">
-                    <input type="text" name="reason" class="form-control form-control-sm d-inline-block w-auto" placeholder="reason" data-testid="close-reason"/>
-                    <button type="submit" class="btn btn-sm btn-danger" data-testid="close-button">Close</button>
+                    <input type="text" name="reason" class="form-control form-control-sm d-inline-block w-auto" placeholder={tr "reason"} data-testid="close-reason"/>
+                    <button type="submit" class="btn btn-sm btn-danger" data-testid="close-button">{tr "Close"}</button>
                 </form>
             |]
             else mempty
@@ -147,12 +147,12 @@ jiraTicketForm alert =
         <div class="mb-2">
             <textarea name="body" class="form-control form-control-sm" rows="3" data-testid="jira-body">{prefillBody}</textarea>
         </div>
-        <button type="submit" class="btn btn-sm btn-primary" data-testid="jira-create-submit">Create Jira ticket</button>
+        <button type="submit" class="btn btn-sm btn-primary" data-testid="jira-create-submit">{tr "Create Jira ticket"}</button>
     </form>
 |]
   where
     prefillBody :: Text
-    prefillBody = alert.description <> "\n\nSource: " <> fromMaybe "-" alert.sourceUrl
+    prefillBody = alert.description <> "\n\n" <> trp "Source: {url}" [("url", fromMaybe "-" alert.sourceUrl)]
 
 renderComment :: (Comment, User) -> Html
 renderComment (comment, author) =

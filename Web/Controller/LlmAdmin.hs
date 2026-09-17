@@ -141,7 +141,7 @@ instance Controller LlmAdminController where
         requirePrivilege "manage_rules"
         analysis <- fetch analysisId
         if analysis.status /= "queued"
-            then setErrorMessage "Only queued LLM analyses can be dropped"
+            then setErrorMessage (tr "Only queued LLM analyses can be dropped")
             else do
                 alert <- fetch analysis.alertId
                 withTransaction do
@@ -153,7 +153,7 @@ instance Controller LlmAdminController where
                                 AND status IN ('job_status_not_started', 'job_status_retry')
                         |]
                     failAnalysis analysis alert "dropped by admin" "llm_failed"
-                setSuccessMessage "LLM analysis dropped"
+                setSuccessMessage (tr "LLM analysis dropped")
         redirectTo LlmQueueAction
     action NewLlmTemplateAction = do
         requirePrivilege "manage_rules"
@@ -167,7 +167,7 @@ instance Controller LlmAdminController where
             activate = paramOrNothing @Text "active" == Just "on"
         if Text.null name || version < 1 || Text.null body
             then do
-                setErrorMessage "Name, positive version and body are required"
+                setErrorMessage (tr "Name, positive version and body are required")
                 redirectTo NewLlmTemplateAction
             else do
                 existing <-
@@ -177,7 +177,7 @@ instance Controller LlmAdminController where
                         |> fetchOneOrNothing
                 case existing of
                     Just _ -> do
-                        setErrorMessage ("Prompt template " <> name <> " v" <> tshow version <> " already exists")
+                        setErrorMessage (trp "Prompt template {name} v{version} already exists" [("name", name), ("version", tshow version)])
                         redirectTo NewLlmTemplateAction
                     Nothing -> do
                         _ <-
@@ -205,8 +205,7 @@ instance Controller LlmAdminController where
                                         |> set #notes notes
                                         |> createRecord
                                     )
-                        let state = if activate then " (active)" else " (inactive)"
-                        setSuccessMessage ("Created " <> name <> " v" <> tshow version <> state)
+                        setSuccessMessage (trp (if activate then "Created {name} v{version} (active)" else "Created {name} v{version} (inactive)") [("name", name), ("version", tshow version)])
                         redirectTo LlmAdminAction
     action EditLlmTemplateAction{templateId} = do
         requirePrivilege "manage_rules"
@@ -228,7 +227,7 @@ instance Controller LlmAdminController where
                 |> set #active False
                 |> set #notes notes
                 |> createRecord
-        setSuccessMessage ("Created " <> get #name template <> " v" <> tshow (template.version + 1) <> " (inactive — activate it from the list)")
+        setSuccessMessage (trp "Created {name} v{version} (inactive — activate it from the list)" [("name", get #name template), ("version", tshow (template.version + 1))])
         redirectTo LlmAdminAction
 
     -- Activate flips the partial-unique active row for this template name
@@ -251,7 +250,7 @@ instance Controller LlmAdminController where
                     UPDATE llm_prompt_templates SET active = true, updated_at = NOW()
                     WHERE id = ${templateRef}
                 |]
-        setSuccessMessage ("Activated " <> get #name template <> " v" <> tshow template.version)
+        setSuccessMessage (trp "Activated {name} v{version}" [("name", get #name template), ("version", tshow template.version)])
         redirectTo LlmAdminAction
     action DeleteLlmTemplateAction{templateId} = do
         requirePrivilege "manage_rules"
@@ -261,28 +260,28 @@ instance Controller LlmAdminController where
                 |> filterWhere (#promptTemplateId, Just templateId)
                 |> fetchCount
         if get #active template
-            then setErrorMessage "Cannot delete the active prompt template version"
+            then setErrorMessage (tr "Cannot delete the active prompt template version")
             else
                 if references > 0
-                    then setErrorMessage "Cannot delete prompt template: analyses reference this version"
+                    then setErrorMessage (tr "Cannot delete prompt template: analyses reference this version")
                     else do
                         deleteRecord template
-                        setSuccessMessage ("Deleted " <> get #name template <> " v" <> tshow template.version)
+                        setSuccessMessage (trp "Deleted {name} v{version}" [("name", get #name template), ("version", tshow template.version)])
         redirectTo LlmAdminAction
     action TestLlmConnectionAction = do
         requirePrivilege "manage_rules"
         maybeConfig <- currentLlmConfig
         case maybeConfig of
-            Nothing -> setErrorMessage "LLM not configured (no enabled llm_configs row, LLM_ENDPOINT/LLM_MODEL missing)"
+            Nothing -> setErrorMessage (tr "LLM not configured (no enabled llm_configs row, LLM_ENDPOINT/LLM_MODEL missing)")
             Just config -> do
                 let url = apiUrl config "/v1/models"
                 result <- connectionOk config
                 case result of
-                    Right () -> setSuccessMessage ("LLM reachable at " <> url <> " (model " <> config.model <> ")")
+                    Right () -> setSuccessMessage (trp "LLM reachable at {url} (model {model})" [("url", url), ("model", config.model)])
                     Left err -> do
                         let ?context = ?context.frameworkConfig
                         Log.logWarn ("llm connection test failed: " <> err)
-                        setErrorMessage ("LLM endpoint " <> url <> " did not answer: " <> err)
+                        setErrorMessage (trp "LLM endpoint {url} did not answer: {error}" [("url", url), ("error", err)])
         redirectTo LlmAdminAction
     action NewLlmProviderAction = do
         requirePrivilege "manage_rules"
@@ -296,7 +295,7 @@ instance Controller LlmAdminController where
             toolsEnabled = paramOrNothing @Text "toolsEnabled" == Just "on"
         if Text.null name || Text.null endpoint || Text.null model
             then do
-                setErrorMessage "Provider name, endpoint and model are required"
+                setErrorMessage (tr "Provider name, endpoint and model are required")
                 redirectTo NewLlmProviderAction
             else do
                 existing <-
@@ -305,7 +304,7 @@ instance Controller LlmAdminController where
                         |> fetchOneOrNothing
                 case existing of
                     Just _ -> do
-                        setErrorMessage ("Provider " <> name <> " already exists")
+                        setErrorMessage (trp "Provider {name} already exists" [("name", name)])
                         redirectTo NewLlmProviderAction
                     Nothing -> do
                         _ <-
@@ -317,7 +316,7 @@ instance Controller LlmAdminController where
                                 |> set #toolsEnabled toolsEnabled
                                 |> set #enabled False
                                 |> createRecord
-                        setSuccessMessage ("Created provider " <> name <> " (disabled — enable it from the list)")
+                        setSuccessMessage (trp "Created provider {name} (disabled — enable it from the list)" [("name", name)])
                         redirectTo LlmAdminAction
     action EditLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
@@ -333,7 +332,7 @@ instance Controller LlmAdminController where
             toolsEnabled = paramOrNothing @Text "toolsEnabled" == Just "on"
         if Text.null name || Text.null endpoint || Text.null model
             then do
-                setErrorMessage "Provider name, endpoint and model are required"
+                setErrorMessage (tr "Provider name, endpoint and model are required")
                 redirectTo (EditLlmProviderAction providerId)
             else do
                 clash <-
@@ -342,7 +341,7 @@ instance Controller LlmAdminController where
                         |> fetchOneOrNothing
                 case clash of
                     Just other | get #id other /= providerId -> do
-                        setErrorMessage ("Provider " <> name <> " already exists")
+                        setErrorMessage (trp "Provider {name} already exists" [("name", name)])
                         redirectTo (EditLlmProviderAction providerId)
                     _ -> do
                         now <- getCurrentTime
@@ -355,7 +354,7 @@ instance Controller LlmAdminController where
                                 |> set #toolsEnabled toolsEnabled
                                 |> set #updatedAt now
                                 |> updateRecord
-                        setSuccessMessage ("Updated provider " <> name)
+                        setSuccessMessage (trp "Updated provider {name}" [("name", name)])
                         redirectTo LlmAdminAction
 
     -- Enabled row is unique (llm_configs_enabled_idx): flip others off in the
@@ -375,7 +374,7 @@ instance Controller LlmAdminController where
                     UPDATE llm_configs SET enabled = true, updated_at = NOW()
                     WHERE id = ${providerId}
                 |]
-        setSuccessMessage ("Enabled provider " <> get #providerName provider)
+        setSuccessMessage (trp "Enabled provider {name}" [("name", get #providerName provider)])
         redirectTo LlmAdminAction
     action DisableLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
@@ -386,7 +385,7 @@ instance Controller LlmAdminController where
                 UPDATE llm_configs SET enabled = false, updated_at = NOW()
                 WHERE id = ${providerId}
             |]
-        setSuccessMessage ("Disabled provider " <> get #providerName provider <> " (env config applies when no provider is enabled)")
+        setSuccessMessage (trp "Disabled provider {name} (env config applies when no provider is enabled)" [("name", get #providerName provider)])
         redirectTo LlmAdminAction
 
     -- Nothing references llm_configs (milestone_7.md §7): deletes are safe.
@@ -394,7 +393,7 @@ instance Controller LlmAdminController where
         requirePrivilege "manage_rules"
         provider <- fetch providerId
         deleteRecord provider
-        setSuccessMessage ("Deleted provider " <> get #providerName provider)
+        setSuccessMessage (trp "Deleted provider {name}" [("name", get #providerName provider)])
         redirectTo LlmAdminAction
 
     -- Agent roles (milestone_8.md §7): name + prompt template + tool
@@ -411,7 +410,7 @@ instance Controller LlmAdminController where
             tools = parseTools (param @Text "tools")
         if Text.null name || Text.null templateName
             then do
-                setErrorMessage "Role name and prompt template name are required"
+                setErrorMessage (tr "Role name and prompt template name are required")
                 redirectTo NewLlmRoleAction
             else do
                 existing <-
@@ -420,7 +419,7 @@ instance Controller LlmAdminController where
                         |> fetchOneOrNothing
                 case existing of
                     Just _ -> do
-                        setErrorMessage ("Role " <> name <> " already exists")
+                        setErrorMessage (trp "Role {name} already exists" [("name", name)])
                         redirectTo NewLlmRoleAction
                     Nothing -> do
                         _ <-
@@ -432,7 +431,7 @@ instance Controller LlmAdminController where
                                 |> set #enabled True
                                 |> set #isDefault False
                                 |> createRecord
-                        setSuccessMessage ("Created role " <> name)
+                        setSuccessMessage (trp "Created role {name}" [("name", name)])
                         redirectTo LlmAdminAction
     action EditLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
@@ -447,7 +446,7 @@ instance Controller LlmAdminController where
             tools = parseTools (param @Text "tools")
         if Text.null name || Text.null templateName
             then do
-                setErrorMessage "Role name and prompt template name are required"
+                setErrorMessage (tr "Role name and prompt template name are required")
                 redirectTo (EditLlmRoleAction roleId)
             else do
                 clash <-
@@ -456,7 +455,7 @@ instance Controller LlmAdminController where
                         |> fetchOneOrNothing
                 case clash of
                     Just other | get #id other /= roleId -> do
-                        setErrorMessage ("Role " <> name <> " already exists")
+                        setErrorMessage (trp "Role {name} already exists" [("name", name)])
                         redirectTo (EditLlmRoleAction roleId)
                     _ -> do
                         now <- getCurrentTime
@@ -468,7 +467,7 @@ instance Controller LlmAdminController where
                                 |> set #tools tools
                                 |> set #updatedAt now
                                 |> updateRecord
-                        setSuccessMessage ("Updated role " <> name)
+                        setSuccessMessage (trp "Updated role {name}" [("name", name)])
                         redirectTo LlmAdminAction
     action ToggleLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
@@ -482,13 +481,13 @@ instance Controller LlmAdminController where
                 |> set #isDefault (role.isDefault && not role.enabled)
                 |> set #updatedAt now
                 |> updateRecord
-        setSuccessMessage ((if role.enabled then "Disabled " else "Enabled ") <> "role " <> role.name)
+        setSuccessMessage (trp (if role.enabled then "Disabled role {name}" else "Enabled role {name}") [("name", role.name)])
         redirectTo LlmAdminAction
     action SetDefaultLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
         role <- fetch roleId
         if not role.enabled
-            then setErrorMessage "Enable the role before making it the default"
+            then setErrorMessage (tr "Enable the role before making it the default")
             else do
                 withTransaction do
                     void do
@@ -502,7 +501,7 @@ instance Controller LlmAdminController where
                             UPDATE llm_agent_roles SET is_default = true, updated_at = NOW()
                             WHERE id = ${roleId}
                         |]
-                setSuccessMessage ("Default role: " <> role.name)
+                setSuccessMessage (trp "Default role: {name}" [("name", role.name)])
         redirectTo LlmAdminAction
     action DeleteLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
@@ -512,13 +511,13 @@ instance Controller LlmAdminController where
                 |> filterWhere (#agentRoleId, Just roleId)
                 |> fetchCount
         if role.isDefault
-            then setErrorMessage "Cannot delete the default role (set another default first)"
+            then setErrorMessage (tr "Cannot delete the default role (set another default first)")
             else
                 if references > 0
-                    then setErrorMessage ("Cannot delete role " <> role.name <> ": analyses reference it")
+                    then setErrorMessage (trp "Cannot delete role {name}: analyses reference it" [("name", role.name)])
                     else do
                         deleteRecord role
-                        setSuccessMessage ("Deleted role " <> role.name)
+                        setSuccessMessage (trp "Deleted role {name}" [("name", role.name)])
         redirectTo LlmAdminAction
 
     -- Auto-analysis gate (milestone 10 §5): singleton row upsert; only known
@@ -550,7 +549,7 @@ instance Controller LlmAdminController where
                         |> set #severities (Aeson.toJSON severities)
                         |> set #environments (Aeson.toJSON environments)
                     )
-        setSuccessMessage "Auto-analysis rules updated"
+        setSuccessMessage (tr "Auto-analysis rules updated")
         redirectTo LlmAdminAction
 
     -- Tool cache (milestone 10 §6): singleton row upsert; ttl 0 or disabled
@@ -574,7 +573,7 @@ instance Controller LlmAdminController where
                         |> set #enabled enabled
                         |> set #ttlSeconds ttlSeconds
                     )
-        setSuccessMessage "Tool cache settings updated"
+        setSuccessMessage (tr "Tool cache settings updated")
         redirectTo LlmAdminAction
 
 -- Tools field: comma-separated whitelist of known tool names; empty = no

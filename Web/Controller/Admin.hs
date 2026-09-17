@@ -53,7 +53,7 @@ instance Controller AdminController where
             void $ sqlExecTyped [typedSql| DELETE FROM enrich_alert_jobs |]
             void $ sqlExecTyped [typedSql| DELETE FROM alerts |]
             void $ sqlExecTyped [typedSql| DELETE FROM alert_groups |]
-        setSuccessMessage "All alerts purged"
+        setSuccessMessage (tr "All alerts purged")
         redirectTo AdminAction
     action AdminDatabaseAction = do
         requirePrivilege "admin"
@@ -62,17 +62,17 @@ instance Controller AdminController where
     action AdminDbAnalyzeAction = do
         requirePrivilege "admin"
         analyzeDatabase
-        setSuccessMessage "ANALYZE completed"
+        setSuccessMessage (tr "ANALYZE completed")
         redirectTo AdminDatabaseAction
     action AdminDbVacuumAction = do
         requirePrivilege "admin"
         vacuumAnalyzeDatabase
-        setSuccessMessage "VACUUM ANALYZE completed"
+        setSuccessMessage (tr "VACUUM ANALYZE completed")
         redirectTo AdminDatabaseAction
     action AdminDbAnalyzeTableAction{tableName} = do
         requirePrivilege "admin"
         ok <- analyzeTable tableName
         if ok
-            then setSuccessMessage ("ANALYZE " <> tableName <> " completed")
-            else setErrorMessage ("Unknown table: " <> tableName)
+            then setSuccessMessage (trp "ANALYZE {table} completed" [("table", tableName)])
+            else setErrorMessage (trp "Unknown table: {table}" [("table", tableName)])
         redirectTo AdminDatabaseAction

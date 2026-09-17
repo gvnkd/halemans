@@ -8,14 +8,13 @@ data NewView = NewView
 instance View NewView where
     html NewView =
         [hsx|
-        <h1>New Assets info source</h1>
+        <h1>{tr "New Assets info source"}</h1>
         <p class="text-muted">
-            Token env holds the NAME of the environment variable containing the bearer token, not the token itself.
-            base_url points at the Assets REST base (.../rest/assets/latest).
+            {tr "Token env holds the NAME of the environment variable containing the bearer token, not the token itself. base_url points at the Assets REST base (.../rest/assets/latest)."}
         </p>
         <form method="POST" action={CreateAssetsConfigAction} data-testid="assets-config-new-form">
             {assetsConfigFormFields Nothing}
-            <button type="submit" class="btn btn-primary" data-testid="assets-config-save">Create info source</button>
-            <a href={AssetsAdminAction} class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" data-testid="assets-config-save">{tr "Create info source"}</button>
+            <a href={AssetsAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
         </form>
     |]

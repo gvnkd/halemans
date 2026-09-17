@@ -23,14 +23,14 @@ instance Controller EscalationPoliciesController where
     action CreateEscalationPolicyAction = do
         requirePrivilege "manage_rules"
         case stepsFromForm of
-            [] -> setErrorMessage "at least one step is required"
+            [] -> setErrorMessage (tr "at least one step is required")
             steps -> do
                 _ <-
                     newRecord @EscalationPolicy
                         |> set #name (param @Text "name")
                         |> set #steps (Aeson.toJSON steps)
                         |> createRecord
-                setSuccessMessage "Escalation policy created"
+                setSuccessMessage (tr "Escalation policy created")
         redirectTo EscalationPoliciesAction
     action EditEscalationPolicyAction{escalationPolicyId} = do
         requirePrivilege "manage_rules"
@@ -41,20 +41,20 @@ instance Controller EscalationPoliciesController where
         requirePrivilege "manage_rules"
         policy <- fetch escalationPolicyId
         case stepsFromForm of
-            [] -> setErrorMessage "at least one step is required"
+            [] -> setErrorMessage (tr "at least one step is required")
             steps -> do
                 _ <-
                     policy
                         |> set #name (param @Text "name")
                         |> set #steps (Aeson.toJSON steps)
                         |> updateRecord
-                setSuccessMessage "Escalation policy updated"
+                setSuccessMessage (tr "Escalation policy updated")
         redirectTo EscalationPoliciesAction
     action DeleteEscalationPolicyAction{escalationPolicyId} = do
         requirePrivilege "manage_rules"
         policy <- fetch escalationPolicyId
         deleteRecord policy
-        setSuccessMessage "Escalation policy deleted"
+        setSuccessMessage (tr "Escalation policy deleted")
         redirectTo EscalationPoliciesAction
 
 formChoices :: (?modelContext :: ModelContext) => IO ([Team], [User])

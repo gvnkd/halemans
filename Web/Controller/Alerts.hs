@@ -9,6 +9,7 @@ import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import Application.Service.DynTable (pageCountFor)
 import qualified Application.Service.Facets as Facets
+import Application.Service.I18n (languageCode, languageFromSettings)
 import qualified Application.Service.Jira.DbConfig as Jira
 import Application.Service.Llm.Queue (latestJobErrors)
 import Control.Monad (void)
@@ -189,8 +190,8 @@ instance Controller AlertsController where
             source <- fetch sourceId
             result <- Cmdb.refreshForAlert source alert
             case result of
-                Left err -> setErrorMessage ("CMDB refresh failed: " <> err)
-                Right _ -> setSuccessMessage "CMDB cache refreshed"
+                Left err -> setErrorMessage (trp "CMDB refresh failed: {error}" [("error", err)])
+                Right _ -> setSuccessMessage (tr "CMDB cache refreshed")
         redirectTo ShowAlertAction{alertId}
 
     -- Manual assets refresh (milestone_8.md §5): any view user, same shape
@@ -200,21 +201,21 @@ instance Controller AlertsController where
         alert <- fetch alertId
         result <- AssetsCache.refreshAssetsForAlert alert
         case result of
-            Left err -> setErrorMessage ("Assets refresh failed: " <> err)
+            Left err -> setErrorMessage (trp "Assets refresh failed: {error}" [("error", err)])
             Right _ -> do
                 -- Facet recompute on manual refresh (milestone_9.md §3).
                 void (Facets.materializeFacets alert)
-                setSuccessMessage "Assets cache refreshed"
+                setSuccessMessage (tr "Assets cache refreshed")
         redirectTo ShowAlertAction{alertId}
     action CreateJiraTicketAction{alertId} = do
         requirePrivilege "ack"
         alert <- fetch alertId
         case alert.sourceId of
-            Nothing -> setErrorMessage "Alert has no source; cannot create ticket"
+            Nothing -> setErrorMessage (tr "Alert has no source; cannot create ticket")
             Just sourceId -> do
                 source <- fetch sourceId
                 if not (sourceConfigBool "jiraWritable" source)
-                    then setErrorMessage "Jira is read-only for this source (enable \"Jira writable\" on the source to create tickets)"
+                    then setErrorMessage (tr "Jira is read-only for this source (enable \"Jira writable\" on the source to create tickets)")
                     else do
                         let issueType = paramOrNothing @Text "issueType" |> fromMaybe "Task"
                             defaultSummary = alert.title
@@ -223,8 +224,8 @@ instance Controller AlertsController where
                             body = paramOrNothing @Text "body" |> fromMaybe defaultBody
                         result <- Jira.createTicketForAlert source alert issueType summary body
                         case result of
-                            Left err -> setErrorMessage ("Jira ticket creation failed: " <> err)
-                            Right link -> setSuccessMessage ("Linked " <> link.ticketKey)
+                            Left err -> setErrorMessage (trp "Jira ticket creation failed: {error}" [("error", err)])
+                            Right link -> setSuccessMessage (trp "Linked {ticket}" [("ticket", link.ticketKey)])
         redirectTo ShowAlertAction{alertId}
     action DeleteJiraLinkAction{alertId, jiraLinkId} = do
         requirePrivilege "ack"
@@ -232,8 +233,8 @@ instance Controller AlertsController where
         if link.origin == "manual" && link.alertId == alertId
             then do
                 deleteRecord link
-                setSuccessMessage ("Unlinked " <> link.ticketKey)
-            else setErrorMessage "Only manual links can be removed"
+                setSuccessMessage (trp "Unlinked {ticket}" [("ticket", link.ticketKey)])
+            else setErrorMessage (tr "Only manual links can be removed")
         redirectTo ShowAlertAction{alertId}
 
     -- Manual re-analyze (milestone_4.md §4): advisory and non-destructive, so
@@ -247,12 +248,13 @@ instance Controller AlertsController where
             newRecord @LlmAnalysis
                 |> set #alertId alertId
                 |> set #agentRoleId roleId
+                |> set #language (Just (languageCode (languageFromSettings currentUser.settings)))
                 |> createRecord
         _ <-
             newRecord @LlmAnalysisJob
                 |> set #analysisId (get #id analysis)
                 |> createRecord
-        setSuccessMessage "LLM analysis queued"
+        setSuccessMessage (tr "LLM analysis queued")
         redirectTo ShowAlertAction{alertId}
 
     -- 👍/👎 feedback (milestone_4.md D6): one vote per user per analysis,
@@ -261,7 +263,7 @@ instance Controller AlertsController where
         requirePrivilege "view"
         analysis <- fetch analysisId
         if analysis.alertId /= alertId
-            then setErrorMessage "Analysis does not belong to this alert"
+            then setErrorMessage (tr "Analysis does not belong to this alert")
             else do
                 let score = param @Int "score"
                 existing <-

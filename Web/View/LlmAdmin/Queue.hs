@@ -29,30 +29,30 @@ data QueueView = QueueView
 instance View QueueView where
     html QueueView{..} =
         [hsx|
-        <h1>LLM queue</h1>
-        <p><a href={LlmAdminAction} class="btn btn-sm btn-outline-secondary">Back to LLM</a></p>
+        <h1>{tr "LLM queue"}</h1>
+        <p><a href={LlmAdminAction} class="btn btn-sm btn-outline-secondary">{tr "Back to LLM"}</a></p>
         {queueTable}
     |]
       where
         queueTable =
             if null queue
-                then [hsx|<p class="text-muted" data-testid="llm-queue-empty">No pending LLM requests.</p>|]
+                then [hsx|<p class="text-muted" data-testid="llm-queue-empty">{tr "No pending LLM requests."}</p>|]
                 else
                     [hsx|
                     <table class="table" data-testid="llm-queue-table">
                         <thead>
                             <tr>
-                                <th>Alert</th>
-                                <th>Analysis</th>
-                                <th>Analysis status</th>
-                                <th>Job</th>
-                                <th>Job status</th>
-                                <th>Attempts</th>
-                                <th>Queued</th>
-                                <th>Updated</th>
-                                <th>Run at</th>
-                                <th>Locked at</th>
-                                <th>Error</th>
+                                <th>{tr "Alert"}</th>
+                                <th>{tr "Analysis"}</th>
+                                <th>{tr "Analysis status"}</th>
+                                <th>{tr "Job"}</th>
+                                <th>{tr "Job status"}</th>
+                                <th>{tr "Attempts"}</th>
+                                <th>{tr "Queued"}</th>
+                                <th>{tr "Updated"}</th>
+                                <th>{tr "Run at"}</th>
+                                <th>{tr "Locked at"}</th>
+                                <th>{tr "Error"}</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -90,5 +90,5 @@ queueRowHtml row =
         (Nothing, Nothing) -> ""
     dropForm =
         if row.analysisStatus == "queued"
-            then inlinePostFormHtml (pathTo (DropLlmAnalysisAction row.analysisId)) "Drop" "btn btn-sm btn-outline-danger" (Just "llm-queue-drop") False
+            then inlinePostFormHtml (pathTo (DropLlmAnalysisAction row.analysisId)) (tr "Drop") "btn btn-sm btn-outline-danger" (Just "llm-queue-drop") False
             else mempty

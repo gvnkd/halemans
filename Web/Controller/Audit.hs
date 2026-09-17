@@ -39,8 +39,8 @@ instance Controller AuditController where
             from = fromMaybe (addUTCTime (-7 * 86400) now) (fromParam >>= parseTimestamp)
             to = fromMaybe now (toParam >>= parseTimestamp)
         case (formatParam `elem` ["csv", "jsonl"], isJust envParam && isJust alertParam || alertInvalid) of
-            (False, _) -> respondAndExit $ responseLBS status400 [("Content-Type", "text/plain; charset=utf-8")] "format must be csv or jsonl"
-            (_, True) -> respondAndExit $ responseLBS status400 [("Content-Type", "text/plain; charset=utf-8")] "scope accepts at most one of environment or alert (valid uuid)"
+            (False, _) -> respondAndExit $ responseLBS status400 [("Content-Type", "text/plain; charset=utf-8")] (cs (tr "format must be csv or jsonl"))
+            (_, True) -> respondAndExit $ responseLBS status400 [("Content-Type", "text/plain; charset=utf-8")] (cs (tr "scope accepts at most one of environment or alert (valid uuid)"))
             (True, False) -> do
                 let fromText = iso8601 from
                     toText = iso8601 to

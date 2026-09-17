@@ -14,48 +14,48 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>Flapping alerts</h1>
+        <h1>{tr "Flapping alerts"}</h1>
         <form method="GET" action={FlappingAction} class="row g-2 align-items-end mb-4" data-testid="flapping-form">
             <div class="col-auto">
-                <label class="form-label">Window</label>
+                <label class="form-label">{tr "Window"}</label>
                 <select name="windowHours" class="form-select" data-testid="flapping-window">
                     {forEach [6, 24, 168, 720] (windowOption windowHours)}
                 </select>
             </div>
             <div class="col-auto">
-                <label class="form-label">Min flaps</label>
+                <label class="form-label">{tr "Min flaps"}</label>
                 <input type="number" name="minFlaps" class="form-control maxw-400" min="1" value={show minFlaps :: Text} data-testid="flapping-min-flaps"/>
             </div>
             <div class="col-auto">
-                <label class="form-label">Max gap (s)</label>
+                <label class="form-label">{tr "Max gap (s)"}</label>
                 <input type="number" name="maxGapSeconds" class="form-control maxw-400" min="60" value={show maxGapSeconds :: Text} data-testid="flapping-max-gap"/>
             </div>
             <div class="col-auto">
-                <button type="submit" class="btn btn-primary" data-testid="flapping-submit">Analyze</button>
+                <button type="submit" class="btn btn-primary" data-testid="flapping-submit">{tr "Analyze"}</button>
             </div>
         </form>
         {resultsTable reports}
     |]
 
 resultsTable :: [FlapReport] -> Html
-resultsTable [] = [hsx|<p class="text-muted" data-testid="flapping-empty">No flapping alerts in the selected window.</p>|]
+resultsTable [] = [hsx|<p class="text-muted" data-testid="flapping-empty">{tr "No flapping alerts in the selected window."}</p>|]
 resultsTable reports =
     [hsx|
     <table class="table" data-testid="flapping-table">
         <thead>
             <tr>
-                <th>Alert</th>
-                <th>Fingerprint</th>
-                <th>Severity</th>
-                <th>Env</th>
-                <th>Host</th>
-                <th>Source</th>
-                <th title="Fire/resolve/refire cycles in qualifying episodes (resolve -> refire gap <= max gap)">Flaps</th>
-                <th title="Flaps per hour over the analysis window">Rate/h</th>
-                <th title="Median time between a resolve and the following refire — the usual flapping period">Median gap</th>
-                <th title="90th percentile of resolve -> refire gaps — worst-case flapping period, outliers excluded">P90 gap</th>
-                <th title="Mean time from firing to resolved (mean time to resolve) across flapping episodes">MTTR</th>
-                <th title="Most recent refire of a flapping episode">Last flap</th>
+                <th>{tr "Alert"}</th>
+                <th>{tr "Fingerprint"}</th>
+                <th>{tr "Severity"}</th>
+                <th>{tr "Env"}</th>
+                <th>{tr "Host"}</th>
+                <th>{tr "Source"}</th>
+                <th title={tr "Fire/resolve/refire cycles in qualifying episodes (resolve -> refire gap <= max gap)"}>{tr "Flaps"}</th>
+                <th title={tr "Flaps per hour over the analysis window"}>{tr "Rate/h"}</th>
+                <th title={tr "Median time between a resolve and the following refire — the usual flapping period"}>{tr "Median gap"}</th>
+                <th title={tr "90th percentile of resolve -> refire gaps — worst-case flapping period, outliers excluded"}>{tr "P90 gap"}</th>
+                <th title={tr "Mean time from firing to resolved (mean time to resolve) across flapping episodes"}>{tr "MTTR"}</th>
+                <th title={tr "Most recent refire of a flapping episode"}>{tr "Last flap"}</th>
             </tr>
         </thead>
         <tbody>

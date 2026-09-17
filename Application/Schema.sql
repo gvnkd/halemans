@@ -550,6 +550,7 @@ CREATE TABLE llm_analyses (
     tool_calls JSONB DEFAULT NULL,
     deduped_from UUID DEFAULT NULL,
     agent_role_id UUID DEFAULT NULL,
+    language TEXT DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );

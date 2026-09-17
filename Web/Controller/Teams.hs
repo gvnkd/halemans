@@ -38,7 +38,7 @@ instance Controller TeamsController where
                 |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
                 |> createRecord
         saveMembers team
-        setSuccessMessage "Team created"
+        setSuccessMessage (tr "Team created")
         redirectTo TeamsAction
     action EditTeamAction{teamId} = do
         requirePrivilege "manage_users"
@@ -56,7 +56,7 @@ instance Controller TeamsController where
         case dashboardConfig of
             Just raw | raw /= "" -> case Aeson.decode (cs raw) of
                 Nothing -> do
-                    setErrorMessage "Default dashboard config is not valid JSON"
+                    setErrorMessage (tr "Default dashboard config is not valid JSON")
                     redirectTo EditTeamAction{teamId}
                 Just config -> do
                     updateTeam team (Just config)
@@ -75,14 +75,14 @@ instance Controller TeamsController where
                     |> updateRecord
             _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
             saveMembers updated
-            setSuccessMessage "Team updated"
+            setSuccessMessage (tr "Team updated")
     action DeleteTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
         _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
         _ <- sqlExecTyped [typedSql| DELETE FROM on_call_schedules WHERE team_id = ${teamId} |]
         deleteRecord team
-        setSuccessMessage "Team deleted"
+        setSuccessMessage (tr "Team deleted")
         redirectTo TeamsAction
 
 -- | Distinct host group names across all zabbix source caches

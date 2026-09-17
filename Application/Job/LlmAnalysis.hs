@@ -1,6 +1,7 @@
 module Application.Job.LlmAnalysis where
 
 import Application.Helper.Ingest (publishAlertUpdate)
+import Application.Service.I18n (agentLanguageName)
 import Application.Service.Llm
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
@@ -63,7 +64,8 @@ runAnalysis job analysis alert config = do
     -- is_default role, else legacy behaviour (no role).
     role <- resolveAgentRole analysis.agentRoleId
     tokenBudget <- Budget.promptTokenBudget
-    promptResult <- buildPromptForAlert tokenBudget (templateNameForRole role) alert
+    languageName <- agentLanguageName analysis.language
+    promptResult <- buildPromptForAlert languageName tokenBudget (templateNameForRole role) alert
     case promptResult of
         Nothing -> failAnalysis analysis alert "no active prompt template" "llm_failed"
         Just built -> do

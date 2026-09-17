@@ -23,54 +23,54 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>Reports</h1>
+        <h1>{tr "Reports"}</h1>
         <form method="GET" action={ReportsAction} class="row g-2 align-items-end mb-4" data-testid="reports-form">
             <div class="col-auto">
-                <label class="form-label">Window</label>
+                <label class="form-label">{tr "Window"}</label>
                 <!-- preset only: unnamed (never submitted); app.js copies the
                      picked expression into from/to and resets this to Custom
                      on any manual from/to edit -->
                 <select class="form-select" data-window-preset="" data-testid="reports-window">
-                    <option value="" selected="selected">Custom</option>
+                    <option value="" selected="selected">{tr "Custom"}</option>
                     <option value="now() - 24h">24h</option>
                     <option value="now() - 168h">7d</option>
                     <option value="now() - 720h">30d</option>
                 </select>
             </div>
             <div class="col-auto">
-                <label class="form-label">From</label>
+                <label class="form-label">{tr "From"}</label>
                 <input type="hidden" name="from" value={rangeFrom}/>
                 <div class="input-group">
-                    <input class="form-control" placeholder="now() - 7d or pick a date" value={rangeFrom} data-local-datetime="from" data-testid="reports-from"/>
-                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="from" data-testid="reports-from-calendar" aria-label="Pick from date">{calendarIcon}</button>
+                    <input class="form-control" placeholder={tr "now() - 7d or pick a date"} value={rangeFrom} data-local-datetime="from" data-testid="reports-from"/>
+                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="from" data-testid="reports-from-calendar" aria-label={tr "Pick from date"}>{calendarIcon}</button>
                 </div>
             </div>
             <div class="col-auto">
-                <label class="form-label">To</label>
+                <label class="form-label">{tr "To"}</label>
                 <input type="hidden" name="to" value={rangeTo}/>
                 <div class="input-group">
-                    <input class="form-control" placeholder="now() or pick a date" value={rangeTo} data-local-datetime="to" data-testid="reports-to"/>
-                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="to" data-testid="reports-to-calendar" aria-label="Pick to date">{calendarIcon}</button>
+                    <input class="form-control" placeholder={tr "now() or pick a date"} value={rangeTo} data-local-datetime="to" data-testid="reports-to"/>
+                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="to" data-testid="reports-to-calendar" aria-label={tr "Pick to date"}>{calendarIcon}</button>
                 </div>
             </div>
             <div class="col-auto">
-                <label class="form-label">Environment</label>
+                <label class="form-label">{tr "Environment"}</label>
                 <select name="env" class="form-select" data-testid="reports-env">
                     {envOption selectedEnv ""}
                     {forEach envs (envOption selectedEnv)}
                 </select>
             </div>
             <div class="col-auto">
-                <label class="form-label">Volume bucket</label>
+                <label class="form-label">{tr "Volume bucket"}</label>
                 <select name="bucket" class="form-select" data-testid="reports-bucket">
                     {forEach ["", "hour", "day"] (bucketOption volumeBucket)}
                 </select>
             </div>
             <div class="col-auto d-flex align-items-end">
-                {filterMultiSelect "severity" "severity" severityOptions severities}
+                {filterMultiSelect "severity" (tr "severity") severityOptions severities}
             </div>
             <div class="col-auto">
-                <button type="submit" class="btn btn-primary" data-testid="reports-submit">Render</button>
+                <button type="submit" class="btn btn-primary" data-testid="reports-submit">{tr "Render"}</button>
             </div>
         </form>
         <div class="card mb-4" data-testid="report-volume">
@@ -82,8 +82,8 @@ instance View IndexView where
         </div>
         <div class="row">
             <div class="col-lg-6">
-                {chartPanel "report-severity" "Alerts by severity" severitySvg}
-                {chartPanel "report-mttr" "Mean time to resolve by severity" mttrSvg}
+                {chartPanel "report-severity" (tr "Alerts by severity") severitySvg}
+                {chartPanel "report-mttr" (tr "Mean time to resolve by severity") mttrSvg}
             </div>
             <div class="col-lg-6">{chartPanel "report-env" breakdownTitle breakdownSvg}</div>
         </div>
@@ -110,9 +110,9 @@ chartPanel testId title svg =
 bucketOption :: Text -> Text -> Html
 bucketOption selected value =
     let label = case value of
-            "" -> "Auto" :: Text
-            "hour" -> "Per hour"
-            "day" -> "Per day"
+            "" -> tr "Auto" :: Text
+            "hour" -> tr "Per hour"
+            "day" -> tr "Per day"
             other -> other
      in if value == selected
             then [hsx|<option value={value} selected="selected">{label}</option>|]
@@ -128,7 +128,7 @@ calendarIcon =
 
 envOption :: Maybe Text -> Text -> Html
 envOption selected value =
-    let label = if value == "" then "All environments" else value
+    let label = if value == "" then tr "All environments" else value
      in if Just value == selected || (value == "" && isNothing selected)
             then [hsx|<option value={value} selected="selected">{label}</option>|]
             else [hsx|<option value={value}>{label}</option>|]

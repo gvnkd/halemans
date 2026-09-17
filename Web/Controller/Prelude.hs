@@ -1,6 +1,7 @@
 module Web.Controller.Prelude (
     module Web.Types,
     module Application.Helper.Controller,
+    module Application.Helper.I18n,
     module IHP.ControllerPrelude,
     module Generated.Types,
     requirePrivilege,
@@ -8,6 +9,7 @@ module Web.Controller.Prelude (
 where
 
 import Application.Helper.Controller
+import Application.Helper.I18n
 import Generated.Types
 import IHP.ControllerPrelude
 import IHP.ControllerSupport (respondAndExit)

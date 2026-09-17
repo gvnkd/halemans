@@ -8,16 +8,16 @@ data IndexView = IndexView {rulesWithTargets :: [(NotificationRule, Text)]}
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        {pageHeaderHtml "Notification rules" newButton}
+        {pageHeaderHtml (tr "Notification rules") newButton}
         <table class="table" data-testid="notification-rules-table">
             <thead>
                 <tr>
-                    <th>Position</th>
-                    <th>Name</th>
-                    <th>Enabled</th>
-                    <th>Severity ≥</th>
-                    <th>Target</th>
-                    <th>Throttle</th>
+                    <th>{tr "Position"}</th>
+                    <th>{tr "Name"}</th>
+                    <th>{tr "Enabled"}</th>
+                    <th>{tr "Severity ≥"}</th>
+                    <th>{tr "Target"}</th>
+                    <th>{tr "Throttle"}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -27,7 +27,7 @@ instance View IndexView where
         </table>
     |]
       where
-        newButton = [hsx|<a href={NewNotificationRuleAction} class="btn btn-sm btn-primary" data-testid="new-notification-rule">New rule</a>|]
+        newButton = [hsx|<a href={NewNotificationRuleAction} class="btn btn-sm btn-primary" data-testid="new-notification-rule">{tr "New rule"}</a>|]
 
 renderRule :: (NotificationRule, Text) -> Html
 renderRule (rule, target) =

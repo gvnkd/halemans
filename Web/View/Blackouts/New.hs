@@ -12,9 +12,9 @@ data NewView = NewView
 instance View NewView where
     html NewView{..} =
         [hsx|
-        <h1>New blackout</h1>
+        <h1>{tr "New blackout"}</h1>
         <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form" class="maxw-500">
             {blackoutFormFields Nothing environments hosts services}
-            <button type="submit" class="btn btn-primary" data-testid="blackout-submit">Create</button>
+            <button type="submit" class="btn btn-primary" data-testid="blackout-submit">{tr "Create"}</button>
         </form>
     |]

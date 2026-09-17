@@ -61,11 +61,12 @@ data PromptInputs = PromptInputs
     , piAssetsAttrs :: [(Text, Text)]
     , piSimilarAlerts :: Text
     , piJiraLinks :: Text
+    , piLanguage :: Text
     }
     deriving (Eq, Show)
 
 emptyInputs :: PromptInputs
-emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" [] "" ""
+emptyInputs = PromptInputs "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" [] "" "" ""
 
 renderTemplate :: Text -> [(Text, Text)] -> Text
 renderTemplate body bindings = foldl' step body bindings
@@ -91,6 +92,7 @@ bindingsFor inputs =
     , ("assets.types", inputs.piAssetsTypes)
     , ("similar_alerts", inputs.piSimilarAlerts)
     , ("jira_links", inputs.piJiraLinks)
+    , ("language", inputs.piLanguage)
     ]
         ++ map (\(name, value) -> ("assets.attr." <> name, value)) inputs.piAssetsAttrs
 
@@ -149,9 +151,11 @@ data BuiltPrompt = BuiltPrompt
 -- Reads whatever context is present at build time (milestone_4.md §4: no
 -- ordering dependency on EnrichAlertJob; absent context renders as empty
 -- sections). The template name comes from the resolved agent role
--- (milestone_8.md §7; "alert_enrichment" when no role applies).
-buildPromptForAlert :: (?modelContext :: ModelContext) => Int -> Text -> Alert -> IO (Maybe BuiltPrompt)
-buildPromptForAlert tokenBudget templateName alert = do
+-- (milestone_8.md §7; "alert_enrichment" when no role applies). The language
+-- name fills the {{language}} slot (profile language of the queueing user, or
+-- the HALEMANS_DEFAULT_LANGUAGE fallback — resolved by the caller).
+buildPromptForAlert :: (?modelContext :: ModelContext) => Text -> Int -> Text -> Alert -> IO (Maybe BuiltPrompt)
+buildPromptForAlert languageName tokenBudget templateName alert = do
     template <-
         query @LlmPromptTemplate
             |> filterWhere (#name, templateName)
@@ -160,7 +164,7 @@ buildPromptForAlert tokenBudget templateName alert = do
     forM template \template -> do
         inputs <- gatherInputs alert
         let rendered =
-                fitPrompt tokenBudget template.body inputs
+                fitPrompt tokenBudget template.body inputs{piLanguage = languageName}
                     <> outputContract
         pure
             BuiltPrompt

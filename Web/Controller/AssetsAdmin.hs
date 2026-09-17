@@ -52,11 +52,11 @@ instance Controller AssetsAdminController where
                         |> fetchOneOrNothing
                 case existing of
                     Just _ -> do
-                        setErrorMessage ("Info source " <> form.name <> " already exists")
+                        setErrorMessage (trp "Info source {name} already exists" [("name", form.name)])
                         redirectTo NewAssetsConfigAction
                     Nothing -> do
                         _ <- createRecord (applyForm form (newRecord @AssetsConfig))
-                        setSuccessMessage ("Created info source " <> form.name)
+                        setSuccessMessage (trp "Created info source {name}" [("name", form.name)])
                         redirectTo AssetsAdminAction
     action EditAssetsConfigAction{configId} = do
         requirePrivilege "manage_rules"
@@ -77,12 +77,12 @@ instance Controller AssetsAdminController where
                         |> fetchOneOrNothing
                 case clash of
                     Just other | get #id other /= configId -> do
-                        setErrorMessage ("Info source " <> form.name <> " already exists")
+                        setErrorMessage (trp "Info source {name} already exists" [("name", form.name)])
                         redirectTo (EditAssetsConfigAction configId)
                     _ -> do
                         now <- getCurrentTime
                         _ <- updateRecord (applyForm form config |> set #updatedAt now)
-                        setSuccessMessage ("Updated info source " <> form.name)
+                        setSuccessMessage (trp "Updated info source {name}" [("name", form.name)])
                         redirectTo AssetsAdminAction
     action ToggleAssetsConfigAction{configId} = do
         requirePrivilege "manage_rules"
@@ -93,7 +93,7 @@ instance Controller AssetsAdminController where
                 |> set #enabled (not config.enabled)
                 |> set #updatedAt now
                 |> updateRecord
-        setSuccessMessage ((if config.enabled then "Disabled " else "Enabled ") <> config.name)
+        setSuccessMessage (trp (if config.enabled then "Disabled {name}" else "Enabled {name}") [("name", config.name)])
         redirectTo AssetsAdminAction
 
     -- assets_objects rows reference the config; enable/disable is the
@@ -106,10 +106,10 @@ instance Controller AssetsAdminController where
                 |> filterWhere (#configId, configId)
                 |> fetchCount
         if cached > 0
-            then setErrorMessage ("Cannot delete " <> config.name <> ": " <> tshow cached <> " cached objects reference it (disable instead)")
+            then setErrorMessage (trp "Cannot delete {name}: {count} cached objects reference it (disable instead)" [("name", config.name), ("count", tshow cached)])
             else do
                 deleteRecord config
-                setSuccessMessage ("Deleted info source " <> config.name)
+                setSuccessMessage (trp "Deleted info source {name}" [("name", config.name)])
         redirectTo AssetsAdminAction
     action TestAssetsConnectionAction{configId} = do
         requirePrivilege "manage_rules"
@@ -119,15 +119,15 @@ instance Controller AssetsAdminController where
             Left err -> do
                 let ?context = ?context.frameworkConfig
                 Log.logWarn ("assets connection test failed: " <> err)
-                setErrorMessage ("Assets config " <> config.name <> ": " <> err)
+                setErrorMessage (trp "Assets config {name}: {error}" [("name", config.name), ("error", err)])
             Right client -> do
                 result <- connectionOk client
                 case result of
-                    Right () -> setSuccessMessage ("Assets reachable at " <> client.clientBaseUrl <> " (" <> config.name <> ")")
+                    Right () -> setSuccessMessage (trp "Assets reachable at {url} ({name})" [("url", client.clientBaseUrl), ("name", config.name)])
                     Left err -> do
                         let ?context = ?context.frameworkConfig
                         Log.logWarn ("assets connection test failed: " <> err)
-                        setErrorMessage ("Assets endpoint " <> client.clientBaseUrl <> " did not answer: " <> err)
+                        setErrorMessage (trp "Assets endpoint {url} did not answer: {error}" [("url", client.clientBaseUrl), ("error", err)])
         redirectTo AssetsAdminAction
 
 data AssetsConfigForm = AssetsConfigForm
@@ -154,13 +154,13 @@ readForm =
         , attributeNames = param @Text "attributeNames"
         }
 
-validateForm :: AssetsConfigForm -> Maybe Text
+validateForm :: (?request :: Request) => AssetsConfigForm -> Maybe Text
 validateForm form
-    | Text.null form.name = Just "Name is required"
-    | Text.null form.baseUrl = Just "Base URL is required"
-    | Text.null form.tokenEnv = Just "Token env var is required"
-    | form.authMode `notElem` ["bearer", "basic"] = Just "Auth mode must be bearer or basic"
-    | form.authMode == "basic" && isNothing form.jiraEmailEnv = Just "Basic auth needs the Jira email env var"
+    | Text.null form.name = Just (tr "Name is required")
+    | Text.null form.baseUrl = Just (tr "Base URL is required")
+    | Text.null form.tokenEnv = Just (tr "Token env var is required")
+    | form.authMode `notElem` ["bearer", "basic"] = Just (tr "Auth mode must be bearer or basic")
+    | form.authMode == "basic" && isNothing form.jiraEmailEnv = Just (tr "Basic auth needs the Jira email env var")
     | otherwise = Nothing
 
 applyForm :: AssetsConfigForm -> AssetsConfig -> AssetsConfig

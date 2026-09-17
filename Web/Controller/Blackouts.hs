@@ -37,8 +37,8 @@ instance Controller BlackoutsController where
                         |> set #reason reason
                         |> set #createdBy (Just currentUserId)
                         |> createRecord
-                setSuccessMessage "Blackout created"
-            Nothing -> setErrorMessage "invalid scope"
+                setSuccessMessage (tr "Blackout created")
+            Nothing -> setErrorMessage (tr "invalid scope")
         redirectTo BlackoutsAction
     action EditBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
@@ -62,14 +62,14 @@ instance Controller BlackoutsController where
                         |> set #endsAt endsAt
                         |> set #reason reason
                         |> updateRecord
-                setSuccessMessage "Blackout updated"
-            Nothing -> setErrorMessage "invalid scope"
+                setSuccessMessage (tr "Blackout updated")
+            Nothing -> setErrorMessage (tr "invalid scope")
         redirectTo BlackoutsAction
     action DeleteBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
         deleteRecord blackout
-        setSuccessMessage "Blackout deleted"
+        setSuccessMessage (tr "Blackout deleted")
         redirectTo BlackoutsAction
 
 scopeChoices :: (?modelContext :: ModelContext) => IO ([Environment], [Host], [Service])

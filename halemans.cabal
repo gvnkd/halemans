@@ -79,6 +79,7 @@ library
         Application.Helper.Controller
         Application.Helper.DashboardConfig
         Application.Helper.FilterPrefs
+        Application.Helper.I18n
         Application.Helper.Ingest
         Application.Helper.Json
         Application.Helper.RuleForm
@@ -132,6 +133,8 @@ library
         Application.Service.Groups
         Application.Service.HostGroups
         Application.Service.Http
+        Application.Service.I18n
+        Application.Service.I18n.CatalogRu
         Application.Service.Jira
         Application.Service.Jira.DbConfig
         Application.Service.Jira.Related

@@ -11,10 +11,10 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        {pageHeaderHtml "Assets info sources" newButton}
+        {pageHeaderHtml (tr "Assets info sources") newButton}
         <table class="table" data-testid="assets-configs">
             <thead>
-                <tr><th>Name</th><th>Base URL</th><th>Schema</th><th>Auth</th><th>Cached objects</th><th>Newest fetch</th><th>Enabled</th><th></th></tr>
+                <tr><th>{tr "Name"}</th><th>{tr "Base URL"}</th><th>{tr "Schema"}</th><th>{tr "Auth"}</th><th>{tr "Cached objects"}</th><th>{tr "Newest fetch"}</th><th>{tr "Enabled"}</th><th></th></tr>
             </thead>
             <tbody>
                 {forEach configs (configRowHtml statsFor)}
@@ -22,7 +22,7 @@ instance View IndexView where
         </table>
     |]
       where
-        newButton = [hsx|<a href={NewAssetsConfigAction} class="btn btn-sm btn-primary" data-testid="new-assets-config">New info source</a>|]
+        newButton = [hsx|<a href={NewAssetsConfigAction} class="btn btn-sm btn-primary" data-testid="new-assets-config">{tr "New info source"}</a>|]
 
 configRowHtml :: (Id AssetsConfig -> (Int64, Maybe UTCTime)) -> AssetsConfig -> Html
 configRowHtml statsFor config =
@@ -36,10 +36,10 @@ configRowHtml statsFor config =
         <td>{newestFetch}</td>
         <td>{stateBadgeHtml config.enabled "assets-config"}</td>
         <td>
-            <a href={EditAssetsConfigAction configId} class="btn btn-sm btn-outline-secondary" data-testid="assets-config-edit">Edit</a>
+            <a href={EditAssetsConfigAction configId} class="btn btn-sm btn-outline-secondary" data-testid="assets-config-edit">{tr "Edit"}</a>
             {toggleForm}
-            {inlinePostFormHtml (pathTo (TestAssetsConnectionAction configId)) "Test" "btn btn-sm btn-outline-primary" (Just "assets-config-test") False}
-            {inlinePostFormHtml (pathTo (DeleteAssetsConfigAction configId)) "Delete" "btn btn-sm btn-outline-danger" (Just "assets-config-delete") True}
+            {inlinePostFormHtml (pathTo (TestAssetsConnectionAction configId)) (tr "Test") "btn btn-sm btn-outline-primary" (Just "assets-config-test") False}
+            {inlinePostFormHtml (pathTo (DeleteAssetsConfigAction configId)) (tr "Delete") "btn btn-sm btn-outline-danger" (Just "assets-config-delete") True}
         </td>
     </tr>
 |]
@@ -51,4 +51,4 @@ configRowHtml statsFor config =
         Nothing -> [hsx|-|]
     toggleForm = inlinePostFormHtml (pathTo (ToggleAssetsConfigAction configId)) toggleLabel "btn btn-sm btn-outline-warning" (Just "assets-config-toggle") False
     toggleLabel :: Text
-    toggleLabel = if config.enabled then "Disable" else "Enable"
+    toggleLabel = if config.enabled then tr "Disable" else tr "Enable"

@@ -1,6 +1,8 @@
 module Web.View.Sessions.New where
 
 import IHP.AuthSupport.View.Sessions.New
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
+import Network.Wai (Request)
 import Web.View.Prelude
 
 instance View (NewView User) where
@@ -13,7 +15,7 @@ instance View (NewView User) where
                         <div class="text-center mb-3">
                             <img src={assetPath "/halemans-app-icon-192.png"} alt="" class="login-glyph"/>
                         </div>
-                        <h5>Halemans — sign in</h5>
+                        <h5>{tr "Halemans — sign in"}</h5>
                         {renderForm user}
                     </div>
                 </div>
@@ -21,16 +23,16 @@ instance View (NewView User) where
         </div>
     |]
 
-renderForm :: User -> Html
+renderForm :: (CurrentUserRecord ~ User, ?request :: Request) => User -> Html
 renderForm user =
     [hsx|
     <form method="POST" action={CreateSessionAction} data-testid="login-form">
         <div class="mb-3">
-            <input name="email" value={user.email} type="email" class="form-control" placeholder="E-Mail" required="required" autofocus="autofocus" data-testid="login-email" />
+            <input name="email" value={user.email} type="email" class="form-control" placeholder={tr "E-Mail"} required="required" autofocus="autofocus" data-testid="login-email" />
         </div>
         <div class="mb-3">
-            <input name="password" type="password" class="form-control" placeholder="Password" data-testid="login-password" />
+            <input name="password" type="password" class="form-control" placeholder={tr "Password"} data-testid="login-password" />
         </div>
-        <button type="submit" class="btn btn-primary w-100" data-testid="login-submit">Login</button>
+        <button type="submit" class="btn btn-primary w-100" data-testid="login-submit">{tr "Login"}</button>
     </form>
 |]

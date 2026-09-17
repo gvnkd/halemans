@@ -14,44 +14,44 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>Admin</h1>
-        <h2>Job metrics (last 24h)</h2>
+        <h1>{tr "Admin"}</h1>
+        <h2>{tr "Job metrics (last 24h)"}</h2>
         <table class="table" data-testid="job-metrics-table">
             <thead>
                 <tr>
-                    <th>Job type</th>
-                    <th>Succeeded</th>
-                    <th>Retried</th>
-                    <th>Failed</th>
+                    <th>{tr "Job type"}</th>
+                    <th>{tr "Succeeded"}</th>
+                    <th>{tr "Retried"}</th>
+                    <th>{tr "Failed"}</th>
                 </tr>
             </thead>
             <tbody>
                 {forEach metrics renderMetricsRow}
             </tbody>
         </table>
-        <h2>Recent job failures</h2>
+        <h2>{tr "Recent job failures"}</h2>
         <table class="table" data-testid="job-failures-table">
             <thead>
                 <tr>
-                    <th>Job type</th>
-                    <th>Job</th>
-                    <th>Error</th>
-                    <th>Updated</th>
+                    <th>{tr "Job type"}</th>
+                    <th>{tr "Job"}</th>
+                    <th>{tr "Error"}</th>
+                    <th>{tr "Updated"}</th>
                 </tr>
             </thead>
             <tbody>
                 {forEach failures renderFailureRow}
             </tbody>
         </table>
-        <h2>API tokens</h2>
+        <h2>{tr "API tokens"}</h2>
         <table class="table" data-testid="admin-api-tokens-table">
             <thead>
                 <tr>
-                    <th>Owner</th>
-                    <th>Name</th>
-                    <th>Prefix</th>
-                    <th>Scopes</th>
-                    <th>Last used</th>
+                    <th>{tr "Owner"}</th>
+                    <th>{tr "Name"}</th>
+                    <th>{tr "Prefix"}</th>
+                    <th>{tr "Scopes"}</th>
+                    <th>{tr "Last used"}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -59,9 +59,9 @@ instance View IndexView where
                 {forEach apiTokens renderApiTokenRow}
             </tbody>
         </table>
-        <h2>Danger zone</h2>
-        <form method="POST" action={AdminPurgeAlertsAction} data-confirm="Delete ALL alerts, groups, events, comments and analyses? This cannot be undone.">
-            <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">Purge all alerts</button>
+        <h2>{tr "Danger zone"}</h2>
+        <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
+            <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">{tr "Purge all alerts"}</button>
         </form>
     |]
 
@@ -102,11 +102,11 @@ renderApiTokenRow (token, ownerEmail) =
         <td>{token.name}</td>
         <td><code>{token.prefix}</code></td>
         <td>{scopes}</td>
-        <td>{utcTimeOrHtml "never" token.lastUsedAt}</td>
+        <td>{utcTimeOrHtml (tr "never") token.lastUsedAt}</td>
         <td>{revokeCell revoked}</td>
     </tr>
 |]
   where
     revokeCell revoked
-        | revoked = [hsx|<span class="badge bg-secondary">revoked</span>|]
-        | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) "Revoke" "btn btn-sm btn-outline-danger" (Just "admin-api-token-revoke") False
+        | revoked = [hsx|<span class="badge bg-secondary">{tr "revoked"}</span>|]
+        | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) (tr "Revoke") "btn btn-sm btn-outline-danger" (Just "admin-api-token-revoke") False

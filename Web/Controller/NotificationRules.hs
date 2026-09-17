@@ -35,7 +35,7 @@ instance Controller NotificationRulesController where
                 |> set #throttleSeconds (param @Int "throttleSeconds")
                 |> set #escalationPolicyId policyRef
                 |> createRecord
-        setSuccessMessage "Notification rule created"
+        setSuccessMessage (tr "Notification rule created")
         redirectTo NotificationRulesAction
     action EditNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
@@ -58,13 +58,13 @@ instance Controller NotificationRulesController where
                 |> set #throttleSeconds (param @Int "throttleSeconds")
                 |> set #escalationPolicyId policyRef
                 |> updateRecord
-        setSuccessMessage "Notification rule updated"
+        setSuccessMessage (tr "Notification rule updated")
         redirectTo NotificationRulesAction
     action DeleteNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
         deleteRecord rule
-        setSuccessMessage "Notification rule deleted"
+        setSuccessMessage (tr "Notification rule deleted")
         redirectTo NotificationRulesAction
 
 formChoices :: (?modelContext :: ModelContext) => IO ([Team], [User], [EscalationPolicy])

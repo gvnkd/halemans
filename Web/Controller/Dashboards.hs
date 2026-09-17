@@ -30,7 +30,7 @@ instance Controller DashboardsController where
             isDefault = paramOrNothing @Text "isDefault" |> isJust
         case decodeDashboardConfigText configText of
             Left err -> do
-                setErrorMessage ("Invalid dashboard config: " <> err)
+                setErrorMessage (trp "Invalid dashboard config: {error}" [("error", err)])
                 redirectTo NewDashboardAction
             Right cards -> do
                 position <- nextPosition
@@ -43,7 +43,7 @@ instance Controller DashboardsController where
                         |> set #position position
                         |> set #isDefault isDefault
                         |> createRecord
-                setSuccessMessage "Dashboard created"
+                setSuccessMessage (tr "Dashboard created")
                 redirectTo DashboardsAction
     action ShowDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
@@ -63,7 +63,7 @@ instance Controller DashboardsController where
             (expandedCard : _) -> renderCardDetail dashboard expandedCard
             [] -> case fallbackExpandedCard valueFilter cards cardIndex of
                 Just expandedCard -> renderCardDetail dashboard expandedCard
-                Nothing -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "card not found"
+                Nothing -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] (cs (tr "card not found"))
     action EditDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
@@ -75,7 +75,7 @@ instance Controller DashboardsController where
             isDefault = paramOrNothing @Text "isDefault" |> isJust
         case decodeDashboardConfigText configText of
             Left err -> do
-                setErrorMessage ("Invalid dashboard config: " <> err)
+                setErrorMessage (trp "Invalid dashboard config: {error}" [("error", err)])
                 redirectTo EditDashboardAction{dashboardId}
             Right cards -> do
                 _ <- withTransaction do
@@ -85,12 +85,12 @@ instance Controller DashboardsController where
                         |> set #config (encodeDashboardConfig cards)
                         |> set #isDefault isDefault
                         |> updateRecord
-                setSuccessMessage "Dashboard updated"
+                setSuccessMessage (tr "Dashboard updated")
                 redirectTo DashboardsAction
     action DeleteDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
         deleteRecord dashboard
-        setSuccessMessage "Dashboard deleted"
+        setSuccessMessage (tr "Dashboard deleted")
         redirectTo DashboardsAction
     action SetDefaultDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
@@ -99,7 +99,7 @@ instance Controller DashboardsController where
             dashboard
                 |> set #isDefault True
                 |> updateRecord
-        setSuccessMessage "Default dashboard set"
+        setSuccessMessage (tr "Default dashboard set")
         redirectTo DashboardsAction
     action MoveDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
@@ -167,7 +167,7 @@ fetchOwn :: (?modelContext :: ModelContext, ?request :: Request, ?respond :: Res
 fetchOwn dashboardId = do
     dashboard <- fetch dashboardId
     when (dashboard.userId /= currentUserId) do
-        respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] "not found"
+        respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] (cs (tr "not found"))
     pure dashboard
 
 decodeDashboardConfigText :: Text -> Either Text [DashboardCard]

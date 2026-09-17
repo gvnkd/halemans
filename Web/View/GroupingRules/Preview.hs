@@ -10,13 +10,13 @@ data PreviewView = PreviewView
 instance View PreviewView where
     html PreviewView{..} =
         [hsx|
-        <h1>Preview: {rule.name}</h1>
-        <p class="text-secondary">Recent alerts this rule would group, with the rendered group key.</p>
+        <h1>{tr "Preview"}: {rule.name}</h1>
+        <p class="text-secondary">{tr "Recent alerts this rule would group, with the rendered group key."}</p>
         <table class="table" data-testid="grouping-rule-preview-table">
             <thead>
                 <tr>
-                    <th>Alert</th>
-                    <th>Group key</th>
+                    <th>{tr "Alert"}</th>
+                    <th>{tr "Group key"}</th>
                 </tr>
             </thead>
             <tbody>

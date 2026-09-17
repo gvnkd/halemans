@@ -1,5 +1,9 @@
-module Application.Helper.View where
+module Application.Helper.View (
+    module Application.Helper.View,
+    module Application.Helper.I18n,
+) where
 
+import Application.Helper.I18n
 import qualified CMark
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import IHP.ViewPrelude

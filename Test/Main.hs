@@ -19,6 +19,7 @@ import qualified Test.FlappingSpec
 import qualified Test.GroupingSpec
 import qualified Test.HostGroupsSpec
 import qualified Test.HttpSpec
+import qualified Test.I18nSpec
 import qualified Test.JiraSpec
 import qualified Test.LiveSpec
 import qualified Test.LlmSpec
@@ -74,3 +75,4 @@ main = hspec do
     Test.TimeRangeSpec.spec
     Test.PrivilegeSpec.spec
     Test.LiveSpec.spec
+    Test.I18nSpec.spec

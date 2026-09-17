@@ -17,10 +17,10 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>Edit source</h1>
+        <h1>{tr "Edit source"}</h1>
         <form method="POST" action={UpdateSourceAction source.id} data-testid="source-edit-form" class="maxw-500">
             {sourceFormFields values}
-            <button type="submit" class="btn btn-primary" data-testid="source-submit">Save</button>
+            <button type="submit" class="btn btn-primary" data-testid="source-submit">{tr "Save"}</button>
         </form>
     |]
       where

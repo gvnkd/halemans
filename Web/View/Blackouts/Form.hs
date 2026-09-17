@@ -1,17 +1,19 @@
 module Web.View.Blackouts.Form (blackoutFormFields) where
 
 import Data.Time.Format (defaultTimeLocale, formatTime)
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
+import Network.Wai (Request)
 import Web.View.Prelude
 
 -- Shared new/edit fields for blackouts (milestone 12 §3). The scope-type /
 -- scope-id filtering script lives in static/app.js keyed on the
 -- blackout-scope-type / blackout-scope-id testids (auto-selects the first
 -- visible option when the type changes).
-blackoutFormFields :: Maybe Blackout -> [Environment] -> [Host] -> [Service] -> Html
+blackoutFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => Maybe Blackout -> [Environment] -> [Host] -> [Service] -> Html
 blackoutFormFields blackout environments hosts services =
     [hsx|
     <div class="mb-3">
-        <label class="form-label">Scope type</label>
+        <label class="form-label">{tr "Scope type"}</label>
         <select name="scopeType" class="form-select" data-testid="blackout-scope-type">
             <option value="environment" selected={scopeIs (.environmentId)}>environment</option>
             <option value="host" selected={scopeIs (.hostId)}>host</option>
@@ -19,7 +21,7 @@ blackoutFormFields blackout environments hosts services =
         </select>
     </div>
     <div class="mb-3" data-scope="environment">
-        <label class="form-label">Scope</label>
+        <label class="form-label">{tr "Scope"}</label>
         <select name="scopeId" class="form-select" data-testid="blackout-scope-id">
             {forEach environments environmentOption}
             {forEach hosts hostOption}
@@ -27,15 +29,15 @@ blackoutFormFields blackout environments hosts services =
         </select>
     </div>
     <div class="mb-3">
-        <label class="form-label">Starts at (UTC, ISO 8601)</label>
+        <label class="form-label">{tr "Starts at (UTC, ISO 8601)"}</label>
         <input name="startsAt" type="text" class="form-control" value={startsAtValue} placeholder="2026-09-04T10:00:00Z" data-testid="blackout-starts-at" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Ends at (UTC, ISO 8601)</label>
+        <label class="form-label">{tr "Ends at (UTC, ISO 8601)"}</label>
         <input name="endsAt" type="text" class="form-control" value={endsAtValue} placeholder="2026-09-04T12:00:00Z" data-testid="blackout-ends-at" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Reason</label>
+        <label class="form-label">{tr "Reason"}</label>
         <input name="reason" type="text" class="form-control" value={reasonValue} data-testid="blackout-reason"/>
     </div>
 |]

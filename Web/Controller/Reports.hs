@@ -140,7 +140,7 @@ instance Controller ReportsController where
             -- keep manually-typed/unknown selections visible in the dropdown
             severityOptions = sortOn Reports.severityRank (nub (severityOptionRows <> severities))
             breakdownSvg = Reports.envChartSvg (map (\row -> (fromMaybe "unknown" (get #label row), get #n row)) breakdownRows)
-            breakdownTitle = if isJust selectedEnv then "Alerts by host" else "Alerts by environment"
+            breakdownTitle = if isJust selectedEnv then tr "Alerts by host" else tr "Alerts by environment"
             hourCounts = Map.fromListWith (<>) (mapMaybe (\row -> (,[(get #severity row, get #n row)]) <$> get #hour_of_day row) hourRows)
             hourLabel :: Int -> Text
             hourLabel h = (if h < 10 then "0" else "") <> show h <> ":00"
@@ -153,7 +153,7 @@ instance Controller ReportsController where
                     else [(dayLabel bucket, Map.findWithDefault [] bucket dayCounts) | bucket <- dayBuckets]
             volumeSeverities = sortOn Reports.severityRank (nub (concatMap (map fst . snd) volumeData))
             volumeSvg = Reports.volumeChartSvg volumeData
-            volumeTitle = if bucketKind == "hour" then "Alert volume per hour" else "Alert volume per day"
+            volumeTitle = if bucketKind == "hour" then tr "Alert volume per hour" else tr "Alert volume per day"
             mttrSvg = Reports.mttrChartSvg (map (\row -> (get #severity row, fromMaybe 0 (get #avg_seconds row))) mttrRows)
         render IndexView{..}
 

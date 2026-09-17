@@ -13,13 +13,13 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>Edit escalation policy</h1>
+        <h1>{tr "Edit escalation policy"}</h1>
         <form method="POST" action={UpdateEscalationPolicyAction policy.id} data-testid="escalation-policy-edit-form" class="maxw-700">
             <div class="mb-3">
-                <label class="form-label">Name</label>
+                <label class="form-label">{tr "Name"}</label>
                 <input name="name" type="text" class="form-control" value={policy.name} data-testid="policy-name" required="required"/>
             </div>
             {stepEditor teams users (stepsFromJSON policy.steps)}
-            <button type="submit" class="btn btn-primary" data-testid="policy-submit">Save</button>
+            <button type="submit" class="btn btn-primary" data-testid="policy-submit">{tr "Save"}</button>
         </form>
     |]

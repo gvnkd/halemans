@@ -48,6 +48,7 @@ data ProfileController
     = ProfileAction
     | UpdateThemeAction
     | UpdateTimezoneAction
+    | UpdateLanguageAction
     | CreateApiTokenAction
     | RevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     deriving (Eq, Show)

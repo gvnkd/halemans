@@ -8,14 +8,14 @@ data IndexView = IndexView {blackouts :: [(Blackout, Text)]}
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        {pageHeaderHtml "Blackouts" newButton}
+        {pageHeaderHtml (tr "Blackouts") newButton}
         <table class="table" data-testid="blackouts-table">
             <thead>
                 <tr>
-                    <th>Scope</th>
-                    <th>Starts</th>
-                    <th>Ends</th>
-                    <th>Reason</th>
+                    <th>{tr "Scope"}</th>
+                    <th>{tr "Starts"}</th>
+                    <th>{tr "Ends"}</th>
+                    <th>{tr "Reason"}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -25,7 +25,7 @@ instance View IndexView where
         </table>
     |]
       where
-        newButton = [hsx|<a href={NewBlackoutAction} class="btn btn-sm btn-primary" data-testid="new-blackout">New blackout</a>|]
+        newButton = [hsx|<a href={NewBlackoutAction} class="btn btn-sm btn-primary" data-testid="new-blackout">{tr "New blackout"}</a>|]
 
 renderBlackout :: (Blackout, Text) -> Html
 renderBlackout (blackout, scopeName) =
