@@ -138,6 +138,7 @@
                         text
                         aeson
                         aeson-pretty
+                        yaml
                         lens
                         vector
                         wreq

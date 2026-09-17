@@ -285,42 +285,45 @@ m7User email =
         |> set #passwordHash "unused"
         |> createRecord
 
--- Rows currently in the DB rendered back as config items (minus the excluded
--- natural keys), so strict applies keep them untouched.
-m7UserKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
+-- Rows currently in the DB rendered back as a config section map (keyed by
+-- the natural key, minus the excluded ones), so strict applies keep them
+-- untouched.
+m7UserKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO Aeson.Value
 m7UserKeepItems exclude = do
     users <- query @User |> fetch
-    pure
-        [ object
-            [ "email" .= get #email user
-            , "passwordHash" .= get #passwordHash user
-            , "displayName" .= get #displayName user
+    pure $
+        object
+            [ Key.fromText (get #email user)
+                .= object
+                    [ "passwordHash" .= get #passwordHash user
+                    , "displayName" .= get #displayName user
+                    ]
+            | user <- users
+            , get #email user `notElem` exclude
             ]
-        | user <- users
-        , get #email user `notElem` exclude
-        ]
 
-m7SourceKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
+m7SourceKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO Aeson.Value
 m7SourceKeepItems exclude = do
     sources <- query @Source |> fetch
-    pure
-        [ object
-            [ "type" .= get #type_ source
-            , "name" .= get #name source
-            , "baseUrl" .= get #baseUrl source
-            , "env" .= get #env source
-            , "pollIntervalSeconds" .= get #pollIntervalSeconds source
-            , "enabled" .= get #enabled source
-            , "config" .= get #config source
+    pure $
+        object
+            [ Key.fromText (get #name source)
+                .= object
+                    [ "type" .= get #type_ source
+                    , "baseUrl" .= get #baseUrl source
+                    , "env" .= get #env source
+                    , "pollIntervalSeconds" .= get #pollIntervalSeconds source
+                    , "enabled" .= get #enabled source
+                    , "config" .= get #config source
+                    ]
+            | source <- sources
+            , get #name source `notElem` exclude
             ]
-        | source <- sources
-        , get #name source `notElem` exclude
-        ]
 
-m7TeamKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO [Aeson.Value]
+m7TeamKeepItems :: (?modelContext :: ModelContext) => [Text] -> IO Aeson.Value
 m7TeamKeepItems exclude = do
     teams <- query @Team |> fetch
-    forM (filter (\team -> get #name team `notElem` exclude) teams) \team -> do
+    entries <- forM (filter (\team -> get #name team `notElem` exclude) teams) \team -> do
         let teamId = get #id team
         members <-
             sqlQueryTyped
@@ -329,28 +332,30 @@ m7TeamKeepItems exclude = do
             JOIN users u ON u.id = tm.user_id WHERE tm.team_id = ${teamId}
         |]
         pure $
-            object
-                [ "name" .= get #name team
-                , "description" .= get #description team
-                , "hostGroups" .= get #hostGroups team
-                , "defaults" .= get #defaults team
-                , "members" .= map (\row -> object ["email" .= get #email row, "role" .= get #team_role row]) members
-                ]
+            Key.fromText (get #name team)
+                .= object
+                    [ "description" .= get #description team
+                    , "hostGroups" .= get #hostGroups team
+                    , "defaults" .= get #defaults team
+                    , "members" .= object [Key.fromText (get #email row) .= object ["role" .= get #team_role row] | row <- members]
+                    ]
+    pure (object entries)
 
-m7LlmKeepItems :: (?modelContext :: ModelContext) => IO [Aeson.Value]
+m7LlmKeepItems :: (?modelContext :: ModelContext) => IO Aeson.Value
 m7LlmKeepItems = do
     rows <- query @LlmConfig |> fetch
-    pure
-        [ object
-            [ "providerName" .= get #providerName row
-            , "endpoint" .= get #endpoint row
-            , "model" .= get #model row
-            , "apiKeyEnv" .= get #apiKeyEnv row
-            , "toolsEnabled" .= get #toolsEnabled row
-            , "enabled" .= get #enabled row
+    pure $
+        object
+            [ Key.fromText (get #providerName row)
+                .= object
+                    [ "endpoint" .= get #endpoint row
+                    , "model" .= get #model row
+                    , "apiKeyEnv" .= get #apiKeyEnv row
+                    , "toolsEnabled" .= get #toolsEnabled row
+                    , "enabled" .= get #enabled row
+                    ]
+            | row <- rows
             ]
-        | row <- rows
-        ]
 
 restoreEnv :: String -> Maybe String -> IO ()
 restoreEnv name = maybe (unsetEnv name) (setEnv name)

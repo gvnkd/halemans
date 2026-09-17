@@ -36,6 +36,7 @@ library
         , uuid
         , aeson
         , aeson-pretty
+        , yaml
         , lens
         , wreq
         , http-client

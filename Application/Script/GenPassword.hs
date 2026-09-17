@@ -5,7 +5,7 @@ import Crypto.PasswordStore (makePassword)
 import System.Exit (exitFailure)
 
 -- Prints the pwstore-fast pbkdf1 hash of a plaintext password, for use in a
--- provision config's users.items[].passwordHash (design_docs/milestone_7.md
+-- provision config's users.<email>.passwordHash (design_docs/milestone_7.md
 -- §4). Container deployments without nix:
 --   docker run --rm <image> /bin/GenPassword '<plaintext>'
 run :: Script

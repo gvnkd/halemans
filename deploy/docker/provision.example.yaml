@@ -1,0 +1,187 @@
+strict: false
+users:
+  admin@example.com:
+    displayName: Admin
+    passwordHash: REPLACE_WITH_HALEMANS_GEN_PASSWORD_OUTPUT
+    roles:
+      - admin
+    settings:
+      theme: dark
+sources:
+  generic-webhook:
+    type: webhook
+    env: prod
+    enabled: true
+    webhookTokens:
+      generic-hook:
+        tokenEnv: HALEMANS_GENERIC_HOOK_TOKEN
+    config:
+      expectedIntervalSeconds: 120
+  zabbix-prod:
+    type: zabbix
+    baseUrl: https://zabbix.example.com
+    env: prod
+    pollIntervalSeconds: 30
+    enabled: false
+    hostGroupsFile: /provision/hostgroups.json
+    config:
+      tokenEnv: ZABBIX_TOKEN
+      hostGroupScope: teams
+      initialHistoryDays: 1
+      writeBack: true
+      jiraWritable: true
+      jiraProjects:
+        - OPS
+      cmdbSpaces:
+        - OPS
+  grafana-prod:
+    type: grafana
+    baseUrl: https://grafana.example.com
+    env: prod
+    pollIntervalSeconds: 30
+    enabled: false
+    config:
+      tokenEnv: GRAFANA_TOKEN
+      writeBack: true
+      jiraWritable: true
+      jiraProjects:
+        - OPS
+      cmdbSpaces:
+        - OPS
+  alertmanager-prod:
+    type: alertmanager
+    baseUrl: https://alertmanager.example.com
+    env: prod
+    enabled: false
+    webhookTokens:
+      am-hook:
+        tokenEnv: HALEMANS_AM_HOOK_TOKEN
+jiraConfigs:
+  jira-prod:
+    baseUrl: https://jira.example.com
+    tokenEnv: JIRA_TOKEN
+    apiVersion: '3'
+    projects:
+      - OPS
+      - SRE
+    enabled: true
+cmdbConfigs:
+  confluence-prod:
+    baseUrl: https://confluence.example.com
+    tokenEnv: CONFLUENCE_TOKEN
+    spaces:
+      - OPS
+      - INFRA
+    enabled: true
+autoAnalyze:
+  enabled: true
+  statuses:
+    - firing
+    - ack
+  severities:
+    - critical
+    - high
+    - warning
+    - info
+  environments: []
+teams:
+  sre:
+    description: Site reliability engineering
+    members:
+      admin@example.com:
+        role: lead
+fieldMappings:
+  env:
+    '100':
+      kind: field
+      key: env
+  service:
+    '100':
+      kind: field
+      key: service
+  host:
+    '100':
+      kind: field
+      key: host
+  Environments:
+    '50':
+      kind: attr
+      key: Environments
+  Service:
+    '50':
+      kind: attr
+      key: Service
+  Location:
+    '50':
+      kind: attr
+      key: Location
+dashboards:
+  admin@example.com:
+    Service matrix:
+      position: 60
+      isDefault: false
+      config:
+        - title: ETCD / EU / PROD
+          match:
+            - facet: attr:Service
+              op: '='
+              value: ETCD
+            - facet: attr:Location
+              op: '='
+              value: EU
+            - facet: attr:Environments
+              op: '='
+              value: PROD
+          groupBy: field:host
+          limit: 20
+        - title: POSTGRES / US / TEST
+          match:
+            - facet: attr:Service
+              op: '='
+              value: POSTGRES
+            - facet: attr:Location
+              op: '='
+              value: US
+            - facet: attr:Environments
+              op: '='
+              value: TEST
+          groupBy: field:host
+          limit: 20
+        - title: All environments
+          match:
+            - facet: attr:Environments
+              op: '~'
+              value: '*'
+          groupBy: attr:Environments
+          limit: 50
+        - title: PostgreSQL summary
+          match:
+            - facet: attr:Service
+              op: '='
+              value: PostgreSQL
+          summary: true
+          size:
+            width: 480
+            height: 200
+        - title: PostgreSQL cluster {value}
+          match:
+            - facet: attr:Service
+              op: '='
+              value: PostgreSQL
+          forEach: attr:DB Cluster
+          sortBy:
+            - key:severity
+            - attr:DB Cluster
+          alertSortBy:
+            - severity
+            - last_seen_at
+          groupBy: field:host
+          limit: 20
+          hideWhen:
+            match:
+              - facet: field:severity
+                op: in
+                values:
+                  - critical
+                  - warning
+            maxCount: 0

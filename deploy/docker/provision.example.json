@@ -1,95 +1,85 @@
 {
+  "strict": false,
   "users": {
-    "items": [
-      {
-        "email": "admin@example.com",
-        "displayName": "Admin",
-        "passwordHash": "REPLACE_WITH_HALEMANS_GEN_PASSWORD_OUTPUT",
-        "roles": ["admin"],
-        "settings": {"theme": "dark"}
-      }
-    ]
+    "admin@example.com": {
+      "displayName": "Admin",
+      "passwordHash": "REPLACE_WITH_HALEMANS_GEN_PASSWORD_OUTPUT",
+      "roles": ["admin"],
+      "settings": {"theme": "dark"}
+    }
   },
   "sources": {
-    "items": [
-      {
-        "type": "webhook",
-        "name": "generic-webhook",
-        "env": "prod",
-        "enabled": true,
-        "webhookTokens": [{"tokenEnv": "HALEMANS_GENERIC_HOOK_TOKEN"}],
-        "config": {
-          "expectedIntervalSeconds": 120
-        }
+    "generic-webhook": {
+      "type": "webhook",
+      "env": "prod",
+      "enabled": true,
+      "webhookTokens": {
+        "generic-hook": {"tokenEnv": "HALEMANS_GENERIC_HOOK_TOKEN"}
       },
-
-      {
-        "type": "zabbix",
-        "name": "zabbix-prod",
-        "baseUrl": "https://zabbix.example.com",
-        "env": "prod",
-        "pollIntervalSeconds": 30,
-        "enabled": false,
-        "hostGroupsFile": "/provision/hostgroups.json",
-        "config": {
-          "tokenEnv": "ZABBIX_TOKEN",
-          "hostGroupScope": "teams",
-          "initialHistoryDays": 1,
-          "writeBack": true,
-          "jiraWritable": true,
-          "jiraProjects": ["OPS"],
-          "cmdbSpaces": ["OPS"]
-        }
-      },
-
-      {
-        "type": "grafana",
-        "name": "grafana-prod",
-        "baseUrl": "https://grafana.example.com",
-        "env": "prod",
-        "pollIntervalSeconds": 30,
-        "enabled": false,
-        "config": {
-          "tokenEnv": "GRAFANA_TOKEN",
-          "writeBack": true,
-          "jiraWritable": true,
-          "jiraProjects": ["OPS"],
-          "cmdbSpaces": ["OPS"]
-        }
-      },
-
-      {
-        "type": "alertmanager",
-        "name": "alertmanager-prod",
-        "baseUrl": "https://alertmanager.example.com",
-        "env": "prod",
-        "enabled": false,
-        "webhookTokens": [{"tokenEnv": "HALEMANS_AM_HOOK_TOKEN"}]
+      "config": {
+        "expectedIntervalSeconds": 120
       }
-    ]
+    },
+
+    "zabbix-prod": {
+      "type": "zabbix",
+      "baseUrl": "https://zabbix.example.com",
+      "env": "prod",
+      "pollIntervalSeconds": 30,
+      "enabled": false,
+      "hostGroupsFile": "/provision/hostgroups.json",
+      "config": {
+        "tokenEnv": "ZABBIX_TOKEN",
+        "hostGroupScope": "teams",
+        "initialHistoryDays": 1,
+        "writeBack": true,
+        "jiraWritable": true,
+        "jiraProjects": ["OPS"],
+        "cmdbSpaces": ["OPS"]
+      }
+    },
+
+    "grafana-prod": {
+      "type": "grafana",
+      "baseUrl": "https://grafana.example.com",
+      "env": "prod",
+      "pollIntervalSeconds": 30,
+      "enabled": false,
+      "config": {
+        "tokenEnv": "GRAFANA_TOKEN",
+        "writeBack": true,
+        "jiraWritable": true,
+        "jiraProjects": ["OPS"],
+        "cmdbSpaces": ["OPS"]
+      }
+    },
+
+    "alertmanager-prod": {
+      "type": "alertmanager",
+      "baseUrl": "https://alertmanager.example.com",
+      "env": "prod",
+      "enabled": false,
+      "webhookTokens": {
+        "am-hook": {"tokenEnv": "HALEMANS_AM_HOOK_TOKEN"}
+      }
+    }
   },
   "jiraConfigs": {
-    "items": [
-      {
-        "name": "jira-prod",
-        "baseUrl": "https://jira.example.com",
-        "tokenEnv": "JIRA_TOKEN",
-        "apiVersion": "3",
-        "projects": ["OPS", "SRE"],
-        "enabled": true
-      }
-    ]
+    "jira-prod": {
+      "baseUrl": "https://jira.example.com",
+      "tokenEnv": "JIRA_TOKEN",
+      "apiVersion": "3",
+      "projects": ["OPS", "SRE"],
+      "enabled": true
+    }
   },
   "cmdbConfigs": {
-    "items": [
-      {
-        "name": "confluence-prod",
-        "baseUrl": "https://confluence.example.com",
-        "tokenEnv": "CONFLUENCE_TOKEN",
-        "spaces": ["OPS", "INFRA"],
-        "enabled": true
-      }
-    ]
+    "confluence-prod": {
+      "baseUrl": "https://confluence.example.com",
+      "tokenEnv": "CONFLUENCE_TOKEN",
+      "spaces": ["OPS", "INFRA"],
+      "enabled": true
+    }
   },
   "autoAnalyze": {
     "enabled": true,
@@ -98,29 +88,36 @@
     "environments": []
   },
   "teams": {
-    "items": [
-      {
-        "name": "sre",
-        "description": "Site reliability engineering",
-        "members": [{"email": "admin@example.com", "role": "lead"}]
+    "sre": {
+      "description": "Site reliability engineering",
+      "members": {
+        "admin@example.com": {"role": "lead"}
       }
-    ]
+    }
   },
   "fieldMappings": {
-    "items": [
-      {"facet": "env", "rank": 100, "kind": "field", "key": "env"},
-      {"facet": "service", "rank": 100, "kind": "field", "key": "service"},
-      {"facet": "host", "rank": 100, "kind": "field", "key": "host"},
-      {"facet": "Environments", "rank": 50, "kind": "attr", "key": "Environments"},
-      {"facet": "Service", "rank": 50, "kind": "attr", "key": "Service"},
-      {"facet": "Location", "rank": 50, "kind": "attr", "key": "Location"}
-    ]
+    "env": {
+      "100": {"kind": "field", "key": "env"}
+    },
+    "service": {
+      "100": {"kind": "field", "key": "service"}
+    },
+    "host": {
+      "100": {"kind": "field", "key": "host"}
+    },
+    "Environments": {
+      "50": {"kind": "attr", "key": "Environments"}
+    },
+    "Service": {
+      "50": {"kind": "attr", "key": "Service"}
+    },
+    "Location": {
+      "50": {"kind": "attr", "key": "Location"}
+    }
   },
   "dashboards": {
-    "items": [
-      {
-        "name": "Service matrix",
-        "userEmail": "admin@example.com",
+    "admin@example.com": {
+      "Service matrix": {
         "position": 60,
         "isDefault": false,
         "config": [
@@ -179,6 +176,6 @@
           }
         ]
       }
-    ]
+    }
   }
 }

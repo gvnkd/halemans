@@ -56,3 +56,4 @@ library
         , warp
         , websockets
         , wreq
+        , yaml

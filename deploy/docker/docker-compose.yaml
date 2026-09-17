@@ -12,9 +12,9 @@
 # First-boot setup:
 #   cd deploy/docker
 #   cp .env.example .env            # fill in the required values
-#   cp provision.example.json provision.json
+#   cp provision.example.json provision.json    # or provision.example.yaml
 #   docker run --rm ghcr.io/gvnkd/halemans:latest /bin/GenPassword 'your-plaintext-password'
-#     # paste the printed hash into provision.json (users.items[].passwordHash)
+#     # paste the printed hash into provision.json (users.<email>.passwordHash)
 #   docker compose up -d
 #
 # Upgrades: docker compose pull && docker compose up -d — pending database
@@ -24,7 +24,9 @@
 #
 # The app listens on HALEMANS_PORT (default 8000). The provision config is
 # applied on every app/worker boot (idempotent upserts); edit provision.json
-# and `docker compose up -d --force-recreate app worker` to re-apply.
+# and `docker compose up -d --force-recreate app worker` to re-apply. YAML is
+# accepted too — point HALEMANS_PROVISION_CONFIG at a .yaml/.yml file with the
+# same structure.
 #
 # Zabbix host groups without hostgroup.get API permission: export the groups
 # once from a privileged session (hostgroup.get, output groupid+name), save

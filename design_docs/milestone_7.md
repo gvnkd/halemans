@@ -16,7 +16,7 @@ retention, dashboards.
 
 | # | Deliverable | Acceptance |
 |---|---|---|
-| D1 | Provision config format + loader (`Application/Service/Provision.hs`) with per-category `strict` flag (default `false`) | Missing/empty config path = no-op; malformed file = startup abort with a clear error naming the offending section |
+| D1 | Provision config format + loader (`Application/Service/Provision.hs`) with a global `strict` flag (default `false`) | Missing/empty config path = no-op; malformed file = startup abort with a clear error naming the offending section |
 | D2 | Startup hook: provisioning runs in both web and worker processes before serving/working | `RunProdServer` and `RunJobs` both apply the config idempotently; second boot changes nothing (no duplicate rows) |
 | D3 | Users provisioning (email, display_name, password_hash, roles, settings) | Users log in with the provisioned password; roles auto-created when unknown; re-run updates password_hash and role assignments |
 | D4 | Password tool `halemans-gen-password` (pwgen plaintext + hash + config snippet) | Output hash verifies against login; pwgen available in the devenv shell |
@@ -27,66 +27,70 @@ retention, dashboards.
 
 ## 2. Provision config file
 
-- One JSON file (aeson is already a dependency; no YAML lib in the tree and
-  JSON keeps secrets-handling trivial). Path from env var
+- One config file, JSON or YAML (chosen by file extension: `.yaml`/`.yml` is
+  decoded via the yaml package into an aeson `Value`, everything else is
+  parsed as JSON; both go through the same aeson parsers). Path from env var
   `HALEMANS_PROVISION_CONFIG`; unset or empty → provisioning is skipped
   entirely (dev stack unaffected).
-- Top-level sections, all optional. Every section is an object with a
-  `strict` flag (default `false`) and an `items` list:
+- Top-level sections, all optional, plus one global `strict` flag (default
+  `false`). Every section is a map keyed by the entity's natural key — no
+  `items` lists; duplicate keys are flagged by json/yaml tooling:
 
 ```json
 {
+  "strict": false,
   "users": {
-    "strict": false,
-    "items": [
-      {"email": "ops@example.com", "displayName": "Ops",
-       "passwordHash": "sha256|17|...|...",
-       "roles": ["admin"], "settings": {"theme": "dark"}}
-    ]
+    "ops@example.com": {
+      "displayName": "Ops",
+      "passwordHash": "sha256|17|...|...",
+      "roles": ["admin"], "settings": {"theme": "dark"}
+    }
   },
   "sources": {
-    "strict": true,
-    "items": [
-      {"type": "zabbix", "name": "zabbix-prod", "baseUrl": "https://zabbix.example",
-       "env": "prod", "pollIntervalSeconds": 30, "enabled": true,
-       "config": {"tokenEnv": "ZABBIX_TOKEN", "hostGroupScope": "teams",
-                  "writeBack": true, "cmdbSpace": "OPS", "jiraProject": "OPS"},
-       "webhookTokens": [{"tokenEnv": "HALEMANS_AM_HOOK_TOKEN"}]}
-    ]
+    "zabbix-prod": {
+      "type": "zabbix", "baseUrl": "https://zabbix.example",
+      "env": "prod", "pollIntervalSeconds": 30, "enabled": true,
+      "config": {"tokenEnv": "ZABBIX_TOKEN", "hostGroupScope": "teams",
+                 "writeBack": true, "cmdbSpace": "OPS", "jiraProject": "OPS"},
+      "webhookTokens": {"am-hook": {"tokenEnv": "HALEMANS_AM_HOOK_TOKEN"}}
+    }
   },
   "teams": {
-    "strict": false,
-    "items": [
-      {"name": "sre", "description": "Site reliability engineering",
-       "hostGroups": ["Linux servers"], "defaults": {},
-       "members": [{"email": "ops@example.com", "role": "lead"}],
-       "defaultDashboardConfig": [{"env": "prod", "filters": {"status": [], "severity": []}}]}
-    ]
+    "sre": {
+      "description": "Site reliability engineering",
+      "hostGroups": ["Linux servers"], "defaults": {},
+      "members": {"ops@example.com": {"role": "lead"}},
+      "defaultDashboardConfig": [{"env": "prod", "filters": {"status": [], "severity": []}}]
+    }
   },
   "llm": {
-    "strict": false,
-    "items": [{
-      "providerName": "default", "endpoint": "http://127.0.0.1:18084",
+    "default": {
+      "endpoint": "http://127.0.0.1:18084",
       "model": "qwen", "apiKeyEnv": "LLM_API_KEY", "toolsEnabled": false,
-      "promptTemplates": [{"name": "alert_enrichment", "version": 1,
-                           "body": "...", "active": true, "notes": "provisioned"}]
-    }]
+      "promptTemplates": {"alert_enrichment": {"1": {
+        "body": "...", "active": true, "notes": "provisioned"}}}
+    }
   }
 }
 ```
 
-- **`strict` semantics (per category, independent of each other):**
+  Composite keys nest: `fieldMappings` is facet → rank (integer as string) →
+  item; `dashboards` is user email → dashboard name → item; `promptTemplates`
+  is template name → version (integer as string) → item.
+
+- **`strict` semantics (one global flag, applies to every section present in
+  the file):**
   - `strict: false` (default) — additive/upsert only: config entries are
     created or updated; DB rows absent from the config are left untouched.
   - `strict: true` — desired-state reconciliation: after upserting the
-    config entries, every DB row of that category whose natural key is NOT
-    in the config is deleted (users by email, sources by name, teams by
-    name, llm_configs by provider_name, prompt templates by (name, version)
-    within each provisioned template name).
-  - A strict section with an empty `items` list deletes EVERYTHING in that
-    category. That is the requested semantic, so the loader requires
-    `"items"` to be present (even if empty) when `strict: true` — an omitted
-    `items` is a config error, never interpreted as "delete all".
+    config entries, every DB row of each present category whose natural key
+    is NOT in the config is deleted (users by email, sources by name, teams
+    by name, llm_configs by provider_name, prompt templates by (name, version)
+    within each provisioned template name). Sections absent from the file are
+    left untouched entirely.
+  - A section present but empty (`"users": {}`) under `strict: true` deletes
+    EVERYTHING in that category; omit the section to keep the category
+    untouched.
   - Deletion runs inside the same transaction as the upserts for that
     category; a FK-blocked delete (e.g. a source referenced by `alerts`, a
     user referenced by `alerts.acknowledged_by`) aborts startup naming the
@@ -126,9 +130,11 @@ retention, dashboards.
   `llm_configs.provider_name`, `llm_prompt_templates.(name, version)`.
   Re-runs update mutable fields (password_hash, enabled, config, membership
   roles) and insert missing rows only.
-- **Per-category `strict` flag** (§2) controls deletion: `false` (default) =
+- **Global `strict` flag** (§2) controls deletion: `false` (default) =
   additive/upsert only, an entity removed from the file stays in the DB;
   `true` = full reconciliation, rows absent from the config are deleted.
+  (Originally per-category; moved to a single top-level flag when sections
+  became name-keyed maps.)
   Strict deletes run per category in one transaction with the upserts, in
   dependency order (user_roles before users, webhook_tokens before sources,
   team_members before teams); a FK-blocked delete aborts startup naming the
@@ -152,7 +158,7 @@ retention, dashboards.
   reconciled additively (`user_roles` insert-if-missing; provision does not
   strip manually-granted roles).
 - Locked users (`locked_at` set) stay locked — provisioning never unlocks.
-- `strict: true`: users whose email is not in `items` are deleted
+- `strict: true`: users whose email is not in the `users` map are deleted
   (user_roles first, then the user row). A user referenced by alert history
   (`acknowledged_by`/`closed_by`, comments, feedback) is FK-blocked → startup
   aborts naming the user; lock them in the UI or drop them from strict scope
@@ -166,8 +172,8 @@ retention, dashboards.
   1. `pwgen -s 24 1` for the plaintext (add `pwgen` to devenv `packages`).
   2. `halemans-hash-password <pw>` (existing pbkdf1 replica) for the hash.
   3. Prints plaintext once, the hash, and a ready-to-paste
-     `{"email": ..., "passwordHash": ..., "roles": [...]}` item fragment for
-     the `users.items` list.
+     `{"<email>": {"passwordHash": ..., "roles": [...]}}` entry fragment for
+     the `users` map.
 - Plaintext goes to stdout only (never a file, never the provision file);
   the operator copies it into a password manager.
 
@@ -193,10 +199,10 @@ retention, dashboards.
   contents (same semantics as the manual sync button). This is the import
   path for tokens without `hostgroup.get` permission; unreadable or
   malformed files abort startup.
-- `strict: true`: sources whose name is not in `items` are deleted
+- `strict: true`: sources whose name is not in the `sources` map are deleted
   (webhook_tokens and zabbix_host_groups first). Sources referenced by
   alerts/raw_events are FK-blocked → startup abort; keep them with
-  `"enabled": false` in `items` instead (this is exactly the M5 smoke
+  `"enabled": false` in the `sources` map instead (this is exactly the M5 smoke
   cleanup pattern — alerts FK blocks DELETE).
 - Provisioning does not enqueue pollers — the existing `EnqueuePollers`
   script stays the mechanism; prod deployments run it once as today
@@ -220,7 +226,7 @@ retention, dashboards.
 - Membership reconciliation is additive with role update on conflict
   (`ON CONFLICT (team_id, user_id) DO UPDATE team_role`); provision never
   removes members.
-- `strict: true`: teams whose name is not in `items` are deleted
+- `strict: true`: teams whose name is not in the `teams` map are deleted
   (team_members first). Teams referenced by on_call_schedules or
   notification_rules are FK-blocked → startup abort naming the team. Member
   lists WITHIN a kept team are reconciled too: members absent from the
@@ -248,8 +254,8 @@ retention, dashboards.
   `(name, version)`; activating a provisioned template deactivates the
   previous active one for that name (single-statement update, mirroring the
   admin UI behaviour).
-- `strict: true`: `llm_configs` rows whose provider_name is not in `items`
-  are deleted (nothing references `llm_configs` — always safe). Prompt
+- `strict: true`: `llm_configs` rows whose provider_name is not in the `llm`
+  map are deleted (nothing references `llm_configs` — always safe). Prompt
   templates are reconciled per provisioned template NAME: versions of a
   provisioned name absent from the config are deleted unless referenced by
   `llm_analyses.prompt_template_id` (FK-blocked → startup abort); templates
@@ -277,11 +283,10 @@ retention, dashboards.
 
 ## 9. Testing
 
-- Unit (checks.tests): config JSON parsing — valid fixtures round-trip,
+- Unit (checks.tests): config JSON/YAML parsing — valid fixtures round-trip,
   unknown fields rejected, each required-field-missing error names the path;
-  `strict` defaults to `false` and parses both ways; `strict: true` with
-  omitted `items` is a config error; env-reference validation; upsert-key
-  derivation; llm resolution order (DB row wins, env fallback).
+  `strict` defaults to `false` and parses both ways; env-reference validation;
+  upsert-key derivation; llm resolution order (DB row wins, env fallback).
 - Integration (checks.integration-tests, temp postgres): apply a full
   provision config twice → identical DB state (idempotency); re-apply with
   changed password_hash/enabled/role → updated in place; unknown team member
@@ -300,7 +305,7 @@ retention, dashboards.
 - [x] Reboot with the same config → zero row churn (no duplicates, no updated_at noise beyond expected)
 - [x] Reboot with edited config, all categories `strict: false` → changed fields updated, removed entities still present (additive-only)
 - [x] Reboot with a category `strict: true` and an entity dropped from the config → that row is deleted; FK-referenced rows → startup aborts naming the blocker
-- [x] `strict: true` with `"items": []` empties the category; omitted `items` under `strict: true` → config error, no deletions
+- [x] `strict: true` with an empty section map empties the category; an omitted section under `strict: true` is left untouched
 - [x] `halemans-gen-password` output → paste hash into config → login succeeds
 - [x] Malformed JSON / unknown field / missing tokenEnv / unknown member email → startup aborts naming the cause
 - [x] No `llm_configs` row → env-based LLM config works exactly as in M4–M6
@@ -354,29 +359,32 @@ retention, dashboards.
 
 ## 11. Decisions
 
-- **JSON over YAML**: aeson is already in the tree; strict manual parsers give
-  loud unknown-field errors that YAML libs make awkward. Operators generate
-  the file with `jq`/nix anyway.
+- **JSON or YAML, map-keyed sections** (revised after the map-format rework):
+  sections are maps keyed by natural keys so duplicate entries are flagged by
+  json/yaml tooling; YAML input is decoded to an aeson `Value` and shares the
+  JSON parsers, so both formats behave identically. (Original decision: JSON
+  only, because aeson was already in the tree and strict manual parsers give
+  loud unknown-field errors that YAML libs made awkward.)
 - **Provision at process start (Config.hs hook), not a separate script**: the
   requirement is "at app start"; one hook in the shared config builder covers
   web + worker + dev server with no new process to orchestrate, and idempotent
   upserts make the double-run (web and worker boot together) harmless.
-- **Per-category `strict` flag, default `false`**: non-strict provisioning is
+- **Global `strict` flag, default `false`** (revised: was per-category before
+  the map-format rework): non-strict provisioning is
   a bootstrap/declarative-overlay (adds and updates, never deletes) — safe to
-  point at a database that also has UI-managed rows. `strict: true` opts a
-  category into full desired-state reconciliation (config = source of truth,
-  absent rows deleted), which is what unattended/config-managed deployments
-  want. Per-category (not one global flag) because the blast radius differs
-  wildly: deleting a stale llm_config is routine, deleting a user referenced
-  by two years of alert history is an incident.
+  point at a database that also has UI-managed rows. `strict: true` opts every
+  section present in the file into full desired-state reconciliation (config =
+  source of truth, absent rows deleted), which is what
+  unattended/config-managed deployments want. Absent sections stay untouched,
+  so a partial file under strict still scopes the blast radius.
 - **FK-blocked strict deletes abort startup instead of soft-deleting**:
   silently converting "delete this source" into "disable it" would make the
   DB diverge from the config while claiming reconciliation — the operator
   must choose explicitly between `"enabled": false` in the config and
   cleaning up referencing rows.
-- **`strict: true` requires an explicit `items` key**: "delete everything in
-  this category" must be written as an empty list on purpose, never produced
-  by a templating accident that dropped a key.
+- **Empty section under `strict: true` deletes the category**: "delete
+  everything in this category" must be written as an explicit empty map
+  (`"users": {}`); an omitted section is never interpreted as "delete all".
 - **LLM config moves to DB-with-env-fallback instead of staying env-only**:
   "create database entities according to the configs" requires a table, and a
   DB row makes the provisioned config observable/testable; the env fallback

@@ -4,6 +4,7 @@ import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
 import qualified Data.Text as Text
@@ -80,56 +81,57 @@ m7Spec = describe "provisioning (milestone 7)" do
                 object
                     [ "users"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "email" .= email
-                                        , "passwordHash" .= ("sha256|17|a|b" :: Text)
-                                        , "displayName" .= ("M7 " <> suffix)
-                                        , "roles" .= (["m7-role-" <> suffix] :: [Text])
-                                        , "settings" .= object ["theme" .= ("latte" :: Text)]
-                                        ]
-                                   ]
+                            [ Key.fromText email
+                                .= object
+                                    [ "passwordHash" .= ("sha256|17|a|b" :: Text)
+                                    , "displayName" .= ("M7 " <> suffix)
+                                    , "roles" .= (["m7-role-" <> suffix] :: [Text])
+                                    , "settings" .= object ["theme" .= ("latte" :: Text)]
+                                    ]
                             ]
                     , "sources"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "type" .= ("webhook" :: Text)
-                                        , "name" .= sourceName
-                                        , "enabled" .= False
-                                        , "webhookTokens" .= [object ["tokenEnv" .= ("M7_TEST_HOOK_TOKEN" :: Text)]]
-                                        ]
-                                   ]
+                            [ Key.fromText sourceName
+                                .= object
+                                    [ "type" .= ("webhook" :: Text)
+                                    , "enabled" .= False
+                                    , "webhookTokens"
+                                        .= object
+                                            [ Key.fromText "m7-hook" .= object ["tokenEnv" .= ("M7_TEST_HOOK_TOKEN" :: Text)]
+                                            ]
+                                    ]
                             ]
                     , "teams"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "name" .= teamName
-                                        , "description" .= ("m7 team " <> suffix)
-                                        , "hostGroups" .= (["Linux servers"] :: [Text])
-                                        , "members" .= [object ["email" .= email, "role" .= ("lead" :: Text)]]
-                                        ]
-                                   ]
+                            [ Key.fromText teamName
+                                .= object
+                                    [ "description" .= ("m7 team " <> suffix)
+                                    , "hostGroups" .= (["Linux servers"] :: [Text])
+                                    , "members"
+                                        .= object
+                                            [ Key.fromText email .= object ["role" .= ("lead" :: Text)]
+                                            ]
+                                    ]
                             ]
                     , "llm"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "providerName" .= provider
-                                        , "endpoint" .= ("http://m7.example" :: Text)
-                                        , "model" .= ("m7-model" :: Text)
-                                        , "enabled" .= False
-                                        , "promptTemplates"
-                                            .= [ object
-                                                    [ "name" .= templateName
-                                                    , "version" .= (1 :: Int)
-                                                    , "body" .= ("body one" :: Text)
-                                                    , "active" .= True
+                            [ Key.fromText provider
+                                .= object
+                                    [ "endpoint" .= ("http://m7.example" :: Text)
+                                    , "model" .= ("m7-model" :: Text)
+                                    , "enabled" .= False
+                                    , "promptTemplates"
+                                        .= object
+                                            [ Key.fromText templateName
+                                                .= object
+                                                    [ Key.fromText "1"
+                                                        .= object
+                                                            [ "body" .= ("body one" :: Text)
+                                                            , "active" .= True
+                                                            ]
                                                     ]
-                                               ]
-                                        ]
-                                   ]
+                                            ]
+                                    ]
                             ]
                     ]
         m7Apply config
@@ -171,9 +173,9 @@ m7Spec = describe "provisioning (milestone 7)" do
             teamName = "m7-team-" <> suffix
             config hash enabled role =
                 object
-                    [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= hash]]]
-                    , "sources" .= object ["items" .= [object ["type" .= ("webhook" :: Text), "name" .= sourceName, "enabled" .= enabled]]]
-                    , "teams" .= object ["items" .= [object ["name" .= teamName, "members" .= [object ["email" .= email, "role" .= role]]]]]
+                    [ "users" .= object [Key.fromText email .= object ["passwordHash" .= hash]]
+                    , "sources" .= object [Key.fromText sourceName .= object ["type" .= ("webhook" :: Text), "enabled" .= enabled]]
+                    , "teams" .= object [Key.fromText teamName .= object ["members" .= object [Key.fromText email .= object ["role" .= role]]]]
                     ]
         m7Apply (config ("hash-one" :: Text) False ("member" :: Text))
         m7Apply (config ("hash-two" :: Text) True ("lead" :: Text))
@@ -192,10 +194,9 @@ m7Spec = describe "provisioning (milestone 7)" do
                 object
                     [ "users"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        ["email" .= email, "passwordHash" .= ("x" :: Text), "settings" .= object ["theme" .= ("frappe" :: Text)]]
-                                   ]
+                            [ Key.fromText email
+                                .= object
+                                    ["passwordHash" .= ("x" :: Text), "settings" .= object ["theme" .= ("frappe" :: Text)]]
                             ]
                     ]
         m7Apply config
@@ -215,14 +216,12 @@ m7Spec = describe "provisioning (milestone 7)" do
             ( object
                 [ "teams"
                     .= object
-                        [ "items"
-                            .= [ object
-                                    [ "name" .= teamName
-                                    , "description" .= ("original" :: Text)
-                                    , "hostGroups" .= (["Linux servers"] :: [Text])
-                                    , "defaults" .= object ["k" .= ("v" :: Text)]
-                                    ]
-                               ]
+                        [ Key.fromText teamName
+                            .= object
+                                [ "description" .= ("original" :: Text)
+                                , "hostGroups" .= (["Linux servers"] :: [Text])
+                                , "defaults" .= object ["k" .= ("v" :: Text)]
+                                ]
                         ]
                 ]
             )
@@ -233,7 +232,7 @@ m7Spec = describe "provisioning (milestone 7)" do
             UPDATE teams SET host_groups = ${uiGroups}, description = ${uiDescription}
             WHERE name = ${teamName}
         |]
-        m7Apply (object ["teams" .= object ["items" .= [object ["name" .= teamName]]]])
+        m7Apply (object ["teams" .= object [Key.fromText teamName .= object []]])
         team <- query @Team |> filterWhere (#name, teamName) |> fetchOneOrNothing >>= maybe (error "team missing") pure
         get #description team `shouldBe` uiDescription
         get #hostGroups team `shouldBe` uiGroups
@@ -243,10 +242,9 @@ m7Spec = describe "provisioning (milestone 7)" do
             ( object
                 [ "teams"
                     .= object
-                        [ "items"
-                            .= [ object
-                                    ["name" .= teamName, "hostGroups" .= ([] :: [Text])]
-                               ]
+                        [ Key.fromText teamName
+                            .= object
+                                ["hostGroups" .= ([] :: [Text])]
                         ]
                 ]
             )
@@ -259,10 +257,9 @@ m7Spec = describe "provisioning (milestone 7)" do
             ( object
                 [ "teams"
                     .= object
-                        [ "items"
-                            .= [ object
-                                    ["name" .= ("m7-team-" <> suffix), "members" .= [object ["email" .= ("m7-missing-" <> suffix <> "@dev")]]]
-                               ]
+                        [ Key.fromText ("m7-team-" <> suffix)
+                            .= object
+                                ["members" .= object [Key.fromText ("m7-missing-" <> suffix <> "@dev") .= object []]]
                         ]
                 ]
             )
@@ -275,13 +272,11 @@ m7Spec = describe "provisioning (milestone 7)" do
             ( object
                 [ "sources"
                     .= object
-                        [ "items"
-                            .= [ object
-                                    [ "type" .= ("zabbix" :: Text)
-                                    , "name" .= ("m7-src-" <> suffix)
-                                    , "config" .= object ["tokenEnv" .= ("M7_MISSING_TOKEN" :: Text)]
-                                    ]
-                               ]
+                        [ Key.fromText ("m7-src-" <> suffix)
+                            .= object
+                                [ "type" .= ("zabbix" :: Text)
+                                , "config" .= object ["tokenEnv" .= ("M7_MISSING_TOKEN" :: Text)]
+                                ]
                         ]
                 ]
             )
@@ -296,13 +291,11 @@ m7Spec = describe "provisioning (milestone 7)" do
                 object
                     [ "sources"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "type" .= ("zabbix" :: Text)
-                                        , "name" .= sourceName
-                                        , "hostGroupsFile" .= groupsPath
-                                        ]
-                                   ]
+                            [ Key.fromText sourceName
+                                .= object
+                                    [ "type" .= ("zabbix" :: Text)
+                                    , "hostGroupsFile" .= groupsPath
+                                    ]
                             ]
                     ]
         LBS.writeFile
@@ -336,13 +329,11 @@ m7Spec = describe "provisioning (milestone 7)" do
             ( object
                 [ "sources"
                     .= object
-                        [ "items"
-                            .= [ object
-                                    [ "type" .= ("zabbix" :: Text)
-                                    , "name" .= ("m7-zbx-" <> suffix)
-                                    , "hostGroupsFile" .= ("/tmp/halemans-m7-no-such-" <> suffix)
-                                    ]
-                               ]
+                        [ Key.fromText ("m7-zbx-" <> suffix)
+                            .= object
+                                [ "type" .= ("zabbix" :: Text)
+                                , "hostGroupsFile" .= ("/tmp/halemans-m7-no-such-" <> suffix)
+                                ]
                         ]
                 ]
             )
@@ -363,14 +354,12 @@ m7Spec = describe "provisioning (milestone 7)" do
                 ( object
                     [ "llm"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "providerName" .= provider
-                                        , "endpoint" .= ("http://m7-db.example" :: Text)
-                                        , "model" .= ("m7-db-model" :: Text)
-                                        , "enabled" .= True
-                                        ]
-                                   ]
+                            [ Key.fromText provider
+                                .= object
+                                    [ "endpoint" .= ("http://m7-db.example" :: Text)
+                                    , "model" .= ("m7-db-model" :: Text)
+                                    , "enabled" .= True
+                                    ]
                             ]
                     ]
                 )
@@ -386,21 +375,22 @@ m7Spec = describe "provisioning (milestone 7)" do
                 object
                     [ "llm"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "providerName" .= provider
-                                        , "endpoint" .= ("http://m7.example" :: Text)
-                                        , "model" .= ("m" :: Text)
-                                        , "promptTemplates"
-                                            .= [ object
-                                                    [ "name" .= templateName
-                                                    , "version" .= version
-                                                    , "body" .= ("body" :: Text)
-                                                    , "active" .= True
+                            [ Key.fromText provider
+                                .= object
+                                    [ "endpoint" .= ("http://m7.example" :: Text)
+                                    , "model" .= ("m" :: Text)
+                                    , "promptTemplates"
+                                        .= object
+                                            [ Key.fromText templateName
+                                                .= object
+                                                    [ Key.fromText (tshow version)
+                                                        .= object
+                                                            [ "body" .= ("body" :: Text)
+                                                            , "active" .= True
+                                                            ]
                                                     ]
-                                               ]
-                                        ]
-                                   ]
+                                            ]
+                                    ]
                             ]
                     ]
         m7Apply (config (1 :: Int))
@@ -425,8 +415,8 @@ m7Spec = describe "provisioning (milestone 7)" do
         void $ newRecord @TeamMember |> set #teamId (get #id keep) |> set #userId (get #id user1) |> set #teamRole "lead" |> createRecord
         void $ newRecord @TeamMember |> set #teamId (get #id keep) |> set #userId (get #id user2) |> createRecord
         keepItems <- m7TeamKeepItems [doomedName, keepName]
-        let keepItem = object ["name" .= keepName, "members" .= [object ["email" .= get #email user1, "role" .= ("lead" :: Text)]]]
-        m7Apply (object ["teams" .= object ["strict" .= True, "items" .= (keepItems <> [keepItem])]])
+        let keepItem = object ["members" .= object [Key.fromText (get #email user1) .= object ["role" .= ("lead" :: Text)]]]
+        m7Apply (object ["strict" .= True, "teams" .= m7InsertEntry keepName keepItem keepItems])
         query @Team |> filterWhere (#name, doomedName) |> fetch `shouldReturn` []
         members <- query @TeamMember |> filterWhere (#teamId, get #id keep) |> fetch
         map (get #userId) members `shouldBe` [get #id user1]
@@ -445,20 +435,23 @@ m7Spec = describe "provisioning (milestone 7)" do
         void $ newRecord @LlmPromptTemplate |> set #name templateName |> set #version 2 |> set #body "two" |> createRecord
         m7Apply
             ( object
-                [ "llm"
-                    .= object
-                        [ "strict" .= True
-                        , "items"
-                            .= ( keepProviders
-                                    <> [ object
-                                            [ "providerName" .= ("m7-strict-llm-" <> suffix)
-                                            , "endpoint" .= ("http://kept.example" :: Text)
-                                            , "model" .= ("m" :: Text)
-                                            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (1 :: Int), "body" .= ("one" :: Text), "active" .= True]]
+                [ "strict" .= True
+                , "llm"
+                    .= m7InsertEntry
+                        ("m7-strict-llm-" <> suffix)
+                        ( object
+                            [ "endpoint" .= ("http://kept.example" :: Text)
+                            , "model" .= ("m" :: Text)
+                            , "promptTemplates"
+                                .= object
+                                    [ Key.fromText templateName
+                                        .= object
+                                            [ Key.fromText "1" .= object ["body" .= ("one" :: Text), "active" .= True]
                                             ]
-                                       ]
-                               )
-                        ]
+                                    ]
+                            ]
+                        )
+                        keepProviders
                 ]
             )
         query @LlmConfig |> filterWhere (#providerName, "m7-doomed-llm-" <> suffix) |> fetch `shouldReturn` []
@@ -481,20 +474,23 @@ m7Spec = describe "provisioning (milestone 7)" do
         keepProviders <- m7LlmKeepItems
         m7Apply
             ( object
-                [ "llm"
-                    .= object
-                        [ "strict" .= True
-                        , "items"
-                            .= ( keepProviders
-                                    <> [ object
-                                            [ "providerName" .= ("m7-strict-llm-" <> suffix)
-                                            , "endpoint" .= ("http://kept.example" :: Text)
-                                            , "model" .= ("m" :: Text)
-                                            , "promptTemplates" .= [object ["name" .= templateName, "version" .= (2 :: Int), "body" .= ("two" :: Text)]]
+                [ "strict" .= True
+                , "llm"
+                    .= m7InsertEntry
+                        ("m7-strict-llm-" <> suffix)
+                        ( object
+                            [ "endpoint" .= ("http://kept.example" :: Text)
+                            , "model" .= ("m" :: Text)
+                            , "promptTemplates"
+                                .= object
+                                    [ Key.fromText templateName
+                                        .= object
+                                            [ Key.fromText "2" .= object ["body" .= ("two" :: Text)]
                                             ]
-                                       ]
-                               )
-                        ]
+                                    ]
+                            ]
+                        )
+                        keepProviders
                 ]
             )
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf "cannot delete prompt template" msg
@@ -515,13 +511,13 @@ m7Spec = describe "provisioning (milestone 7)" do
         -- Transactional: the FK-blocked delete rolls the whole category back,
         -- so even the unreferenced doomed user survives this apply.
         keepWithoutReferenced <- m7UserKeepItems [get #email doomedReferenced]
-        m7Apply (object ["users" .= object ["strict" .= True, "items" .= keepWithoutReferenced]])
+        m7Apply (object ["strict" .= True, "users" .= keepWithoutReferenced])
             `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf ("cannot delete user \"m7-fk-" <> suffix <> "@dev\"") msg
         surviving <- query @User |> filterWhere (#email, get #email doomedPlain) |> fetch
         map (get #id) surviving `shouldBe` [get #id doomedPlain]
         -- Without the referenced user in scope the plain one is deleted.
         keepWithoutPlain <- m7UserKeepItems [get #email doomedPlain]
-        m7Apply (object ["users" .= object ["strict" .= True, "items" .= keepWithoutPlain]])
+        m7Apply (object ["strict" .= True, "users" .= keepWithoutPlain])
         query @User |> filterWhere (#email, get #email doomedPlain) |> fetch `shouldReturn` []
         kept <- query @User |> filterWhere (#email, get #email doomedReferenced) |> fetch
         map (get #id) kept `shouldBe` [get #id doomedReferenced]
@@ -539,7 +535,7 @@ m7Spec = describe "provisioning (milestone 7)" do
             setEnv "ZABBIX_TOKEN" "m7-dummy-zabbix"
             setEnv "GRAFANA_TOKEN" "m7-dummy-grafana"
             keepItems <- m7SourceKeepItems [get #name doomed]
-            m7Apply (object ["sources" .= object ["strict" .= True, "items" .= keepItems]])
+            m7Apply (object ["strict" .= True, "sources" .= keepItems])
                 `shouldThrow` \(ProvisionError msg) -> Text.isInfixOf ("cannot delete source \"m7-doomed-src-" <> suffix <> "\"") msg
 
     it "provisions field mappings and dashboards idempotently" do
@@ -549,35 +545,35 @@ m7Spec = describe "provisioning (milestone 7)" do
             dashName = "m7-dash-" <> suffix
             config enabled =
                 object
-                    [ "users" .= object ["items" .= [object ["email" .= email, "passwordHash" .= ("x" :: Text)]]]
+                    [ "users" .= object [Key.fromText email .= object ["passwordHash" .= ("x" :: Text)]]
                     , "fieldMappings"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "facet" .= facet
-                                        , "rank" .= (42 :: Int)
-                                        , "kind" .= ("field" :: Text)
-                                        , "key" .= ("env" :: Text)
-                                        , "enabled" .= enabled
-                                        ]
-                                   ]
+                            [ Key.fromText facet
+                                .= object
+                                    [ Key.fromText "42"
+                                        .= object
+                                            [ "kind" .= ("field" :: Text)
+                                            , "key" .= ("env" :: Text)
+                                            , "enabled" .= enabled
+                                            ]
+                                    ]
                             ]
                     , "dashboards"
                         .= object
-                            [ "items"
-                                .= [ object
-                                        [ "name" .= dashName
-                                        , "userEmail" .= email
-                                        , "isDefault" .= True
-                                        , "config"
-                                            .= [ object
-                                                    [ "title" .= ("probe" :: Text)
-                                                    , "match" .= [object ["facet" .= ("field:env" :: Text), "op" .= ("=" :: Text), "value" .= ("prod" :: Text)]]
-                                                    , "groupBy" .= ("field:host" :: Text)
-                                                    ]
-                                               ]
-                                        ]
-                                   ]
+                            [ Key.fromText email
+                                .= object
+                                    [ Key.fromText dashName
+                                        .= object
+                                            [ "isDefault" .= True
+                                            , "config"
+                                                .= [ object
+                                                        [ "title" .= ("probe" :: Text)
+                                                        , "match" .= [object ["facet" .= ("field:env" :: Text), "op" .= ("=" :: Text), "value" .= ("prod" :: Text)]]
+                                                        , "groupBy" .= ("field:host" :: Text)
+                                                        ]
+                                                   ]
+                                            ]
+                                    ]
                             ]
                     ]
         m7Apply (config False)
@@ -593,10 +589,10 @@ m7Spec = describe "provisioning (milestone 7)" do
             ( object
                 [ "dashboards"
                     .= object
-                        [ "items"
-                            .= [ object
-                                    ["name" .= ("m7-dash-" <> suffix), "userEmail" .= ("m7-ghost-" <> suffix <> "@dev")]
-                               ]
+                        [ Key.fromText ("m7-ghost-" <> suffix <> "@dev")
+                            .= object
+                                [ Key.fromText ("m7-dash-" <> suffix) .= object []
+                                ]
                         ]
                 ]
             )
@@ -620,45 +616,61 @@ m7Spec = describe "provisioning (milestone 7)" do
                 |> set #name doomedDash
                 |> createRecord
         mappings <- query @FieldMapping |> fetch
-        let keepMappings =
-                [ object
-                    [ "facet" .= mapping.facet
-                    , "rank" .= mapping.rank
-                    , "kind" .= mapping.kind
-                    , "key" .= mapping.key
-                    , "enabled" .= mapping.enabled
-                    ]
-                | mapping <- mappings
-                , mapping.facet /= doomedFacet
-                ]
+        let keptMappings = filter (\mapping -> mapping.facet /= doomedFacet) mappings
+            keepMappings =
+                Aeson.Object $
+                    KeyMap.fromListWith
+                        m7MergeObjects
+                        [ ( Key.fromText mapping.facet
+                          , Aeson.Object $
+                                KeyMap.singleton
+                                    (Key.fromText (tshow mapping.rank))
+                                    (object ["kind" .= mapping.kind, "key" .= mapping.key, "enabled" .= mapping.enabled])
+                          )
+                        | mapping <- keptMappings
+                        ]
         dashboards <- query @Dashboard |> fetch
-        keepDashboards <- fmap catMaybes $ forM dashboards \dashboard -> do
+        keepDashboardEntries <- fmap catMaybes $ forM dashboards \dashboard -> do
             dashOwner <- fetch dashboard.userId
             pure $
                 if dashboard.name == doomedDash
                     then Nothing
                     else
                         Just
-                            ( object
-                                [ "name" .= dashboard.name
-                                , "userEmail" .= dashOwner.email
-                                , "config" .= dashboard.config
-                                , "position" .= dashboard.position
-                                , "isDefault" .= dashboard.isDefault
-                                ]
+                            ( Key.fromText dashOwner.email
+                            , Aeson.Object $
+                                KeyMap.singleton
+                                    (Key.fromText dashboard.name)
+                                    ( object
+                                        [ "config" .= dashboard.config
+                                        , "position" .= dashboard.position
+                                        , "isDefault" .= dashboard.isDefault
+                                        ]
+                                    )
                             )
+        let keepDashboards = Aeson.Object (KeyMap.fromListWith m7MergeObjects keepDashboardEntries)
         m7Apply
             ( object
-                [ "fieldMappings" .= object ["strict" .= True, "items" .= keepMappings]
-                , "dashboards" .= object ["strict" .= True, "items" .= keepDashboards]
+                [ "strict" .= True
+                , "fieldMappings" .= keepMappings
+                , "dashboards" .= keepDashboards
                 ]
             )
         query @FieldMapping |> filterWhere (#facet, doomedFacet) |> fetch `shouldReturn` []
         query @Dashboard |> filterWhere (#name, doomedDash) |> fetch `shouldReturn` []
         remainingMappings <- query @FieldMapping |> fetch
-        length remainingMappings `shouldBe` length keepMappings
+        length remainingMappings `shouldBe` length keptMappings
         remainingDashboards <- query @Dashboard |> fetch
-        length remainingDashboards `shouldBe` length keepDashboards
+        length remainingDashboards `shouldBe` length keepDashboardEntries
+
+-- Insert one entry into a section map built by the m7*KeepItems helpers.
+m7InsertEntry :: Text -> Aeson.Value -> Aeson.Value -> Aeson.Value
+m7InsertEntry key item (Aeson.Object o) = Aeson.Object (KeyMap.insert (Key.fromText key) item o)
+m7InsertEntry _ _ value = value
+
+m7MergeObjects :: Aeson.Value -> Aeson.Value -> Aeson.Value
+m7MergeObjects (Aeson.Object a) (Aeson.Object b) = Aeson.Object (KeyMap.union a b)
+m7MergeObjects _ value = value
 
 -- | Provisioning (m7).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
