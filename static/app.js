@@ -144,6 +144,14 @@
 
     window.halemansLocalizeTimes = localizeAll;
 
+    // Turbolinks renders via morphdom (turbolinksMorphdom): when the new page
+    // keeps rows in place, existing <time> elements are reused and only their
+    // textContent reverts to the UTC fallback — invisible to the childList
+    // observer below. Re-localize after every turbolinks render.
+    document.addEventListener('turbolinks:render', function () {
+        if (document.body) localizeAll(document.body);
+    });
+
     document.addEventListener('DOMContentLoaded', function () {
         localizeAll(document.body);
         new MutationObserver(function (mutations) {
