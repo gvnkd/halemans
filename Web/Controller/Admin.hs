@@ -2,10 +2,17 @@ module Web.Controller.Admin where
 
 import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
+import Application.Service.ProvisionExport (buildProvisionExport)
 import Control.Monad (void)
+import qualified Data.Aeson.Encode.Pretty as Aeson
+import qualified Data.ByteString.Lazy as LBS
 import Data.Time.Clock (getCurrentTime)
+import qualified Data.Yaml as Yaml
+import IHP.ControllerSupport (respondAndExit)
 import IHP.ModelSupport (withTransaction)
 import IHP.TypedSql (sqlExecTyped, typedSql)
+import Network.HTTP.Types (status200)
+import Network.Wai (responseLBS)
 import Web.Controller.Prelude
 import Web.View.Admin.Database
 import Web.View.Admin.Index
@@ -59,6 +66,28 @@ instance Controller AdminController where
         requirePrivilege "admin"
         stats <- fetchDatabaseStats
         render DatabaseView{..}
+    -- Provision config snapshot (Application.Service.ProvisionExport) in the
+    -- map-keyed provision format; ?format=json selects JSON, default YAML.
+    action AdminExportProvisionAction = do
+        requirePrivilege "admin"
+        config <- buildProvisionExport
+        case paramOrNothing @Text "format" of
+            Just "json" ->
+                respondAndExit $
+                    responseLBS
+                        status200
+                        [ ("Content-Type", "application/json; charset=utf-8")
+                        , ("Content-Disposition", "attachment; filename=\"provision.json\"")
+                        ]
+                        (Aeson.encodePretty config)
+            _ ->
+                respondAndExit $
+                    responseLBS
+                        status200
+                        [ ("Content-Type", "application/yaml; charset=utf-8")
+                        , ("Content-Disposition", "attachment; filename=\"provision.yaml\"")
+                        ]
+                        (LBS.fromStrict (Yaml.encode config))
     action AdminDbAnalyzeAction = do
         requirePrivilege "admin"
         analyzeDatabase

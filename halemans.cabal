@@ -155,6 +155,7 @@ library
         Application.Service.Notify
         Application.Service.PollerControl
         Application.Service.Provision
+        Application.Service.ProvisionExport
         Application.Service.Push
         Application.Service.Reconcile
         Application.Service.Reports

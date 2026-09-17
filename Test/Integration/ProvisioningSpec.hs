@@ -7,8 +7,10 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
+import qualified Data.List as List
 import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
+import qualified Data.Yaml as Yaml
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig, buildFrameworkConfig)
@@ -50,7 +52,8 @@ import Application.Service.Llm.ToolCache (cachedToolCall)
 import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.PollerControl (ensurePollerForSourceType)
-import Application.Service.Provision (ProvisionError (..), applyProvisionConfig)
+import Application.Service.Provision (CmdbConfigItem (..), JiraConfigItem (..), ProvisionConfig (..), ProvisionError (..), SourceItem (..), UserItem (..), applyProvisionConfig, parseProvisionConfig, parseProvisionConfigYaml)
+import Application.Service.ProvisionExport (buildProvisionExport)
 import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Application.Service.WriteBack (executeAttempt)
@@ -662,6 +665,38 @@ m7Spec = describe "provisioning (milestone 7)" do
         length remainingMappings `shouldBe` length keptMappings
         remainingDashboards <- query @Dashboard |> fetch
         length remainingDashboards `shouldBe` length keepDashboardEntries
+
+    it "exports the DB state as a re-appliable provision config" do
+        exported <- buildProvisionExport
+        -- The export round-trips through the strict parser in both formats.
+        parsedJson <- case parseProvisionConfig (Aeson.encode exported) of
+            Left err -> expectationFailure (cs err) >> error "unreachable"
+            Right parsed -> pure parsed
+        parsedYaml <- case parseProvisionConfigYaml (Yaml.encode exported) of
+            Left err -> expectationFailure (cs err) >> error "unreachable"
+            Right parsed -> pure parsed
+        parsedYaml `shouldBe` parsedJson
+        -- Re-applying the snapshot is a no-op; every exported tokenEnv
+        -- reference must resolve, so stub them all (restored after).
+        envNames <- do
+            sourceEnvs <- fmap catMaybes $ forM (fromMaybe [] parsedJson.sources) \item ->
+                pure $ case item.config of
+                    Aeson.Object o -> case KeyMap.lookup "tokenEnv" o of
+                        Just (Aeson.String envVar) -> Just envVar
+                        _ -> Nothing
+                    _ -> Nothing
+            pure (sourceEnvs <> map (.jiraTokenEnv) (fromMaybe [] parsedJson.jiraConfigs) <> map (.cmdbTokenEnv) (fromMaybe [] parsedJson.cmdbConfigs))
+        oldValues <- forM envNames \name -> (name,) <$> lookupEnv (cs name)
+        forM_ envNames \name -> setEnv (cs name) "m7-export-dummy"
+        flip finally (forM_ oldValues \(name, old) -> restoreEnv (cs name) old) do
+            m7Apply exported
+        -- Spot-check: the export listed every user and source currently in DB.
+        let exportedUserEmails = map (.email) (fromMaybe [] parsedJson.users)
+            exportedSourceNames = map (.name) (fromMaybe [] parsedJson.sources)
+        dbUsers <- query @User |> fetch
+        dbSources <- query @Source |> fetch
+        List.sort exportedUserEmails `shouldBe` List.sort (map (.email) dbUsers)
+        List.sort exportedSourceNames `shouldBe` List.sort (map (.name) dbSources)
 
 -- Insert one entry into a section map built by the m7*KeepItems helpers.
 m7InsertEntry :: Text -> Aeson.Value -> Aeson.Value -> Aeson.Value

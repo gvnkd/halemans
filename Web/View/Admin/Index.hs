@@ -59,11 +59,22 @@ instance View IndexView where
                 {forEach apiTokens renderApiTokenRow}
             </tbody>
         </table>
+        <h2>{tr "Provisioning"}</h2>
+        <p>
+            <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
+            <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} data-testid="export-provision-json">{tr "Download provision.json"}</a>
+        </p>
+        <p class="text-muted">{tr "Snapshot of users, sources, teams, LLM config, field mappings, dashboards and integrations in the provision format. Webhook tokens and hostGroupsFile are not exported (secrets stay env references)."}</p>
         <h2>{tr "Danger zone"}</h2>
         <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
             <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">{tr "Purge all alerts"}</button>
         </form>
     |]
+      where
+        exportYamlUrl :: Text
+        exportYamlUrl = pathTo AdminExportProvisionAction <> "?format=yaml"
+        exportJsonUrl :: Text
+        exportJsonUrl = pathTo AdminExportProvisionAction <> "?format=json"
 
 renderMetricsRow :: JobTypeMetrics -> Html
 renderMetricsRow row =

@@ -136,6 +136,7 @@ data AdminController
     | AdminDbAnalyzeAction
     | AdminDbVacuumAction
     | AdminDbAnalyzeTableAction {tableName :: !Text}
+    | AdminExportProvisionAction
     deriving (Eq, Show, Data)
 
 data AuditController
