@@ -33,20 +33,21 @@ if [ -z "$pending" ]; then
     exit 0
 fi
 
+# printf (not echo): dash's echo interprets \e (in \else, \endif) as ESC.
 {
-    echo "SELECT pg_advisory_lock(hashtext('halemans-db-migrate'));"
+    printf '%s\n' "SELECT pg_advisory_lock(hashtext('halemans-db-migrate'));"
     for f in $pending; do
         rev="${f##*/}"; rev="${rev%%-*}"
         # Re-check inside the lock: a concurrently booting container may
         # have applied the file while we waited.
-        echo "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE revision = $rev) AS applied \\gset"
-        echo "\\if :applied"
-        echo "\\else"
-        echo "\\echo 'db-migrate: applying $f'"
-        echo "\\i $f"
-        echo "INSERT INTO schema_migrations (revision) VALUES ($rev);"
-        echo "\\endif"
+        printf '%s\n' "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE revision = $rev) AS applied \\gset"
+        printf '%s\n' "\\if :applied"
+        printf '%s\n' "\\else"
+        printf '%s\n' "\\echo 'db-migrate: applying $f'"
+        printf '%s\n' "\\i $f"
+        printf '%s\n' "INSERT INTO schema_migrations (revision) VALUES ($rev);"
+        printf '%s\n' "\\endif"
     done
-    echo "SELECT pg_advisory_unlock(hashtext('halemans-db-migrate'));"
+    printf '%s\n' "SELECT pg_advisory_unlock(hashtext('halemans-db-migrate'));"
 } | psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q
 echo "db-migrate: done"
