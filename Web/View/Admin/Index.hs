@@ -61,8 +61,8 @@ instance View IndexView where
         </table>
         <h2>{tr "Provisioning"}</h2>
         <p>
-            <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
-            <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} data-testid="export-provision-json">{tr "Download provision.json"}</a>
+            <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} download="provision.yaml" data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
+            <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} download="provision.json" data-testid="export-provision-json">{tr "Download provision.json"}</a>
         </p>
         <p class="text-muted">{tr "Snapshot of users, sources, teams, LLM config, field mappings, dashboards and integrations in the provision format. Webhook tokens and hostGroupsFile are not exported (secrets stay env references)."}</p>
         <h2>{tr "Danger zone"}</h2>

@@ -53,7 +53,7 @@ import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.PollerControl (ensurePollerForSourceType)
 import Application.Service.Provision (CmdbConfigItem (..), JiraConfigItem (..), ProvisionConfig (..), ProvisionError (..), SourceItem (..), UserItem (..), applyProvisionConfig, parseProvisionConfig, parseProvisionConfigYaml)
-import Application.Service.ProvisionExport (buildProvisionExport)
+import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
 import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Application.Service.WriteBack (executeAttempt)
@@ -669,10 +669,10 @@ m7Spec = describe "provisioning (milestone 7)" do
     it "exports the DB state as a re-appliable provision config" do
         exported <- buildProvisionExport
         -- The export round-trips through the strict parser in both formats.
-        parsedJson <- case parseProvisionConfig (Aeson.encode exported) of
+        parsedJson <- case parseProvisionConfig (renderProvisionJson exported) of
             Left err -> expectationFailure (cs err) >> error "unreachable"
             Right parsed -> pure parsed
-        parsedYaml <- case parseProvisionConfigYaml (Yaml.encode exported) of
+        parsedYaml <- case parseProvisionConfigYaml (renderProvisionYaml exported) of
             Left err -> expectationFailure (cs err) >> error "unreachable"
             Right parsed -> pure parsed
         parsedYaml `shouldBe` parsedJson
@@ -697,6 +697,36 @@ m7Spec = describe "provisioning (milestone 7)" do
         dbSources <- query @Source |> fetch
         List.sort exportedUserEmails `shouldBe` List.sort (map (.email) dbUsers)
         List.sort exportedSourceNames `shouldBe` List.sort (map (.name) dbSources)
+
+    it "renders export YAML as literal blocks with a byte-exact round-trip" do
+        let nasty =
+                object
+                    [ "trailingSpaces" .= ("space at end \nnext" :: Text)
+                    , "crlf" .= ("one\r\ntwo" :: Text)
+                    , "unicode" .= ("строка1\nстрока2" :: Text)
+                    , "specialWord" .= ("yes" :: Text)
+                    , "empty" .= ("" :: Text)
+                    , "blankTail" .= ("line\n\n" :: Text)
+                    , "colon: key" .= object ["nested" .= [object ["multi" .= ("x\ny" :: Text)], Aeson.String "plain"]]
+                    , "quote's" .= ("it's \"quoted\"" :: Text)
+                    , "number" .= (42 :: Int)
+                    , "bool" .= True
+                    , "null" .= Aeson.Null
+                    , "emptyObj" .= object []
+                    , "emptyArr" .= ([] :: [Text])
+                    , "arrOfEmpty" .= [object []]
+                    ]
+            rendered = renderProvisionYaml nasty
+            renderedText = cs rendered :: Text
+        renderedText `shouldSatisfy` Text.isInfixOf "|-"
+        renderedText `shouldSatisfy` Text.isInfixOf "'yes'"
+        -- Multi-line strings keep literal blocks even with trailing-space
+        -- lines (libyaml would collapse them to one double-quoted line).
+        renderedText `shouldSatisfy` Text.isInfixOf "space at end \n"
+        case Yaml.decodeEither' rendered of
+            Left err -> expectationFailure (cs (show err))
+            Right parsed -> parsed `shouldBe` nasty
+        Aeson.decode (renderProvisionJson nasty) `shouldBe` Just nasty
 
 -- Insert one entry into a section map built by the m7*KeepItems helpers.
 m7InsertEntry :: Text -> Aeson.Value -> Aeson.Value -> Aeson.Value

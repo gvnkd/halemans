@@ -2,12 +2,10 @@ module Web.Controller.Admin where
 
 import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
-import Application.Service.ProvisionExport (buildProvisionExport)
+import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
 import Control.Monad (void)
-import qualified Data.Aeson.Encode.Pretty as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Time.Clock (getCurrentTime)
-import qualified Data.Yaml as Yaml
 import IHP.ControllerSupport (respondAndExit)
 import IHP.ModelSupport (withTransaction)
 import IHP.TypedSql (sqlExecTyped, typedSql)
@@ -79,7 +77,7 @@ instance Controller AdminController where
                         [ ("Content-Type", "application/json; charset=utf-8")
                         , ("Content-Disposition", "attachment; filename=\"provision.json\"")
                         ]
-                        (Aeson.encodePretty config)
+                        (renderProvisionJson config)
             _ ->
                 respondAndExit $
                     responseLBS
@@ -87,7 +85,7 @@ instance Controller AdminController where
                         [ ("Content-Type", "application/yaml; charset=utf-8")
                         , ("Content-Disposition", "attachment; filename=\"provision.yaml\"")
                         ]
-                        (LBS.fromStrict (Yaml.encode config))
+                        (LBS.fromStrict (renderProvisionYaml config))
     action AdminDbAnalyzeAction = do
         requirePrivilege "admin"
         analyzeDatabase

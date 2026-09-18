@@ -1022,6 +1022,20 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
+    @check("admin provision export links download directly")
+    def _():
+        # regression: without the download attribute turbolinks intercepts the
+        # export link (a[href]:not([download])) and renders the YAML/JSON
+        # inline as one-line HTML instead of saving a file.
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin")
+        for testid in ("export-provision-yaml", "export-provision-json"):
+            link = admin.get_by_test_id(testid)
+            assert link.get_attribute("download") is not None, f"{testid} lost its download attribute"
+        admin.close()
+        login(page, "sre")
+
     # milestone 6: token management UI (design_docs/milestone_6.md §4/§9)
     @check("profile API tokens: create (shown once), use, revoke")
     def _():
