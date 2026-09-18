@@ -86,6 +86,7 @@ POST /blackouts/{blackoutId}/delete  DeleteBlackoutAction
 GET  /profile         ProfileAction
 POST /profile/theme   UpdateThemeAction
 POST /profile/timezone UpdateTimezoneAction
+POST /profile/language UpdateLanguageAction
 POST /profile/api-tokens                          CreateApiTokenAction
 POST /profile/api-tokens/{apiTokenId}/revoke      RevokeApiTokenAction
 |]
@@ -208,6 +209,7 @@ GET  /admin    AdminAction
 POST /admin/api-tokens/{apiTokenId}/revoke    AdminRevokeApiTokenAction
 POST /admin/purge-alerts    AdminPurgeAlertsAction
 GET  /admin/database                            AdminDatabaseAction
+GET  /admin/provision/export                    AdminExportProvisionAction
 POST /admin/database/analyze                    AdminDbAnalyzeAction
 POST /admin/database/vacuum                     AdminDbVacuumAction
 POST /admin/database/tables/{tableName}/analyze AdminDbAnalyzeTableAction

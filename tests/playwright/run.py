@@ -190,6 +190,26 @@ with sync_playwright() as pw:
         page.goto(f"{APP}/alerts")
         assert "severity" not in page.url, f"alerts filters not cleared: {page.url}"
 
+    @check("alerts: repeated Last seen sort clicks keep timestamps localized")
+    def _():
+        # regression: turbolinks renders via morphdom; on a cache-hit revisit
+        # rows stay in place, morphdom reuses the <time> elements and reverts
+        # their text to the UTC fallback with text-node mutations only, which
+        # the childList observer in app.js cannot see. app.js re-localizes on
+        # turbolinks:render.
+        fp = "pw-sort-tz"
+        fire_generic_alert(fp)
+        wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'")
+        page.goto(f"{APP}/alerts")
+        page.get_by_test_id("alerts-table").wait_for()
+        page.locator("time.utc-time").first.wait_for()
+        for i in range(3):
+            page.get_by_test_id("sort-last_seen_at").click()
+            page.wait_for_load_state("networkidle")
+            stale = page.evaluate("""() => Array.from(document.querySelectorAll('time.utc-time'))
+                .filter(t => / UTC$/.test(t.textContent)).length""")
+            assert stale == 0, f"{stale} timestamps fell back to plain UTC after sort click {i + 1}"
+
     @check("alert card: ack with timeout, comment, timeline updates")
     def _():
         fp = f"pw-ack-{int(time.time())}"
@@ -999,6 +1019,20 @@ with sync_playwright() as pw:
         rows = admin.get_by_test_id("job-metrics-row").all()
         assert len(rows) >= 10, f"metrics rows: {len(rows)}"
         admin.get_by_test_id("job-failures-table").wait_for()
+        admin.close()
+        login(page, "sre")
+
+    @check("admin provision export links download directly")
+    def _():
+        # regression: without the download attribute turbolinks intercepts the
+        # export link (a[href]:not([download])) and renders the YAML/JSON
+        # inline as one-line HTML instead of saving a file.
+        admin = context.new_page()
+        login(admin, "admin")
+        admin.goto(f"{APP}/admin")
+        for testid in ("export-provision-yaml", "export-provision-json"):
+            link = admin.get_by_test_id(testid)
+            assert link.get_attribute("download") is not None, f"{testid} lost its download attribute"
         admin.close()
         login(page, "sre")
 

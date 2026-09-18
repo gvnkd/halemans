@@ -1,5 +1,7 @@
 module Web.View.FieldMappings.New where
 
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
+import Network.Wai (Request)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -7,37 +9,37 @@ data NewView = NewView
 instance View NewView where
     html NewView =
         [hsx|
-        <h1>New field mapping</h1>
+        <h1>{tr "New field mapping"}</h1>
         <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form" class="maxw-600">
             {fieldMappingFormFields "" 100 "field" "" True}
-            <button type="submit" class="btn btn-primary" data-testid="field-mapping-submit">Create</button>
+            <button type="submit" class="btn btn-primary" data-testid="field-mapping-submit">{tr "Create"}</button>
         </form>
     |]
 
-fieldMappingFormFields :: Text -> Int -> Text -> Text -> Bool -> Html
+fieldMappingFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => Text -> Int -> Text -> Text -> Bool -> Html
 fieldMappingFormFields facet rank kind key enabled =
     [hsx|
     <div class="mb-3">
-        <label class="form-label">Facet name</label>
+        <label class="form-label">{tr "Facet name"}</label>
         <input name="facet" type="text" class="form-control" value={facet} placeholder="env" data-testid="mapping-facet" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Rank (lower wins)</label>
+        <label class="form-label">{tr "Rank (lower wins)"}</label>
         <input name="rank" type="number" class="form-control" value={rank} data-testid="mapping-rank"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Kind</label>
+        <label class="form-label">{tr "Kind"}</label>
         <select name="kind" class="form-select" data-testid="mapping-kind">
             {forEach ["field", "label", "attr"] (kindOption kind)}
         </select>
     </div>
     <div class="mb-3">
-        <label class="form-label">Key (alert field / label name / Assets attribute name)</label>
+        <label class="form-label">{tr "Key (alert field / label name / Assets attribute name)"}</label>
         <input name="key" type="text" class="form-control" value={key} placeholder="Environments" data-testid="mapping-key" required="required"/>
     </div>
     <div class="mb-3 form-check">
         <input name="enabled" type="checkbox" class="form-check-input" checked={enabled} data-testid="mapping-enabled"/>
-        <label class="form-check-label">Enabled</label>
+        <label class="form-check-label">{tr "Enabled"}</label>
     </div>
 |]
 

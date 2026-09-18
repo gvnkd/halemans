@@ -48,6 +48,7 @@ data ProfileController
     = ProfileAction
     | UpdateThemeAction
     | UpdateTimezoneAction
+    | UpdateLanguageAction
     | CreateApiTokenAction
     | RevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     deriving (Eq, Show)
@@ -135,6 +136,7 @@ data AdminController
     | AdminDbAnalyzeAction
     | AdminDbVacuumAction
     | AdminDbAnalyzeTableAction {tableName :: !Text}
+    | AdminExportProvisionAction
     deriving (Eq, Show, Data)
 
 data AuditController

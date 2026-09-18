@@ -1,5 +1,7 @@
 module Web.View.Teams.New where
 
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
+import Network.Wai (Request)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -11,46 +13,46 @@ data NewView = NewView
 instance View NewView where
     html NewView{..} =
         [hsx|
-        <h1>New team</h1>
+        <h1>{tr "New team"}</h1>
         <form method="POST" action={CreateTeamAction} data-testid="team-form" class="maxw-600">
             <div class="mb-3">
-                <label class="form-label">Name</label>
+                <label class="form-label">{tr "Name"}</label>
                 <input name="name" type="text" class="form-control" data-testid="team-name" required="required"/>
             </div>
             <div class="mb-3">
-                <label class="form-label">Description</label>
+                <label class="form-label">{tr "Description"}</label>
                 <input name="description" type="text" class="form-control" data-testid="team-description"/>
             </div>
             {hostGroupPicker availableGroups []}
             {memberPicker users currentRoles}
-            <button type="submit" class="btn btn-primary" data-testid="team-submit">Create</button>
+            <button type="submit" class="btn btn-primary" data-testid="team-submit">{tr "Create"}</button>
         </form>
     |]
 
 -- | Multi-select of zabbix host groups gathered into zabbix_host_groups by
 -- manual source sync. With an empty cache there is nothing to pick from, so
 -- the picker degrades to instructions. Shared with the edit form.
-hostGroupPicker :: [Text] -> [Text] -> Html
+hostGroupPicker :: (CurrentUserRecord ~ User, ?request :: Request) => [Text] -> [Text] -> Html
 hostGroupPicker availableGroups selected = case availableGroups of
     [] ->
         [hsx|
         <div class="mb-3" data-testid="team-host-groups-empty">
-            <label class="form-label">Zabbix host groups</label>
+            <label class="form-label">{tr "Zabbix host groups"}</label>
             <div class="form-text">
-                No host groups fetched yet. Open the <a href={SourcesAction}>Sources</a> page
-                and use "Sync host groups" on a zabbix source, then reload this page.
+                {tr "No host groups fetched yet. Open the"} <a href={SourcesAction}>{tr "Sources"}</a>
+                {tr "page and use \"Sync host groups\" on a zabbix source, then reload this page."}
             </div>
         </div>
     |]
     _ ->
         [hsx|
         <div class="mb-3">
-            <label class="form-label">Zabbix host groups</label>
-            <input type="text" class="form-control form-control-sm mb-1" placeholder="Filter groups…" data-testid="team-host-groups-filter" data-hg-filter=""/>
+            <label class="form-label">{tr "Zabbix host groups"}</label>
+            <input type="text" class="form-control form-control-sm mb-1" placeholder={tr "Filter groups…"} data-testid="team-host-groups-filter" data-hg-filter=""/>
             <select name="hostGroups" class="form-select" multiple="multiple" size={pickerSize} data-testid="team-host-groups" data-hg-select="">
                 {forEach availableGroups groupOption}
             </select>
-            <div class="form-text">Used by zabbix sources with host group scope "teams" to restrict which alerts are fetched. Ctrl-click to select multiple.</div>
+            <div class="form-text">{tr "Used by zabbix sources with host group scope \"teams\" to restrict which alerts are fetched. Ctrl-click to select multiple."}</div>
         </div>
     |]
   where
@@ -64,12 +66,12 @@ hostGroupPicker availableGroups selected = case availableGroups of
 -- behavior (and the host-group filter above) lives in static/app.js, keyed
 -- on the data-hg-filter / data-member-* hooks; without JS every row stays
 -- visible (pre-rewrite behavior).
-memberPicker :: [User] -> [(Id User, Text)] -> Html
+memberPicker :: (CurrentUserRecord ~ User, ?request :: Request) => [User] -> [(Id User, Text)] -> Html
 memberPicker users currentRoles =
     [hsx|
     <div class="mb-3" data-testid="team-members">
-        <label class="form-label">Members</label>
-        <input type="text" class="form-control form-control-sm mb-1" placeholder="Filter users to add…" data-testid="team-members-filter" data-member-filter=""/>
+        <label class="form-label">{tr "Members"}</label>
+        <input type="text" class="form-control form-control-sm mb-1" placeholder={tr "Filter users to add…"} data-testid="team-members-filter" data-member-filter=""/>
         {forEach users userRow}
     </div>
 |]

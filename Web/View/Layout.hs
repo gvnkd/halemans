@@ -6,6 +6,7 @@ import Application.Helper.Controller ()
 import Application.Helper.Theme (bsTheme, themeFromSettings)
 import Application.Helper.Timezone (timezoneFromSettings)
 import Application.Helper.View
+import Application.Service.I18n (languageCode)
 import Application.Version (appVersion)
 import Generated.Types
 import IHP.Environment
@@ -17,7 +18,7 @@ defaultLayout :: Html -> Html
 defaultLayout inner =
     [hsx|
 <!DOCTYPE html>
-<html lang="en" data-theme={activeTheme} data-bs-theme={activeBsTheme} data-tz={activeTimezone}>
+<html lang={activeLanguage} data-theme={activeTheme} data-bs-theme={activeBsTheme} data-tz={activeTimezone}>
     <head>
         {metaTags}
 
@@ -27,7 +28,7 @@ defaultLayout inner =
         <title>{pageTitleOrDefault "Halemans"}</title>
     </head>
     <body>
-        <a href="#content" class="skip-to-content">Skip to content</a>
+        <a href="#content" class="skip-to-content">{tr "Skip to content"}</a>
         {navigation}
         <div class="container-fluid mt-4 px-4">
             {renderFlashMessages}
@@ -46,6 +47,8 @@ defaultLayout inner =
         Nothing -> "dark"
     activeBsTheme :: Text
     activeBsTheme = bsTheme activeTheme
+    activeLanguage :: Text
+    activeLanguage = languageCode currentLanguage
     -- Fixed offset from users.settings.timezone ("" = browser default);
     -- app.js reads data-tz when localizing <time class="utc-time"> elements.
     activeTimezone :: Text
@@ -63,28 +66,28 @@ navigation =
             <span class="badge app-version-badge" data-testid="app-version">v{appVersion}</span>
         </div>
         <ul class="navbar-nav me-auto">
-            <li class="nav-item"><a class="nav-link" href={DashboardAction}>Overview</a></li>
-            <li class="nav-item"><a class="nav-link" href={DashboardsAction}>Dashboards</a></li>
-            <li class="nav-item"><a class="nav-link" href={AlertsAction}>Alerts</a></li>
-            <li class="nav-item"><a class="nav-link" href={ReportsAction} data-testid="nav-reports">Reports</a></li>
-            <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>Blackouts</a></li>
-            <li class="nav-item"><a class="nav-link" href={SourcesAction}>Sources</a></li>
+            <li class="nav-item"><a class="nav-link" href={DashboardAction}>{tr "Overview"}</a></li>
+            <li class="nav-item"><a class="nav-link" href={DashboardsAction}>{tr "Dashboards"}</a></li>
+            <li class="nav-item"><a class="nav-link" href={AlertsAction}>{tr "Alerts"}</a></li>
+            <li class="nav-item"><a class="nav-link" href={ReportsAction} data-testid="nav-reports">{tr "Reports"}</a></li>
+            <li class="nav-item"><a class="nav-link" href={BlackoutsAction}>{tr "Blackouts"}</a></li>
+            <li class="nav-item"><a class="nav-link" href={SourcesAction}>{tr "Sources"}</a></li>
             <li class="nav-item dropdown">
-                <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">Admin</a>
+                <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">{tr "Admin"}</a>
                 <ul class="dropdown-menu">
-                    <li><a class="dropdown-item" href={TeamsAction}>Teams</a></li>
-                    <li><a class="dropdown-item" href={GroupingRulesAction}>Grouping rules</a></li>
-                    <li><a class="dropdown-item" href={FieldMappingsAction}>Field mappings</a></li>
-                    <li><a class="dropdown-item" href={NotificationRulesAction}>Notification rules</a></li>
-                    <li><a class="dropdown-item" href={EscalationPoliciesAction}>Escalation policies</a></li>
-                    <li><a class="dropdown-item" href={IntegrationsAction}>Integrations</a></li>
+                    <li><a class="dropdown-item" href={TeamsAction}>{tr "Teams"}</a></li>
+                    <li><a class="dropdown-item" href={GroupingRulesAction}>{tr "Grouping rules"}</a></li>
+                    <li><a class="dropdown-item" href={FieldMappingsAction}>{tr "Field mappings"}</a></li>
+                    <li><a class="dropdown-item" href={NotificationRulesAction}>{tr "Notification rules"}</a></li>
+                    <li><a class="dropdown-item" href={EscalationPoliciesAction}>{tr "Escalation policies"}</a></li>
+                    <li><a class="dropdown-item" href={IntegrationsAction}>{tr "Integrations"}</a></li>
                     <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>
-                    <li><a class="dropdown-item" href={AssetsAdminAction}>Assets</a></li>
-                    <li><a class="dropdown-item" href={LlmQueueAction}>LLM queue</a></li>
-                    <li><a class="dropdown-item" href={AdminAction}>Jobs</a></li>
-                    <li><a class="dropdown-item" href={AdminDatabaseAction}>Database</a></li>
-                    <li><a class="dropdown-item" href={AuditExportsAction}>Audit exports</a></li>
-                    <li><a class="dropdown-item" href={FlappingAction}>Flapping</a></li>
+                    <li><a class="dropdown-item" href={AssetsAdminAction}>{tr "Assets"}</a></li>
+                    <li><a class="dropdown-item" href={LlmQueueAction}>{tr "LLM queue"}</a></li>
+                    <li><a class="dropdown-item" href={AdminAction}>{tr "Jobs"}</a></li>
+                    <li><a class="dropdown-item" href={AdminDatabaseAction}>{tr "Database"}</a></li>
+                    <li><a class="dropdown-item" href={AuditExportsAction}>{tr "Audit exports"}</a></li>
+                    <li><a class="dropdown-item" href={FlappingAction}>{tr "Flapping"}</a></li>
                 </ul>
             </li>
         </ul>
@@ -100,11 +103,11 @@ userMenu = case currentUserOrNothing of
     Just user ->
         [hsx|
         <li class="nav-item"><a class="nav-link" href={ProfileAction}>{user.email}</a></li>
-        <li class="nav-item"><a class="nav-link js-delete js-delete-no-confirm" href={DeleteSessionAction} data-testid="logout">Logout</a></li>
+        <li class="nav-item"><a class="nav-link js-delete js-delete-no-confirm" href={DeleteSessionAction} data-testid="logout">{tr "Logout"}</a></li>
     |]
     Nothing ->
         [hsx|
-        <li class="nav-item"><a class="nav-link" href={NewSessionAction}>Login</a></li>
+        <li class="nav-item"><a class="nav-link" href={NewSessionAction}>{tr "Login"}</a></li>
     |]
 
 -- The 'assetPath' function used below appends a `?v=SOME_VERSION` to the static assets in production

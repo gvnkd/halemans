@@ -53,11 +53,11 @@ instance Controller IntegrationsController where
                         |> fetchOneOrNothing
                 case existing of
                     Just _ -> do
-                        setErrorMessage ("Jira connection " <> form.jiraName <> " already exists")
+                        setErrorMessage (trp "Jira connection {name} already exists" [("name", form.jiraName)])
                         redirectTo NewJiraConfigAction
                     Nothing -> do
                         _ <- createRecord (applyJiraForm form (newRecord @JiraConfig))
-                        setSuccessMessage ("Created Jira connection " <> form.jiraName)
+                        setSuccessMessage (trp "Created Jira connection {name}" [("name", form.jiraName)])
                         redirectTo IntegrationsAction
     action EditJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
@@ -78,12 +78,12 @@ instance Controller IntegrationsController where
                         |> fetchOneOrNothing
                 case clash of
                     Just other | get #id other /= jiraConfigId -> do
-                        setErrorMessage ("Jira connection " <> form.jiraName <> " already exists")
+                        setErrorMessage (trp "Jira connection {name} already exists" [("name", form.jiraName)])
                         redirectTo (EditJiraConfigAction jiraConfigId)
                     _ -> do
                         now <- getCurrentTime
                         _ <- updateRecord (applyJiraForm form config |> set #updatedAt now)
-                        setSuccessMessage ("Updated Jira connection " <> form.jiraName)
+                        setSuccessMessage (trp "Updated Jira connection {name}" [("name", form.jiraName)])
                         redirectTo IntegrationsAction
     action ToggleJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
@@ -94,24 +94,24 @@ instance Controller IntegrationsController where
                 |> set #enabled (not config.enabled)
                 |> set #updatedAt now
                 |> updateRecord
-        setSuccessMessage ((if config.enabled then "Disabled " else "Enabled ") <> config.name)
+        setSuccessMessage (trp (if config.enabled then "Disabled {name}" else "Enabled {name}") [("name", config.name)])
         redirectTo IntegrationsAction
     action DeleteJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch jiraConfigId
         deleteRecord config
-        setSuccessMessage ("Deleted Jira connection " <> config.name)
+        setSuccessMessage (trp "Deleted Jira connection {name}" [("name", config.name)])
         redirectTo IntegrationsAction
     action TestJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch jiraConfigId
-        result <- jiraServiceConfig config >>= maybe (pure (Left "token env var not set")) Jira.connectionOk
+        result <- jiraServiceConfig config >>= maybe (pure (Left (tr "token env var not set"))) Jira.connectionOk
         case result of
-            Right () -> setSuccessMessage ("Jira reachable at " <> config.baseUrl <> " (" <> config.name <> ")")
+            Right () -> setSuccessMessage (trp "Jira reachable at {url} ({name})" [("url", config.baseUrl), ("name", config.name)])
             Left err -> do
                 let ?context = ?context.frameworkConfig
                 Log.logWarn ("jira connection test failed: " <> err)
-                setErrorMessage ("Jira " <> config.name <> " unreachable: " <> err)
+                setErrorMessage (trp "Jira {name} unreachable: {error}" [("name", config.name), ("error", err)])
         redirectTo IntegrationsAction
     action NewCmdbConfigAction = do
         requirePrivilege "manage_sources"
@@ -130,11 +130,11 @@ instance Controller IntegrationsController where
                         |> fetchOneOrNothing
                 case existing of
                     Just _ -> do
-                        setErrorMessage ("CMDB connection " <> form.cmdbName <> " already exists")
+                        setErrorMessage (trp "CMDB connection {name} already exists" [("name", form.cmdbName)])
                         redirectTo NewCmdbConfigAction
                     Nothing -> do
                         _ <- createRecord (applyCmdbForm form (newRecord @CmdbConfig))
-                        setSuccessMessage ("Created CMDB connection " <> form.cmdbName)
+                        setSuccessMessage (trp "Created CMDB connection {name}" [("name", form.cmdbName)])
                         redirectTo IntegrationsAction
     action EditCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
@@ -155,12 +155,12 @@ instance Controller IntegrationsController where
                         |> fetchOneOrNothing
                 case clash of
                     Just other | get #id other /= cmdbConfigId -> do
-                        setErrorMessage ("CMDB connection " <> form.cmdbName <> " already exists")
+                        setErrorMessage (trp "CMDB connection {name} already exists" [("name", form.cmdbName)])
                         redirectTo (EditCmdbConfigAction cmdbConfigId)
                     _ -> do
                         now <- getCurrentTime
                         _ <- updateRecord (applyCmdbForm form config |> set #updatedAt now)
-                        setSuccessMessage ("Updated CMDB connection " <> form.cmdbName)
+                        setSuccessMessage (trp "Updated CMDB connection {name}" [("name", form.cmdbName)])
                         redirectTo IntegrationsAction
     action ToggleCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
@@ -171,24 +171,24 @@ instance Controller IntegrationsController where
                 |> set #enabled (not config.enabled)
                 |> set #updatedAt now
                 |> updateRecord
-        setSuccessMessage ((if config.enabled then "Disabled " else "Enabled ") <> config.name)
+        setSuccessMessage (trp (if config.enabled then "Disabled {name}" else "Enabled {name}") [("name", config.name)])
         redirectTo IntegrationsAction
     action DeleteCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch cmdbConfigId
         deleteRecord config
-        setSuccessMessage ("Deleted CMDB connection " <> config.name)
+        setSuccessMessage (trp "Deleted CMDB connection {name}" [("name", config.name)])
         redirectTo IntegrationsAction
     action TestCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch cmdbConfigId
-        result <- cmdbServiceConfig config >>= maybe (pure (Left "token env var not set")) Cmdb.connectionOk
+        result <- cmdbServiceConfig config >>= maybe (pure (Left (tr "token env var not set"))) Cmdb.connectionOk
         case result of
-            Right () -> setSuccessMessage ("Confluence reachable at " <> config.baseUrl <> " (" <> config.name <> ")")
+            Right () -> setSuccessMessage (trp "Confluence reachable at {url} ({name})" [("url", config.baseUrl), ("name", config.name)])
             Left err -> do
                 let ?context = ?context.frameworkConfig
                 Log.logWarn ("confluence connection test failed: " <> err)
-                setErrorMessage ("Confluence " <> config.name <> " unreachable: " <> err)
+                setErrorMessage (trp "Confluence {name} unreachable: {error}" [("name", config.name), ("error", err)])
         redirectTo IntegrationsAction
 
 -- Builds the service-layer config from a DB row, resolving token_env
@@ -242,12 +242,12 @@ readJiraForm =
         , jiraProjects = csvList (param @Text "projects")
         }
 
-validateJiraForm :: JiraConfigForm -> Maybe Text
+validateJiraForm :: (?request :: Request) => JiraConfigForm -> Maybe Text
 validateJiraForm form
-    | Text.null form.jiraName = Just "Name is required"
-    | Text.null form.jiraBaseUrl = Just "Base URL is required"
-    | Text.null form.jiraTokenEnv = Just "Token env var is required"
-    | form.jiraApiVersion `notElem` ["2", "3"] = Just "API version must be 2 or 3"
+    | Text.null form.jiraName = Just (tr "Name is required")
+    | Text.null form.jiraBaseUrl = Just (tr "Base URL is required")
+    | Text.null form.jiraTokenEnv = Just (tr "Token env var is required")
+    | form.jiraApiVersion `notElem` ["2", "3"] = Just (tr "API version must be 2 or 3")
     | otherwise = Nothing
 
 applyJiraForm :: JiraConfigForm -> JiraConfig -> JiraConfig
@@ -275,11 +275,11 @@ readCmdbForm =
         , cmdbSpaces = csvList (param @Text "spaces")
         }
 
-validateCmdbForm :: CmdbConfigForm -> Maybe Text
+validateCmdbForm :: (?request :: Request) => CmdbConfigForm -> Maybe Text
 validateCmdbForm form
-    | Text.null form.cmdbName = Just "Name is required"
-    | Text.null form.cmdbBaseUrl = Just "Base URL is required"
-    | Text.null form.cmdbTokenEnv = Just "Token env var is required"
+    | Text.null form.cmdbName = Just (tr "Name is required")
+    | Text.null form.cmdbBaseUrl = Just (tr "Base URL is required")
+    | Text.null form.cmdbTokenEnv = Just (tr "Token env var is required")
     | otherwise = Nothing
 
 applyCmdbForm :: CmdbConfigForm -> CmdbConfig -> CmdbConfig

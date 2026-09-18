@@ -22,7 +22,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>Alerts</h1>
+        <h1>{tr "Alerts"}</h1>
         {severityCounts}
         {table}
     |]

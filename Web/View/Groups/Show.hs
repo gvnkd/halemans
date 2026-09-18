@@ -68,7 +68,7 @@ instance View ShowView where
                 then
                     [hsx|
                     <form method="POST" action={AckGroupAction group.id} class="mb-3">
-                        <button type="submit" class="btn btn-sm btn-warning" data-testid="ack-group">Ack all firing</button>
+                        <button type="submit" class="btn btn-sm btn-warning" data-testid="ack-group">{tr "Ack all firing"}</button>
                     </form>
                 |]
                 else mempty

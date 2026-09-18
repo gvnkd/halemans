@@ -12,6 +12,7 @@ import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import qualified Application.Service.Assets as Assets
 import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.Assets.Types (Ticket (..))
+import Application.Service.I18n (defaultLanguageName)
 import Application.Service.Jira (JiraIssue (..))
 import qualified Application.Service.Jira as Jira
 import qualified Application.Service.Jira.DbConfig as JiraDb
@@ -245,12 +246,15 @@ renderFilterPrompt alert candidates role = do
             |> filterWhere (#name, templateName)
             |> filterWhere (#active, True)
             |> fetchOneOrNothing
+    -- Worker-side prompt: no queueing user, so {{language}} falls back to the
+    -- system default (HALEMANS_DEFAULT_LANGUAGE).
+    languageName <- defaultLanguageName
     pure case template of
-        Just row -> renderTemplate row.body (filterBindings alert candidates) <> relevanceContract
+        Just row -> renderTemplate row.body (filterBindings languageName alert candidates) <> relevanceContract
         Nothing -> relevancePrompt alert candidates
 
-filterBindings :: Alert -> [RelatedCandidate] -> [(Text, Text)]
-filterBindings alert candidates =
+filterBindings :: Text -> Alert -> [RelatedCandidate] -> [(Text, Text)]
+filterBindings languageName alert candidates =
     bindingsFor
         emptyInputs
             { piTitle = alert.title
@@ -260,6 +264,7 @@ filterBindings alert candidates =
             , piService = fromMaybe "unknown" (effectiveFieldText FieldService alert)
             , piCheckName = fromMaybe "unknown" alert.checkName
             , piDescription = Text.take 500 alert.description
+            , piLanguage = languageName
             }
         ++ [("candidates", Text.intercalate "\n" (map candidateLine candidates))]
 

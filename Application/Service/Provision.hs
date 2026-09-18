@@ -1,6 +1,5 @@
 module Application.Service.Provision (
     ProvisionConfig (..),
-    Section (..),
     UserItem (..),
     SourceItem (..),
     WebhookTokenItem (..),
@@ -15,6 +14,7 @@ module Application.Service.Provision (
     AutoAnalyzeItem (..),
     ProvisionError (..),
     parseProvisionConfig,
+    parseProvisionConfigYaml,
     parseHostGroupsFile,
     applyProvisionConfig,
 ) where
@@ -33,9 +33,10 @@ import Data.Aeson (FromJSON, Value, parseJSON, (.!=), (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.Aeson.Types (Parser, parseEither)
+import Data.Aeson.Types (JSONPathElement (..), Parser, parseEither, (<?>))
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List as List
+import qualified Data.Yaml as Yaml
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.HaskellSupport (set)
@@ -44,33 +45,33 @@ import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, query)
 import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv)
+import System.FilePath (takeExtension)
+import Text.Read (readMaybe)
 
 -- Declarative bootstrap provisioning (design_docs/milestone_7.md). At process
--- start (hooked from Config.hs) the JSON file named by
+-- start (hooked from Config.hs) the JSON or YAML file named by
 -- HALEMANS_PROVISION_CONFIG is upserted into users, sources, teams, LLM
--- config, field mappings and dashboards. Every category applies inside one
--- transaction guarded by an advisory lock so racing web/worker boots
--- converge. Parsing is strict: unknown keys and unresolvable references
--- abort startup.
+-- config, field mappings and dashboards. Sections are maps keyed by the
+-- entity's natural key (user email, source/team/provider/config name, facet +
+-- rank, user email + dashboard name) so duplicates are caught by json/yaml
+-- tooling; a single top-level "strict" flag switches every present section to
+-- reconcile-delete semantics. Every category applies inside one transaction
+-- guarded by an advisory lock so racing web/worker boots converge. Parsing is
+-- strict: unknown keys and unresolvable references abort startup.
 
 newtype ProvisionError = ProvisionError Text deriving stock (Show)
 instance Exception ProvisionError
 
-data Section a = Section
-    { strict :: Bool
-    , items :: [a]
-    }
-    deriving (Eq, Show)
-
 data ProvisionConfig = ProvisionConfig
-    { users :: Maybe (Section UserItem)
-    , sources :: Maybe (Section SourceItem)
-    , teams :: Maybe (Section TeamItem)
-    , llm :: Maybe (Section LlmItem)
-    , fieldMappings :: Maybe (Section FieldMappingItem)
-    , dashboards :: Maybe (Section DashboardItem)
-    , jiraConfigs :: Maybe (Section JiraConfigItem)
-    , cmdbConfigs :: Maybe (Section CmdbConfigItem)
+    { strict :: Bool
+    , users :: Maybe [UserItem]
+    , sources :: Maybe [SourceItem]
+    , teams :: Maybe [TeamItem]
+    , llm :: Maybe [LlmItem]
+    , fieldMappings :: Maybe [FieldMappingItem]
+    , dashboards :: Maybe [DashboardItem]
+    , jiraConfigs :: Maybe [JiraConfigItem]
+    , cmdbConfigs :: Maybe [CmdbConfigItem]
     , autoAnalyze :: Maybe AutoAnalyzeItem
     }
     deriving (Eq, Show)
@@ -97,8 +98,9 @@ data SourceItem = SourceItem
     }
     deriving (Eq, Show)
 
-newtype WebhookTokenItem = WebhookTokenItem
-    { tokenEnv :: Text
+data WebhookTokenItem = WebhookTokenItem
+    { wtName :: Text
+    , tokenEnv :: Text
     }
     deriving (Eq, Show)
 
@@ -175,7 +177,7 @@ data CmdbConfigItem = CmdbConfigItem
     }
     deriving (Eq, Show)
 
--- Auto-analysis gate (milestone 10 §5): singleton, not a Section — no
+-- Auto-analysis gate (milestone 10 §5): singleton, not a keyed section — no
 -- strict-delete semantics; an absent key leaves the row untouched.
 -- environments scopes to effective env names; absent/empty = all envs.
 data AutoAnalyzeItem = AutoAnalyzeItem
@@ -194,29 +196,35 @@ rejectUnknownFields allowed o =
         [] -> pure ()
         (unknown : _) -> fail ("unknown field \"" <> cs unknown <> "\"")
 
-instance (FromJSON a) => FromJSON (Section a) where
-    parseJSON = Aeson.withObject "section" \o -> do
-        rejectUnknownFields ["strict", "items"] o
-        strict <- o .:? "strict" .!= False
-        maybeItems <- o .:? "items"
-        items <- case maybeItems of
-            Nothing
-                | strict -> fail "strict section requires an explicit \"items\" list (use \"items\": [] to empty the category)"
-                | otherwise -> pure []
-            Just items -> pure items
-        pure Section{..}
+-- Sections are maps keyed by the entity's natural key; the key is threaded
+-- into the item parser so the item records keep their name/email fields.
+parseKeyed :: Text -> (Text -> Aeson.Object -> Parser a) -> Value -> Parser [a]
+parseKeyed label parseItem = Aeson.withObject (cs label) \o ->
+    forM (KeyMap.toList o) \(key, value) ->
+        Aeson.withObject (cs label) (parseItem (Key.toText key)) value <?> Key key
 
-instance FromJSON UserItem where
-    parseJSON = Aeson.withObject "users item" \o -> do
-        rejectUnknownFields ["email", "displayName", "passwordHash", "roles", "settings"] o
-        email <- o .: "email"
-        displayName <- o .:? "displayName" .!= ""
-        passwordHash <- o .: "passwordHash"
-        roles <- o .:? "roles" .!= []
-        settings <- o .:? "settings" .!= Aeson.object []
-        validateTheme settings
-        validateTimezone settings
-        pure UserItem{..}
+parseSection :: Key.Key -> (Text -> Aeson.Object -> Parser a) -> Aeson.Object -> Parser (Maybe [a])
+parseSection name parseItem o = case KeyMap.lookup name o of
+    Nothing -> pure Nothing
+    Just value -> Just <$> (parseKeyed (Key.toText name) parseItem value <?> Key name)
+
+-- Nested map keys that must be integers (field mapping ranks, prompt
+-- template versions).
+parseIntKey :: Text -> Text -> Parser Int
+parseIntKey label key = case readMaybe (cs key) of
+    Just n -> pure n
+    Nothing -> fail (cs (label <> " \"" <> key <> "\" is not an integer"))
+
+parseUserItem :: Text -> Aeson.Object -> Parser UserItem
+parseUserItem email o = do
+    rejectUnknownFields ["displayName", "passwordHash", "roles", "settings"] o
+    displayName <- o .:? "displayName" .!= ""
+    passwordHash <- o .: "passwordHash"
+    roles <- o .:? "roles" .!= []
+    settings <- o .:? "settings" .!= Aeson.object []
+    validateTheme settings
+    validateTimezone settings
+    pure UserItem{..}
 
 validateTheme :: Value -> Parser ()
 validateTheme settings = case settings of
@@ -238,136 +246,148 @@ validateTimezone settings = case settings of
         Just _ -> fail "settings.timezone must be a string"
     _ -> fail "settings must be an object"
 
-instance FromJSON WebhookTokenItem where
-    parseJSON = Aeson.withObject "webhook token" \o -> do
-        rejectUnknownFields ["tokenEnv"] o
-        tokenEnv <- o .: "tokenEnv"
-        pure WebhookTokenItem{..}
+parseWebhookTokenItem :: Text -> Aeson.Object -> Parser WebhookTokenItem
+parseWebhookTokenItem wtName o = do
+    rejectUnknownFields ["tokenEnv"] o
+    tokenEnv <- o .: "tokenEnv"
+    pure WebhookTokenItem{..}
 
-instance FromJSON SourceItem where
-    parseJSON = Aeson.withObject "sources item" \o -> do
-        rejectUnknownFields ["type", "name", "baseUrl", "env", "pollIntervalSeconds", "enabled", "config", "webhookTokens", "hostGroupsFile"] o
-        sourceType <- o .: "type"
-        unless (sourceType `elem` ["zabbix", "grafana", "alertmanager", "webhook"]) do
-            fail ("unknown source type \"" <> cs sourceType <> "\"")
-        name <- o .: "name"
-        baseUrl <- o .:? "baseUrl" .!= ""
-        env <- o .:? "env" .!= "dev"
-        pollIntervalSeconds <- o .:? "pollIntervalSeconds" .!= 30
-        enabled <- o .:? "enabled" .!= True
-        config <- o .:? "config" .!= Aeson.object []
-        webhookTokens <- o .:? "webhookTokens" .!= []
-        hostGroupsFile <- o .:? "hostGroupsFile"
-        when (isJust hostGroupsFile && sourceType /= "zabbix") do
-            fail "hostGroupsFile is only valid for zabbix sources"
-        pure SourceItem{..}
+parseSourceItem :: Text -> Aeson.Object -> Parser SourceItem
+parseSourceItem name o = do
+    rejectUnknownFields ["type", "baseUrl", "env", "pollIntervalSeconds", "enabled", "config", "webhookTokens", "hostGroupsFile"] o
+    sourceType <- o .: "type"
+    unless (sourceType `elem` ["zabbix", "grafana", "alertmanager", "webhook"]) do
+        fail ("unknown source type \"" <> cs sourceType <> "\"")
+    baseUrl <- o .:? "baseUrl" .!= ""
+    env <- o .:? "env" .!= "dev"
+    pollIntervalSeconds <- o .:? "pollIntervalSeconds" .!= 30
+    enabled <- o .:? "enabled" .!= True
+    config <- o .:? "config" .!= Aeson.object []
+    webhookTokens <- case KeyMap.lookup "webhookTokens" o of
+        Nothing -> pure []
+        Just value -> parseKeyed "webhookTokens" parseWebhookTokenItem value <?> Key "webhookTokens"
+    hostGroupsFile <- o .:? "hostGroupsFile"
+    when (isJust hostGroupsFile && sourceType /= "zabbix") do
+        fail "hostGroupsFile is only valid for zabbix sources"
+    pure SourceItem{..}
 
-instance FromJSON MemberItem where
-    parseJSON = Aeson.withObject "team member" \o -> do
-        rejectUnknownFields ["email", "role"] o
-        email <- o .: "email"
-        rawRole <- o .:? "role" .!= "member"
-        let role = if rawRole == "" then "member" else rawRole
-        pure MemberItem{..}
+parseMemberItem :: Text -> Aeson.Object -> Parser MemberItem
+parseMemberItem email o = do
+    rejectUnknownFields ["role"] o
+    rawRole <- o .:? "role" .!= "member"
+    let role = if rawRole == "" then "member" else rawRole
+    pure MemberItem{..}
 
-instance FromJSON TeamItem where
-    parseJSON = Aeson.withObject "teams item" \o -> do
-        rejectUnknownFields ["name", "description", "hostGroups", "defaults", "members", "defaultDashboardConfig"] o
-        name <- o .: "name"
-        -- Absent keys stay Nothing so re-provisioning does not clobber
-        -- UI-edited values; an explicit key (even [] or "") overwrites.
-        description <- o .:? "description"
-        hostGroups <- o .:? "hostGroups"
-        defaults <- o .:? "defaults"
-        members <- o .:? "members" .!= []
-        defaultDashboardConfig <- o .:? "defaultDashboardConfig"
-        pure TeamItem{..}
+parseTeamItem :: Text -> Aeson.Object -> Parser TeamItem
+parseTeamItem name o = do
+    rejectUnknownFields ["description", "hostGroups", "defaults", "members", "defaultDashboardConfig"] o
+    -- Absent keys stay Nothing so re-provisioning does not clobber
+    -- UI-edited values; an explicit key (even [] or "") overwrites.
+    description <- o .:? "description"
+    hostGroups <- o .:? "hostGroups"
+    defaults <- o .:? "defaults"
+    members <- case KeyMap.lookup "members" o of
+        Nothing -> pure []
+        Just value -> parseKeyed "members" parseMemberItem value <?> Key "members"
+    defaultDashboardConfig <- o .:? "defaultDashboardConfig"
+    pure TeamItem{..}
 
-instance FromJSON PromptTemplateItem where
-    parseJSON = Aeson.withObject "prompt template" \o -> do
-        rejectUnknownFields ["name", "version", "body", "active", "notes"] o
-        name <- o .: "name"
-        version <- o .: "version"
-        body <- o .: "body"
-        active <- o .:? "active" .!= False
-        notes <- o .:? "notes"
-        pure PromptTemplateItem{..}
+parsePromptTemplateItem :: Text -> Int -> Aeson.Object -> Parser PromptTemplateItem
+parsePromptTemplateItem name version o = do
+    rejectUnknownFields ["body", "active", "notes"] o
+    body <- o .: "body"
+    active <- o .:? "active" .!= False
+    notes <- o .:? "notes"
+    pure PromptTemplateItem{..}
 
-instance FromJSON LlmItem where
-    parseJSON = Aeson.withObject "llm item" \o -> do
-        rejectUnknownFields ["providerName", "endpoint", "model", "apiKeyEnv", "toolsEnabled", "enabled", "promptTemplates"] o
-        providerName <- o .: "providerName"
-        endpoint <- o .: "endpoint"
-        model <- o .: "model"
-        apiKeyEnv <- o .:? "apiKeyEnv"
-        toolsEnabled <- o .:? "toolsEnabled" .!= False
-        enabled <- o .:? "enabled" .!= False
-        promptTemplates <- o .:? "promptTemplates" .!= []
-        pure LlmItem{..}
+parsePromptTemplateScope :: Text -> Aeson.Object -> Parser [PromptTemplateItem]
+parsePromptTemplateScope name o =
+    forM (KeyMap.toList o) \(key, value) -> do
+        version <- parseIntKey "prompt template version" (Key.toText key)
+        Aeson.withObject "promptTemplates" (parsePromptTemplateItem name version) value <?> Key key
 
-instance FromJSON FieldMappingItem where
-    parseJSON = Aeson.withObject "fieldMappings item" \o -> do
-        rejectUnknownFields ["facet", "rank", "kind", "key", "enabled"] o
-        facet <- o .: "facet"
-        rank <- o .: "rank"
-        kind <- o .: "kind"
-        key <- o .: "key"
-        enabled <- o .:? "enabled" .!= True
-        unless (kind `elem` ["field", "label", "attr"]) do
-            fail ("unknown field mapping kind \"" <> cs kind <> "\" (valid: field label attr)")
-        when (kind == "field" && isNothing (parseAlertField key)) do
-            fail ("unknown alert field \"" <> cs key <> "\" (valid: env host service check severity status)")
-        pure FieldMappingItem{..}
+parseLlmItem :: Text -> Aeson.Object -> Parser LlmItem
+parseLlmItem providerName o = do
+    rejectUnknownFields ["endpoint", "model", "apiKeyEnv", "toolsEnabled", "enabled", "promptTemplates"] o
+    endpoint <- o .: "endpoint"
+    model <- o .: "model"
+    apiKeyEnv <- o .:? "apiKeyEnv"
+    toolsEnabled <- o .:? "toolsEnabled" .!= False
+    enabled <- o .:? "enabled" .!= False
+    promptTemplates <- case KeyMap.lookup "promptTemplates" o of
+        Nothing -> pure []
+        Just value -> fmap concat (parseKeyed "promptTemplates" parsePromptTemplateScope value) <?> Key "promptTemplates"
+    pure LlmItem{..}
 
-instance FromJSON DashboardItem where
-    parseJSON = Aeson.withObject "dashboards item" \o -> do
-        rejectUnknownFields ["name", "userEmail", "config", "position", "isDefault"] o
-        name <- o .: "name"
-        userEmail <- o .: "userEmail"
-        config <- o .:? "config" .!= Aeson.toJSON ([] :: [Value])
-        position <- o .:? "position" .!= 0
-        isDefault <- o .:? "isDefault" .!= False
-        case decodeDashboardConfig config of
-            Left err -> fail ("invalid config for dashboard \"" <> cs name <> "\": " <> cs err)
-            Right _ -> pure ()
-        pure DashboardItem{..}
+parseFieldMappingItem :: Text -> Int -> Aeson.Object -> Parser FieldMappingItem
+parseFieldMappingItem facet rank o = do
+    rejectUnknownFields ["kind", "key", "enabled"] o
+    kind <- o .: "kind"
+    key <- o .: "key"
+    enabled <- o .:? "enabled" .!= True
+    unless (kind `elem` ["field", "label", "attr"]) do
+        fail ("unknown field mapping kind \"" <> cs kind <> "\" (valid: field label attr)")
+    when (kind == "field" && isNothing (parseAlertField key)) do
+        fail ("unknown alert field \"" <> cs key <> "\" (valid: env host service check severity status)")
+    pure FieldMappingItem{..}
+
+parseFieldMappingScope :: Text -> Aeson.Object -> Parser [FieldMappingItem]
+parseFieldMappingScope facet o =
+    forM (KeyMap.toList o) \(key, value) -> do
+        rank <- parseIntKey "field mapping rank" (Key.toText key)
+        Aeson.withObject "fieldMappings" (parseFieldMappingItem facet rank) value <?> Key key
+
+parseDashboardItem :: Text -> Text -> Aeson.Object -> Parser DashboardItem
+parseDashboardItem userEmail name o = do
+    rejectUnknownFields ["config", "position", "isDefault"] o
+    config <- o .:? "config" .!= Aeson.toJSON ([] :: [Value])
+    position <- o .:? "position" .!= 0
+    isDefault <- o .:? "isDefault" .!= False
+    case decodeDashboardConfig config of
+        Left err -> fail ("invalid config for dashboard \"" <> cs name <> "\": " <> cs err)
+        Right _ -> pure ()
+    pure DashboardItem{..}
+
+parseDashboardScope :: Text -> Aeson.Object -> Parser [DashboardItem]
+parseDashboardScope userEmail o =
+    forM (KeyMap.toList o) \(key, value) ->
+        Aeson.withObject "dashboards" (parseDashboardItem userEmail (Key.toText key)) value <?> Key key
 
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
-        rejectUnknownFields ["users", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "autoAnalyze"] o
-        users <- o .:? "users"
-        sources <- o .:? "sources"
-        teams <- o .:? "teams"
-        llm <- o .:? "llm"
-        fieldMappings <- o .:? "fieldMappings"
-        dashboards <- o .:? "dashboards"
-        jiraConfigs <- o .:? "jiraConfigs"
-        cmdbConfigs <- o .:? "cmdbConfigs"
+        rejectUnknownFields ["strict", "users", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "autoAnalyze"] o
+        strict <- o .:? "strict" .!= False
+        users <- parseSection "users" parseUserItem o
+        sources <- parseSection "sources" parseSourceItem o
+        teams <- parseSection "teams" parseTeamItem o
+        llm <- parseSection "llm" parseLlmItem o
+        fieldMappings <- fmap concat <$> parseSection "fieldMappings" parseFieldMappingScope o
+        dashboards <- fmap concat <$> parseSection "dashboards" parseDashboardScope o
+        jiraConfigs <- parseSection "jiraConfigs" parseJiraConfigItem o
+        cmdbConfigs <- parseSection "cmdbConfigs" parseCmdbConfigItem o
         autoAnalyze <- o .:? "autoAnalyze"
         pure ProvisionConfig{..}
 
-instance FromJSON JiraConfigItem where
-    parseJSON = Aeson.withObject "jiraConfigs item" \o -> do
-        rejectUnknownFields ["name", "baseUrl", "tokenEnv", "apiVersion", "projects", "enabled"] o
-        jiraConfigName <- o .: "name"
-        jiraBaseUrl <- o .: "baseUrl"
-        jiraTokenEnv <- o .: "tokenEnv"
-        jiraApiVersion <- o .:? "apiVersion" .!= "3"
-        jiraProjects <- o .:? "projects" .!= []
-        jiraEnabled <- o .:? "enabled" .!= True
-        unless (jiraApiVersion `elem` ["2", "3"]) do
-            fail ("unknown jira apiVersion \"" <> cs jiraApiVersion <> "\" (valid: 2 3)")
-        pure JiraConfigItem{..}
+parseJiraConfigItem :: Text -> Aeson.Object -> Parser JiraConfigItem
+parseJiraConfigItem jiraConfigName o = do
+    rejectUnknownFields ["baseUrl", "tokenEnv", "apiVersion", "projects", "enabled"] o
+    jiraBaseUrl <- o .: "baseUrl"
+    jiraTokenEnv <- o .: "tokenEnv"
+    jiraApiVersion <- o .:? "apiVersion" .!= "3"
+    jiraProjects <- o .:? "projects" .!= []
+    jiraEnabled <- o .:? "enabled" .!= True
+    unless (jiraApiVersion `elem` ["2", "3"]) do
+        fail ("unknown jira apiVersion \"" <> cs jiraApiVersion <> "\" (valid: 2 3)")
+    pure JiraConfigItem{..}
 
-instance FromJSON CmdbConfigItem where
-    parseJSON = Aeson.withObject "cmdbConfigs item" \o -> do
-        rejectUnknownFields ["name", "baseUrl", "tokenEnv", "spaces", "enabled"] o
-        cmdbConfigName <- o .: "name"
-        cmdbBaseUrl <- o .: "baseUrl"
-        cmdbTokenEnv <- o .: "tokenEnv"
-        cmdbSpaces <- o .:? "spaces" .!= []
-        cmdbEnabled <- o .:? "enabled" .!= True
-        pure CmdbConfigItem{..}
+parseCmdbConfigItem :: Text -> Aeson.Object -> Parser CmdbConfigItem
+parseCmdbConfigItem cmdbConfigName o = do
+    rejectUnknownFields ["baseUrl", "tokenEnv", "spaces", "enabled"] o
+    cmdbBaseUrl <- o .: "baseUrl"
+    cmdbTokenEnv <- o .: "tokenEnv"
+    cmdbSpaces <- o .:? "spaces" .!= []
+    cmdbEnabled <- o .:? "enabled" .!= True
+    pure CmdbConfigItem{..}
 
 instance FromJSON AutoAnalyzeItem where
     parseJSON = Aeson.withObject "autoAnalyze" \o -> do
@@ -384,29 +404,40 @@ instance FromJSON AutoAnalyzeItem where
                 fail ("unknown severity \"" <> cs severity <> "\" (valid: critical high warning info)")
         pure AutoAnalyzeItem{..}
 
+configFromValue :: Value -> Either Text ProvisionConfig
+configFromValue value = case parseEither parseJSON value of
+    Left err -> Left (cs err)
+    Right config -> Right config
+
 parseProvisionConfig :: LByteString -> Either Text ProvisionConfig
 parseProvisionConfig bytes = case Aeson.eitherDecode bytes of
     Left err -> Left ("invalid JSON: " <> cs err)
-    Right value -> case parseEither parseJSON value of
-        Left err -> Left (cs err)
-        Right config -> Right config
+    Right value -> configFromValue value
+
+parseProvisionConfigYaml :: ByteString -> Either Text ProvisionConfig
+parseProvisionConfigYaml bytes = case Yaml.decodeEither' bytes of
+    Left err -> Left ("invalid YAML: " <> tshow err)
+    Right value -> configFromValue value
 
 -- Entry point (milestone_7.md §3): read + apply, aborting startup on any error.
 
 applyProvisionConfig :: (?modelContext :: ModelContext) => FilePath -> IO ()
 applyProvisionConfig path = do
     bytes <- LBS.readFile path
-    config <- case parseProvisionConfig bytes of
+    let parsed
+            | takeExtension path `elem` [".yaml", ".yml"] = parseProvisionConfigYaml (LBS.toStrict bytes)
+            | otherwise = parseProvisionConfig bytes
+    config <- case parsed of
         Left err -> throwIO $ ProvisionError (cs path <> ": " <> err)
         Right config -> pure config
-    applyUsers config.users
-    applySources config.sources
-    applyTeams config.teams
-    applyLlm config.llm
-    applyFieldMappings config.fieldMappings
-    applyDashboards config.dashboards
-    applyJiraConfigs config.jiraConfigs
-    applyCmdbConfigs config.cmdbConfigs
+    applyUsers config.strict config.users
+    applySources config.strict config.sources
+    applyTeams config.strict config.teams
+    applyLlm config.strict config.llm
+    applyFieldMappings config.strict config.fieldMappings
+    applyDashboards config.strict config.dashboards
+    applyJiraConfigs config.strict config.jiraConfigs
+    applyCmdbConfigs config.strict config.cmdbConfigs
     applyAutoAnalyze config.autoAnalyze
     putStrLn ("provision: applied " <> cs path)
 
@@ -428,11 +459,11 @@ withProvisionLock category action = withTransaction do
 
 -- Users (milestone_7.md §4)
 
-applyUsers :: (?modelContext :: ModelContext) => Maybe (Section UserItem) -> IO ()
-applyUsers Nothing = pure ()
-applyUsers (Just section) = withProvisionLock "users" do
-    forM_ section.items upsertUser
-    when section.strict (strictDeleteUsers section.items)
+applyUsers :: (?modelContext :: ModelContext) => Bool -> Maybe [UserItem] -> IO ()
+applyUsers _ Nothing = pure ()
+applyUsers strict (Just items) = withProvisionLock "users" do
+    forM_ items upsertUser
+    when strict (strictDeleteUsers items)
 
 upsertUser :: (?modelContext :: ModelContext) => UserItem -> IO ()
 upsertUser item = do
@@ -488,11 +519,11 @@ strictDeleteUsers items = do
 
 -- Sources (milestone_7.md §5)
 
-applySources :: (?modelContext :: ModelContext) => Maybe (Section SourceItem) -> IO ()
-applySources Nothing = pure ()
-applySources (Just section) = withProvisionLock "sources" do
-    forM_ section.items upsertSource
-    when section.strict (strictDeleteSources section.items)
+applySources :: (?modelContext :: ModelContext) => Bool -> Maybe [SourceItem] -> IO ()
+applySources _ Nothing = pure ()
+applySources strict (Just items) = withProvisionLock "sources" do
+    forM_ items upsertSource
+    when strict (strictDeleteSources items)
 
 upsertSource :: (?modelContext :: ModelContext) => SourceItem -> IO ()
 upsertSource item = do
@@ -596,11 +627,11 @@ strictDeleteSources items = do
 
 -- Teams (milestone_7.md §6)
 
-applyTeams :: (?modelContext :: ModelContext) => Maybe (Section TeamItem) -> IO ()
-applyTeams Nothing = pure ()
-applyTeams (Just section) = withProvisionLock "teams" do
-    forM_ section.items (upsertTeam section.strict)
-    when section.strict (strictDeleteTeams section.items)
+applyTeams :: (?modelContext :: ModelContext) => Bool -> Maybe [TeamItem] -> IO ()
+applyTeams _ Nothing = pure ()
+applyTeams strict (Just items) = withProvisionLock "teams" do
+    forM_ items (upsertTeam strict)
+    when strict (strictDeleteTeams items)
 
 upsertTeam :: (?modelContext :: ModelContext) => Bool -> TeamItem -> IO ()
 upsertTeam strict item = do
@@ -675,11 +706,11 @@ strictDeleteTeams items = do
 
 -- LLM config (milestone_7.md §7)
 
-applyLlm :: (?modelContext :: ModelContext) => Maybe (Section LlmItem) -> IO ()
-applyLlm Nothing = pure ()
-applyLlm (Just section) = withProvisionLock "llm" do
-    forM_ section.items upsertLlm
-    when section.strict (strictReconcileLlm section.items)
+applyLlm :: (?modelContext :: ModelContext) => Bool -> Maybe [LlmItem] -> IO ()
+applyLlm _ Nothing = pure ()
+applyLlm strict (Just items) = withProvisionLock "llm" do
+    forM_ items upsertLlm
+    when strict (strictReconcileLlm items)
 
 upsertLlm :: (?modelContext :: ModelContext) => LlmItem -> IO ()
 upsertLlm item = do
@@ -776,11 +807,11 @@ strictReconcileLlm items = do
 -- Field mappings (milestone 9 §2): upsert on the UNIQUE (facet, rank) pair;
 -- re-provision updates kind/key/enabled in place.
 
-applyFieldMappings :: (?modelContext :: ModelContext) => Maybe (Section FieldMappingItem) -> IO ()
-applyFieldMappings Nothing = pure ()
-applyFieldMappings (Just section) = withProvisionLock "fieldMappings" do
-    forM_ section.items upsertFieldMapping
-    when section.strict (strictDeleteFieldMappings section.items)
+applyFieldMappings :: (?modelContext :: ModelContext) => Bool -> Maybe [FieldMappingItem] -> IO ()
+applyFieldMappings _ Nothing = pure ()
+applyFieldMappings strict (Just items) = withProvisionLock "fieldMappings" do
+    forM_ items upsertFieldMapping
+    when strict (strictDeleteFieldMappings items)
 
 upsertFieldMapping :: (?modelContext :: ModelContext) => FieldMappingItem -> IO ()
 upsertFieldMapping item = do
@@ -811,11 +842,11 @@ strictDeleteFieldMappings items = do
 -- Dashboards: upsert by (user email, name). isDefault flips the user's other
 -- dashboards off (mirrors dashboards_default_idx unique-WHERE).
 
-applyDashboards :: (?modelContext :: ModelContext) => Maybe (Section DashboardItem) -> IO ()
-applyDashboards Nothing = pure ()
-applyDashboards (Just section) = withProvisionLock "dashboards" do
-    forM_ section.items upsertDashboard
-    when section.strict (strictDeleteDashboards section.items)
+applyDashboards :: (?modelContext :: ModelContext) => Bool -> Maybe [DashboardItem] -> IO ()
+applyDashboards _ Nothing = pure ()
+applyDashboards strict (Just items) = withProvisionLock "dashboards" do
+    forM_ items upsertDashboard
+    when strict (strictDeleteDashboards items)
 
 upsertDashboard :: (?modelContext :: ModelContext) => DashboardItem -> IO ()
 upsertDashboard item = do
@@ -868,12 +899,12 @@ strictDeleteDashboards items = do
 -- name; tokenEnv must resolve to a set env var (secrets stay env
 -- references). Nothing references these tables: strict deletes are safe.
 
-applyJiraConfigs :: (?modelContext :: ModelContext) => Maybe (Section JiraConfigItem) -> IO ()
-applyJiraConfigs Nothing = pure ()
-applyJiraConfigs (Just section) = withProvisionLock "jiraConfigs" do
-    forM_ section.items upsertJiraConfig
-    when section.strict do
-        let keepNames = map (.jiraConfigName) section.items
+applyJiraConfigs :: (?modelContext :: ModelContext) => Bool -> Maybe [JiraConfigItem] -> IO ()
+applyJiraConfigs _ Nothing = pure ()
+applyJiraConfigs strict (Just items) = withProvisionLock "jiraConfigs" do
+    forM_ items upsertJiraConfig
+    when strict do
+        let keepNames = map (.jiraConfigName) items
         allConfigs <- query @JiraConfig |> fetch
         forM_ (filter (\row -> row.name `notElem` keepNames) allConfigs) deleteRecord
 
@@ -904,12 +935,12 @@ upsertJiraConfig item = do
                 |> updateRecord
     pure ()
 
-applyCmdbConfigs :: (?modelContext :: ModelContext) => Maybe (Section CmdbConfigItem) -> IO ()
-applyCmdbConfigs Nothing = pure ()
-applyCmdbConfigs (Just section) = withProvisionLock "cmdbConfigs" do
-    forM_ section.items upsertCmdbConfig
-    when section.strict do
-        let keepNames = map (.cmdbConfigName) section.items
+applyCmdbConfigs :: (?modelContext :: ModelContext) => Bool -> Maybe [CmdbConfigItem] -> IO ()
+applyCmdbConfigs _ Nothing = pure ()
+applyCmdbConfigs strict (Just items) = withProvisionLock "cmdbConfigs" do
+    forM_ items upsertCmdbConfig
+    when strict do
+        let keepNames = map (.cmdbConfigName) items
         allConfigs <- query @CmdbConfig |> fetch
         forM_ (filter (\row -> row.name `notElem` keepNames) allConfigs) deleteRecord
 

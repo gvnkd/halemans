@@ -11,7 +11,7 @@ newtype DatabaseView = DatabaseView
 instance View DatabaseView where
     html DatabaseView{..} =
         [hsx|
-        <h1>Database</h1>
+        <h1>{tr "Database"}</h1>
         <p>
             <span data-testid="db-name">{stats.databaseName}</span>
             —
@@ -19,22 +19,22 @@ instance View DatabaseView where
         </p>
         <div class="d-flex gap-2 mb-4">
             <form method="POST" action={AdminDbAnalyzeAction}>
-                <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="db-analyze-all">ANALYZE all tables</button>
+                <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="db-analyze-all">{tr "ANALYZE all tables"}</button>
             </form>
-            <form method="POST" action={AdminDbVacuumAction} data-confirm="Run VACUUM ANALYZE on the whole database? This can take a while.">
-                <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="db-vacuum-all">VACUUM ANALYZE database</button>
+            <form method="POST" action={AdminDbVacuumAction} data-confirm={tr "Run VACUUM ANALYZE on the whole database? This can take a while."}>
+                <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="db-vacuum-all">{tr "VACUUM ANALYZE database"}</button>
             </form>
         </div>
-        <h2>Tables</h2>
+        <h2>{tr "Tables"}</h2>
         <table class="table" data-testid="db-tables-table">
             <thead>
                 <tr>
-                    <th>Table</th>
-                    <th>Live rows</th>
-                    <th>Dead rows</th>
-                    <th>Total size</th>
-                    <th>Last vacuum</th>
-                    <th>Last analyze</th>
+                    <th>{tr "Table"}</th>
+                    <th>{tr "Live rows"}</th>
+                    <th>{tr "Dead rows"}</th>
+                    <th>{tr "Total size"}</th>
+                    <th>{tr "Last vacuum"}</th>
+                    <th>{tr "Last analyze"}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -53,9 +53,9 @@ renderTableRow row =
         <td>{live}</td>
         <td>{deadCell}</td>
         <td>{formatBytes row.totalBytes}</td>
-        <td>{utcTimeOrHtml "never" row.lastVacuum}</td>
-        <td>{utcTimeOrHtml "never" row.lastAnalyze}</td>
-        <td>{inlinePostFormHtml (pathTo (AdminDbAnalyzeTableAction row.tableName)) "Analyze" "btn btn-sm btn-outline-secondary" (Just "db-table-analyze") False}</td>
+        <td>{utcTimeOrHtml (tr "never") row.lastVacuum}</td>
+        <td>{utcTimeOrHtml (tr "never") row.lastAnalyze}</td>
+        <td>{inlinePostFormHtml (pathTo (AdminDbAnalyzeTableAction row.tableName)) (tr "Analyze") "btn btn-sm btn-outline-secondary" (Just "db-table-analyze") False}</td>
     </tr>
 |]
   where

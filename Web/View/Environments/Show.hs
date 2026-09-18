@@ -144,8 +144,8 @@ instance View ShowView where
             <h1>{environmentName}</h1>
             {activeBlackoutNotice}
             <div class="mb-2" data-testid="view-toggle">
-                <a href={toggleUrl "flat"} class={toggleClass "flat"} data-testid="view-flat">Flat</a>
-                <a href={toggleUrl "grouped"} class={toggleClass "grouped"} data-testid="view-grouped">Grouped</a>
+                <a href={toggleUrl "flat"} class={toggleClass "flat"} data-testid="view-flat">{tr "Flat"}</a>
+                <a href={toggleUrl "grouped"} class={toggleClass "grouped"} data-testid="view-grouped">{tr "Grouped"}</a>
             </div>
             {content}
         </div>
@@ -161,7 +161,7 @@ instance View ShowView where
                 else
                     [hsx|
                     <div class="alert alert-secondary blackout-notice" data-testid="blackout-notice">
-                        Blackout active — new alerts are suppressed.
+                        {tr "Blackout active — new alerts are suppressed."}
                     </div>
                 |]
         toggleUrl mode = pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (envBaseItems filters mode))

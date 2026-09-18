@@ -99,7 +99,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>Overview</h1>
+        <h1>{tr "Overview"}</h1>
         {teamDefaultBanner}
         <div id="env-cards" data-testid="env-cards" data-live-scope="dashboard">
             {forEach cards renderCard}
@@ -117,11 +117,11 @@ teamBanner :: Aeson.Value -> Html
 teamBanner config =
     [hsx|
     <div class="alert alert-info d-flex justify-content-between align-items-center" data-testid="team-default-banner">
-        <span>Your team has a default dashboard template.</span>
+        <span>{tr "Your team has a default dashboard template."}</span>
         <form method="POST" action={CreateDashboardAction}>
             <input type="hidden" name="name" value="Team default"/>
             <input type="hidden" name="config" value={cs (Aeson.encode config) :: Text}/>
-            <button type="submit" class="btn btn-sm btn-primary" data-testid="save-team-default">Save as my dashboard</button>
+            <button type="submit" class="btn btn-sm btn-primary" data-testid="save-team-default">{tr "Save as my dashboard"}</button>
         </form>
     </div>
 |]
@@ -151,7 +151,7 @@ renderCard card =
 cardLink :: EnvCard -> Html
 cardLink card = case card.cardEnvName of
     Just name -> [hsx|<a href={ShowEnvironmentAction name}>{name}</a>|]
-    Nothing -> [hsx|<span>unassigned</span>|]
+    Nothing -> [hsx|<span>{tr "unassigned"}</span>|]
 
 cardDomId :: EnvCard -> Text
 cardDomId card = "env-card-" <> fromMaybe "unassigned" card.cardEnvName

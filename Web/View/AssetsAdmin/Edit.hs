@@ -10,14 +10,14 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>Edit Assets info source</h1>
-        <p class="text-muted">{config.name} is {stateText}. Enabling/disabling happens from the list.</p>
+        <h1>{tr "Edit Assets info source"}</h1>
+        <p class="text-muted">{trp "{name} is {state}. Enabling/disabling happens from the list." [("name", config.name), ("state", stateText)]}</p>
         <form method="POST" action={UpdateAssetsConfigAction (get #id config)} data-testid="assets-config-form">
             {assetsConfigFormFields (Just config)}
-            <button type="submit" class="btn btn-primary" data-testid="assets-config-save">Save info source</button>
-            <a href={AssetsAdminAction} class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" data-testid="assets-config-save">{tr "Save info source"}</button>
+            <a href={AssetsAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
         </form>
     |]
       where
         stateText :: Text
-        stateText = if config.enabled then "enabled" else "disabled"
+        stateText = if config.enabled then tr "enabled" else tr "disabled"

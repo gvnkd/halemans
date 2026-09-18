@@ -12,26 +12,26 @@ jiraConfigFormFields :: Maybe JiraConfig -> Html
 jiraConfigFormFields config =
     [hsx|
     <div class="mb-3">
-        <label class="form-label">Name</label>
+        <label class="form-label">{tr "Name"}</label>
         <input name="name" type="text" class="form-control" value={field (.name)} data-testid="jira-config-name" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Base URL</label>
+        <label class="form-label">{tr "Base URL"}</label>
         <input name="baseUrl" type="text" class="form-control" value={field (.baseUrl)} data-testid="jira-config-base-url" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Token env var</label>
+        <label class="form-label">{tr "Token env var"}</label>
         <input name="tokenEnv" type="text" class="form-control" value={field (.tokenEnv)} data-testid="jira-config-token-env" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">REST API version</label>
+        <label class="form-label">{tr "REST API version"}</label>
         <select name="apiVersion" class="form-select" data-testid="jira-config-api-version">
             <option value="3" selected={versionIs "3"}>3 (Jira Cloud)</option>
             <option value="2" selected={versionIs "2"}>2 (Jira Server / Data Center)</option>
         </select>
     </div>
     <div class="mb-3">
-        <label class="form-label">Projects (comma-separated; empty = search all)</label>
+        <label class="form-label">{tr "Projects (comma-separated; empty = search all)"}</label>
         <input name="projects" type="text" class="form-control" value={projectsText} data-testid="jira-config-projects"/>
     </div>
 |]
@@ -47,19 +47,19 @@ cmdbConfigFormFields :: Maybe CmdbConfig -> Html
 cmdbConfigFormFields config =
     [hsx|
     <div class="mb-3">
-        <label class="form-label">Name</label>
+        <label class="form-label">{tr "Name"}</label>
         <input name="name" type="text" class="form-control" value={field (.name)} data-testid="cmdb-config-name" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Base URL</label>
+        <label class="form-label">{tr "Base URL"}</label>
         <input name="baseUrl" type="text" class="form-control" value={field (.baseUrl)} data-testid="cmdb-config-base-url" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Token env var</label>
+        <label class="form-label">{tr "Token env var"}</label>
         <input name="tokenEnv" type="text" class="form-control" value={field (.tokenEnv)} data-testid="cmdb-config-token-env" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">Spaces (comma-separated; empty = search all)</label>
+        <label class="form-label">{tr "Spaces (comma-separated; empty = search all)"}</label>
         <input name="spaces" type="text" class="form-control" value={spacesText} data-testid="cmdb-config-spaces"/>
     </div>
 |]

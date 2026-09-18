@@ -12,9 +12,9 @@
 # First-boot setup:
 #   cd deploy/docker
 #   cp .env.example .env            # fill in the required values
-#   cp provision.example.json provision.json
+#   cp provision.example.json provision.json    # or provision.example.yaml
 #   docker run --rm ghcr.io/gvnkd/halemans:latest /bin/GenPassword 'your-plaintext-password'
-#     # paste the printed hash into provision.json (users.items[].passwordHash)
+#     # paste the printed hash into provision.json (users.<email>.passwordHash)
 #   docker compose up -d
 #
 # Upgrades: docker compose pull && docker compose up -d — pending database
@@ -24,7 +24,9 @@
 #
 # The app listens on HALEMANS_PORT (default 8000). The provision config is
 # applied on every app/worker boot (idempotent upserts); edit provision.json
-# and `docker compose up -d --force-recreate app worker` to re-apply.
+# and `docker compose up -d --force-recreate app worker` to re-apply. YAML is
+# accepted too — point HALEMANS_PROVISION_CONFIG at a .yaml/.yml file with the
+# same structure.
 #
 # Zabbix host groups without hostgroup.get API permission: export the groups
 # once from a privileged session (hostgroup.get, output groupid+name), save
@@ -38,7 +40,7 @@
 name: halemans
 
 x-halemans-env: &halemans-env
-  DATABASE_URL: postgresql://halemans:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/halemans
+  DATABASE_URL: postgresql://${POSTGRES_USER:-halemans}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/halemans
   HALEMANS_PROVISION_CONFIG: /provision/provision.json
 
 x-halemans-image: &halemans-image
@@ -52,7 +54,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: halemans
-      POSTGRES_USER: halemans
+      # Renaming only takes effect on a FRESH db-data volume (POSTGRES_USER is
+      # consumed once, at first init of the cluster).
+      POSTGRES_USER: ${POSTGRES_USER:-halemans}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       # PG18+ layout: mount the parent dir so the datadir lives in a
@@ -60,7 +64,7 @@ services:
       # the mount boundary (docker-library/postgres#37).
       - db-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U halemans -d halemans"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d halemans"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -74,7 +78,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://halemans:${POSTGRES_PASSWORD}@db:5432/halemans
+      DATABASE_URL: postgresql://${POSTGRES_USER:-halemans}:${POSTGRES_PASSWORD}@db:5432/halemans
 
   # Seeds the background poller jobs once per deployment.
   enqueue-pollers:

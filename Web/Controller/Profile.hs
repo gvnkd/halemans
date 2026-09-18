@@ -3,6 +3,7 @@ module Web.Controller.Profile where
 import Application.Helper.Theme (isValidTheme, themeFromSettings, themes)
 import Application.Helper.Timezone (isValidTimezone, timezoneFromSettings)
 import Application.Service.Api.Token (allScopes, newApiToken)
+import Application.Service.I18n (isValidLanguage, languageFromSettings, languages)
 import Application.Service.Push (vapidPublicKey)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
@@ -54,7 +55,25 @@ instance Controller ProfileController where
                         |> updateRecord
                 redirectTo ProfileAction
             else do
-                setErrorMessage ("Unknown timezone: " <> timezone)
+                setErrorMessage (trp "Unknown timezone: {timezone}" [("timezone", timezone)])
+                redirectTo ProfileAction
+
+    -- UI language (users.settings.language): drives tr/trp in views and is
+    -- stamped onto manually queued LLM analyses as their prompt language.
+    action UpdateLanguageAction = do
+        let language = paramOrNothing @Text "language" |> fromMaybe "" |> Text.strip
+        if isValidLanguage language
+            then do
+                let merged = case currentUser.settings of
+                        Aeson.Object o -> Aeson.Object (KeyMap.insert "language" (Aeson.String language) o)
+                        _ -> object ["language" .= language]
+                _ <-
+                    currentUser
+                        |> set #settings merged
+                        |> updateRecord
+                redirectTo ProfileAction
+            else do
+                setErrorMessage (trp "Unknown language: {language}" [("language", language)])
                 redirectTo ProfileAction
 
     -- API token management (design_docs/milestone_6.md §4): the plaintext is
@@ -64,7 +83,7 @@ instance Controller ProfileController where
             scopes = [scope | scope <- allScopes, isJust (paramOrNothing @Text (cs (scopeParamName scope)))]
         if Text.null name || null scopes
             then do
-                setErrorMessage "API token needs a name and at least one scope."
+                setErrorMessage (tr "API token needs a name and at least one scope.")
                 redirectTo ProfileAction
             else do
                 (_, plaintext) <- newApiToken currentUserId name scopes Nothing
@@ -97,4 +116,5 @@ renderProfile newToken = do
     pushPublicKey <- vapidPublicKey
     let currentTheme = themeFromSettings currentUser.settings
         currentTimezone = timezoneFromSettings currentUser.settings
+        currentLanguage = languageFromSettings currentUser.settings
     render ShowView{..}

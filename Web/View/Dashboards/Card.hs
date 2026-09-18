@@ -23,7 +23,7 @@ instance View CardView where
         <h1>{dashboard.name}</h1>
         <h2 data-testid="dashboard-card-title">{cardTitleText expandedCard.ecCard}</h2>
         <p>
-            <a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-outline-secondary">Back to dashboard</a>
+            <a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-outline-secondary">{tr "Back to dashboard"}</a>
         </p>
         {table}
         {emptyNote}
@@ -72,5 +72,5 @@ instance View CardView where
         valueItem = maybe [] (\value -> [("value", Just (cs value))]) expandedCard.ecValue
         emptyNote =
             if null alerts
-                then [hsx|<p class="text-secondary" data-testid="dashboard-card-empty">No matching alerts.</p>|]
+                then [hsx|<p class="text-secondary" data-testid="dashboard-card-empty">{tr "No matching alerts."}</p>|]
                 else mempty

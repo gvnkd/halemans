@@ -3,7 +3,10 @@ module Web.View.Profile.Show where
 import Application.Helper.Theme (themes)
 import Application.Helper.Timezone (timezones)
 import Application.Service.Api.Token (allScopes)
+import Application.Service.I18n (Language, languageCode, languages)
 import qualified Data.Text as Text
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
+import Network.Wai (Request)
 import Web.View.Fragments (inlinePostFormHtml)
 import Web.View.Prelude
 
@@ -12,6 +15,7 @@ data ShowView = ShowView
     , pushPublicKey :: Maybe Text
     , currentTheme :: Text
     , currentTimezone :: Maybe Text
+    , currentLanguage :: Language
     , apiTokens :: [ApiToken]
     , newToken :: Maybe Text
     }
@@ -19,47 +23,55 @@ data ShowView = ShowView
 instance View ShowView where
     html ShowView{..} =
         [hsx|
-        <h1>Profile</h1>
+        <h1>{tr "Profile"}</h1>
         <p>{currentUser.email}</p>
 
-        <h2>Theme</h2>
+        <h2>{tr "Theme"}</h2>
         <div class="theme-picker mb-3" data-testid="theme-picker">
             {forEach themes themeButton}
         </div>
 
-        <h2>Timezone</h2>
+        <h2>{tr "Timezone"}</h2>
         <form method="POST" action={UpdateTimezoneAction} class="mb-3" data-testid="timezone-form">
             <select name="timezone" class="form-select w-auto" data-autosubmit="" data-testid="timezone-select">
-                <option value="" selected={isNothing currentTimezone}>Browser default</option>
+                <option value="" selected={isNothing currentTimezone}>{tr "Browser default"}</option>
                 {forEach timezones timezoneOption}
             </select>
-            <p class="form-text mb-0">Timestamps render in this timezone; the default follows your browser.</p>
+            <p class="form-text mb-0">{tr "Timestamps render in this timezone; the default follows your browser."}</p>
         </form>
 
-        <h2>API tokens</h2>
+        <h2>{tr "Language"}</h2>
+        <form method="POST" action={UpdateLanguageAction} class="mb-3" data-testid="language-form">
+            <select name="language" class="form-select w-auto" data-autosubmit="" data-testid="language-select">
+                {forEach languages languageOption}
+            </select>
+            <p class="form-text mb-0">{tr "UI language; also used as the prompt language for LLM analyses you queue."}</p>
+        </form>
+
+        <h2>{tr "API tokens"}</h2>
         {newTokenBanner}
         <form method="POST" action={CreateApiTokenAction} class="mb-3" data-testid="api-token-create-form">
             <div class="row g-2 align-items-end">
                 <div class="col-auto">
-                    <label class="form-label">Name</label>
+                    <label class="form-label">{tr "Name"}</label>
                     <input type="text" name="name" class="form-control" data-testid="api-token-name"/>
                 </div>
                 <div class="col-auto">
                     {forEach allScopes scopeCheckbox}
                 </div>
                 <div class="col-auto">
-                    <button type="submit" class="btn btn-primary" data-testid="api-token-create">Create token</button>
+                    <button type="submit" class="btn btn-primary" data-testid="api-token-create">{tr "Create token"}</button>
                 </div>
             </div>
         </form>
         <table class="table" data-testid="api-tokens-table">
             <thead>
                 <tr>
-                    <th>Name</th>
-                    <th>Prefix</th>
-                    <th>Scopes</th>
-                    <th>Last used</th>
-                    <th>Expires</th>
+                    <th>{tr "Name"}</th>
+                    <th>{tr "Prefix"}</th>
+                    <th>{tr "Scopes"}</th>
+                    <th>{tr "Last used"}</th>
+                    <th>{tr "Expires"}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -68,36 +80,38 @@ instance View ShowView where
             </tbody>
         </table>
 
-        <h2>Push notifications</h2>
+        <h2>{tr "Push notifications"}</h2>
         {pushSection}
 
-        <h2>Dashboards</h2>
-        <p><a href={DashboardsAction} data-testid="profile-dashboards-link">Manage my dashboards</a></p>
+        <h2>{tr "Dashboards"}</h2>
+        <p><a href={DashboardsAction} data-testid="profile-dashboards-link">{tr "Manage my dashboards"}</a></p>
     |]
       where
         themeButton theme = themeChoiceButton currentTheme theme
         timezoneOption timezone =
             [hsx|<option value={timezone} selected={currentTimezone == Just timezone}>{timezone}</option>|]
+        languageOption (code, label) =
+            [hsx|<option value={code} selected={languageCode currentLanguage == code}>{label}</option>|]
         newTokenBanner = case newToken of
             Nothing -> mempty
             Just plaintext ->
                 [hsx|
                     <div class="alert alert-success" data-testid="api-token-created">
-                        <p class="mb-1">Token created. Copy it now — it is shown exactly once and never stored.</p>
+                        <p class="mb-1">{tr "Token created. Copy it now — it is shown exactly once and never stored."}</p>
                         <code data-testid="api-token-plaintext">{plaintext}</code>
                     </div>
                 |]
         pushSection = case pushPublicKey of
             Nothing ->
                 [hsx|
-                    <p class="text-warning" data-testid="push-unavailable">Push is not configured on this server (no VAPID keys).</p>
+                    <p class="text-warning" data-testid="push-unavailable">{tr "Push is not configured on this server (no VAPID keys)."}</p>
                 |]
             Just publicKey ->
                 [hsx|
                     <div data-testid="push-settings" data-vapid-key={publicKey}>
-                        <p>{length subscriptions} subscription(s) registered for this account.</p>
-                        <button class="btn btn-sm btn-primary" id="push-subscribe-button" data-testid="push-subscribe">Enable push for this browser</button>
-                        <button class="btn btn-sm btn-outline-secondary" id="push-unsubscribe-button" data-testid="push-unsubscribe">Disable</button>
+                        <p>{trp "Push subscriptions registered for this account: {n}" [("n", tshow (length subscriptions))]}</p>
+                        <button class="btn btn-sm btn-primary" id="push-subscribe-button" data-testid="push-subscribe">{tr "Enable push for this browser"}</button>
+                        <button class="btn btn-sm btn-outline-secondary" id="push-unsubscribe-button" data-testid="push-unsubscribe">{tr "Disable"}</button>
                         <span id="push-status" data-testid="push-status"></span>
                     </div>
                 |]
@@ -113,7 +127,7 @@ scopeCheckbox scope =
   where
     scopeParamName s = "scope_" <> Text.map (\c -> if c == ':' then '_' else c) s
 
-renderApiTokenRow :: ApiToken -> Html
+renderApiTokenRow :: (CurrentUserRecord ~ User, ?request :: Request) => ApiToken -> Html
 renderApiTokenRow token =
     let scopes :: Text
         scopes = Text.intercalate ", " token.scopes
@@ -123,15 +137,15 @@ renderApiTokenRow token =
         <td data-testid="api-token-row-name">{token.name}</td>
         <td><code>{token.prefix}</code></td>
         <td>{scopes}</td>
-        <td data-testid="api-token-last-used">{utcTimeOrHtml "never" token.lastUsedAt}</td>
-        <td>{utcTimeOrHtml "never" token.expiresAt}</td>
+        <td data-testid="api-token-last-used">{utcTimeOrHtml (tr "never") token.lastUsedAt}</td>
+        <td>{utcTimeOrHtml (tr "never") token.expiresAt}</td>
         <td>{revokeCell revoked}</td>
     </tr>
 |]
   where
     revokeCell revoked
-        | revoked = [hsx|<span class="badge bg-secondary" data-testid="api-token-revoked">revoked</span>|]
-        | otherwise = inlinePostFormHtml (pathTo (RevokeApiTokenAction (get #id token))) "Revoke" "btn btn-sm btn-outline-danger" (Just "api-token-revoke") False
+        | revoked = [hsx|<span class="badge bg-secondary" data-testid="api-token-revoked">{tr "revoked"}</span>|]
+        | otherwise = inlinePostFormHtml (pathTo (RevokeApiTokenAction (get #id token))) (tr "Revoke") "btn btn-sm btn-outline-danger" (Just "api-token-revoke") False
 
 -- Clicking a choice swaps data-theme live and persists via POST
 -- /profile/theme (static/app.js halemansApplyTheme).

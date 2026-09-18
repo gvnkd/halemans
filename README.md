@@ -152,13 +152,13 @@ Pre-built images carry the server, worker, schema bootstrap and password tool:
 ```bash
 cd deploy/docker
 cp .env.example .env                       # fill in required values
-cp provision.example.json provision.json
+cp provision.example.json provision.json     # or provision.example.yaml
 docker run --rm ghcr.io/gvnkd/halemans:latest /bin/GenPassword 'your-plaintext-password'
-# paste the printed hash into provision.json (users.items[].passwordHash)
+# paste the printed hash into provision.json (users.<email>.passwordHash)
 docker compose up -d
 ```
 
-The app listens on `HALEMANS_PORT` (default 8000). `provision.json` is re-applied on every boot — edit and `docker compose up -d --force-recreate app worker` to update. Images are built by GitHub Actions (`.github/workflows/docker-images.yaml`) and pushed to `ghcr.io/gvnkd/halemans:{latest,sha,v*}` (override with `HALEMANS_IMAGE` if you host your own).
+The app listens on `HALEMANS_PORT` (default 8000). `provision.json` is re-applied on every boot — edit and `docker compose up -d --force-recreate app worker` to update. Images are built by GitHub Actions (`.github/workflows/docker-images.yaml`) and pushed to `ghcr.io/gvnkd/halemans:{latest,sha,v*}` (override with `HALEMANS_IMAGE` if you host your own). The provision config can be JSON or YAML (`.json` / `.yaml` / `.yml` by file extension, identical structure); sections are maps keyed by the entity name so duplicates are flagged by json/yaml tooling, and a top-level `"strict": true` makes every listed section reconcile-delete anything not in the file.
 
 See [`deploy/docker/.env.example`](deploy/docker/.env.example) for all configuration options (source tokens, Jira/Confluence, LLM endpoint, session secret).
 
@@ -212,10 +212,10 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 
 ```json
 {
-  "jiraConfigs": {"items": [{"name": "jira-prod", "baseUrl": "https://jira.example.com",
-    "tokenEnv": "JIRA_TOKEN", "apiVersion": "3", "projects": ["OPS", "SRE"]}]},
-  "cmdbConfigs": {"items": [{"name": "confluence-prod", "baseUrl": "https://confluence.example.com",
-    "tokenEnv": "CONFLUENCE_TOKEN", "spaces": ["OPS", "INFRA"]}]}
+  "jiraConfigs": {"jira-prod": {"baseUrl": "https://jira.example.com",
+    "tokenEnv": "JIRA_TOKEN", "apiVersion": "3", "projects": ["OPS", "SRE"]}},
+  "cmdbConfigs": {"confluence-prod": {"baseUrl": "https://confluence.example.com",
+    "tokenEnv": "CONFLUENCE_TOKEN", "spaces": ["OPS", "INFRA"]}}
 }
 ```
 

@@ -39,7 +39,7 @@ instance Controller FieldMappingsController where
                         |> set #key (param @Text "key")
                         |> set #enabled enabledParam
                         |> createRecord
-                setSuccessMessage "Field mapping created"
+                setSuccessMessage (tr "Field mapping created")
                 redirectTo FieldMappingsAction
     action EditFieldMappingAction{fieldMappingId} = do
         requirePrivilege "manage_rules"
@@ -61,27 +61,27 @@ instance Controller FieldMappingsController where
                         |> set #key (param @Text "key")
                         |> set #enabled enabledParam
                         |> updateRecord
-                setSuccessMessage "Field mapping updated"
+                setSuccessMessage (tr "Field mapping updated")
                 redirectTo FieldMappingsAction
     action DeleteFieldMappingAction{fieldMappingId} = do
         requirePrivilege "manage_rules"
         mapping <- fetch fieldMappingId
         deleteRecord mapping
-        setSuccessMessage "Field mapping deleted"
+        setSuccessMessage (tr "Field mapping deleted")
         redirectTo FieldMappingsAction
     action RecomputeFacetsAction = do
         requirePrivilege "manage_rules"
         void do
             newRecord @FacetBackfillJob
                 |> createRecord
-        setSuccessMessage "Facet recompute enqueued (non-closed alerts, chunked)"
+        setSuccessMessage (tr "Facet recompute enqueued (non-closed alerts, chunked)")
         redirectTo FieldMappingsAction
 
 validateMappingParams :: (?request :: Request, ?respond :: Respond) => Either Text ()
 validateMappingParams
-    | kindParam `notElem` ["field", "label", "attr"] = Left "kind must be field, label or attr"
+    | kindParam `notElem` ["field", "label", "attr"] = Left (tr "kind must be field, label or attr")
     | kindParam == "field" && isNothing (parseAlertField (param @Text "key")) =
-        Left "field mappings must reference an alert field: env, host, service, check, severity, status"
+        Left (tr "field mappings must reference an alert field: env, host, service, check, severity, status")
     | otherwise = Right ()
   where
     kindParam = param @Text "kind" :: Text

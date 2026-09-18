@@ -59,6 +59,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.List as List
 import qualified Data.Text as Text
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Web.View.Prelude
 
 -- Pre-rendered HSX fragments shared by initial page renders and the
@@ -99,18 +100,18 @@ alertRowHtmlCols groupKey cols alert =
     textCell value = [hsx|{fromMaybe "" value}|]
     mutedCell =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>{fromMaybe "muted" alert.suppressedBy}</span>|]
+            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>{fromMaybe (tr "muted") alert.suppressedBy}</span>|]
             else [hsx|<span class="text-muted">-</span>|]
     suppressedMarker =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>muted</span>|]
+            then [hsx|<span class="badge status-suppressed" title={suppressedTitle}>{tr "muted"}</span>|]
             else mempty
     suppressedTitle :: Text
     suppressedTitle = case alert.suppressedBy of
-        Just "source" -> "muted at source"
-        _ -> "under blackout"
+        Just "source" -> tr "muted at source"
+        _ -> tr "under blackout"
     groupBadge = case alert.groupId of
-        Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">group</a>|]
+        Just groupId -> [hsx| <a href={ShowGroupAction groupId} class="badge group-badge" data-testid="group-badge">{tr "group"}</a>|]
         Nothing -> mempty
     groupCell = case (alert.groupId, groupKey) of
         (Just groupId, Just key) -> [hsx|<a href={ShowGroupAction groupId}>{key}</a>|]
@@ -199,9 +200,9 @@ groupedAlertsTableHtml testId tbodyId groups =
     <table class="table" data-testid={testId}>
         <thead>
             <tr>
-                <th>Status</th>
-                <th>Worst severity</th>
-                <th>Group</th>
+                <th>{tr "Status"}</th>
+                <th>{tr "Worst severity"}</th>
+                <th>{tr "Group"}</th>
                 <th></th>
             </tr>
         </thead>
@@ -253,28 +254,38 @@ timelineGroupHtml group =
 -- Human-readable summary for the kind-aware timeline (milestone_3.md §8):
 -- external actions render with source-side attribution ("acked in zabbix by
 -- admin"), enrichment/write-back failures with their subsystem/error.
-eventSummary :: AlertEvent -> Text
+eventSummary :: (CurrentUserRecord ~ User, ?request :: Request) => AlertEvent -> Text
 eventSummary event = case event.kind of
     "external" -> case (payloadText "action", payloadText "source", payloadText "actor") of
-        (Just action, Just source, actor) -> actionLabel action <> " in " <> source <> " by " <> fromMaybe "?" actor
+        (Just action, Just source, actor) -> trp "{action} in {source} by {actor}" [("action", actionLabel action), ("source", source), ("actor", fromMaybe "?" actor)]
         _ -> ""
-    "created" -> maybe "" ("from " <>) (payloadText "source")
-    "notified" -> maybe "" ("via " <>) (payloadText "rule")
+    "created" -> maybe "" (\source -> trp "from {source}" [("source", source)]) (payloadText "source")
+    "notified" -> maybe "" (\rule -> trp "via {rule}" [("rule", rule)]) (payloadText "rule")
     "resolved" -> case (payloadText "from", payloadText "to") of
         (Just from, Just to) -> from <> " → " <> to
         _ -> ""
-    "stalled" -> "no source updates" <> maybe "" (\from -> " (was " <> from <> ")") (payloadText "from")
-    "writeback_failed" -> "write-back failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
-    "enrichment_failed" -> "enrichment failed" <> maybe "" (\s -> " (" <> s <> ")") (payloadText "subsystem")
-    "llm_failed" -> "LLM analysis failed" <> maybe "" (\err -> ": " <> err) (payloadText "error")
-    "llm_skipped" -> "LLM analysis skipped" <> maybe "" (\err -> ": " <> err) (payloadText "error")
+    "stalled" -> case payloadText "from" of
+        Just from -> trp "no source updates (was {from})" [("from", from)]
+        Nothing -> tr "no source updates"
+    "writeback_failed" -> case payloadText "error" of
+        Just err -> trp "write-back failed: {error}" [("error", err)]
+        Nothing -> tr "write-back failed"
+    "enrichment_failed" -> case payloadText "subsystem" of
+        Just subsystem -> trp "enrichment failed ({subsystem})" [("subsystem", subsystem)]
+        Nothing -> tr "enrichment failed"
+    "llm_failed" -> case payloadText "error" of
+        Just err -> trp "LLM analysis failed: {error}" [("error", err)]
+        Nothing -> tr "LLM analysis failed"
+    "llm_skipped" -> case payloadText "error" of
+        Just err -> trp "LLM analysis skipped: {error}" [("error", err)]
+        Nothing -> tr "LLM analysis skipped"
     _ -> ""
   where
     payloadText :: Text -> Maybe Text
     payloadText key = parseMaybe (Aeson.withObject "payload" (\o -> o Aeson..: Key.fromText key)) event.payload
     actionLabel = \case
-        "ack" -> "acked"
-        "unack" -> "unacked"
+        "ack" -> tr "acked"
+        "unack" -> tr "unacked"
         other -> other
 
 payloadDetails :: AlertEvent -> Html
@@ -283,7 +294,7 @@ payloadDetails event = case event.payload of
     _ ->
         [hsx|
         <details class="timeline-payload">
-            <summary>payload</summary>
+            <summary>{tr "payload"}</summary>
             <pre class="json-viewer">{payloadText}</pre>
         </details>
     |]
@@ -318,7 +329,7 @@ groupRowHtml (group, members) =
             else
                 [hsx|
                 <details class="group-members">
-                    <summary>members</summary>
+                    <summary>{tr "members"}</summary>
                     <table class="table table-sm">
                         <tbody>
                             {forEach members alertRowHtml}
@@ -339,10 +350,13 @@ groupHeaderHtml group =
             <code>{group.groupKey}</code>
             {statusBadgeHtml group.status}
             {severityBadgeHtml group.worstSeverity Nothing}
-            <span class="badge group-member-count">{group.memberCount} members</span>
+            <span class="badge group-member-count">{memberCountText}</span>
         </p>
     </div>
 |]
+  where
+    memberCountText :: Text
+    memberCountText = trp "{count} members" [("count", tshow group.memberCount)]
 
 -- Context panels on the alert card (milestone_3.md §8), shared by the
 -- initial render and the websocket broadcaster (kinds enriched/writeback).
@@ -355,7 +369,7 @@ alertDetailsDomId :: Text
 alertDetailsDomId = "alert-details-panel"
 
 alertDetailsCardHtml :: Alert -> Html
-alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsDomId) "Alert details" badges body
+alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsDomId) (tr "Alert details") badges body
   where
     badges =
         [hsx|
@@ -364,27 +378,27 @@ alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsD
         |]
     suppressedBadge =
         if alert.suppressed
-            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>suppressed</span>|]
+            then [hsx|<span class="badge status-suppressed" data-testid="alert-suppressed" title={suppressedTitle}>{tr "suppressed"}</span>|]
             else mempty
     suppressedTitle :: Text
     suppressedTitle = case alert.suppressedBy of
-        Just "source" -> "muted at source"
-        _ -> "under blackout"
+        Just "source" -> tr "muted at source"
+        _ -> tr "under blackout"
     body =
         [hsx|
             <dl class="alert-details-grid" data-testid="alert-details">
-                {field "fingerprint" "Fingerprint" fingerprintValue}
-                {field "env" "Env" (fieldCell FieldEnv)}
-                {field "host" "Host" (fieldCell FieldHost)}
-                {field "service" "Service" (fieldCell FieldService)}
-                {field "check" "Check" checkValue}
-                {field "occurrences" "Occurrences" occurrencesBadge}
-                {field "started-at" "Started at" (maybeUtcTimeHtml alert.startedAt)}
-                {field "last-seen" "Last seen" (utcTimeHtml alert.lastSeenAt)}
-                {field "resolved-at" "Resolved at" (maybeUtcTimeHtml alert.resolvedAt)}
+                {field "fingerprint" (tr "Fingerprint") fingerprintValue}
+                {field "env" (tr "Env") (fieldCell FieldEnv)}
+                {field "host" (tr "Host") (fieldCell FieldHost)}
+                {field "service" (tr "Service") (fieldCell FieldService)}
+                {field "check" (tr "Check") checkValue}
+                {field "occurrences" (tr "Occurrences") occurrencesBadge}
+                {field "started-at" (tr "Started at") (maybeUtcTimeHtml alert.startedAt)}
+                {field "last-seen" (tr "Last seen") (utcTimeHtml alert.lastSeenAt)}
+                {field "resolved-at" (tr "Resolved at") (maybeUtcTimeHtml alert.resolvedAt)}
             </dl>
             {sourceFooter}
-            <h6>Description</h6>
+            <h6>{tr "Description"}</h6>
             <p data-testid="alert-description">{alert.description}</p>
         |]
     fingerprintValue = [hsx|<code>{alert.fingerprint}</code>|]
@@ -399,15 +413,17 @@ alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsD
             </div>
         |]
     sourceFooter = case alert.sourceUrl of
-        Just url -> [hsx|<p class="source-link mb-2" data-testid="alert-source-link"><a href={url} target="_blank">source: {url}</a></p>|]
+        Just url -> [hsx|<p class="source-link mb-2" data-testid="alert-source-link"><a href={url} target="_blank">{sourceText url}</a></p>|]
         Nothing -> mempty
+    sourceText url = trp "source: {url}" [("url", url)]
     -- Effective value (facet override wins); the raw column is shown
     -- alongside when they differ, for provenance.
     fieldCell :: AlertField -> Html
     fieldCell alertField = case (effectiveFieldText alertField alert, alertFieldText alertField alert) of
-        (Just eff, Just raw) | eff /= raw -> [hsx|<span class="badge" data-testid="field-override">{eff}</span> <span class="text-muted" data-testid="field-override-raw">(raw: {raw})</span>|]
+        (Just eff, Just raw) | eff /= raw -> [hsx|<span class="badge" data-testid="field-override">{eff}</span> <span class="text-muted" data-testid="field-override-raw">{rawText raw}</span>|]
         (Just eff, _) -> [hsx|<span class="badge">{eff}</span>|]
         (Nothing, _) -> [hsx|<span class="text-muted">-</span>|]
+    rawText raw = trp "(raw: {raw})" [("raw", raw)]
 
 cmdbPanelDomId :: Text
 cmdbPanelDomId = "cmdb-panel"
@@ -415,17 +431,17 @@ cmdbPanelDomId = "cmdb-panel"
 cmdbPanelHtml :: Alert -> Maybe CmdbEntry -> Html
 cmdbPanelHtml alert entry = panelHtml "cmdb-panel" (Just cmdbPanelDomId) "CMDB" refreshButton body
   where
-    refreshButton = inlinePostFormHtml (pathTo (RefreshCmdbAction (get #id alert))) "Refresh" "btn btn-sm btn-outline-secondary" (Just "cmdb-refresh") False
+    refreshButton = inlinePostFormHtml (pathTo (RefreshCmdbAction (get #id alert))) (tr "Refresh") "btn btn-sm btn-outline-secondary" (Just "cmdb-refresh") False
     body = case entry of
-        Nothing -> [hsx|<p class="text-muted" data-testid="cmdb-empty">No CMDB entry (no host/service subject, or lookup pending).</p>|]
+        Nothing -> [hsx|<p class="text-muted" data-testid="cmdb-empty">{tr "No CMDB entry (no host/service subject, or lookup pending)."}</p>|]
         Just cached
-            | isNothing cached.pageId -> [hsx|<p class="text-muted" data-testid="cmdb-negative">No Confluence page found for this subject (cached miss).</p>|]
+            | isNothing cached.pageId -> [hsx|<p class="text-muted" data-testid="cmdb-negative">{tr "No Confluence page found for this subject (cached miss)."}</p>|]
             | otherwise ->
                 [hsx|
                     <div data-testid="cmdb-entry">
                         <p><strong>{cached.title}</strong></p>
                         <p data-testid="cmdb-excerpt">{cached.excerpt}</p>
-                        {externalLinkFooterHtml cached.url "Open in Confluence" "cached" cached.fetchedAt (Just "cmdb-link")}
+                        {externalLinkFooterHtml cached.url (tr "Open in Confluence") (tr "cached") cached.fetchedAt (Just "cmdb-link")}
                     </div>
                 |]
 
@@ -440,11 +456,11 @@ assetsPanelDomId :: Text
 assetsPanelDomId = "assets-panel"
 
 assetsPanelHtml :: Alert -> [(AssetAlertLink, AssetsObject, AssetsConfig)] -> Html
-assetsPanelHtml alert linked = panelHtml "assets-panel" (Just assetsPanelDomId) "Assets" refreshButton body
+assetsPanelHtml alert linked = panelHtml "assets-panel" (Just assetsPanelDomId) (tr "Assets") refreshButton body
   where
-    refreshButton = inlinePostFormHtml (pathTo (RefreshAssetsAction (get #id alert))) "Refresh" "btn btn-sm btn-outline-secondary" (Just "assets-refresh") False
+    refreshButton = inlinePostFormHtml (pathTo (RefreshAssetsAction (get #id alert))) (tr "Refresh") "btn btn-sm btn-outline-secondary" (Just "assets-refresh") False
     body = case linked of
-        [] -> [hsx|<p class="text-muted" data-testid="assets-empty">No linked assets (no info source configured, or lookup pending).</p>|]
+        [] -> [hsx|<p class="text-muted" data-testid="assets-empty">{tr "No linked assets (no info source configured, or lookup pending)."}</p>|]
         entries -> [hsx|<div>{forEach entries assetEntryHtml}</div>|]
 
 assetEntryHtml :: (AssetAlertLink, AssetsObject, AssetsConfig) -> Html
@@ -461,7 +477,7 @@ assetEntryHtml (_, object, config) =
         <dl class="asset-attrs mb-1">
             {forEach displayAttrs attrRow}
         </dl>
-        {externalLinkFooterHtml object.sourceUrl "Open in Jira Assets" "fetched" object.fetchedAt (Just "asset-link")}
+        {externalLinkFooterHtml object.sourceUrl (tr "Open in Jira Assets") (tr "fetched") object.fetchedAt (Just "asset-link")}
     </div>
 |]
   where
@@ -514,7 +530,7 @@ jiraLinksHtml alert links =
             then mempty
             else
                 [hsx|
-                <h6 class="mt-2" data-testid="jira-related-heading">Related tasks</h6>
+                <h6 class="mt-2" data-testid="jira-related-heading">{tr "Related tasks"}</h6>
                 <ul data-testid="jira-related">
                     {forEach related (jiraLinkItem alert)}
                 </ul>
@@ -534,7 +550,7 @@ jiraLinkItem alert link =
   where
     unlinkForm =
         if link.origin == "manual"
-            then inlinePostFormHtml (pathTo (DeleteJiraLinkAction (get #id alert) (get #id link))) "unlink" "btn btn-sm btn-outline-danger" (Just "jira-unlink") True
+            then inlinePostFormHtml (pathTo (DeleteJiraLinkAction (get #id alert) (get #id link))) (tr "unlink") "btn btn-sm btn-outline-danger" (Just "jira-unlink") True
             else mempty
 
 writeBackChipDomId :: Text
@@ -546,10 +562,11 @@ writeBackChipHtml latest = [hsx|<span id={writeBackChipDomId}>{chip}</span>|]
     chip = case latest of
         Nothing -> mempty
         Just attempt -> case attempt.status of
-            "queued" -> [hsx|<span class="badge status-ack" data-testid="writeback-status" title="write-back pending">write-back: {attempt.action} pending</span>|]
-            "failed" -> [hsx|<span class="badge status-firing" data-testid="writeback-status" title={fromMaybe "" attempt.lastError}>write-back: {attempt.action} failed</span>|]
-            "done" -> [hsx|<span class="badge status-resolved" data-testid="writeback-status">write-back: {attempt.action} synced</span>|]
+            "queued" -> [hsx|<span class="badge status-ack" data-testid="writeback-status" title={tr "write-back pending"}>{statusText attempt "write-back: {action} pending"}</span>|]
+            "failed" -> [hsx|<span class="badge status-firing" data-testid="writeback-status" title={fromMaybe "" attempt.lastError}>{statusText attempt "write-back: {action} failed"}</span>|]
+            "done" -> [hsx|<span class="badge status-resolved" data-testid="writeback-status">{statusText attempt "write-back: {action} synced"}</span>|]
             _ -> mempty
+    statusText attempt key = trp key [("action", attempt.action)]
 
 -- LLM analysis panel (milestone_4.md §7). Latest analysis wins; older rows
 -- are expandable history. Feedback is per analysis; the `feedback` list
@@ -561,14 +578,14 @@ llmPanelDomId :: Text
 llmPanelDomId = "llm-panel"
 
 llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> [(Id LlmAnalysis, Text)] -> [LlmAgentRole] -> Html
-llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Just llmPanelDomId) "LLM analysis" reanalyzeButton bodyWithHistory
+llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Just llmPanelDomId) (tr "LLM analysis") reanalyzeButton bodyWithHistory
   where
     bodyWithHistory = [hsx|{body}{historyBlock}|]
     reanalyzeButton =
         [hsx|
             <form method="POST" action={ReanalyzeAlertAction (get #id alert)} class="d-inline">
                 {roleSelect}
-                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="llm-reanalyze">Re-analyze</button>
+                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="llm-reanalyze">{tr "Re-analyze"}</button>
             </form>
         |]
     -- Agent-role choice (milestone_8.md §7): empty = the is_default role
@@ -584,11 +601,11 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
             |]
     defaultLabel :: Text
     defaultLabel = case find (.isDefault) roles of
-        Just defaultRole -> "role: " <> defaultRole.name <> " (default)"
-        Nothing -> "role: default"
+        Just defaultRole -> trp "role: {name} (default)" [("name", defaultRole.name)]
+        Nothing -> tr "role: default"
     roleOption role = [hsx|<option value={tshow (get #id role)}>{role.name}</option>|]
     body = case analyses of
-        [] -> [hsx|<p class="text-muted" data-testid="llm-empty">No analysis yet.</p>|]
+        [] -> [hsx|<p class="text-muted" data-testid="llm-empty">{tr "No analysis yet."}</p>|]
         _ -> [hsx|{pendingNote}{llmAnalysisHtml alert shownAnalysis feedback (lookup (get #id shownAnalysis) jobErrors)}|]
     -- A queued/running re-analysis (milestone_5.md §7 retrigger,
     -- milestone_8.md §7 role re-run) must not hide the last terminal
@@ -608,17 +625,18 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
     pendingNote = case analyses of
         (newest : _)
             | get #id newest /= get #id shownAnalysis ->
-                [hsx|<p class="text-muted" data-testid="llm-pending-note">re-analysis pending…</p>|]
+                [hsx|<p class="text-muted" data-testid="llm-pending-note">{tr "re-analysis pending…"}</p>|]
         _ -> mempty
     historyBlock = case [a | a <- analyses, get #id a /= get #id shownAnalysis] of
         [] -> mempty
         older ->
             [hsx|
                 <details data-testid="llm-history">
-                    <summary>History ({length older})</summary>
+                    <summary>{historyText older}</summary>
                     {forEach older olderAnalysis}
                 </details>
             |]
+    historyText olderRows = trp "History ({count})" [("count", tshow (length olderRows))]
     olderAnalysis analysis = llmAnalysisHtml alert analysis feedback (lookup (get #id analysis) jobErrors)
 
 llmAnalysisHtml :: Alert -> LlmAnalysis -> [LlmFeedback] -> Maybe Text -> Html
@@ -630,7 +648,7 @@ llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
             <div class="llm-markdown" data-testid="llm-markdown">{markdownHtml (fromMaybe "" analysis.resultMd)}</div>
             {structuredBlock}
             <p class="text-muted llm-footer" data-testid="llm-footer">
-                provider {analysis.provider} · model {analysis.model} · template v{versionText} · {utcTimeHtml analysis.updatedAt}
+                {providerLine} · {utcTimeHtml analysis.updatedAt}
             </p>
             {llmFeedbackHtml alert analysis feedback}
         </div>
@@ -638,32 +656,34 @@ llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
       where
         versionText :: Text
         versionText = maybe "-" tshow analysis.promptVersion
+        providerLine :: Text
+        providerLine = trp "provider {provider} · model {model} · template v{version}" [("provider", analysis.provider), ("model", analysis.model), ("version", versionText)]
         dedupedBadge =
             if isJust analysis.dedupedFrom
-                then [hsx|<span class="badge status-ack" data-testid="llm-deduped">deduped copy</span>|]
+                then [hsx|<span class="badge status-ack" data-testid="llm-deduped">{tr "deduped copy"}</span>|]
                 else mempty
         structuredBlock = case analysis.result of
             Nothing -> mempty
             Just result ->
                 [hsx|
                     <div class="llm-structured" data-testid="llm-structured">
-                        <p data-testid="llm-probable-cause"><strong>Probable cause:</strong> {fieldText "probable_cause" result}</p>
+                        <p data-testid="llm-probable-cause"><strong>{tr "Probable cause:"}</strong> {fieldText "probable_cause" result}</p>
                         {confidenceBadge result}
                         {actionsList result}
                         {referencesList result}
                     </div>
                 |]
     "failed" -> llmUnavailableHtml (fromMaybe "" analysis.errorMessage)
-    "running" -> [hsx|<p class="text-muted" data-testid="llm-running">analysis running…</p>|]
+    "running" -> [hsx|<p class="text-muted" data-testid="llm-running">{tr "analysis running…"}</p>|]
     _ -> case jobError of
         Just err -> llmUnavailableHtml err
-        Nothing -> [hsx|<p class="text-muted" data-testid="llm-pending">analysis pending…</p>|]
+        Nothing -> [hsx|<p class="text-muted" data-testid="llm-pending">{tr "analysis pending…"}</p>|]
 
 llmUnavailableHtml :: Text -> Html
 llmUnavailableHtml message =
     [hsx|
     <div data-testid="llm-unavailable">
-        <span class="badge status-firing" title={message}>analysis unavailable</span>
+        <span class="badge status-firing" title={message}>{tr "analysis unavailable"}</span>
         <span class="text-muted"> {message}</span>
     </div>
 |]
@@ -680,10 +700,10 @@ fieldDouble key value = parseMaybe (Aeson.withObject "result" (\o -> o Aeson..: 
 confidenceBadge :: Aeson.Value -> Html
 confidenceBadge result = case fieldDouble "confidence" result of
     Nothing -> mempty
-    Just confidence -> [hsx|<span class="badge status-badge" data-testid="llm-confidence">confidence {confidenceText confidence}</span>|]
+    Just confidence -> [hsx|<span class="badge status-badge" data-testid="llm-confidence">{confidenceText confidence}</span>|]
   where
     confidenceText :: Double -> Text
-    confidenceText confidence = tshow (round (confidence * 100) :: Int) <> "%"
+    confidenceText confidence = trp "confidence {value}" [("value", tshow (round (confidence * 100) :: Int) <> "%")]
 
 actionItem :: Text -> Html
 actionItem action = [hsx|<li>{action}</li>|]
@@ -694,7 +714,7 @@ actionsList result = case fieldTexts "suggested_actions" result of
     actions ->
         [hsx|
         <div data-testid="llm-actions">
-            <strong>Suggested actions:</strong>
+            <strong>{tr "Suggested actions:"}</strong>
             <ul>{forEach actions actionItem}</ul>
         </div>
     |]
@@ -705,7 +725,7 @@ referencesList result = case fieldTexts "references" result of
     references ->
         [hsx|
         <div data-testid="llm-references">
-            <strong>References:</strong>
+            <strong>{tr "References:"}</strong>
             <ul>{forEach references referenceItem}</ul>
         </div>
     |]
@@ -754,7 +774,9 @@ filterMultiSelect name label options selected =
 |]
   where
     buttonLabel :: Text
-    buttonLabel = label <> ": " <> if null selected then "any" else tshow (length selected)
+    buttonLabel = trp "{label}: {selected}" [("label", label), ("selected", selectedText)]
+    selectedText :: Text
+    selectedText = if null selected then tr "any" else tshow (length selected)
     optionItem value =
         [hsx|
             <div class="form-check">
@@ -807,13 +829,13 @@ rollupCardHtml RollupCard{..} =
                 {rollupSeverityBadge rcWorstSeverity}
             </h5>
             <div class="env-counts">
-                <span class="count status-firing" data-testid="count-firing">{rcFiring} firing</span>
-                <span class="count status-ack" data-testid="count-ack">{rcAcked} ack</span>
-                <span class="count status-resolved" data-testid="count-resolved">{rcResolved} resolved</span>
-                <span class="count status-stalled" data-testid="count-stalled">{rcStalled} stalled</span>
+                <span class="count status-firing" data-testid="count-firing">{firingText}</span>
+                <span class="count status-ack" data-testid="count-ack">{ackedText}</span>
+                <span class="count status-resolved" data-testid="count-resolved">{resolvedText}</span>
+                <span class="count status-stalled" data-testid="count-stalled">{stalledText}</span>
                 {rollupSuppressedBadge rcSuppressed}
             </div>
-            <div class="env-hourly" title="alerts per hour (last 24h)">
+            <div class="env-hourly" title={tr "alerts per hour (last 24h)"}>
                 {hourlyContent}
             </div>
             {rollupLink}
@@ -821,6 +843,10 @@ rollupCardHtml RollupCard{..} =
     </div>
 |]
   where
+    firingText = trp "{count} firing" [("count", tshow rcFiring)]
+    ackedText = trp "{count} ack" [("count", tshow rcAcked)]
+    resolvedText = trp "{count} resolved" [("count", tshow rcResolved)]
+    stalledText = trp "{count} stalled" [("count", tshow rcStalled)]
     cardClasses :: Text
     cardClasses =
         "card env-card "
@@ -834,7 +860,7 @@ rollupCardHtml RollupCard{..} =
         Just href -> [hsx|<a href={href} class="stretched-link" data-testid="summary-link"></a>|]
     hourlyContent =
         if null rcHourly
-            then [hsx|<span class="text-muted" data-testid="hourly-empty">No events in the last 24 hours.</span>|]
+            then [hsx|<span class="text-muted" data-testid="hourly-empty">{tr "No events in the last 24 hours."}</span>|]
             else forEach rcHourly rollupHourBucket
 
 rollupSeverityClass :: Maybe Text -> Text
@@ -848,8 +874,10 @@ rollupSeverityBadge (Just severity) = severityBadgeHtml severity Nothing
 
 rollupSuppressedBadge :: Int -> Html
 rollupSuppressedBadge count
-    | count > 0 = [hsx|<span class="count status-suppressed" data-testid="count-suppressed" title="muted by blackout">{count} suppressed</span>|]
+    | count > 0 = [hsx|<span class="count status-suppressed" data-testid="count-suppressed" title={tr "muted by blackout"}>{suppressedText}</span>|]
     | otherwise = mempty
+  where
+    suppressedText = trp "{count} suppressed" [("count", tshow count)]
 
 -- Hour bucket as `HH [count]`: the count sits in a colored rounded square
 -- so pairs don't run together visually. The hour goes through the same
@@ -885,15 +913,15 @@ severityBadgeHtml severity testId = [hsx|<span class={"badge severity-badge seve
 -- | enabled/disabled state pill without testids (admin list rows).
 enabledBadgeHtml :: Bool -> Html
 enabledBadgeHtml enabled
-    | enabled = [hsx|<span class="badge status-resolved">enabled</span>|]
-    | otherwise = [hsx|<span class="badge bg-secondary">disabled</span>|]
+    | enabled = [hsx|<span class="badge status-resolved">{tr "enabled"}</span>|]
+    | otherwise = [hsx|<span class="badge bg-secondary">{tr "disabled"}</span>|]
 
 -- | enabled/disabled state pill with per-state testids derived from a base
 -- name (<base>-enabled / <base>-disabled).
 stateBadgeHtml :: Bool -> Text -> Html
 stateBadgeHtml enabled base
-    | enabled = [hsx|<span class="badge status-resolved" data-testid={base <> "-enabled"}>enabled</span>|]
-    | otherwise = [hsx|<span class="badge bg-secondary" data-testid={base <> "-disabled"}>disabled</span>|]
+    | enabled = [hsx|<span class="badge status-resolved" data-testid={base <> "-enabled"}>{tr "enabled"}</span>|]
+    | otherwise = [hsx|<span class="badge bg-secondary" data-testid={base <> "-disabled"}>{tr "disabled"}</span>|]
 
 -- | List-page header: title left, action buttons right.
 pageHeaderHtml :: Text -> Html -> Html
@@ -932,8 +960,8 @@ inlinePostFormHtml actionPath label buttonClass testId jsDelete =
 editDeleteActionsHtml :: Text -> Text -> Text -> Html
 editDeleteActionsHtml editPath deletePath editTestId =
     [hsx|
-    <a href={editPath} class="btn btn-sm btn-outline-secondary" data-testid={editTestId}>Edit</a>
-    {inlinePostFormHtml deletePath "Delete" "btn btn-sm btn-outline-danger" Nothing False}
+    <a href={editPath} class="btn btn-sm btn-outline-secondary" data-testid={editTestId}>{tr "Edit"}</a>
+    {inlinePostFormHtml deletePath (tr "Delete") "btn btn-sm btn-outline-danger" Nothing False}
 |]
 
 -- | Card panel scaffolding (card > card-body > title + header action).

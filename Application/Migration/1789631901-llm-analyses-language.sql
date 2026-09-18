@@ -1,0 +1,1 @@
+ALTER TABLE llm_analyses ADD COLUMN language TEXT DEFAULT NULL;

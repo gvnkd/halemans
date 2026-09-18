@@ -11,14 +11,14 @@ data EditRoleView = EditRoleView
 instance View EditRoleView where
     html EditRoleView{..} =
         [hsx|
-        <h1>Edit agent role</h1>
-        <p class="text-muted">{role.name} is {stateText}. Enable/default actions live on the roles list.</p>
+        <h1>{tr "Edit agent role"}</h1>
+        <p class="text-muted">{trp "{name} is {state}. Enable/default actions live on the roles list." [("name", role.name), ("state", stateText)]}</p>
         <form method="POST" action={UpdateLlmRoleAction (get #id role)} data-testid="llm-role-form">
             {roleFormFields (Just role) toolNames}
-            <button type="submit" class="btn btn-primary" data-testid="llm-role-save">Save role</button>
-            <a href={LlmAdminAction} class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" data-testid="llm-role-save">{tr "Save role"}</button>
+            <a href={LlmAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
         </form>
     |]
       where
         stateText :: Text
-        stateText = if role.enabled then "enabled" else "disabled"
+        stateText = if role.enabled then tr "enabled" else tr "disabled"

@@ -43,7 +43,7 @@ instance Controller SourcesController where
                 |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
                 |> createRecord
         ensurePollerForSourceType (param @Text "type")
-        setSuccessMessage "Source created"
+        setSuccessMessage (tr "Source created")
         redirectTo SourcesAction
     action EditSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
@@ -72,7 +72,7 @@ instance Controller SourcesController where
                 |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
                 |> updateRecord
         when source.enabled (ensurePollerForSourceType (param @Text "type"))
-        setSuccessMessage "Source updated"
+        setSuccessMessage (tr "Source updated")
         redirectTo SourcesAction
     action ToggleSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
@@ -82,7 +82,7 @@ instance Controller SourcesController where
                 |> set #enabled (not source.enabled)
                 |> updateRecord
         unless source.enabled (ensurePollerForSourceType (get #type_ source))
-        setSuccessMessage (if source.enabled then "Source disabled" else "Source enabled")
+        setSuccessMessage (if source.enabled then tr "Source disabled" else tr "Source enabled")
         redirectTo SourcesAction
 
     -- \| Manual sync of the zabbix host group cache (zabbix_host_groups).
@@ -92,12 +92,12 @@ instance Controller SourcesController where
         requirePrivilege "manage_sources"
         source <- fetch sourceId
         if get #type_ source /= ("zabbix" :: Text)
-            then setErrorMessage "Host group sync is only available for zabbix sources"
+            then setErrorMessage (tr "Host group sync is only available for zabbix sources")
             else do
                 result <- syncHostGroups source
                 case result of
-                    Left err -> setErrorMessage ("Host group sync failed: " <> err)
-                    Right count -> setSuccessMessage ("Synced " <> tshow count <> " host groups")
+                    Left err -> setErrorMessage (trp "Host group sync failed: {error}" [("error", err)])
+                    Right count -> setSuccessMessage (trp "Synced {count} host groups" [("count", tshow count)])
         redirectTo SourcesAction
 
 -- | Credentials stay env-var references ({"tokenEnv":"GRAFANA_TOKEN"}), never
@@ -164,7 +164,7 @@ configInt :: Text -> Source -> Maybe Int
 configInt key source = parseMaybe (Aeson.withObject "config" (\o -> o Aeson..: Key.fromText key)) source.config
 
 -- | Replace the source's host group cache with a fresh hostgroup.get listing.
-syncHostGroups :: (?modelContext :: ModelContext) => Source -> IO (Either Text Int)
+syncHostGroups :: (?modelContext :: ModelContext, ?request :: Request) => Source -> IO (Either Text Int)
 syncHostGroups source = do
     let tokenEnv :: Maybe Text
         tokenEnv = parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: "tokenEnv")) source.config
@@ -172,7 +172,7 @@ syncHostGroups source = do
         Just envVar -> fmap cs <$> lookupEnv (cs envVar)
         Nothing -> pure Nothing
     case token of
-        Nothing -> pure (Left "token env var is not set")
+        Nothing -> pure (Left (tr "token env var is not set"))
         Just token -> do
             outcome <- try (Zabbix.hostGroupsGetAll source.baseUrl token)
             case outcome of

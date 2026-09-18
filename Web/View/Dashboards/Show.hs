@@ -5,6 +5,7 @@ import Application.Pipeline.Grouping (AlertField (..))
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), runCardQuery, runCardQueryGroups, runCardSummary)
 import Application.Service.DynTable
 import qualified Data.Text as Text
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.HTTP.Types (urlEncode)
 import Web.View.DynTable (DynTable (..), dynTableHtml)
 import Web.View.Fragments (RollupCard (..), alertRowHtmlCols, alertStaticColumns, rollupCardHtml, severityBadgeHtml, statusBadgeHtml)
@@ -33,8 +34,8 @@ instance View ShowView where
         <div data-live-scope={liveScope}>
             <h1 data-testid="dashboard-title">{dashboard.name}</h1>
             <p>
-                <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary">Edit</a>
-                <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">All dashboards</a>
+                <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary">{tr "Edit"}</a>
+                <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">{tr "All dashboards"}</a>
             </p>
             <div id="dashboard-cards">
                 {forEach cardSections (renderCardSection dashboard.id)}
@@ -100,12 +101,12 @@ cardAlertsLink dashboardId expanded =
         Nothing -> ""
         Just value -> "?value=" <> cs (urlEncode True (cs value))
 
-cardTitleText :: DashboardCard -> Text
+cardTitleText :: (CurrentUserRecord ~ User, ?request :: Request) => DashboardCard -> Text
 cardTitleText card = case (card.cardTitle, legacyEnv card, card.cardGroupBy) of
     (Just title, _, _) -> title
     (Nothing, Just env, _) -> env
-    (Nothing, Nothing, Just groupBy) -> "by " <> facetRefText groupBy
-    _ -> "card"
+    (Nothing, Nothing, Just groupBy) -> trp "by {field}" [("field", facetRefText groupBy)]
+    _ -> tr "card"
 
 legacyEnv :: DashboardCard -> Maybe Text
 legacyEnv card

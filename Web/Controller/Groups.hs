@@ -37,5 +37,5 @@ instance Controller GroupsController where
                 |> fetch
         forM_ firingMembers \alert ->
             ackAlert currentUser alert (Just "group ack") Nothing
-        setSuccessMessage "Group acknowledged"
+        setSuccessMessage (tr "Group acknowledged")
         redirectTo (ShowGroupAction groupId)

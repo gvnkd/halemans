@@ -8,13 +8,13 @@ data IndexView = IndexView {teamsWithMembers :: [(Team, [(User, Text)])]}
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        {pageHeaderHtml "Teams" newButton}
+        {pageHeaderHtml (tr "Teams") newButton}
         <table class="table" data-testid="teams-table">
             <thead>
                 <tr>
-                    <th>Name</th>
-                    <th>Description</th>
-                    <th>Members</th>
+                    <th>{tr "Name"}</th>
+                    <th>{tr "Description"}</th>
+                    <th>{tr "Members"}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -24,7 +24,7 @@ instance View IndexView where
         </table>
     |]
       where
-        newButton = [hsx|<a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">New team</a>|]
+        newButton = [hsx|<a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">{tr "New team"}</a>|]
 
 renderTeam :: (Team, [(User, Text)]) -> Html
 renderTeam (team, members) =

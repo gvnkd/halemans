@@ -655,10 +655,10 @@ prov_hash="$(printf '%s\n' "$gen_out" | awk '/^passwordHash:/ {print $2}')"
 
 cat > "$PROV_DIR/pass1.json" <<EOF
 {
-  "users": {"items": [{"email": "smoke-prov@dev", "passwordHash": "$prov_hash", "roles": ["viewer"], "settings": {"theme": "dark"}}]},
-  "sources": {"items": [{"type": "webhook", "name": "smoke-prov-hook", "enabled": false}]},
-  "teams": {"items": [{"name": "smoke-prov-team", "members": [{"email": "smoke-prov@dev", "role": "lead"}]}]},
-  "llm": {"items": [{"providerName": "smoke-prov", "endpoint": "http://127.0.0.1:18084", "model": "mock-llm-1", "enabled": true}]}
+  "users": {"smoke-prov@dev": {"passwordHash": "$prov_hash", "roles": ["viewer"], "settings": {"theme": "dark"}}},
+  "sources": {"smoke-prov-hook": {"type": "webhook", "enabled": false}},
+  "teams": {"smoke-prov-team": {"members": {"smoke-prov@dev": {"role": "lead"}}}},
+  "llm": {"smoke-prov": {"endpoint": "http://127.0.0.1:18084", "model": "mock-llm-1", "enabled": true}}
 }
 EOF
 
@@ -676,14 +676,14 @@ login_as "smoke-prov@dev" "$prov_password" \
 
 # Second pass: strict teams with the extra team removed (sre kept with its
 # seeded membership) deletes smoke-prov-team and nothing else.
+# Second pass: global strict with ONLY the teams section present (absent
+# sections stay untouched) deletes smoke-prov-team and nothing else.
 cat > "$PROV_DIR/pass2.json" <<EOF
 {
-  "users": {"items": [{"email": "smoke-prov@dev", "passwordHash": "$prov_hash", "roles": ["viewer"]}]},
-  "sources": {"items": [{"type": "webhook", "name": "smoke-prov-hook", "enabled": false}]},
-  "teams": {"strict": true, "items": [
-    {"name": "sre", "members": [{"email": "sre@dev", "role": "lead"}, {"email": "admin@dev", "role": "member"}]}
-  ]},
-  "llm": {"items": [{"providerName": "smoke-prov", "endpoint": "http://127.0.0.1:18084", "model": "mock-llm-1", "enabled": true}]}
+  "strict": true,
+  "teams": {
+    "sre": {"members": {"sre@dev": {"role": "lead"}, "admin@dev": {"role": "member"}}}
+  }
 }
 EOF
 restart_app "$PROV_DIR/pass2.json" && pass "app reboots with strict teams" || fail "app reboots with strict teams"

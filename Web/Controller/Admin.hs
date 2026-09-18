@@ -2,10 +2,15 @@ module Web.Controller.Admin where
 
 import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
+import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
 import Control.Monad (void)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Time.Clock (getCurrentTime)
+import IHP.ControllerSupport (respondAndExit)
 import IHP.ModelSupport (withTransaction)
 import IHP.TypedSql (sqlExecTyped, typedSql)
+import Network.HTTP.Types (status200)
+import Network.Wai (responseLBS)
 import Web.Controller.Prelude
 import Web.View.Admin.Database
 import Web.View.Admin.Index
@@ -53,26 +58,48 @@ instance Controller AdminController where
             void $ sqlExecTyped [typedSql| DELETE FROM enrich_alert_jobs |]
             void $ sqlExecTyped [typedSql| DELETE FROM alerts |]
             void $ sqlExecTyped [typedSql| DELETE FROM alert_groups |]
-        setSuccessMessage "All alerts purged"
+        setSuccessMessage (tr "All alerts purged")
         redirectTo AdminAction
     action AdminDatabaseAction = do
         requirePrivilege "admin"
         stats <- fetchDatabaseStats
         render DatabaseView{..}
+    -- Provision config snapshot (Application.Service.ProvisionExport) in the
+    -- map-keyed provision format; ?format=json selects JSON, default YAML.
+    action AdminExportProvisionAction = do
+        requirePrivilege "admin"
+        config <- buildProvisionExport
+        case paramOrNothing @Text "format" of
+            Just "json" ->
+                respondAndExit $
+                    responseLBS
+                        status200
+                        [ ("Content-Type", "application/json; charset=utf-8")
+                        , ("Content-Disposition", "attachment; filename=\"provision.json\"")
+                        ]
+                        (renderProvisionJson config)
+            _ ->
+                respondAndExit $
+                    responseLBS
+                        status200
+                        [ ("Content-Type", "application/yaml; charset=utf-8")
+                        , ("Content-Disposition", "attachment; filename=\"provision.yaml\"")
+                        ]
+                        (LBS.fromStrict (renderProvisionYaml config))
     action AdminDbAnalyzeAction = do
         requirePrivilege "admin"
         analyzeDatabase
-        setSuccessMessage "ANALYZE completed"
+        setSuccessMessage (tr "ANALYZE completed")
         redirectTo AdminDatabaseAction
     action AdminDbVacuumAction = do
         requirePrivilege "admin"
         vacuumAnalyzeDatabase
-        setSuccessMessage "VACUUM ANALYZE completed"
+        setSuccessMessage (tr "VACUUM ANALYZE completed")
         redirectTo AdminDatabaseAction
     action AdminDbAnalyzeTableAction{tableName} = do
         requirePrivilege "admin"
         ok <- analyzeTable tableName
         if ok
-            then setSuccessMessage ("ANALYZE " <> tableName <> " completed")
-            else setErrorMessage ("Unknown table: " <> tableName)
+            then setSuccessMessage (trp "ANALYZE {table} completed" [("table", tableName)])
+            else setErrorMessage (trp "Unknown table: {table}" [("table", tableName)])
         redirectTo AdminDatabaseAction

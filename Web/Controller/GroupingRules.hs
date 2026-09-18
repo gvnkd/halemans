@@ -29,7 +29,7 @@ instance Controller GroupingRulesController where
                 |> set #groupKeyTemplate (param @Text "groupKeyTemplate")
                 |> set #createdBy (Just currentUserId)
                 |> createRecord
-        setSuccessMessage "Grouping rule created"
+        setSuccessMessage (tr "Grouping rule created")
         redirectTo GroupingRulesAction
     action EditGroupingRuleAction{groupingRuleId} = do
         requirePrivilege "manage_rules"
@@ -50,13 +50,13 @@ instance Controller GroupingRulesController where
                 |> set #groupKeyTemplate (param @Text "groupKeyTemplate")
                 |> set #version (rule.version + 1)
                 |> updateRecord
-        setSuccessMessage "Grouping rule updated (version bumped)"
+        setSuccessMessage (tr "Grouping rule updated (version bumped)")
         redirectTo GroupingRulesAction
     action DeleteGroupingRuleAction{groupingRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch groupingRuleId
         deleteRecord rule
-        setSuccessMessage "Grouping rule deleted"
+        setSuccessMessage (tr "Grouping rule deleted")
         redirectTo GroupingRulesAction
 
     -- Test-against-recent-alerts preview (§9): shows which of the last 100
