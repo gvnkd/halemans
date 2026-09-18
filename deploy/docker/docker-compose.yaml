@@ -40,7 +40,7 @@
 name: halemans
 
 x-halemans-env: &halemans-env
-  DATABASE_URL: postgresql://halemans:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/halemans
+  DATABASE_URL: postgresql://${POSTGRES_USER:-halemans}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/halemans
   HALEMANS_PROVISION_CONFIG: /provision/provision.json
 
 x-halemans-image: &halemans-image
@@ -54,7 +54,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: halemans
-      POSTGRES_USER: halemans
+      # Renaming only takes effect on a FRESH db-data volume (POSTGRES_USER is
+      # consumed once, at first init of the cluster).
+      POSTGRES_USER: ${POSTGRES_USER:-halemans}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       # PG18+ layout: mount the parent dir so the datadir lives in a
@@ -62,7 +64,7 @@ services:
       # the mount boundary (docker-library/postgres#37).
       - db-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U halemans -d halemans"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d halemans"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -76,7 +78,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://halemans:${POSTGRES_PASSWORD}@db:5432/halemans
+      DATABASE_URL: postgresql://${POSTGRES_USER:-halemans}:${POSTGRES_PASSWORD}@db:5432/halemans
 
   # Seeds the background poller jobs once per deployment.
   enqueue-pollers:
