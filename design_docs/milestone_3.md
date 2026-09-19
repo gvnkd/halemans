@@ -15,7 +15,7 @@ Builds on the milestone-2 stack: same devenv processes, same smoke harness. LLM 
 | D5 | Write-back service per §10: Zabbix `event.acknowledge`, Alertmanager/Grafana silence on local ack/close | Ack in Halemans UI propagates to source (verifiable via source API); failures retry with backoff and surface on the alert card |
 | D6 | External reconciliation: pollers mirror source-side ack/close into Halemans (status mirror + `AlertEvent(external)`) | Ack in Zabbix → Halemans alert shows acked with external attribution; last-writer-wins, both actions in history |
 | D7 | User dashboards: saved env+filter sets, reorderable, per user, one default; team-driven defaults per §7 | Dashboard CRUD + reorder + set-default; new user lands on team default when set |
-| D8 | Theme packs per §11: CSS-variable packs (Catppuccin latte/frappe/macchiato, Dracula, light/dark defaults), `data-theme` switch without reload | Theme picker on profile; no full page reload; Playwright screenshot snapshots per pack |
+| D8 | Theme packs per §11: CSS-variable packs (Catppuccin latte/frappe/macchiato, Dracula, light/dark defaults + brand halemans-dark/halemans-light), `data-theme` switch without reload | Theme picker on profile; no full page reload; Playwright screenshot snapshots per pack |
 | D9 | Dev fixtures: mock Confluence + Jira servers in devenv (seeded pages/tickets) | Smoke/integration run without external services |
 | D10 | Smoke/Playwright suites extended; `nix flake check --impure` green | Check green |
 
@@ -87,7 +87,7 @@ Milestone-2 step 8 was a stub enqueue; now real:
 - Dashboard page subscribes to WS scopes per included environment (existing broadcaster, `env:<name>` scope set).
 
 ### Themes (§11)
-- CSS-variable packs: `latte`, `frappe`, `macchiato`, `dracula`, `light`, `dark`. Single `theme.css` with `[data-theme="…"]` variable blocks; no per-theme stylesheets.
+- CSS-variable packs: `latte`, `frappe`, `macchiato`, `dracula`, `light`, `dark`, plus the brand packs `halemans-dark`/`halemans-light` (design_docs/halemans-brand-tokens.txt). Single `theme.css` with `[data-theme="…"]` variable blocks; no per-theme stylesheets.
 - Picker on profile page; stored in `users.settings.theme`; applied by setting `data-theme` on `<html>` — vanilla JS swaps the attribute + persists via fetch, no reload.
 - Severity/status colors are variables consumed everywhere (fix the few hardcoded colors left from milestone 1).
 - Playwright screenshot snapshots per pack on the alert card page (§16).

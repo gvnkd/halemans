@@ -45,6 +45,11 @@ Semantic tokens (every pack defines these)
   --severity-critical / --severity-high / --severity-warning / --severity-info
   --status-firing / --status-ack / --status-resolved / --status-stalled
   --status-closed / --status-suppressed
+Brand constants (defined once in app.css :root, never per-pack)
+  --brand-signal #FF5A1F  --brand-signal-hover  --on-brand-signal
+                     signal orange + foreground; reserved for primary
+                     CTAs (.btn-brand), the active nav underline, and
+                     the navbar hairline — packs must not restyle them
 
 Pack: dark (Catppuccin Mocha) — default
   bg #1e1e2e  surface #2a2a3c  border #45475a  text #cdd6f4  muted #9399b2
@@ -66,7 +71,8 @@ Pack: latte / light (Catppuccin Latte)
 
 Pack: frappe (Catppuccin Frappe)
   bg #303446  surface #414559  border #51576d  text #c6d0f5
-  muted #a5adce   (darkened from #b4bdd9 — was 1.2:1 below body text)
+  muted #b4bdd9   (AA 5.0:1 on surface; a darker #a5adce variant was
+                   measured at 4.21:1 on surface — rejected)
   accent #8caaee  accent-hover #babbf1
   severity: critical #e78284  high #ef9f76  warning #e5c890  info #8caaee
   status: firing #e78284  ack #e5c890  resolved #a6d189  stalled #ef9f76
@@ -88,6 +94,35 @@ Pack: dracula
   status: firing #ff5555  ack #f1fa8c  resolved #50fa7b  stalled #ffb86c
           closed #8c96b8  suppressed #bd93f9
   on-accent #282a36  badge-fg #282a36  badge-fg-warm #282a36
+
+Pack: halemans-dark (brand, 2026-09)
+  bg #0C121D (dark)  surface #131C2B  border #263349  text #F5F3EE (paper)
+  muted #8B96A3 (text-dark)
+  accent #4C8DFF (sev-info blue — signal orange stays reserved for the
+          brand constants above)
+  severity: critical #E5484D  high #F5A524  warning #F5A524  info #4C8DFF
+  status: firing #E5484D  ack #F5A524  resolved #98A2AD (notice pip —
+          the brand palette has no green)  stalled #F5A524
+          closed #66707B  suppressed #3A4556
+  on-accent #101820 (ink — the only AA foreground on these saturated
+          fills; white tops ~3.7:1)  badge-fg #101820  badge-fg-warm #101820
+
+Pack: halemans-light (brand, 2026-09)
+  bg #F5F3EE (paper)  surface #FFFFFF  border #DFDCD4 (faint)
+  text #101820 (ink)  muted #66707B (muted)
+  accent #4C8DFF  accent-hover #3A6FD8
+  severity/status: same hexes as halemans-dark
+  on-accent #101820  badge-fg #101820  badge-fg-warm #101820
+
+Brand-pack notes
+  - Built strictly from §1 palette + neutrals; the only derived values
+    are surface/border darks, the suppressed grays, and accent-hover.
+  - Registration points for a new pack: static/app.css [data-theme]
+    block, Application.Helper.Theme (themes + bsTheme), static/app.js
+    THEMES/LIGHT_THEMES (client-side picker validation — forgetting
+    this makes the picker silently do nothing), Provision.hs
+    settings.theme validation, Test/ThemeSpec, playwright theme
+    snapshot loop in tests/playwright/run.py.
 
 Contrast rule (enforced by the 2026-09 patch)
   Text on saturated fills must reach WCAG AA 4.5:1:
