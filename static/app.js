@@ -184,8 +184,8 @@
 // Theme packs (milestone_3.md §7): swap [data-theme] on <html>, persist to
 // localStorage, POST to /profile/theme (fire-and-forget).
 (function () {
-    var THEMES = ['latte', 'frappe', 'macchiato', 'dracula', 'light', 'dark'];
-    var LIGHT_THEMES = ['latte', 'light'];
+    var THEMES = ['latte', 'frappe', 'macchiato', 'dracula', 'light', 'dark', 'halemans-dark', 'halemans-light'];
+    var LIGHT_THEMES = ['latte', 'light', 'halemans-light'];
     var STORAGE_KEY = 'halemans-theme';
 
     function isValidTheme(theme) {

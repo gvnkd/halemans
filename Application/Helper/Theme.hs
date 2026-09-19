@@ -14,7 +14,7 @@ import IHP.Prelude
 -- via data-theme on <html>; the chosen pack persists in users.settings.theme.
 
 themes :: [Text]
-themes = ["latte", "frappe", "macchiato", "dracula", "light", "dark"]
+themes = ["latte", "frappe", "macchiato", "dracula", "light", "dark", "halemans-dark", "halemans-light"]
 
 isValidTheme :: Text -> Bool
 isValidTheme theme = theme `elem` themes
@@ -28,4 +28,4 @@ themeFromSettings settings =
 -- Bootstrap 5.3 color mode mapped from each pack: without data-bs-theme
 -- Bootstrap renders light placeholders/muted text on our dark surfaces.
 bsTheme :: Text -> Text
-bsTheme theme = if theme `elem` ["latte", "light"] then "light" else "dark"
+bsTheme theme = if theme `elem` ["latte", "light", "halemans-light"] then "light" else "dark"

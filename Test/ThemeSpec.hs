@@ -8,8 +8,8 @@ import Test.Hspec
 spec :: Spec
 spec = describe "Application.Helper.Theme" do
     describe "isValidTheme" do
-        it "accepts all six packs" do
-            forM_ ["latte", "frappe", "macchiato", "dracula", "light", "dark"] \theme ->
+        it "accepts all eight packs" do
+            forM_ ["latte", "frappe", "macchiato", "dracula", "light", "dark", "halemans-dark", "halemans-light"] \theme ->
                 isValidTheme theme `shouldBe` True
         it "rejects unknown keys" do
             isValidTheme "solarized" `shouldBe` False

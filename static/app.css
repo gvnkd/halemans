@@ -146,6 +146,59 @@
     --status-suppressed: #bd93f9;
 }
 
+/* Brand packs (design_docs/halemans-brand-tokens.txt): built strictly from
+   the brand palette — ink/paper/dark/signal + the four severity pips and
+   neutrals. Signal orange stays reserved for brand elements (--brand-signal
+   CTAs, active nav underline); the pack accent is the info blue.
+   on-accent/badge foregrounds are brand ink: it is the only AA-safe
+   foreground on the #4C8DFF / #E5484D / #F5A524 fills (white tops at ~3.7:1). */
+[data-theme="halemans-dark"] {
+    color-scheme: dark;
+    --bg: #0C121D;
+    --surface: #131C2B;
+    --border: #263349;
+    --text: #F5F3EE;
+    --text-muted: #8B96A3;
+    --accent: #4C8DFF;
+    --accent-hover: #6BA2FF;
+    --on-accent: #101820;
+    --badge-fg: #101820;
+    --badge-fg-warm: #101820;
+    --severity-critical: #E5484D;
+    --severity-high: #F5A524;
+    --severity-warning: #F5A524;
+    --severity-info: #4C8DFF;
+    --status-firing: #E5484D;
+    --status-ack: #F5A524;
+    --status-resolved: #98A2AD;
+    --status-stalled: #F5A524;
+    --status-closed: #66707B;
+    --status-suppressed: #3A4556;
+}
+[data-theme="halemans-light"] {
+    color-scheme: light;
+    --bg: #F5F3EE;
+    --surface: #FFFFFF;
+    --border: #DFDCD4;
+    --text: #101820;
+    --text-muted: #66707B;
+    --accent: #4C8DFF;
+    --accent-hover: #3A6FD8;
+    --on-accent: #101820;
+    --badge-fg: #101820;
+    --badge-fg-warm: #101820;
+    --severity-critical: #E5484D;
+    --severity-high: #F5A524;
+    --severity-warning: #F5A524;
+    --severity-info: #4C8DFF;
+    --status-firing: #E5484D;
+    --status-ack: #F5A524;
+    --status-resolved: #98A2AD;
+    --status-stalled: #F5A524;
+    --status-closed: #66707B;
+    --status-suppressed: #C9C4B8;
+}
+
 /* Bridge: feed our tokens into Bootstrap's variables. app.css loads after
    bootstrap.min.css, so equal-specificity rules here win. */
 :root {

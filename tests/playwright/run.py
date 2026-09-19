@@ -712,7 +712,7 @@ with sync_playwright() as pw:
         tmpdir = os.environ.get("TMPDIR", "/tmp")
         snap_alert = sql("SELECT id FROM alerts ORDER BY created_at DESC LIMIT 1")
         assert snap_alert, "no alert to screenshot"
-        for theme in ["latte", "frappe", "macchiato", "dracula", "light", "dark"]:
+        for theme in ["latte", "frappe", "macchiato", "dracula", "light", "dark", "halemans-dark", "halemans-light"]:
             resp = page.request.post(f"{APP}/profile/theme",
                                      data=json.dumps({"theme": theme}),
                                      headers={"Content-Type": "application/json"})

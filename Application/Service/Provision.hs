@@ -380,7 +380,7 @@ validateTheme settings = case settings of
         Nothing -> pure ()
         Just (Aeson.String theme)
             | isValidTheme theme -> pure ()
-            | otherwise -> fail ("unknown theme \"" <> cs theme <> "\" (valid: latte frappe macchiato dracula light dark)")
+            | otherwise -> fail ("unknown theme \"" <> cs theme <> "\" (valid: latte frappe macchiato dracula light dark halemans-dark halemans-light)")
         Just _ -> fail "settings.theme must be a string"
     _ -> fail "settings must be an object"
 
