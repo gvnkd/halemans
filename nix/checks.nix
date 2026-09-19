@@ -70,6 +70,7 @@ in
         MOCK_JIRA_PY = "${self}/nix/mocks/mock_jira.py";
         MOCK_LLM_PY = "${self}/nix/mocks/mock_llm.py";
         MOCK_ASSETS_PY = "${self}/nix/mocks/mock_assets.py";
+        MOCK_GRAFANA_PY = "${self}/nix/mocks/mock_grafana.py";
         buildPhase = ''
             export IHP_LIB=${ihpLib}
 
@@ -93,22 +94,25 @@ in
             export LLM_MODEL="mock-llm-1"
             export ASSETS_TOKEN="test-assets-token"
             export HALEMANS_ASSETS_URL="http://127.0.0.1:18085/rest/assets/latest"
+            export GRAFANA_TOKEN="test-grafana-token"
+            export MOCK_GRAFANA_URL="http://127.0.0.1:18086"
             python3 "$MOCK_CONFLUENCE_PY" > "$TMPDIR/mock-confluence.log" 2>&1 &
             python3 "$MOCK_JIRA_PY" > "$TMPDIR/mock-jira.log" 2>&1 &
             python3 "$MOCK_LLM_PY" > "$TMPDIR/mock-llm.log" 2>&1 &
             python3 "$MOCK_ASSETS_PY" > "$TMPDIR/mock-assets.log" 2>&1 &
+            python3 "$MOCK_GRAFANA_PY" > "$TMPDIR/mock-grafana.log" 2>&1 &
             mocks_up=0
             for i in $(seq 1 30); do
                 if python3 -c "
 import urllib.request
-for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LLM_ENDPOINT/health', 'http://127.0.0.1:18085/health'):
+for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LLM_ENDPOINT/health', 'http://127.0.0.1:18085/health', '$MOCK_GRAFANA_URL/health'):
     assert urllib.request.urlopen(url, timeout=1).status == 200
 "; then mocks_up=1; break; fi
                 sleep 1
             done
             if [ "$mocks_up" != 1 ]; then
                 echo "mocks never came up" >&2
-                tail -20 "$TMPDIR/mock-confluence.log" "$TMPDIR/mock-jira.log" "$TMPDIR/mock-llm.log" "$TMPDIR/mock-assets.log" >&2
+                tail -20 "$TMPDIR/mock-confluence.log" "$TMPDIR/mock-jira.log" "$TMPDIR/mock-llm.log" "$TMPDIR/mock-assets.log" "$TMPDIR/mock-grafana.log" >&2
                 exit 1
             fi
 
@@ -187,6 +191,7 @@ for url in ('$HALEMANS_CONFLUENCE_URL/health', '$HALEMANS_JIRA_URL/health', '$LL
         MOCK_JIRA_PY = "${self}/nix/mocks/mock_jira.py";
         MOCK_LLM_PY = "${self}/nix/mocks/mock_llm.py";
         MOCK_ASSETS_PY = "${self}/nix/mocks/mock_assets.py";
+        MOCK_GRAFANA_PY = "${self}/nix/mocks/mock_grafana.py";
         ZABBIX_SERVER_TEMPLATE = halemansLib.zabbixServerConfTemplate;
         ZABBIX_WEB_TEMPLATE = halemansLib.zabbixWebConfTemplate;
         ZABBIX_AGENT_TEMPLATE = halemansLib.zabbixAgentConfTemplate;

@@ -5,6 +5,7 @@ import qualified Test.Integration.ApiSpec
 import qualified Test.Integration.DashboardsSpec
 import qualified Test.Integration.EnrichmentSpec
 import qualified Test.Integration.LlmSpec
+import qualified Test.Integration.MetricChartSpec
 import qualified Test.Integration.PipelineSpec
 import qualified Test.Integration.ProvisioningSpec
 import Test.Integration.Setup (integrationMain)
@@ -19,4 +20,5 @@ main =
         Test.Integration.ApiSpec.spec
         Test.Integration.ProvisioningSpec.spec
         Test.Integration.EnrichmentSpec.spec
+        Test.Integration.MetricChartSpec.spec
         Test.Integration.DashboardsSpec.spec

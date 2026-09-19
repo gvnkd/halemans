@@ -22,6 +22,7 @@ data ShowView = ShowView
     , canAck :: Bool
     , canClose :: Bool
     , jiraWritable :: Bool
+    , metricsAvailable :: Bool
     }
 
 instance View ShowView where
@@ -43,6 +44,8 @@ instance View ShowView where
             {cmdbPanelHtml alert cmdbEntry}
 
             {assetsPanelHtml alert linkedAssetEntries}
+
+            {metricChartPanel}
 
             {llmPanelHtml alert analyses feedback llmJobErrors agentRoles}
 
@@ -80,6 +83,21 @@ instance View ShowView where
             Just "source" -> tr "muted at source"
             _ -> tr "under blackout"
         actionBar = renderActionBar alert canAck canClose
+        metricChartPanel =
+            if metricsAvailable
+                then
+                    [hsx|
+                    <section class="card mb-3" data-testid="metric-panel">
+                        <div class="card-body">
+                            <h5 class="card-title">{tr "Metrics"}</h5>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-testid="metric-chart-load"
+                                data-metric-chart-url={pathTo (RenderMetricChartAction alert.id)}
+                                data-metric-chart-target="metric-chart-container">{tr "Show metrics"}</button>
+                            <div id="metric-chart-container" class="metric-chart-container" data-testid="metric-chart-container"></div>
+                        </div>
+                    </section>
+                    |]
+                else mempty
         jiraPanelBody = [hsx|{jiraLinksHtml alert jiraLinks}{jiraCreateForm}|]
         -- Ticket creation only when the source opts into writable Jira
         -- (milestone 10); related/auto links render regardless.

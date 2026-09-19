@@ -76,6 +76,7 @@ library
         -- BEGIN GENERATED MODULES (docker/prepare-cabal-build.sh refreshes this list)
         Application.Connector.Alertmanager
         Application.Connector.Grafana
+        Application.Connector.GrafanaMetrics
         Application.Connector.Zabbix
         Application.Helper.Controller
         Application.Helper.DashboardConfig
@@ -152,6 +153,7 @@ library
         Application.Service.Llm.ToolCache
         Application.Service.Llm.Tools
         Application.Service.Log
+        Application.Service.MetricChart
         Application.Service.Notify
         Application.Service.PollerControl
         Application.Service.Provision

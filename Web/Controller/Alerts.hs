@@ -12,13 +12,18 @@ import qualified Application.Service.Facets as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
 import qualified Application.Service.Jira.DbConfig as Jira
 import Application.Service.Llm.Queue (latestJobErrors)
+import Application.Service.MetricChart (fetchAlertMetricSeries, metricWindowFor, seriesChartSvg)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.List as List
+import IHP.HSX.Markup (renderMarkupText)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
+import IHP.ViewPrelude (Html, preEscapedToHtml)
+import Network.HTTP.Types (status200)
 import Network.HTTP.Types.URI (renderQuery)
+import Network.Wai (responseLBS)
 import Web.Controller.Prelude
 import Web.View.Alerts.Index
 import Web.View.Alerts.Show
@@ -156,7 +161,23 @@ instance Controller AlertsController where
         jiraWritable <- case alert.sourceId of
             Nothing -> pure False
             Just sourceId -> sourceConfigBool "jiraWritable" <$> fetch sourceId
+        metricsAvailable <- case alert.sourceId of
+            Nothing -> pure False
+            Just sourceId -> (\source -> source.type_ == "grafana") <$> fetch sourceId
         render ShowView{..}
+    action RenderMetricChartAction{alertId} = do
+        requirePrivilege "view"
+        alert <- fetch alertId
+        now <- getCurrentTime
+        chartHtml <- case alert.sourceId of
+            Nothing -> pure (metricChartErrorHtml (tr "Alert has no source; cannot fetch metrics"))
+            Just sourceId -> do
+                source <- fetch sourceId
+                result <- fetchAlertMetricSeries source alert (metricWindowFor source alert now)
+                pure case result of
+                    Left err -> metricChartErrorHtml (trp "Metrics unavailable: {error}" [("error", err)])
+                    Right series -> [hsx|<div class="metric-chart" data-testid="metric-chart-svg">{preEscapedToHtml (seriesChartSvg series)}</div>|]
+        respondAndExit (responseLBS status200 [("Content-Type", "text/html; charset=utf-8")] (cs (renderMarkupText chartHtml)))
     action AckAlertAction{alertId} = do
         requirePrivilege "ack"
         alert <- fetch alertId
@@ -280,3 +301,13 @@ instance Controller AlertsController where
                             |> set #score score
                             |> createRecord
         redirectTo ShowAlertAction{alertId}
+
+-- Error block for the metric chart fragment (lazy-load fetch target). The
+-- message is translated at the call site (?request is in scope there only).
+metricChartErrorHtml :: Text -> Html
+metricChartErrorHtml message =
+    [hsx|
+    <div class="alert alert-warning mb-0" data-testid="metric-chart-error">
+        {message}
+    </div>
+|]

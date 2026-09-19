@@ -23,6 +23,7 @@ data EnvironmentsController
 data AlertsController
     = AlertsAction
     | ShowAlertAction {alertId :: !(Id Alert)}
+    | RenderMetricChartAction {alertId :: !(Id Alert)}
     | AckAlertAction {alertId :: !(Id Alert)}
     | UnackAlertAction {alertId :: !(Id Alert)}
     | CloseAlertAction {alertId :: !(Id Alert)}

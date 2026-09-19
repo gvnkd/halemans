@@ -434,3 +434,31 @@
         if (message && !window.confirm(message)) event.preventDefault();
     });
 })();
+
+// [data-metric-chart-url] buttons lazy-load the alert metric chart: one fetch
+// into the target container, then the button goes away (one shot per page
+// load; the fetch re-runs the upstream query each time).
+(function () {
+    document.addEventListener('click', function (event) {
+        var btn = event.target.closest && event.target.closest('[data-metric-chart-url]');
+        if (!btn) return;
+        event.preventDefault();
+        var target = document.getElementById(btn.getAttribute('data-metric-chart-target'));
+        if (!target) return;
+        btn.disabled = true;
+        target.textContent = '…';
+        fetch(btn.getAttribute('data-metric-chart-url'), { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (response) {
+                if (!response.ok) throw new Error('http ' + response.status);
+                return response.text();
+            })
+            .then(function (html) {
+                target.innerHTML = html;
+                btn.remove();
+            })
+            .catch(function () {
+                target.textContent = '';
+                btn.disabled = false;
+            });
+    });
+})();

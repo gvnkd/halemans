@@ -421,6 +421,18 @@ a:hover { color: var(--accent-hover); }
 .report-chart .chart-sev-info { fill: var(--severity-info); }
 .report-chart .chart-sev-other { fill: var(--text-muted); }
 
+/* Alert metric chart (alert detail lazy-load widget): same theme-token
+   approach as the report charts; lines stroke, legend chips fill. */
+.metric-chart svg { display: block; width: 100%; height: auto; }
+.metric-chart .chart-text { fill: var(--text); }
+.metric-chart .chart-text-muted { fill: var(--text-muted); }
+.metric-chart .chart-grid { stroke: var(--border); fill: none; }
+.metric-chart .chart-line-1 { stroke: var(--severity-critical); fill: none; }
+.metric-chart .chart-line-2 { stroke: var(--severity-info); fill: none; }
+.metric-chart .chart-line-3 { stroke: var(--severity-warning); fill: none; }
+.metric-chart .chart-line-4 { stroke: var(--text-muted); fill: none; }
+.metric-chart-container { margin-top: 0.5rem; }
+
 /* shared width limits replacing per-view inline styles */
 .maxw-400 { max-width: 400px; }
 .maxw-500 { max-width: 500px; }

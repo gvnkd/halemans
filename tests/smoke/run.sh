@@ -176,6 +176,24 @@ else
     fail "rbac (no firing alert to probe)"
 fi
 
+# ------------------------------------------------- grafana metric chart
+# Lazy-load widget against the mock grafana (provisioning rule + ds/query).
+scenario "grafana metric chart"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+mock_alert_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM alerts WHERE fingerprint = 'grafana-mock-rule-cpu' LIMIT 1" 2>/dev/null)
+if [ -n "$mock_alert_id" ]; then
+    show_body=$(curl -s -b "$COOKIES" "$APP_URL/alerts/$mock_alert_id")
+    printf '%s' "$show_body" | grep -q 'data-testid="metric-chart-load"' \
+        && pass "metric chart button renders on alert page" || fail "metric chart button renders on alert page"
+    chart_body=$(curl -s -b "$COOKIES" "$APP_URL/alerts/$mock_alert_id/metrics-chart")
+    printf '%s' "$chart_body" | grep -q 'data-testid="metric-chart-svg"' \
+        && pass "metric chart endpoint returns SVG" || fail "metric chart endpoint returns SVG"
+    printf '%s' "$chart_body" | grep -q 'instance-1' \
+        && pass "metric chart renders mock series" || fail "metric chart renders mock series"
+else
+    fail "grafana metric chart (no mock alert row)"
+fi
+
 # ------------------------------------------------- grafana poller reconcile
 # milestone 2 §8: with the webhook token removed, the poller must still pick
 # up the fire AND the resolve (single fingerprint, no duplicate).

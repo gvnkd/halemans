@@ -259,6 +259,11 @@ export LLM_MODEL="mock-llm-1"
 # Mock Assets (milestone 8 D9): fixed test token, inherited by web/worker.
 export ASSETS_TOKEN="test-assets-token"
 export HALEMANS_ASSETS_URL="http://127.0.0.1:18085/rest/assets/latest"
+# Mock Grafana (alert metric chart): serves provisioning rule GET + ds/query
+# for the lazy-load chart widget. Dedicated token env so the real grafana
+# source (alert ingestion) keeps its own token.
+export MOCK_GRAFANA_TOKEN="test-grafana-token"
+export MOCK_GRAFANA_URL="http://127.0.0.1:18086"
 # Flatten write-back retry backoff (1m/5m/15m) so the failure-chip smoke
 # scenario reaches terminal 'failed' fast; inherited by the worker.
 export HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0"
@@ -271,19 +276,23 @@ python3 "$MOCK_LLM_PY" > "$T/mock-llm.log" 2>&1 &
 pids="$pids $!"
 python3 "$MOCK_ASSETS_PY" > "$T/mock-assets.log" 2>&1 &
 pids="$pids $!"
+python3 "$MOCK_GRAFANA_PY" > "$T/mock-grafana.log" 2>&1 &
+pids="$pids $!"
 for i in $(seq 1 30); do
     curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null 2>&1 \
         && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null 2>&1 \
         && curl -sf "$LLM_ENDPOINT/health" > /dev/null 2>&1 \
-        && curl -sf "http://127.0.0.1:18085/health" > /dev/null 2>&1 && break
+        && curl -sf "http://127.0.0.1:18085/health" > /dev/null 2>&1 \
+        && curl -sf "$MOCK_GRAFANA_URL/health" > /dev/null 2>&1 && break
     sleep 1
 done
 curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null \
     && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null \
     && curl -sf "$LLM_ENDPOINT/health" > /dev/null \
-    && curl -sf "http://127.0.0.1:18085/health" > /dev/null || {
+    && curl -sf "http://127.0.0.1:18085/health" > /dev/null \
+    && curl -sf "$MOCK_GRAFANA_URL/health" > /dev/null || {
         echo "mocks never came up" >&2
-        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" "$T/mock-llm.log" "$T/mock-assets.log" >&2
+        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" "$T/mock-llm.log" "$T/mock-assets.log" "$T/mock-grafana.log" >&2
         exit 1
     }
 
@@ -310,6 +319,28 @@ SELECT u.id, r.id FROM users u, roles r
 WHERE u.email = :'email' AND r.name = :'role';
 SQL
 done
+
+# Mock Grafana source + alert for the metric chart widget: the alert's
+# generatorURL carries the mock rule uid, so the lazy-load chart fetches
+# rule -> expr -> ds/query from the mock (poll disabled: no alertmanager
+# listing endpoint is mocked).
+psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO sources (id, type, name, base_url, env, poll_interval_seconds, enabled, config) VALUES
+    ('a0000000-0000-0000-0000-000000000004', 'grafana', 'grafana-mock',
+     'http://127.0.0.1:18086', 'dev', 30, true,
+     '{"tokenEnv":"MOCK_GRAFANA_TOKEN","metrics":{"leadMinutes":60,"trailMinutes":15,"maxPoints":500}}')
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO alerts (fingerprint, source_id, external_id, title, severity, status, source_url, started_at)
+SELECT 'grafana-mock-rule-cpu',
+       'a0000000-0000-0000-0000-000000000004',
+       'mock-rule-cpu',
+       'Mock CPU saturation',
+       'warning',
+       'firing',
+       'http://127.0.0.1:18086/alerting/grafana/mock-rule-cpu/view?orgId=1',
+       NOW() - INTERVAL '30 minutes'
+WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE fingerprint = 'grafana-mock-rule-cpu');
+SQL
 
 # Milestone 9 §9: a v2-JSON dashboard exercising match + groupBy over
 # materialized facets (one section per DB Cluster value). Same as

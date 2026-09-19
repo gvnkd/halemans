@@ -45,9 +45,22 @@ let
             exec python3 ${./mocks/mock_assets.py}
         '';
     };
+    # Mock Grafana subset (alert metric chart): provisioning rule GET +
+    # /api/ds/query POST. Token from GRAFANA_TOKEN (same env var as the real
+    # grafana source uses).
+    mockGrafana = pkgs.writeShellApplication {
+        name = "mock-grafana";
+        runtimeInputs = [ pkgs.python3 halemansLib.ensureTokens ];
+        text = ''
+            halemans-ensure-tokens
+            # shellcheck disable=SC1091
+            source "''${DEVENV_STATE:?}/halemans/env.sh"
+            exec python3 ${./mocks/mock_grafana.py}
+        '';
+    };
 in
 {
-    packages = [ mockConfluence mockJira mockLlm mockAssets ];
+    packages = [ mockConfluence mockJira mockLlm mockAssets mockGrafana ];
 
     processes.mock-confluence = {
         exec = "${mockConfluence}/bin/mock-confluence";
@@ -88,6 +101,17 @@ in
             readiness_probe.http_get = {
                 host = "127.0.0.1";
                 port = 18085;
+                path = "/health";
+            };
+        };
+    };
+
+    processes.mock-grafana = {
+        exec = "${mockGrafana}/bin/mock-grafana";
+        process-compose = {
+            readiness_probe.http_get = {
+                host = "127.0.0.1";
+                port = 18086;
                 path = "/health";
             };
         };
