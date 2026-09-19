@@ -108,6 +108,16 @@ with sync_playwright() as pw:
             page.get_by_test_id("env-cards").wait_for()
             page.close()
 
+    @check("user menu dropdown exposes profile and logout")
+    def _():
+        page = context.new_page()
+        login(page, "sre")
+        page.get_by_test_id("user-menu").click()
+        page.get_by_role("link", name="Profile").wait_for()
+        page.get_by_test_id("logout").wait_for()
+        page.close()
+
+    page = context.new_page()
     page = context.new_page()
     login(page, "sre")
 
