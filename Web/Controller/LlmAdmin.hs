@@ -36,13 +36,13 @@ instance Controller LlmAdminController where
         templateRows <-
             sqlQueryTyped
                 [typedSql|
-            SELECT t.id, t.name, t.version, t.active, t.notes,
+            SELECT t.id, t.name, t.version, t.active, t.notes, t.protected,
                 COALESCE(SUM(f.score), 0) AS feedback_score,
                 COUNT(f.id) AS feedback_count
             FROM llm_prompt_templates t
             LEFT JOIN llm_analyses a ON a.prompt_template_id = t.id
             LEFT JOIN llm_feedback f ON f.analysis_id = a.id
-            GROUP BY t.id, t.name, t.version, t.active, t.notes
+            GROUP BY t.id, t.name, t.version, t.active, t.notes, t.protected
             ORDER BY t.name, t.version DESC
         |]
         let templates =
@@ -55,6 +55,7 @@ instance Controller LlmAdminController where
                         , notes = get #notes row
                         , feedbackScore = get #feedback_score row
                         , feedbackCount = get #feedback_count row
+                        , rowProtected = get #protected row
                         }
         counterRows <-
             sqlQueryTyped
@@ -210,6 +211,7 @@ instance Controller LlmAdminController where
     action EditLlmTemplateAction{templateId} = do
         requirePrivilege "manage_rules"
         template <- fetch templateId
+        ensureNotProtected (get #name template <> " v" <> tshow template.version) (get #protected template)
         render EditView{..}
 
     -- Editing a template always creates version+1 (append-only lineage,
@@ -217,6 +219,7 @@ instance Controller LlmAdminController where
     action UpdateLlmTemplateAction{templateId} = do
         requirePrivilege "manage_rules"
         template <- fetch templateId
+        ensureNotProtected (get #name template <> " v" <> tshow template.version) (get #protected template)
         let body = param @Text "body"
             notes = paramOrNothing @Text "notes"
         _ <-
@@ -235,6 +238,7 @@ instance Controller LlmAdminController where
     action ActivateLlmTemplateAction{templateId} = do
         requirePrivilege "manage_rules"
         template <- fetch templateId
+        ensureNotProtected (get #name template <> " v" <> tshow template.version) (get #protected template)
         let templateName = get #name template
             templateRef = get #id template
         withTransaction do
@@ -255,6 +259,7 @@ instance Controller LlmAdminController where
     action DeleteLlmTemplateAction{templateId} = do
         requirePrivilege "manage_rules"
         template <- fetch templateId
+        ensureNotProtected (get #name template <> " v" <> tshow template.version) (get #protected template)
         references <-
             query @LlmAnalysis
                 |> filterWhere (#promptTemplateId, Just templateId)
@@ -321,10 +326,12 @@ instance Controller LlmAdminController where
     action EditLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
         provider <- fetch providerId
+        ensureNotProtected provider.providerName (get #protected provider)
         render EditProviderView{..}
     action UpdateLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
         provider <- fetch providerId
+        ensureNotProtected provider.providerName (get #protected provider)
         let name = param @Text "providerName"
             endpoint = param @Text "endpoint"
             model = param @Text "model"
@@ -362,6 +369,7 @@ instance Controller LlmAdminController where
     action EnableLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
         provider <- fetch providerId
+        ensureNotProtected provider.providerName (get #protected provider)
         withTransaction do
             void do
                 sqlExecTyped
@@ -379,6 +387,7 @@ instance Controller LlmAdminController where
     action DisableLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
         provider <- fetch providerId
+        ensureNotProtected provider.providerName (get #protected provider)
         void do
             sqlExecTyped
                 [typedSql|
@@ -392,6 +401,7 @@ instance Controller LlmAdminController where
     action DeleteLlmProviderAction{providerId} = do
         requirePrivilege "manage_rules"
         provider <- fetch providerId
+        ensureNotProtected provider.providerName (get #protected provider)
         deleteRecord provider
         setSuccessMessage (trp "Deleted provider {name}" [("name", get #providerName provider)])
         redirectTo LlmAdminAction
@@ -436,10 +446,12 @@ instance Controller LlmAdminController where
     action EditLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
         role <- fetch roleId
+        ensureNotProtected role.name (get #protected role)
         render EditRoleView{role, toolNames = roleToolNames role}
     action UpdateLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
         role <- fetch roleId
+        ensureNotProtected role.name (get #protected role)
         let name = param @Text "name"
             description = param @Text "description"
             templateName = param @Text "promptTemplateName"
@@ -472,6 +484,7 @@ instance Controller LlmAdminController where
     action ToggleLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
         role <- fetch roleId
+        ensureNotProtected role.name (get #protected role)
         now <- getCurrentTime
         -- Disabling the default role also drops the default flag, so
         -- resolution never lands on a disabled role.
@@ -486,6 +499,7 @@ instance Controller LlmAdminController where
     action SetDefaultLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
         role <- fetch roleId
+        ensureNotProtected role.name (get #protected role)
         if not role.enabled
             then setErrorMessage (tr "Enable the role before making it the default")
             else do
@@ -506,6 +520,7 @@ instance Controller LlmAdminController where
     action DeleteLlmRoleAction{roleId} = do
         requirePrivilege "manage_rules"
         role <- fetch roleId
+        ensureNotProtected role.name (get #protected role)
         references <-
             query @LlmAnalysis
                 |> filterWhere (#agentRoleId, Just roleId)

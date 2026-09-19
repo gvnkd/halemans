@@ -16,7 +16,7 @@ spec :: Spec
 spec = describe "Application.Service.Provision" do
     describe "parseProvisionConfig" do
         it "parses the empty config" do
-            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig False Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig False Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
             let json =
@@ -106,6 +106,83 @@ spec = describe "Application.Service.Provision" do
                     llm.providerName `shouldBe` "default"
                     llm.enabled `shouldBe` True
                     map (\template -> (template.name, template.version)) llm.promptTemplates `shouldBe` [("alert_enrichment", 1)]
+
+        it "parses the rule/integration sections and defaults protected to true" do
+            let json :: LByteString
+                json =
+                    "{\"roles\": {\"admin\": {\"privileges\": [\"admin\", \"manage_rules\"]}},"
+                        <> "\"assetsConfigs\": {\"assets-prod\": {\"baseUrl\": \"https://assets.example\", \"tokenEnv\": \"ASSETS_TOKEN\", \"authMode\": \"basic\", \"jiraEmailEnv\": \"JIRA_EMAIL\"}},"
+                        <> "\"groupingRules\": {\"by-service\": {\"position\": 10, \"match\": {\"fields\": {\"severity\": \"critical\"}}, \"groupKeyTemplate\": \"{service}\"}},"
+                        <> "\"escalationPolicies\": {\"page-sre\": {\"steps\": [{\"afterSeconds\": 300, \"targetTeam\": \"sre\", \"unlessStatus\": \"ack\"}]}},"
+                        <> "\"notificationRules\": {\"push-critical\": {\"severityThreshold\": \"critical\", \"team\": \"sre\", \"escalationPolicy\": \"page-sre\", \"throttleSeconds\": 60}},"
+                        <> "\"llmAgentRoles\": {\"oncall\": {\"promptTemplateName\": \"alert_enrichment\", \"tools\": [\"cmdb_lookup\", \"jira_search\"], \"isDefault\": true}}}"
+            case parseProvisionConfig json of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [role] = fromMaybe [] config.roles
+                    role.roleName `shouldBe` "admin"
+                    role.rolePrivileges `shouldBe` ["admin", "manage_rules"]
+                    role.roleProtected `shouldBe` True
+                    let [assets] = fromMaybe [] config.assetsConfigs
+                    assets.acName `shouldBe` "assets-prod"
+                    assets.acAuthMode `shouldBe` "basic"
+                    assets.acProtected `shouldBe` True
+                    let [grouping] = fromMaybe [] config.groupingRules
+                    grouping.grName `shouldBe` "by-service"
+                    grouping.grProtected `shouldBe` True
+                    let [policy] = fromMaybe [] config.escalationPolicies
+                    policy.epName `shouldBe` "page-sre"
+                    let [step] = policy.epSteps
+                    step.esAfterSeconds `shouldBe` 300
+                    step.esTargetTeam `shouldBe` Just "sre"
+                    step.esTargetUser `shouldBe` Nothing
+                    step.esUnlessStatus `shouldBe` Just "ack"
+                    let [notification] = fromMaybe [] config.notificationRules
+                    notification.nrName `shouldBe` "push-critical"
+                    notification.nrTeam `shouldBe` Just "sre"
+                    notification.nrEscalationPolicy `shouldBe` Just "page-sre"
+                    notification.nrProtected `shouldBe` True
+                    let [agentRole] = fromMaybe [] config.llmAgentRoles
+                    agentRole.arName `shouldBe` "oncall"
+                    agentRole.arIsDefault `shouldBe` True
+                    agentRole.arProtected `shouldBe` True
+
+        it "parses per-item protected opt-out" do
+            case parseProvisionConfig "{\"roles\": {\"admin\": {\"privileges\": [], \"protected\": false}}}" of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [role] = fromMaybe [] config.roles
+                    role.roleProtected `shouldBe` False
+
+        it "rejects escalation steps with both team and user targets" do
+            let json = "{\"escalationPolicies\": {\"p\": {\"steps\": [{\"afterSeconds\": 60, \"targetTeam\": \"t\", \"targetUser\": \"a@b.c\"}]}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("one of targetTeam or targetUser" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects notification rules with both team and user targets" do
+            let json = "{\"notificationRules\": {\"n\": {\"team\": \"t\", \"user\": \"a@b.c\"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("one of team or user" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects unknown severities in notification rules" do
+            let json = "{\"notificationRules\": {\"n\": {\"severityThreshold\": \"urgent\"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown severity" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects unknown fields in rule match expressions" do
+            let json = "{\"groupingRules\": {\"g\": {\"match\": {\"fields\": {\"bogus\": \"x\"}}}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown alert field" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects basic assets configs without jiraEmailEnv" do
+            let json = "{\"assetsConfigs\": {\"a\": {\"baseUrl\": \"https://a\", \"tokenEnv\": \"T\", \"authMode\": \"basic\"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("jiraEmailEnv" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
 
         it "parses YAML identically to JSON" do
             let json =

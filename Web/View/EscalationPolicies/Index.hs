@@ -33,7 +33,7 @@ renderPolicy :: (CurrentUserRecord ~ User, ?request :: Request) => EscalationPol
 renderPolicy policy =
     [hsx|
     <tr data-testid="escalation-policy-row">
-        <td>{policy.name}</td>
+        <td>{policy.name} {protectedBadgeHtml (get #protected policy)}</td>
         <td>{forEach (stepsFromJSON policy.steps) renderStep}</td>
         <td>
             {editDeleteActionsHtml (pathTo (EditEscalationPolicyAction policy.id)) (pathTo (DeleteEscalationPolicyAction policy.id)) "edit-escalation-policy"}

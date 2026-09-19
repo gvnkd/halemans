@@ -35,11 +35,13 @@ instance Controller EscalationPoliciesController where
     action EditEscalationPolicyAction{escalationPolicyId} = do
         requirePrivilege "manage_rules"
         policy <- fetch escalationPolicyId
+        ensureNotProtected policy.name (get #protected policy)
         (teams, users) <- formChoices
         render EditView{policy, teams, users}
     action UpdateEscalationPolicyAction{escalationPolicyId} = do
         requirePrivilege "manage_rules"
         policy <- fetch escalationPolicyId
+        ensureNotProtected policy.name (get #protected policy)
         case stepsFromForm of
             [] -> setErrorMessage (tr "at least one step is required")
             steps -> do
@@ -53,6 +55,7 @@ instance Controller EscalationPoliciesController where
     action DeleteEscalationPolicyAction{escalationPolicyId} = do
         requirePrivilege "manage_rules"
         policy <- fetch escalationPolicyId
+        ensureNotProtected policy.name (get #protected policy)
         deleteRecord policy
         setSuccessMessage (tr "Escalation policy deleted")
         redirectTo EscalationPoliciesAction

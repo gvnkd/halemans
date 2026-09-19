@@ -5,6 +5,7 @@
 -- sources.config: non-secret config; credentials are env-var references like {"tokenEnv":"ZABBIX_TOKEN"}.
 CREATE TABLE sources (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     type TEXT NOT NULL,
     name TEXT NOT NULL,
     base_url TEXT NOT NULL DEFAULT '',
@@ -110,6 +111,7 @@ ALTER TABLE zabbix_host_groups ADD CONSTRAINT zabbix_host_groups_source_id_fkey 
 
 CREATE TABLE users (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     email TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     display_name TEXT NOT NULL DEFAULT '',
@@ -122,6 +124,7 @@ CREATE UNIQUE INDEX users_email_idx ON users(email);
 
 CREATE TABLE roles (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     privileges TEXT[] NOT NULL DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
@@ -259,6 +262,7 @@ ALTER TABLE push_notification_jobs ADD CONSTRAINT push_notification_jobs_alert_i
 
 CREATE TABLE teams (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     host_groups JSONB NOT NULL DEFAULT '[]',
@@ -292,6 +296,7 @@ CREATE UNIQUE INDEX on_call_schedules_team_id_idx ON on_call_schedules(team_id);
 
 CREATE TABLE escalation_policies (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     steps JSONB NOT NULL DEFAULT '[]',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
@@ -300,6 +305,7 @@ CREATE UNIQUE INDEX escalation_policies_name_idx ON escalation_policies(name);
 
 CREATE TABLE grouping_rules (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     position INT NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
@@ -330,6 +336,7 @@ CREATE INDEX alerts_group_id_idx ON alerts(group_id);
 
 CREATE TABLE notification_rules (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     position INT NOT NULL DEFAULT 0,
     name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT true,
@@ -425,6 +432,7 @@ CREATE INDEX jira_links_alert_idx ON jira_links(alert_id);
 
 CREATE TABLE dashboards (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     user_id UUID NOT NULL,
     name TEXT NOT NULL,
     config JSONB NOT NULL DEFAULT '[]',
@@ -438,6 +446,7 @@ CREATE UNIQUE INDEX dashboards_default_idx ON dashboards(user_id) WHERE is_defau
 
 CREATE TABLE field_mappings (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     facet TEXT NOT NULL,
     rank INT NOT NULL,
     kind TEXT NOT NULL,
@@ -522,6 +531,7 @@ CREATE TABLE jira_sync_jobs (
 
 CREATE TABLE llm_prompt_templates (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     version INT NOT NULL,
     body TEXT NOT NULL,
@@ -672,6 +682,7 @@ CREATE UNIQUE INDEX sources_name_idx ON sources(name);
 -- stores the env var NAME, never the key (milestone_7.md §7).
 CREATE TABLE llm_configs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     provider_name TEXT NOT NULL,
     endpoint TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -692,6 +703,7 @@ CREATE UNIQUE INDEX llm_configs_enabled_idx ON llm_configs(enabled) WHERE enable
 -- card panel + LLM excerpt render.
 CREATE TABLE assets_configs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     base_url TEXT NOT NULL,
     token_env TEXT NOT NULL,
@@ -758,6 +770,7 @@ CREATE UNIQUE INDEX assets_icon_cache_config_url_idx ON assets_icon_cache(config
 -- + tool whitelist; at most one default.
 CREATE TABLE llm_agent_roles (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     prompt_template_name TEXT NOT NULL DEFAULT 'alert_enrichment',
@@ -778,6 +791,7 @@ ALTER TABLE llm_analyses ADD CONSTRAINT llm_analyses_agent_role_id_fkey FOREIGN 
 -- token can see). token_env holds the env var NAME, never the token.
 CREATE TABLE jira_configs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     base_url TEXT NOT NULL,
     token_env TEXT NOT NULL,
@@ -791,6 +805,7 @@ CREATE UNIQUE INDEX jira_configs_name_idx ON jira_configs(name);
 
 CREATE TABLE cmdb_configs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
     name TEXT NOT NULL,
     base_url TEXT NOT NULL,
     token_env TEXT NOT NULL,

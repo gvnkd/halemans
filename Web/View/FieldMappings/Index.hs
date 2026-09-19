@@ -49,7 +49,7 @@ renderMapping :: FieldMapping -> Html
 renderMapping mapping =
     [hsx|
     <tr data-testid="field-mapping-row">
-        <td data-testid="field-mapping-facet">{mapping.facet}</td>
+        <td data-testid="field-mapping-facet">{mapping.facet} {protectedBadgeHtml (get #protected mapping)}</td>
         <td>{mapping.rank}</td>
         <td><code>{mapping.kind}</code></td>
         <td><code>{mapping.key}</code></td>

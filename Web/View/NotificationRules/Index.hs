@@ -34,7 +34,7 @@ renderRule (rule, target) =
     [hsx|
     <tr data-testid="notification-rule-row">
         <td>{rule.position}</td>
-        <td>{rule.name}</td>
+        <td>{rule.name} {protectedBadgeHtml (get #protected rule)}</td>
         <td>{enabledBadgeHtml rule.enabled}</td>
         <td>{rule.severityThreshold}</td>
         <td>{target}</td>

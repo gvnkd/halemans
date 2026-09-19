@@ -1,31 +1,54 @@
 module Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml) where
 
-import Data.Aeson (object, (.=))
+import Data.Aeson (object, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as AesonPretty
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List as List
 import qualified Data.Text as Text
 import Data.Yaml.Internal (isSpecialString)
 import Generated.Types
 import IHP.Fetch (fetch)
-import IHP.ModelSupport (Id' (..), ModelContext)
+import IHP.ModelSupport (Id' (..), ModelContext, textToId)
 import IHP.Prelude
 import IHP.QueryBuilder (orderByAsc, query)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
+import System.Environment (getEnvironment)
+
+-- DB shape of an escalation policy step (what Application.Pipeline.Escalation
+-- consumes): UUIDs as text, unlike the provision file's natural keys.
+data StoredStep = StoredStep
+    { stAfterSeconds :: Int
+    , stTargetTeamId :: Maybe Text
+    , stTargetUserId :: Maybe Text
+    , stUnlessStatus :: Maybe Text
+    }
+
+parseStoredStep :: Aeson.Value -> Parser StoredStep
+parseStoredStep = Aeson.withObject "escalation step" \o ->
+    StoredStep
+        <$> o .: "after_seconds"
+        <*> o .:? "target_team_id"
+        <*> o .:? "target_user_id"
+        <*> o .:? "unless_status"
 
 -- Renders the current DB state as a provision config (the map-keyed format
 -- parsed by Application.Service.Provision), for the admin "export" download.
 -- strict is always false: the export is a snapshot, never a reconcile order.
--- webhook_tokens and hostGroupsFile are NOT exported — the table holds raw
--- token values while the config wants env references, and secrets must not
--- land in a downloadable file; re-add them by hand after exporting.
+-- hostGroupsFile is NOT exported (needs a local file). webhook_tokens are
+-- exported as env REFERENCES ONLY: a token whose value matches a process
+-- environment variable is emitted as that variable's name (first match in
+-- sorted order); tokens with no env match are omitted from the export, so
+-- re-provisioning the file on a fresh node doesn't recreate them — set a
+-- dedicated env var per token to make them round-trip.
 
 buildProvisionExport :: (?modelContext :: ModelContext) => IO Aeson.Value
 buildProvisionExport = do
     users <- exportUsers
+    roles <- exportRoles
     sources <- exportSources
     teams <- exportTeams
     llm <- exportLlm
@@ -33,11 +56,17 @@ buildProvisionExport = do
     dashboards <- exportDashboards
     jiraConfigs <- exportJiraConfigs
     cmdbConfigs <- exportCmdbConfigs
+    assetsConfigs <- exportAssetsConfigs
+    groupingRules <- exportGroupingRules
+    escalationPolicies <- exportEscalationPolicies
+    notificationRules <- exportNotificationRules
+    llmAgentRoles <- exportLlmAgentRoles
     autoAnalyze <- exportAutoAnalyze
     pure $
         object $
             [ "strict" .= False
             , "users" .= users
+            , "roles" .= roles
             , "sources" .= sources
             , "teams" .= teams
             , "llm" .= llm
@@ -45,6 +74,11 @@ buildProvisionExport = do
             , "dashboards" .= dashboards
             , "jiraConfigs" .= jiraConfigs
             , "cmdbConfigs" .= cmdbConfigs
+            , "assetsConfigs" .= assetsConfigs
+            , "groupingRules" .= groupingRules
+            , "escalationPolicies" .= escalationPolicies
+            , "notificationRules" .= notificationRules
+            , "llmAgentRoles" .= llmAgentRoles
             ]
                 <> ["autoAnalyze" .= autoAnalyze | isJust autoAnalyze]
   where
@@ -67,21 +101,55 @@ buildProvisionExport = do
                         , "settings" .= user.settings
                         ]
         pure (object entries)
-    exportSources = do
-        sources <- query @Source |> orderByAsc #name |> fetch
+    exportRoles = do
+        roleRows <- query @Role |> orderByAsc #name |> fetch
         pure $
             object
-                [ Key.fromText source.name
-                    .= object
-                        [ "type" .= source.type_
-                        , "baseUrl" .= source.baseUrl
-                        , "env" .= source.env
-                        , "pollIntervalSeconds" .= source.pollIntervalSeconds
-                        , "enabled" .= source.enabled
-                        , "config" .= source.config
-                        ]
-                | source <- sources
+                [ Key.fromText role.name
+                    .= object ["privileges" .= role.privileges]
+                | role <- roleRows
                 ]
+    exportSources = do
+        envVars <- List.sortOn fst <$> getEnvironment
+        sources <- query @Source |> orderByAsc #name |> fetch
+        entries <- forM sources \source -> do
+            let sourceId = get #id source
+            tokens <-
+                sqlQueryTyped
+                    [typedSql|
+                SELECT t.token FROM webhook_tokens t
+                WHERE t.source_id = ${sourceId}
+                ORDER BY t.created_at
+            |]
+            -- webhook_tokens has no name column (the file-format key is a
+            -- label only, dropped at import), so env-matched tokens are
+            -- keyed by the env var name.
+            let tokenEnvNames =
+                    List.nub
+                        [ cs envName :: Text
+                        | tokenValue <- tokens
+                        , (envName, envValue) <- envVars
+                        , cs envValue == tokenValue
+                        ]
+            pure $
+                Key.fromText source.name
+                    .= object
+                        ( [ "type" .= source.type_
+                          , "baseUrl" .= source.baseUrl
+                          , "env" .= source.env
+                          , "pollIntervalSeconds" .= source.pollIntervalSeconds
+                          , "enabled" .= source.enabled
+                          , "config" .= source.config
+                          ]
+                            <> [ "webhookTokens"
+                                    .= object
+                                        [ Key.fromText envName .= object ["tokenEnv" .= envName]
+                                        | envName <- tokenEnvNames
+                                        ]
+                               | not (null tokenEnvNames)
+                               ]
+                        )
+        pure (object entries)
     exportTeams = do
         teams <- query @Team |> orderByAsc #name |> fetch
         entries <- forM teams \team -> do
@@ -201,6 +269,108 @@ buildProvisionExport = do
                         , "enabled" .= config.enabled
                         ]
                 | config <- configs
+                ]
+    exportAssetsConfigs = do
+        configs <- query @AssetsConfig |> orderByAsc #name |> fetch
+        pure $
+            object
+                [ Key.fromText config.name
+                    .= object
+                        ( [ "baseUrl" .= config.baseUrl
+                          , "tokenEnv" .= config.tokenEnv
+                          , "authMode" .= config.authMode
+                          , "defaultSchemaName" .= config.defaultSchemaName
+                          , "hostQueryTemplate" .= config.hostQueryTemplate
+                          , "attributeNames" .= config.attributeNames
+                          , "enabled" .= config.enabled
+                          ]
+                            <> ["jiraEmailEnv" .= jiraEmailEnv | Just jiraEmailEnv <- [config.jiraEmailEnv]]
+                        )
+                | config <- configs
+                ]
+    exportGroupingRules = do
+        rules <- query @GroupingRule |> orderByAsc #name |> fetch
+        pure $
+            object
+                [ Key.fromText rule.name
+                    .= object
+                        [ "position" .= rule.position
+                        , "enabled" .= rule.enabled
+                        , "match" .= rule.match
+                        , "groupKeyTemplate" .= rule.groupKeyTemplate
+                        ]
+                | rule <- rules
+                ]
+    -- Steps are stored with UUID references; the export resolves them back
+    -- to team names / user emails so the file is node-independent.
+    exportEscalationPolicies = do
+        policies <- query @EscalationPolicy |> orderByAsc #name |> fetch
+        entries <- forM policies \policy -> do
+            steps <- case parseMaybe (Aeson.parseJSON @[Aeson.Value]) policy.steps of
+                Just values -> mapM resolveStep values
+                Nothing -> pure []
+            pure $ Key.fromText policy.name .= object ["steps" .= steps]
+        pure (object entries)
+    resolveStep value = case parseMaybe parseStoredStep value of
+        Nothing -> pure (Aeson.object ["unresolvable" .= tshow value])
+        Just step -> do
+            targetTeam <- forM step.stTargetTeamId \teamIdText -> do
+                let teamId = textToId teamIdText :: Id Team
+                team <- fetch teamId
+                pure team.name
+            targetUser <- forM step.stTargetUserId \userIdText -> do
+                let userId = textToId userIdText :: Id User
+                user <- fetch userId
+                pure user.email
+            pure $
+                Aeson.object
+                    ( ["afterSeconds" .= step.stAfterSeconds]
+                        <> ["targetTeam" .= team | Just team <- [targetTeam]]
+                        <> ["targetUser" .= user | Just user <- [targetUser]]
+                        <> ["unlessStatus" .= status | Just status <- [step.stUnlessStatus]]
+                    )
+    exportNotificationRules = do
+        rules <- query @NotificationRule |> orderByAsc #name |> fetch
+        entries <- forM rules \rule -> do
+            teamName <- forM rule.teamId \teamId -> do
+                team <- fetch teamId
+                pure team.name
+            userEmail <- forM rule.userId \userId -> do
+                user <- fetch userId
+                pure user.email
+            policyName <- forM rule.escalationPolicyId \policyId -> do
+                policy <- fetch policyId
+                pure policy.name
+            pure $
+                Key.fromText rule.name
+                    .= object
+                        ( [ "position" .= rule.position
+                          , "enabled" .= rule.enabled
+                          , "match" .= rule.match
+                          , "severityThreshold" .= rule.severityThreshold
+                          , "channel" .= rule.channel
+                          , "channelConfig" .= rule.channelConfig
+                          , "throttleSeconds" .= rule.throttleSeconds
+                          ]
+                            <> ["team" .= team | Just team <- [teamName]]
+                            <> ["user" .= user | Just user <- [userEmail]]
+                            <> ["escalationPolicy" .= policy | Just policy <- [policyName]]
+                        )
+        pure (object entries)
+    exportLlmAgentRoles = do
+        roles <- query @LlmAgentRole |> orderByAsc #name |> fetch
+        pure $
+            object
+                [ Key.fromText role.name
+                    .= object
+                        ( [ "description" .= role.description
+                          , "promptTemplateName" .= role.promptTemplateName
+                          , "tools" .= role.tools
+                          , "enabled" .= role.enabled
+                          , "isDefault" .= role.isDefault
+                          ]
+                        )
+                | role <- roles
                 ]
     exportAutoAnalyze = do
         rows <- query @LlmAutoAnalyzeConfig |> fetch

@@ -34,6 +34,7 @@ instance Controller GroupingRulesController where
     action EditGroupingRuleAction{groupingRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch groupingRuleId
+        ensureNotProtected rule.name (get #protected rule)
         render EditView{rule}
 
     -- Any edit bumps version (milestone_2.md §4): previously grouped alerts
@@ -41,6 +42,7 @@ instance Controller GroupingRulesController where
     action UpdateGroupingRuleAction{groupingRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch groupingRuleId
+        ensureNotProtected rule.name (get #protected rule)
         _ <-
             rule
                 |> set #name (param @Text "name")
@@ -55,6 +57,7 @@ instance Controller GroupingRulesController where
     action DeleteGroupingRuleAction{groupingRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch groupingRuleId
+        ensureNotProtected rule.name (get #protected rule)
         deleteRecord rule
         setSuccessMessage (tr "Grouping rule deleted")
         redirectTo GroupingRulesAction

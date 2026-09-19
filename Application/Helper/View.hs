@@ -36,3 +36,11 @@ renderMarkdownText = CMark.commonmarkToHtml [CMark.optSafe]
 
 markdownHtml :: Text -> Html
 markdownHtml = preEscapedToHtml . renderMarkdownText
+
+-- Badge for provision-managed config items: shown in admin list views next
+-- to the item name; the controller side rejects edits via ensureNotProtected.
+protectedBadgeHtml :: Bool -> Html
+protectedBadgeHtml itemProtected =
+    if itemProtected
+        then [hsx|<span class="badge bg-secondary" data-testid="protected-badge" title={tr "Managed by provisioning (HALEMANS_PROVISION_CONFIG); edit the provision file to change"}>{tr "protected"}</span>|]
+        else mempty

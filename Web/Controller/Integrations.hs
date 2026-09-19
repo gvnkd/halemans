@@ -62,10 +62,12 @@ instance Controller IntegrationsController where
     action EditJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch jiraConfigId
+        ensureNotProtected config.name (get #protected config)
         render JiraEditView{..}
     action UpdateJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch jiraConfigId
+        ensureNotProtected config.name (get #protected config)
         let form = readJiraForm
         case validateJiraForm form of
             Just err -> do
@@ -88,6 +90,7 @@ instance Controller IntegrationsController where
     action ToggleJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch jiraConfigId
+        ensureNotProtected config.name (get #protected config)
         now <- getCurrentTime
         _ <-
             config
@@ -99,6 +102,7 @@ instance Controller IntegrationsController where
     action DeleteJiraConfigAction{jiraConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch jiraConfigId
+        ensureNotProtected config.name (get #protected config)
         deleteRecord config
         setSuccessMessage (trp "Deleted Jira connection {name}" [("name", config.name)])
         redirectTo IntegrationsAction
@@ -139,10 +143,12 @@ instance Controller IntegrationsController where
     action EditCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch cmdbConfigId
+        ensureNotProtected config.name (get #protected config)
         render CmdbEditView{..}
     action UpdateCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch cmdbConfigId
+        ensureNotProtected config.name (get #protected config)
         let form = readCmdbForm
         case validateCmdbForm form of
             Just err -> do
@@ -165,6 +171,7 @@ instance Controller IntegrationsController where
     action ToggleCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch cmdbConfigId
+        ensureNotProtected config.name (get #protected config)
         now <- getCurrentTime
         _ <-
             config
@@ -176,6 +183,7 @@ instance Controller IntegrationsController where
     action DeleteCmdbConfigAction{cmdbConfigId} = do
         requirePrivilege "manage_sources"
         config <- fetch cmdbConfigId
+        ensureNotProtected config.name (get #protected config)
         deleteRecord config
         setSuccessMessage (trp "Deleted CMDB connection {name}" [("name", config.name)])
         redirectTo IntegrationsAction

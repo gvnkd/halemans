@@ -14,6 +14,7 @@ data TemplateRow = TemplateRow
     , notes :: Maybe Text
     , feedbackScore :: Int64
     , feedbackCount :: Int64
+    , rowProtected :: Bool
     }
 
 data CounterRow = CounterRow
@@ -151,7 +152,7 @@ providerRowHtml :: LlmConfig -> Html
 providerRowHtml provider =
     [hsx|
     <tr data-testid="llm-provider">
-        <td>{provider.providerName}</td>
+        <td>{provider.providerName} {protectedBadgeHtml (get #protected provider)}</td>
         <td>{provider.endpoint}</td>
         <td>{provider.model}</td>
         <td>{fromMaybe "-" provider.apiKeyEnv}</td>
@@ -180,7 +181,7 @@ roleRowHtml :: LlmAgentRole -> Html
 roleRowHtml role =
     [hsx|
     <tr data-testid="llm-role">
-        <td>{role.name}</td>
+        <td>{role.name} {protectedBadgeHtml (get #protected role)}</td>
         <td>{role.promptTemplateName}</td>
         <td data-testid="llm-role-tools">{toolsText}</td>
         <td>{enabledBadge}</td>
@@ -223,7 +224,7 @@ templateRowHtml :: TemplateRow -> Html
 templateRowHtml row =
     [hsx|
     <tr data-testid="llm-template">
-        <td>{row.name}</td>
+        <td>{row.name} {protectedBadgeHtml row.rowProtected}</td>
         <td data-testid="llm-template-version">v{row.version}</td>
         <td>{activeBadge}</td>
         <td data-testid="llm-template-feedback">{row.feedbackScore} ({trp "votes: {count}" [("count", tshow row.feedbackCount)]})</td>

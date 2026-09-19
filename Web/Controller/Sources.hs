@@ -48,6 +48,7 @@ instance Controller SourcesController where
     action EditSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
+        ensureNotProtected source.name (get #protected source)
         render
             EditView
                 { source
@@ -62,6 +63,7 @@ instance Controller SourcesController where
     action UpdateSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
+        ensureNotProtected source.name (get #protected source)
         _ <-
             source
                 |> set #type_ (param @Text "type")
@@ -77,6 +79,7 @@ instance Controller SourcesController where
     action ToggleSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
         source <- fetch sourceId
+        ensureNotProtected source.name (get #protected source)
         _ <-
             source
                 |> set #enabled (not source.enabled)

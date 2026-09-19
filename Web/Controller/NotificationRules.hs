@@ -40,11 +40,13 @@ instance Controller NotificationRulesController where
     action EditNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
+        ensureNotProtected rule.name (get #protected rule)
         (teams, users, policies) <- formChoices
         render EditView{rule, teams, users, policies}
     action UpdateNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
+        ensureNotProtected rule.name (get #protected rule)
         let (teamRef, userRef) = targetRef
         _ <-
             rule
@@ -63,6 +65,7 @@ instance Controller NotificationRulesController where
     action DeleteNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
+        ensureNotProtected rule.name (get #protected rule)
         deleteRecord rule
         setSuccessMessage (tr "Notification rule deleted")
         redirectTo NotificationRulesAction

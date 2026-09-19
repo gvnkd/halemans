@@ -30,7 +30,7 @@ renderTeam :: (Team, [(User, Text)]) -> Html
 renderTeam (team, members) =
     [hsx|
     <tr data-testid="team-row">
-        <td>{team.name}</td>
+        <td>{team.name} {protectedBadgeHtml (get #protected team)}</td>
         <td>{team.description}</td>
         <td>{memberList}</td>
         <td>

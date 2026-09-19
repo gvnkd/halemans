@@ -28,7 +28,7 @@ configRowHtml :: (Id AssetsConfig -> (Int64, Maybe UTCTime)) -> AssetsConfig -> 
 configRowHtml statsFor config =
     [hsx|
     <tr data-testid="assets-config">
-        <td>{config.name}</td>
+        <td>{config.name} {protectedBadgeHtml (get #protected config)}</td>
         <td data-testid="assets-config-base-url-cell">{config.baseUrl}</td>
         <td>{config.defaultSchemaName}</td>
         <td>{config.authMode}</td>

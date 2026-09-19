@@ -64,7 +64,7 @@ instance View IndexView where
             <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} download="provision.yaml" data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
             <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} download="provision.json" data-testid="export-provision-json">{tr "Download provision.json"}</a>
         </p>
-        <p class="text-muted">{tr "Snapshot of users, sources, teams, LLM config, field mappings, dashboards and integrations in the provision format. Webhook tokens and hostGroupsFile are not exported (secrets stay env references)."}</p>
+        <p class="text-muted">{tr "Snapshot of users, roles, sources, teams, LLM config and agent roles, field mappings, dashboards, grouping, notification and escalation rules and integrations in the provision format. Webhook tokens are exported as env references when the token value matches a process env var; tokens with no env match and hostGroupsFile are not exported."}</p>
         <h2>{tr "Danger zone"}</h2>
         <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
             <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">{tr "Purge all alerts"}</button>

@@ -61,10 +61,12 @@ instance Controller AssetsAdminController where
     action EditAssetsConfigAction{configId} = do
         requirePrivilege "manage_rules"
         config <- fetch configId
+        ensureNotProtected config.name (get #protected config)
         render EditView{..}
     action UpdateAssetsConfigAction{configId} = do
         requirePrivilege "manage_rules"
         config <- fetch configId
+        ensureNotProtected config.name (get #protected config)
         let form = readForm
         case validateForm form of
             Just err -> do
@@ -87,6 +89,7 @@ instance Controller AssetsAdminController where
     action ToggleAssetsConfigAction{configId} = do
         requirePrivilege "manage_rules"
         config <- fetch configId
+        ensureNotProtected config.name (get #protected config)
         now <- getCurrentTime
         _ <-
             config
@@ -101,6 +104,7 @@ instance Controller AssetsAdminController where
     action DeleteAssetsConfigAction{configId} = do
         requirePrivilege "manage_rules"
         config <- fetch configId
+        ensureNotProtected config.name (get #protected config)
         cached <-
             query @AssetsObject
                 |> filterWhere (#configId, configId)

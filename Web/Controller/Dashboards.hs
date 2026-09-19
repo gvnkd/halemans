@@ -66,10 +66,12 @@ instance Controller DashboardsController where
                 Nothing -> respondAndExit $ responseLBS status404 [("Content-Type", "text/plain")] (cs (tr "card not found"))
     action EditDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
+        ensureNotProtected dashboard.name (get #protected dashboard)
         let cards = fromRight [] (decodeDashboardConfig dashboard.config)
         render EditView{dashboard, configText = renderDashboardConfig cards}
     action UpdateDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
+        ensureNotProtected dashboard.name (get #protected dashboard)
         let name = param @Text "name"
             configText = param @Text "config"
             isDefault = paramOrNothing @Text "isDefault" |> isJust
@@ -89,11 +91,13 @@ instance Controller DashboardsController where
                 redirectTo DashboardsAction
     action DeleteDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
+        ensureNotProtected dashboard.name (get #protected dashboard)
         deleteRecord dashboard
         setSuccessMessage (tr "Dashboard deleted")
         redirectTo DashboardsAction
     action SetDefaultDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
+        ensureNotProtected dashboard.name (get #protected dashboard)
         _ <- withTransaction do
             unsetDefaults
             dashboard
@@ -103,6 +107,7 @@ instance Controller DashboardsController where
         redirectTo DashboardsAction
     action MoveDashboardAction{dashboardId} = do
         dashboard <- fetchOwn dashboardId
+        ensureNotProtected dashboard.name (get #protected dashboard)
         let position = param @Int "position"
         _ <-
             dashboard

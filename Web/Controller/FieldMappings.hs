@@ -44,6 +44,7 @@ instance Controller FieldMappingsController where
     action EditFieldMappingAction{fieldMappingId} = do
         requirePrivilege "manage_rules"
         mapping <- fetch fieldMappingId
+        ensureNotProtected (mapping.facet <> "#" <> tshow mapping.rank) (get #protected mapping)
         render EditView{mapping}
     action UpdateFieldMappingAction{fieldMappingId} = do
         requirePrivilege "manage_rules"
@@ -53,6 +54,7 @@ instance Controller FieldMappingsController where
                 redirectTo EditFieldMappingAction{fieldMappingId}
             Right () -> do
                 mapping <- fetch fieldMappingId
+                ensureNotProtected (mapping.facet <> "#" <> tshow mapping.rank) (get #protected mapping)
                 _ <-
                     mapping
                         |> set #facet (param @Text "facet")
@@ -66,6 +68,7 @@ instance Controller FieldMappingsController where
     action DeleteFieldMappingAction{fieldMappingId} = do
         requirePrivilege "manage_rules"
         mapping <- fetch fieldMappingId
+        ensureNotProtected (mapping.facet <> "#" <> tshow mapping.rank) (get #protected mapping)
         deleteRecord mapping
         setSuccessMessage (tr "Field mapping deleted")
         redirectTo FieldMappingsAction

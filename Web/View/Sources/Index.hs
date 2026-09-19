@@ -50,7 +50,7 @@ renderSourceRow :: (CurrentUserRecord ~ User, ?request :: Request) => Bool -> So
 renderSourceRow canManage source =
     [hsx|
     <tr data-source-type={sourceType} data-testid="source-row">
-        <td>{source.name}</td>
+        <td>{source.name} {protectedBadgeHtml (get #protected source)}</td>
         <td>{sourceType}</td>
         <td>{source.baseUrl}</td>
         <td>{source.env}</td>

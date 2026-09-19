@@ -52,7 +52,7 @@ import Application.Service.Llm.ToolCache (cachedToolCall)
 import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
 import Application.Service.PollerControl (ensurePollerForSourceType)
-import Application.Service.Provision (CmdbConfigItem (..), JiraConfigItem (..), ProvisionConfig (..), ProvisionError (..), SourceItem (..), UserItem (..), applyProvisionConfig, parseProvisionConfig, parseProvisionConfigYaml)
+import Application.Service.Provision (AssetsConfigItem (..), CmdbConfigItem (..), JiraConfigItem (..), ProvisionConfig (..), ProvisionError (..), SourceItem (..), UserItem (..), applyProvisionConfig, parseProvisionConfig, parseProvisionConfigYaml)
 import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
 import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack)
 import Application.Service.SourceHealth (healthFingerprint, reconcileFingerprint, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
@@ -685,7 +685,12 @@ m7Spec = describe "provisioning (milestone 7)" do
                         Just (Aeson.String envVar) -> Just envVar
                         _ -> Nothing
                     _ -> Nothing
-            pure (sourceEnvs <> map (.jiraTokenEnv) (fromMaybe [] parsedJson.jiraConfigs) <> map (.cmdbTokenEnv) (fromMaybe [] parsedJson.cmdbConfigs))
+            pure
+                ( sourceEnvs
+                    <> map (.jiraTokenEnv) (fromMaybe [] parsedJson.jiraConfigs)
+                    <> map (.cmdbTokenEnv) (fromMaybe [] parsedJson.cmdbConfigs)
+                    <> map (.acTokenEnv) (fromMaybe [] parsedJson.assetsConfigs)
+                )
         oldValues <- forM envNames \name -> (name,) <$> lookupEnv (cs name)
         forM_ envNames \name -> setEnv (cs name) "m7-export-dummy"
         flip finally (forM_ oldValues \(name, old) -> restoreEnv (cs name) old) do
@@ -697,6 +702,162 @@ m7Spec = describe "provisioning (milestone 7)" do
         dbSources <- query @Source |> fetch
         List.sort exportedUserEmails `shouldBe` List.sort (map (.email) dbUsers)
         List.sort exportedSourceNames `shouldBe` List.sort (map (.name) dbSources)
+
+    it "provisions roles, rules, escalation policies, notification rules, assets configs and agent roles" do
+        suffix <- tshow <$> nextRandom
+        setEnv "M7_ASSETS_TOKEN" ("assets-tok-" <> cs suffix)
+        let email = "m7-" <> suffix <> "@dev"
+            teamName = "m7-team-" <> suffix
+            policyName = "m7-pol-" <> suffix
+            ruleName = "m7-rule-" <> suffix
+            assetsName = "m7-assets-" <> suffix
+            roleName = "m7-agent-" <> suffix
+            groupingName = "m7-group-" <> suffix
+            config =
+                object
+                    [ "users" .= object [Key.fromText email .= object ["passwordHash" .= ("x" :: Text)]]
+                    , "roles"
+                        .= object
+                            [ Key.fromText ("m7-privs-" <> suffix)
+                                .= object ["privileges" .= (["view", "ack"] :: [Text])]
+                            ]
+                    , "teams" .= object [Key.fromText teamName .= object ["members" .= object [Key.fromText email .= object ["role" .= ("lead" :: Text)]]]]
+                    , "escalationPolicies"
+                        .= object
+                            [ Key.fromText policyName
+                                .= object
+                                    [ "steps"
+                                        .= [ object ["afterSeconds" .= (300 :: Int), "targetTeam" .= teamName]
+                                           , object ["afterSeconds" .= (600 :: Int), "targetUser" .= email]
+                                           ]
+                                    ]
+                            ]
+                    , "notificationRules"
+                        .= object
+                            [ Key.fromText ruleName
+                                .= object
+                                    [ "severityThreshold" .= ("critical" :: Text)
+                                    , "team" .= teamName
+                                    , "escalationPolicy" .= policyName
+                                    ]
+                            ]
+                    , "assetsConfigs"
+                        .= object
+                            [ Key.fromText assetsName
+                                .= object
+                                    [ "baseUrl" .= ("http://m7-assets.example" :: Text)
+                                    , "tokenEnv" .= ("M7_ASSETS_TOKEN" :: Text)
+                                    , "enabled" .= False
+                                    ]
+                            ]
+                    , "groupingRules"
+                        .= object
+                            [ Key.fromText groupingName
+                                .= object
+                                    [ "position" .= (5 :: Int)
+                                    , "groupKeyTemplate" .= ("{env}/{service}" :: Text)
+                                    ]
+                            ]
+                    , "llmAgentRoles"
+                        .= object
+                            [ Key.fromText roleName
+                                .= object
+                                    [ "promptTemplateName" .= ("alert_enrichment" :: Text)
+                                    , "tools" .= (["cmdb_lookup"] :: [Text])
+                                    , "isDefault" .= True
+                                    ]
+                            ]
+                    ]
+        m7Apply config
+        m7Apply config
+        role <- query @Role |> filterWhere (#name, "m7-privs-" <> suffix) |> fetchOneOrNothing >>= maybe (error "role missing") pure
+        role.privileges `shouldBe` ["view", "ack"]
+        get #protected role `shouldBe` True
+        policy <- query @EscalationPolicy |> filterWhere (#name, policyName) |> fetchOneOrNothing >>= maybe (error "policy missing") pure
+        get #protected policy `shouldBe` True
+        team <- query @Team |> filterWhere (#name, teamName) |> fetchOneOrNothing >>= maybe (error "team missing") pure
+        user <- query @User |> filterWhere (#email, email) |> fetchOneOrNothing >>= maybe (error "user missing") pure
+        let steps = fromMaybe [] (Aeson.decode (Aeson.encode policy.steps) :: Maybe [Aeson.Value])
+        length steps `shouldBe` 2
+        let stepTarget value = fromMaybe "" (parseMaybe (Aeson.withObject "step" (\o -> o Aeson..: "target_team_id")) value)
+            stepTargets = map stepTarget steps
+        stepTargets `shouldBe` [tshow (get #id team), ""]
+        notification <- query @NotificationRule |> filterWhere (#name, ruleName) |> fetchOneOrNothing >>= maybe (error "notification rule missing") pure
+        notification.teamId `shouldBe` Just (get #id team)
+        notification.escalationPolicyId `shouldBe` Just (get #id policy)
+        get #protected notification `shouldBe` True
+        assets <- query @AssetsConfig |> filterWhere (#name, assetsName) |> fetchOneOrNothing >>= maybe (error "assets config missing") pure
+        assets.baseUrl `shouldBe` "http://m7-assets.example"
+        get #protected assets `shouldBe` True
+        grouping <- query @GroupingRule |> filterWhere (#name, groupingName) |> fetchOneOrNothing >>= maybe (error "grouping rule missing") pure
+        grouping.version `shouldBe` 1
+        get #protected grouping `shouldBe` True
+        agentRole <- query @LlmAgentRole |> filterWhere (#name, roleName) |> fetchOneOrNothing >>= maybe (error "agent role missing") pure
+        agentRole.isDefault `shouldBe` True
+        get #protected agentRole `shouldBe` True
+
+    it "re-provisioning without a key clears protection but keeps the row (non-strict)" do
+        suffix <- tshow <$> nextRandom
+        let roleName = "m7-unprotect-" <> suffix
+        m7Apply (object ["roles" .= object [Key.fromText roleName .= object ["privileges" .= (["view"] :: [Text])]]])
+        provisioned <- query @Role |> filterWhere (#name, roleName) |> fetchOneOrNothing >>= maybe (error "role missing") pure
+        get #protected provisioned `shouldBe` True
+        -- A later file version dropped the role from the (present) section:
+        -- the row stays, but the admin UI may edit it again.
+        m7Apply (object ["roles" .= object [Key.fromText ("m7-other-" <> suffix) .= object []]])
+        unprotected <- query @Role |> filterWhere (#name, roleName) |> fetchOneOrNothing >>= maybe (error "role missing") pure
+        get #protected unprotected `shouldBe` False
+        unprotected.privileges `shouldBe` ["view"]
+        -- A section absent from the file leaves protection untouched.
+        m7Apply (object ["sources" .= object [Key.fromText ("m7-src-" <> suffix) .= object ["type" .= ("webhook" :: Text)]]])
+        stillUnprotected <- query @Role |> filterWhere (#name, roleName) |> fetchOneOrNothing >>= maybe (error "role missing") pure
+        get #protected stillUnprotected `shouldBe` False
+
+    it "honours per-item protected opt-out" do
+        suffix <- tshow <$> nextRandom
+        let roleName = "m7-open-" <> suffix
+        m7Apply (object ["roles" .= object [Key.fromText roleName .= object ["privileges" .= ([] :: [Text]), "protected" .= False]]])
+        role <- query @Role |> filterWhere (#name, roleName) |> fetchOneOrNothing >>= maybe (error "role missing") pure
+        get #protected role `shouldBe` False
+
+    it "grouping rule re-provision bumps version only on content change" do
+        suffix <- tshow <$> nextRandom
+        let groupingName = "m7-ver-" <> suffix
+            config template =
+                object
+                    [ "groupingRules"
+                        .= object
+                            [ Key.fromText groupingName
+                                .= object ["groupKeyTemplate" .= template]
+                            ]
+                    ]
+        m7Apply (config ("one" :: Text))
+        m7Apply (config "one")
+        rule <- query @GroupingRule |> filterWhere (#name, groupingName) |> fetchOneOrNothing >>= maybe (error "grouping rule missing") pure
+        rule.version `shouldBe` 1
+        m7Apply (config "two")
+        bumped <- query @GroupingRule |> filterWhere (#name, groupingName) |> fetchOneOrNothing >>= maybe (error "grouping rule missing") pure
+        bumped.version `shouldBe` 2
+
+    it "strict roles deletes unlisted roles and their memberships" do
+        suffix <- tshow <$> nextRandom
+        doomed <- newRecord @Role |> set #name ("m7-doomed-role-" <> suffix) |> set #privileges ["view"] |> createRecord
+        user <- m7User ("m7-roleuser-" <> suffix <> "@dev")
+        let doomedId = get #id doomed
+            userId = get #id user
+        void $ sqlExecTyped [typedSql| INSERT INTO user_roles (user_id, role_id) VALUES (${userId}, ${doomedId}) |]
+        allRoles <- query @Role |> fetch
+        let keepRoles =
+                Aeson.Object $
+                    KeyMap.fromList
+                        [ (Key.fromText role.name, object ["privileges" .= role.privileges])
+                        | role <- allRoles
+                        , role.name /= get #name doomed
+                        ]
+        m7Apply (object ["strict" .= True, "roles" .= keepRoles])
+        query @Role |> filterWhere (#name, get #name doomed) |> fetch `shouldReturn` []
+        rows <- sqlQueryTyped [typedSql| SELECT count(*) FROM user_roles WHERE role_id = ${doomedId} |]
+        rows `shouldBe` [0 :: Int64]
 
     it "renders export YAML as literal blocks with a byte-exact round-trip" do
         let nasty =

@@ -35,7 +35,7 @@ renderRule rule =
     [hsx|
     <tr data-testid="grouping-rule-row">
         <td>{rule.position}</td>
-        <td>{rule.name}</td>
+        <td>{rule.name} {protectedBadgeHtml (get #protected rule)}</td>
         <td>{enabledBadgeHtml rule.enabled}</td>
         <td data-testid="grouping-rule-version">{rule.version}</td>
         <td><code>{rule.groupKeyTemplate}</code></td>

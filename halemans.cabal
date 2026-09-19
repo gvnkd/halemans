@@ -156,6 +156,7 @@ library
         Application.Service.PollerControl
         Application.Service.Provision
         Application.Service.ProvisionExport
+        Application.Service.PurgeAlerts
         Application.Service.Push
         Application.Service.Reconcile
         Application.Service.Reports

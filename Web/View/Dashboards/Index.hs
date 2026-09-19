@@ -25,7 +25,7 @@ renderRow :: Dashboard -> Html
 renderRow dashboard =
     [hsx|
     <tr data-testid="dashboard-row">
-        <td><a href={ShowDashboardAction dashboard.id} data-testid="dashboard-link">{dashboard.name}</a></td>
+        <td><a href={ShowDashboardAction dashboard.id} data-testid="dashboard-link">{dashboard.name}</a> {protectedBadgeHtml (get #protected dashboard)}</td>
         <td>{defaultBadge}</td>
         <td>
             <form method="POST" action={MoveDashboardAction dashboard.id} class="d-inline" data-testid="dashboard-move-form">

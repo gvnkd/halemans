@@ -77,7 +77,7 @@ jiraConfigRowHtml :: JiraConfig -> Html
 jiraConfigRowHtml config =
     [hsx|
     <tr data-testid="jira-config">
-        <td>{config.name}</td>
+        <td>{config.name} {protectedBadgeHtml (get #protected config)}</td>
         <td data-testid="jira-config-base-url-cell">{config.baseUrl}</td>
         <td>{config.apiVersion}</td>
         <td data-testid="jira-config-projects-cell">{scopeText config.projects}</td>
@@ -100,7 +100,7 @@ cmdbConfigRowHtml :: CmdbConfig -> Html
 cmdbConfigRowHtml config =
     [hsx|
     <tr data-testid="cmdb-config">
-        <td>{config.name}</td>
+        <td>{config.name} {protectedBadgeHtml (get #protected config)}</td>
         <td data-testid="cmdb-config-base-url-cell">{config.baseUrl}</td>
         <td data-testid="cmdb-config-spaces-cell">{scopeText config.spaces}</td>
         <td>{stateBadgeHtml config.enabled "cmdb-config"}</td>

@@ -43,6 +43,7 @@ instance Controller TeamsController where
     action EditTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
+        ensureNotProtected team.name (get #protected team)
         users <- query @User |> orderByAsc #email |> fetch
         rows <- query @TeamMember |> filterWhere (#teamId, teamId) |> fetch
         availableGroups <- cachedHostGroupNames
@@ -52,6 +53,7 @@ instance Controller TeamsController where
     action UpdateTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
+        ensureNotProtected team.name (get #protected team)
         let dashboardConfig = paramOrNothing @Text "defaultDashboardConfig"
         case dashboardConfig of
             Just raw | raw /= "" -> case Aeson.decode (cs raw) of
@@ -79,6 +81,7 @@ instance Controller TeamsController where
     action DeleteTeamAction{teamId} = do
         requirePrivilege "manage_users"
         team <- fetch teamId
+        ensureNotProtected team.name (get #protected team)
         _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
         _ <- sqlExecTyped [typedSql| DELETE FROM on_call_schedules WHERE team_id = ${teamId} |]
         deleteRecord team
