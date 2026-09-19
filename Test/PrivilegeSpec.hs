@@ -3,6 +3,8 @@ module Test.PrivilegeSpec where
 import Application.Service.DatabaseStats (DatabaseStats (..), TableStats (..), analyzeTable, fetchDatabaseStats)
 import qualified Config
 import Control.Exception (bracket_)
+import Control.Monad (void)
+import Data.Int (Int64)
 import qualified Data.Text as Text
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -17,6 +19,7 @@ import qualified IHP.ModelSupport as ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, query)
 import IHP.Test.Mocking
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import Network.HTTP.Types (status200, status403)
 import Network.Wai (Response, defaultRequest, responseStatus)
 import Network.Wai.Internal (ResponseReceived (..))
@@ -57,6 +60,63 @@ spec = around withTestApp do
         it "analyzes known tables and rejects unknown names" \mockContext -> withCtx mockContext do
             analyzeTable "users" `shouldReturn` True
             analyzeTable "users; DROP TABLE users" `shouldReturn` False
+    describe "admin alert purge" do
+        it "wipes alerts with every dependent row, including asset links" \mockContext -> withCtx mockContext do
+            suffix <- tshow <$> nextRandom
+            let fingerprint = "purge-fp-" <> suffix
+                email = "purge-" <> suffix <> "@example.com"
+            user <- newTestUser email
+            role <- newRecord @Role |> set #name ("purge-admin-" <> suffix) |> set #privileges ["admin"] |> createRecord
+            _ <- newRecord @UserRole |> set #userId user.id |> set #roleId role.id |> createRecord
+            alertRows <-
+                sqlQueryTyped
+                    [typedSql|
+                WITH src AS (
+                    INSERT INTO sources (type, name) VALUES ('webhook', ${"purge-src-" <> suffix}) RETURNING id
+                ), grp AS (
+                    INSERT INTO alert_groups (group_key) VALUES (${"purge-grp-" <> suffix}) RETURNING id
+                )
+                INSERT INTO alerts (fingerprint, source_id, title, group_id)
+                VALUES (${fingerprint}, (SELECT id FROM src), 'purge me', (SELECT id FROM grp))
+                RETURNING id
+            |]
+            alertId <- case alertRows of
+                [row] -> pure row
+                _ -> expectationFailure "expected one alert" >> error "unreachable"
+            policy <- newRecord @EscalationPolicy |> set #name ("purge-pol-" <> suffix) |> createRecord
+            let userId = user.id
+                policyId = policy.id
+            -- One row in every table that FK-references alerts; the purge
+            -- 23503'd on asset_alert_links before it was deleted first.
+            void $ sqlExecTyped [typedSql| INSERT INTO asset_alert_links (alert_id, matched_by) VALUES (${alertId}, 'purge-host') |]
+            void $ sqlExecTyped [typedSql| INSERT INTO alert_events (alert_id, kind, user_id) VALUES (${alertId}, 'external', ${userId}) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO comments (alert_id, user_id, body) VALUES (${alertId}, ${userId}, 'note') |]
+            void $ sqlExecTyped [typedSql| INSERT INTO push_notification_jobs (alert_id) VALUES (${alertId}) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO escalation_trackers (alert_id, policy_id) VALUES (${alertId}, ${policyId}) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO jira_links (alert_id, ticket_key) VALUES (${alertId}, 'PURGE-1') |]
+            void $ sqlExecTyped [typedSql| INSERT INTO write_back_attempts (alert_id, action, source_id) VALUES (${alertId}, 'ack', (SELECT source_id FROM alerts WHERE id = ${alertId})) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO enrich_alert_jobs (alert_id) VALUES (${alertId}) |]
+            analysisRows <- sqlQueryTyped [typedSql| INSERT INTO llm_analyses (alert_id, prompt_hash) VALUES (${alertId}, 'purge-hash') RETURNING id |]
+            analysisId <- case analysisRows of
+                [row] -> pure row
+                _ -> expectationFailure "expected one analysis" >> error "unreachable"
+            void $ sqlExecTyped [typedSql| INSERT INTO llm_feedback (analysis_id, user_id, score) VALUES (${analysisId}, ${userId}, 1) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO write_back_jobs (attempt_id) VALUES ((SELECT id FROM write_back_attempts WHERE alert_id = ${alertId})) |]
+            withUser user do
+                void (callAction AdminPurgeAlertsAction)
+            remaining <-
+                sqlQueryTyped
+                    [typedSql|
+                SELECT (SELECT count(*) FROM alerts) + (SELECT count(*) FROM alert_groups)
+                     + (SELECT count(*) FROM asset_alert_links) + (SELECT count(*) FROM alert_events)
+                     + (SELECT count(*) FROM comments) + (SELECT count(*) FROM push_notification_jobs)
+                     + (SELECT count(*) FROM escalation_trackers) + (SELECT count(*) FROM jira_links)
+                     + (SELECT count(*) FROM write_back_jobs) + (SELECT count(*) FROM write_back_attempts)
+                     + (SELECT count(*) FROM enrich_alert_jobs) + (SELECT count(*) FROM llm_analyses)
+                     + (SELECT count(*) FROM llm_feedback)
+            |]
+            -- Expression columns decode Maybe-wrapped (typedSql note #15).
+            remaining `shouldBe` [Just (0 :: Int64)]
 
 -- | Existential wrapper so the matrix can hold actions of different
 -- controller types. The controller value is kept (not the IO) so

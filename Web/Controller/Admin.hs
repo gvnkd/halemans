@@ -3,12 +3,11 @@ module Web.Controller.Admin where
 import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
 import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
+import Application.Service.PurgeAlerts (purgeAllAlerts)
 import Control.Monad (void)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Time.Clock (getCurrentTime)
 import IHP.ControllerSupport (respondAndExit)
-import IHP.ModelSupport (withTransaction)
-import IHP.TypedSql (sqlExecTyped, typedSql)
 import Network.HTTP.Types (status200)
 import Network.Wai (responseLBS)
 import Web.Controller.Prelude
@@ -41,23 +40,10 @@ instance Controller AdminController where
         redirectTo AdminAction
 
     -- Danger zone: wipes every alert with all dependent rows (events,
-    -- comments, analyses, jobs) plus now-empty groups. FK order matters.
+    -- comments, analyses, jobs, asset links) plus now-empty groups.
     action AdminPurgeAlertsAction = do
         requirePrivilege "admin"
-        withTransaction do
-            void $ sqlExecTyped [typedSql| DELETE FROM llm_feedback |]
-            void $ sqlExecTyped [typedSql| DELETE FROM llm_analysis_jobs |]
-            void $ sqlExecTyped [typedSql| DELETE FROM llm_analyses |]
-            void $ sqlExecTyped [typedSql| DELETE FROM alert_events |]
-            void $ sqlExecTyped [typedSql| DELETE FROM comments |]
-            void $ sqlExecTyped [typedSql| DELETE FROM push_notification_jobs |]
-            void $ sqlExecTyped [typedSql| DELETE FROM escalation_trackers |]
-            void $ sqlExecTyped [typedSql| DELETE FROM jira_links |]
-            void $ sqlExecTyped [typedSql| DELETE FROM write_back_jobs |]
-            void $ sqlExecTyped [typedSql| DELETE FROM write_back_attempts |]
-            void $ sqlExecTyped [typedSql| DELETE FROM enrich_alert_jobs |]
-            void $ sqlExecTyped [typedSql| DELETE FROM alerts |]
-            void $ sqlExecTyped [typedSql| DELETE FROM alert_groups |]
+        purgeAllAlerts
         setSuccessMessage (tr "All alerts purged")
         redirectTo AdminAction
     action AdminDatabaseAction = do
