@@ -20,6 +20,12 @@
 }
 
 :root {
+    /* brand identity (design_docs/halemans-brand-tokens.txt §1): signal
+       orange is a brand constant — theme packs never override it; it is
+       reserved for the active nav underline and primary CTAs */
+    --brand-signal: #FF5A1F;
+    --brand-signal-hover: #E8480F;
+    --on-brand-signal: #ffffff;
     --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
     --text-xs: 0.7rem;
@@ -375,7 +381,6 @@ a:hover { color: var(--accent-hover); }
 
 /* branding (milestone 12 §5) */
 .navbar-glyph { width: 24px; height: 24px; margin-right: 0.5rem; vertical-align: -0.35em; }
-.login-glyph { width: 64px; height: 64px; }
 
 /* ================= UI polish patch (design pass 2026-09) =================
    1. Contrast fixes: badge/button text on saturated fills (latte FAILed
@@ -415,7 +420,6 @@ a:hover { color: var(--accent-hover); }
     --badge-fg: #ffffff;         /* crit 4.5, resolved 4.9, info 4.9 */
     --badge-fg-warm: #2e2300;    /* warn 5.5, high 4.9 */
     --accent-hover: #1a4fd0;     /* was #7287fd: 2.8:1 on light bg (FAIL) */
-}
 }
 
 /* ---- Bootstrap bridge, round 2: components that used to ignore the pack ---- */
@@ -507,6 +511,25 @@ a:hover { color: var(--accent-hover); }
 /* focus ring follows the pack accent instead of Bootstrap blue */
 .btn:focus-visible, .btn:focus {
     box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--accent) 30%, transparent);
+}
+/* brand CTA: signal orange on every pack — theme accents never apply here
+   (brand tokens §1: primary CTAs carry the brand color) */
+.btn-brand {
+    --bs-btn-color: var(--on-brand-signal);
+    --bs-btn-bg: var(--brand-signal);
+    --bs-btn-border-color: var(--brand-signal);
+    --bs-btn-hover-color: var(--on-brand-signal);
+    --bs-btn-hover-bg: var(--brand-signal-hover);
+    --bs-btn-hover-border-color: var(--brand-signal-hover);
+    --bs-btn-active-color: var(--on-brand-signal);
+    --bs-btn-active-bg: var(--brand-signal-hover);
+    --bs-btn-active-border-color: var(--brand-signal-hover);
+    --bs-btn-disabled-color: var(--on-brand-signal);
+    --bs-btn-disabled-bg: var(--brand-signal);
+    --bs-btn-disabled-border-color: var(--brand-signal);
+}
+.btn-brand:focus-visible, .btn-brand:focus {
+    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--brand-signal) 35%, transparent);
 }
 
 /* text-bg utility: needs !important to beat Bootstrap's own utility */
@@ -649,7 +672,7 @@ a:hover { color: var(--accent-hover); }
         color-mix(in srgb, var(--surface) 92%, var(--text) 8%),
         var(--surface));
     border-bottom: 1px solid var(--border);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--brand-signal) 35%, transparent);
     min-height: 56px;
 }
 .navbar-brand {
@@ -697,8 +720,8 @@ a:hover { color: var(--accent-hover); }
     bottom: 0.05rem;
     height: 2px;
     border-radius: 2px 2px 0 0;
-    background: var(--accent);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+    background: var(--brand-signal);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--brand-signal) 60%, transparent);
 }
 
 /* version: small mono pill; with the Layout.hs change it sits inline next
@@ -748,3 +771,96 @@ a:hover { color: var(--accent-hover); }
 }
 .hourly-count-badge { color: var(--on-accent); }
 .alert-details-field dt { letter-spacing: 0.06em; }
+
+
+/* ---- login screen (#sessions-new) ----
+   Centers the card over a page background with faint brand glows; fields
+   are labeled, autofil is tamed (browser default paints mustard yellow on
+   dark themes), primary action carries the brand accent. */
+#sessions-new {
+    min-height: calc(100vh - 57px - 2rem);   /* navbar + layout mt-4 */
+    display: grid;
+    place-items: center;
+    margin-top: -1rem;
+    padding: 1rem 0 2rem;
+    background:
+        radial-gradient(1200px 600px at 70% -10%,
+            color-mix(in srgb, var(--accent) 11%, transparent), transparent 60%),
+        radial-gradient(900px 500px at 10% 110%,
+            color-mix(in srgb, var(--severity-info) 9%, transparent), transparent 60%);
+}
+.login-card {
+    width: 400px;
+    max-width: calc(100vw - 2rem);
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--surface) 88%, var(--text) 12%),
+        var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+    padding: 2.25rem 2rem 1.5rem;
+    text-align: center;
+}
+.login-glyph {
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+    display: block;
+    margin: 0 auto 1rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.login-title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 0.25rem;
+}
+.login-title .login-title-dim { color: var(--text-muted); font-weight: 500; }
+.login-sub {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-bottom: 1.5rem;
+}
+.login-field { text-align: left; margin-bottom: 0.85rem; }
+.login-field label {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+}
+.login-field .form-control {
+    height: 42px;
+    background: color-mix(in srgb, var(--text) 4%, var(--surface));
+    border-radius: 9px;
+}
+.login-field .form-control:hover { border-color: color-mix(in srgb, var(--border) 70%, var(--text)); }
+/* browser autofill paints its own mustard yellow on dark themes; pin the
+   field surface and text to the pack instead */
+.login-field .form-control:-webkit-autofill,
+.login-field .form-control:-webkit-autofill:hover,
+.login-field .form-control:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--text);
+    -webkit-box-shadow: 0 0 0 1000px color-mix(in srgb, var(--text) 10%, var(--surface)) inset;
+    caret-color: var(--text);
+    transition: background-color 99999s ease-out;
+}
+.login-submit {
+    height: 44px;
+    margin-top: 0.4rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--brand-signal) 40%, transparent);
+}
+.login-foot {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+}
+.login-foot .login-hint { font-size: var(--text-xs); color: var(--text-muted); }

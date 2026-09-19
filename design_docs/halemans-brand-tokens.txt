@@ -1,0 +1,127 @@
+HALEMANS — BRAND TOKENS
+Home Alert Management System
+Compiled 2026-09 · logo identity + application theme packs
+
+=====================================================================
+1. BRAND IDENTITY (logo / marketing layer)
+=====================================================================
+
+Primary palette
+  ink          #101820   wordmark, symbol lines on light, primary text
+  paper        #F5F3EE   light backgrounds, reversed wordmark on dark
+  dark         #0C121D   app-icon tile, dark surfaces, "reversed on ink"
+  signal       #FF5A1F   the accent: merged beam, node, ping ring,
+                         active states. The one loud color — use sparingly.
+
+Supporting neutrals
+  muted        #66707B   secondary text on paper
+  faint        #DFDCD4   hairlines, dividers on paper
+  line-dark    #A9B5C1   symbol lines on dark backgrounds
+  text-dark    #8B96A3   secondary text / captions on dark backgrounds
+
+Severity dots (the four pips of the symbol, top to bottom)
+  sev-critical #E5484D
+  sev-warning  #F5A524
+  sev-info     #4C8DFF
+  sev-notice   #98A2AD
+
+Usage rules
+  - Signal orange is reserved for the "single managed signal" idea:
+    the merged beam/node, the active nav underline, primary CTAs.
+  - Severity colors appear ONLY as the four source pips and for
+    severity semantics in the product UI — never as decoration.
+  - The symbol works single-color (all ink, or all white); color pips
+    are the full-color variant only.
+
+=====================================================================
+2. APPLICATION THEME PACKS (product UI)
+=====================================================================
+
+Semantic tokens (every pack defines these)
+  --bg --surface --border --text --text-muted --accent --accent-hover
+  --on-accent        foreground on accent-filled controls
+  --badge-fg         foreground on red/green/blue fills
+  --badge-fg-warm    foreground on amber/orange/yellow fills
+  --severity-critical / --severity-high / --severity-warning / --severity-info
+  --status-firing / --status-ack / --status-resolved / --status-stalled
+  --status-closed / --status-suppressed
+
+Pack: dark (Catppuccin Mocha) — default
+  bg #1e1e2e  surface #2a2a3c  border #45475a  text #cdd6f4  muted #9399b2
+  accent #89b4fa  accent-hover #b4befe
+  severity: critical #f38ba8  high #fab387  warning #f9e2af  info #89b4fa
+  status: firing #f38ba8  ack #f9e2af  resolved #a6e3a1  stalled #fab387
+          closed #9399b2  suppressed #6c7086
+  on-accent #1e1e2e  badge-fg #1e1e2e  badge-fg-warm #1e1e2e
+
+Pack: latte / light (Catppuccin Latte)
+  bg #eff1f5  surface #ffffff  border #ccd0da  text #4c4f69  muted #66697e
+  accent #1e66f5  accent-hover #1a4fd0   (hover fixed from #7287fd, 2.8:1 FAIL)
+  severity: critical #d20f39  high #fe640b  warning #df8e1d  info #1e66f5
+  status: firing #d20f39  ack #df8e1d  resolved #40a02b  stalled #fe640b
+          closed #6c6f85  suppressed #9ca0b0
+  on-accent #ffffff  badge-fg #ffffff  badge-fg-warm #2e2300
+  note: filled resolved badges/buttons darken to 82% mix (#348323) — token
+        stays canonical, fill adjusted for WCAG AA.
+
+Pack: frappe (Catppuccin Frappe)
+  bg #303446  surface #414559  border #51576d  text #c6d0f5
+  muted #a5adce   (darkened from #b4bdd9 — was 1.2:1 below body text)
+  accent #8caaee  accent-hover #babbf1
+  severity: critical #e78284  high #ef9f76  warning #e5c890  info #8caaee
+  status: firing #e78284  ack #e5c890  resolved #a6d189  stalled #ef9f76
+          closed #a5adce  suppressed #737994
+  on-accent #303446  badge-fg #303446  badge-fg-warm #303446
+
+Pack: macchiato (Catppuccin Macchiato)
+  bg #24273a  surface #363a4f  border #494d64  text #cad3f5  muted #a5adcb
+  accent #8aadf4  accent-hover #b7bdf8
+  severity: critical #ed8796  high #f5a97f  warning #eed49f  info #8aadf4
+  status: firing #ed8796  ack #eed49f  resolved #a6da95  stalled #f5a97f
+          closed #a5adcb  suppressed #6e738d
+  on-accent #24273a  badge-fg #24273a  badge-fg-warm #24273a
+
+Pack: dracula
+  bg #282a36  surface #44475a  border #6272a4  text #f8f8f2  muted #b0b8d0
+  accent #8be9fd  accent-hover #bd93f9
+  severity: critical #ff5555  high #ffb86c  warning #f1fa8c  info #8be9fd
+  status: firing #ff5555  ack #f1fa8c  resolved #50fa7b  stalled #ffb86c
+          closed #8c96b8  suppressed #bd93f9
+  on-accent #282a36  badge-fg #282a36  badge-fg-warm #282a36
+
+Contrast rule (enforced by the 2026-09 patch)
+  Text on saturated fills must reach WCAG AA 4.5:1:
+  dark packs  -> page-bg dark text on pastel fills
+  latte       -> white on cool fills, #2E2300 on warm fills
+
+=====================================================================
+3. BRAND FONTS
+=====================================================================
+
+Identity / marketing
+  Space Grotesk   wordmark ("halemans", lowercase), display headlines
+                  Google Fonts · SIL OFL
+  JetBrains Mono  annotations, labels, version tags, captions
+                  Google Fonts · SIL OFL
+
+Product UI (self-hosted in /static/vendor/fonts, no CDN)
+  Inter (variable, weights 100–900)   UI text
+                  token: --font-sans
+  JetBrains Mono (400, 700)           code, timestamps, version badges,
+                  token: --font-mono     numeric chips
+
+Type scale (product)
+  --text-xs   0.70rem   labels, captions, version pill
+  --text-sm   0.75rem   secondary text
+  --text-md   0.85rem   nav items, dense body
+  --text-base 1rem      body
+  --text-lg   1.25rem   card/page titles
+
+Typography rules
+  - Numbers that change live (counts, badges, times) use
+    font-variant-numeric: tabular-nums.
+  - Uppercase labels: letter-spacing 0.06–0.08em, weight 600,
+    color --text-muted.
+  - Wordmark is always lowercase "halemans"; product name in prose is
+    "Halemans".
+
