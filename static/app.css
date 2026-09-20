@@ -740,6 +740,13 @@ a:hover { color: var(--accent-hover); }
     border-bottom: 1px solid var(--border);
     min-height: 56px;
 }
+/* Brand, version pill and nav read as ONE left-aligned row ("brand · ver
+   · Overview · Dashboards · …"); Bootstrap defaults to space-between, which
+   strands the nav at the right edge. */
+.navbar > .container-fluid {
+    justify-content: flex-start;
+    gap: 1rem;
+}
 /* Two-tone text wordmark: "Hale" in text color + "mans" in signal orange —
    no glyph image (brand tokens §1: the wordmark is lowercase text). Space
    Grotesk is the brand face but not vendored yet; the sans stack fills in. */
@@ -753,24 +760,28 @@ a:hover { color: var(--accent-hover); }
 }
 .brand-word-accent { color: var(--brand-signal); }
 a.navbar-brand:hover .brand-word-accent { color: var(--brand-signal-hover); }
-/* Primary nav reads as one line: "Overview · Dashboards · …". */
-.navbar .app-nav > .nav-item {
-    display: flex;
-    align-items: center;
-}
-.navbar .app-nav > .nav-item + .nav-item::before {
-    content: "·";
-    color: var(--text-muted);
-    font-size: var(--text-lg);
-    line-height: 1;
-    margin: 0 0.4rem;
-    align-self: center;
-}
-/* The user menu sits at the end of the nav line, after a divider. */
-.navbar .nav-user {
-    border-left: 1px solid var(--border);
-    margin-left: 0.9rem;
-    padding-left: 0.5rem;
+/* Primary nav reads as one line: "Overview · Dashboards · …". Separators
+   and the user divider only make sense in the expanded (lg+) horizontal
+   bar; collapsed, the nav stacks vertically (no toggler) and they render
+   as stray dots, so they're scoped to the media query. */
+@media (min-width: 992px) {
+    .navbar .app-nav > .nav-item {
+        display: flex;
+        align-items: center;
+    }
+    .navbar .app-nav > .nav-item + .nav-item::before {
+        content: "·";
+        color: var(--text-muted);
+        font-size: var(--text-lg);
+        line-height: 1;
+        margin: 0 0.4rem;
+        align-self: center;
+    }
+    .navbar .nav-user {
+        border-left: 1px solid var(--border);
+        margin-left: 0.9rem;
+        padding-left: 0.5rem;
+    }
 }
 .navbar .nav-link {
     position: relative;
@@ -1171,57 +1182,38 @@ a:hover { text-decoration: underline; }
     --bs-btn-border-color: var(--accent);
 }
 
-/* Segmented control (theme picker, env view toggle): pill buttons on the
-   page background; active = signal border + 2px signal bottom keyline +
-   small signal dot (the spec's severity-neutral "active" marker). */
+/* Segmented control (theme picker, env view toggle): squared buttons on
+   the page background; active = signal border + 2px signal bottom keyline
+   (inset) + signal dot prefix (the brand mockup's "active" marker). */
 .seg {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: 0.25rem;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.25rem;
+    gap: 0.5rem;
 }
 .seg-item {
-    position: relative;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    background: transparent;
+    background: var(--bg);
+    border: 1px solid var(--border);
     color: var(--text-muted);
+    border-radius: var(--radius-btn);
+    padding: 0.35rem 0.9rem;
     font-size: var(--text-md);
     font-weight: 500;
-    padding: 0.3rem 0.85rem 0.5rem 1.2rem;
 }
 .seg-item:hover {
     color: var(--text);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
+    border-color: var(--text-muted);
 }
 .seg-item.active {
-    border-color: var(--brand-signal);
     color: var(--text);
+    border-color: var(--brand-signal);
+    box-shadow: inset 0 -2px 0 var(--brand-signal);
 }
 .seg-item.active::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 0.5rem;
-    transform: translateY(-50%);
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--brand-signal);
-}
-.seg-item.active::after {
-    content: "";
-    position: absolute;
-    left: 50%;
-    bottom: 0.3rem;
-    transform: translateX(-50%);
-    width: 0.9rem;
-    height: 2px;
-    border-radius: 2px;
-    background: var(--brand-signal);
+    content: "●";
+    color: var(--brand-signal);
+    font-size: var(--text-xs);
+    margin-right: 0.4rem;
+    vertical-align: 2px;
 }
 
 /* Empty states: one muted line in a dashed frame; tables use the
