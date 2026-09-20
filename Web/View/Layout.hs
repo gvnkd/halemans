@@ -64,7 +64,7 @@ navigation =
     <nav class="navbar navbar-expand-lg" data-testid="nav">
     <div class="container-fluid">
         <div class="d-flex align-items-center">
-            <a class="navbar-brand" href={DashboardAction}><img src={assetPath "/halemans-app-icon-192.png"} alt="" class="navbar-glyph"/>Halemans</a>
+            <a class="navbar-brand" href={DashboardAction}><img src={assetPath "/halemans-micromark-ondark.svg"} alt="" class="navbar-glyph"/>Halemans</a>
             <span class="app-version-badge" data-testid="app-version">v{appVersion}</span>
         </div>
         <ul class="navbar-nav me-auto">
@@ -197,15 +197,23 @@ metaTags activeTheme =
     <meta property="og:title" content="Halemans"/>
     <meta property="og:type" content="website"/>
     <meta property="og:description" content="Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks"/>
-    <meta property="og:image" content={assetPath "/halemans-app-icon-512.png"}/>
-    <meta name="twitter:card" content="summary"/>
+    <meta property="og:image" content={ogImageUrl}/>
+    <meta property="og:image:width" content="1200"/>
+    <meta property="og:image:height" content="630"/>
+    <meta name="twitter:card" content="summary_large_image"/>
     <link rel="manifest" href={assetPath "/manifest.webmanifest"}/>
+    <link rel="icon" type="image/svg+xml" href={assetPath "/halemans-micromark-ondark.svg"}/>
     <link rel="icon" href={assetPath "/favicon.ico"} sizes="any"/>
     <link rel="icon" type="image/png" sizes="32x32" href={assetPath "/halemans-favicon-32.png"}/>
     <link rel="icon" type="image/png" sizes="16x16" href={assetPath "/halemans-favicon-16.png"}/>
     <link rel="apple-touch-icon" href={assetPath "/halemans-app-icon-180.png"}/>
     {autoRefreshMeta}
 |]
+
+-- og:image must be an absolute URL (scrapers ignore relative ones);
+-- frameworkConfig.baseUrl is IHP_BASEURL or http://hostname:port.
+ogImageUrl :: (?context :: Request, ?request :: Request) => Text
+ogImageUrl = ?context.frameworkConfig.baseUrl <> assetPath "/halemans-og-card-1200x630.png"
 
 -- PWA/status-bar color follows the active pack's --bg (static/app.css);
 -- mirrors themeFromSettings' default of "dark" for anonymous users.

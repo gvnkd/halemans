@@ -11,7 +11,7 @@ instance View (NewView User) where
         [hsx|
         <div class="h-100" id="sessions-new">
             <div class="login-card">
-                <img src={assetPath "/halemans-app-icon-192.png"} alt="" class="login-glyph"/>
+                <img src={assetPath "/halemans-glyph-darkbg.svg"} alt="" class="login-glyph"/>
                 <h1 class="login-title">Halemans <span class="login-title-dim">— {tr "sign in"}</span></h1>
                 <p class="login-sub">{tr "Home Alert Management System"}</p>
                 {renderForm user}

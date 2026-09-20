@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 1200" role="img" aria-label="Halemans logo">
+  <line x1="296.7" y1="600.8" x2="639.6" y2="798.8" stroke="#A9B5C1" stroke-width="20.7" stroke-linecap="round"/>
+  <line x1="296.7" y1="721.4" x2="639.6" y2="798.8" stroke="#A9B5C1" stroke-width="20.7" stroke-linecap="round"/>
+  <line x1="296.7" y1="876.2" x2="639.6" y2="798.8" stroke="#A9B5C1" stroke-width="20.7" stroke-linecap="round"/>
+  <line x1="296.7" y1="996.8" x2="639.6" y2="798.8" stroke="#A9B5C1" stroke-width="20.7" stroke-linecap="round"/>
+  <line x1="648.6" y1="798.8" x2="821.4" y2="798.8" stroke="#FF5A1F" stroke-width="21.6" stroke-linecap="round"/>
+  <circle cx="877.2" cy="798.8" r="45.9" fill="none" stroke="#FF5A1F" stroke-width="4.5"/>
+  <circle cx="877.2" cy="798.8" r="34.2" fill="#FF5A1F"/>
+  <circle cx="296.7" cy="600.8" r="11.7" fill="#E5484D"/>
+  <circle cx="296.7" cy="721.4" r="11.7" fill="#F5A524"/>
+  <circle cx="296.7" cy="876.2" r="11.7" fill="#4C8DFF"/>
+  <circle cx="296.7" cy="996.8" r="11.7" fill="#98A2AD"/>
+  <text x="999" y="640" font-family="'Space Grotesk','Inter',sans-serif" font-size="230" font-weight="400" letter-spacing="3" fill="#F5F3EE">halemans</text>
+  <text x="1005" y="790" font-family="'JetBrains Mono','DejaVu Sans Mono',monospace" font-size="50" letter-spacing="14" fill="#8B96A3">HOME ALERT MANAGEMENT SYSTEM</text>
+</svg>

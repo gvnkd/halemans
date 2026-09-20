@@ -1,0 +1,14 @@
+HALEMANS — BRAND TOKENS · §1 addendum (logo asset rules)
+Append to section 1 of design_docs/halemans-brand-tokens.txt
+Compiled 2026-09 · applies to images/svg masters + all derived assets
+
+  - Symbol anatomy (1024-unit master): beams converge at apex (544,512);
+    pips r=13; capsule w=24; node dot r=38 at (808,512); PING-RING r=51 /
+    sw=5 around the dot, present in every variant (color/darkbg/mono).
+  - Safe area: >=14% margin on all sides of every master; app icon keeps
+    the glyph inside the central 66% (iOS squircle / Android adaptive).
+  - MICRO-MARK (funnel + dot, no pips/thin beams) is mandatory below 24px
+    and for favicons; full glyph minimum size 24px screen / 8mm print.
+  - Lockups are transparent RGBA; wordmark Space Grotesk 400 lowercase
+    (#F5F3EE on dark, #101820 on light); tagline JetBrains Mono uppercase,
+    ls 0.28em, #8B96A3 on dark / #66707B on light.

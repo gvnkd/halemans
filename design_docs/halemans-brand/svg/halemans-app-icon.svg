@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Halemans logo">
+  <rect width="1024" height="1024" rx="227" fill="#0C121D"/>
+  <line x1="385.6" y1="366.7" x2="637.0" y2="511.9" stroke="#A9B5C1" stroke-width="15.2" stroke-linecap="round"/>
+  <line x1="385.6" y1="455.2" x2="637.0" y2="511.9" stroke="#A9B5C1" stroke-width="15.2" stroke-linecap="round"/>
+  <line x1="385.6" y1="568.7" x2="637.0" y2="511.9" stroke="#A9B5C1" stroke-width="15.2" stroke-linecap="round"/>
+  <line x1="385.6" y1="657.1" x2="637.0" y2="511.9" stroke="#A9B5C1" stroke-width="15.2" stroke-linecap="round"/>
+  <line x1="643.6" y1="511.9" x2="770.4" y2="511.9" stroke="#FF5A1F" stroke-width="15.8" stroke-linecap="round"/>
+  <circle cx="811.3" cy="511.9" r="33.7" fill="none" stroke="#FF5A1F" stroke-width="3.3"/>
+  <circle cx="811.3" cy="511.9" r="25.1" fill="#FF5A1F"/>
+  <circle cx="385.6" cy="366.7" r="8.6" fill="#E5484D"/>
+  <circle cx="385.6" cy="455.2" r="8.6" fill="#F5A524"/>
+  <circle cx="385.6" cy="568.7" r="8.6" fill="#4C8DFF"/>
+  <circle cx="385.6" cy="657.1" r="8.6" fill="#98A2AD"/>
+</svg>

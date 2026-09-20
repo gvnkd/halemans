@@ -1,0 +1,14 @@
+<!-- Halemans brand assets — reference for the app's HTML <head>.
+     The LIVE head is Web/View/Layout.hs (metaTags/stylesheets/scripts);
+     keep this snippet in sync with it. Rules the app follows:
+     - icon srcs are app-root absolute (served from static/)
+     - theme-color follows the active theme pack (Layout themeColor), NOT
+       a hardcoded value — #0C121D below is the brand-dark fallback only
+     - og:image MUST be absolute (scrapers drop relative URLs) -->
+<link rel="icon" type="image/svg+xml" href="/halemans-micromark-ondark.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/halemans-favicon-32.png">
+<link rel="apple-touch-icon" href="/halemans-app-icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta property="og:image" content="https://<host>/halemans-og-card-1200x630.png">
+<meta name="theme-color" content="#0C121D">

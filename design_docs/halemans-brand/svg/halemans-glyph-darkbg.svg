@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Halemans logo">
+  <line x1="163" y1="292" x2="544" y2="512" stroke="#A9B5C1" stroke-width="23" stroke-linecap="round"/>
+  <line x1="163" y1="426" x2="544" y2="512" stroke="#A9B5C1" stroke-width="23" stroke-linecap="round"/>
+  <line x1="163" y1="598" x2="544" y2="512" stroke="#A9B5C1" stroke-width="23" stroke-linecap="round"/>
+  <line x1="163" y1="732" x2="544" y2="512" stroke="#A9B5C1" stroke-width="23" stroke-linecap="round"/>
+  <line x1="554" y1="512" x2="746" y2="512" stroke="#FF5A1F" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="808" cy="512" r="51" fill="none" stroke="#FF5A1F" stroke-width="5"/>
+  <circle cx="808" cy="512" r="38" fill="#FF5A1F"/>
+  <circle cx="163" cy="292" r="13" fill="#E5484D"/>
+  <circle cx="163" cy="426" r="13" fill="#F5A524"/>
+  <circle cx="163" cy="598" r="13" fill="#4C8DFF"/>
+  <circle cx="163" cy="732" r="13" fill="#98A2AD"/>
+</svg>

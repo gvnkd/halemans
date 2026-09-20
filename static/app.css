@@ -872,6 +872,8 @@ a:hover { color: var(--accent-hover); }
     border-radius: 18px;
     display: block;
     margin: 0 auto 1rem;
+    background: #0C121D;   /* brand dark tile; glyph is the darkbg variant */
+    padding: 12px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .login-title {
