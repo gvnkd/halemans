@@ -46,59 +46,66 @@ instance View IndexView where
     <div>
         {pageHeaderHtml "LLM" mempty}
 
-        {sectionHeaderHtml (tr "Effective configuration") mempty}
-        <div class="card maxw-700"><div class="card-body">
-            <table class="table" data-testid="llm-config">
-                <tbody>
-                    <tr><td>{tr "Endpoint"}</td><td>{fromMaybe "-" endpoint}</td></tr>
-                    <tr><td>{tr "Model"}</td><td>{fromMaybe "-" model}</td></tr>
-                    <tr><td>{tr "Tools (read-only)"}</td><td>{if toolsEnabled then tr "enabled" else tr "disabled"}</td></tr>
-                    <tr><td>{tr "Daily token budget"}</td><td data-testid="llm-daily-budget">{dailyBudget}</td></tr>
-                    <tr><td>{tr "Rate limit"}</td><td data-testid="llm-rate-limit">{trp "{count} requests/min" [("count", tshow rateLimit)]}</td></tr>
-                </tbody>
-            </table>
-            {inlinePostFormHtml (pathTo TestLlmConnectionAction) (tr "Test connection") "btn btn-ghost" (Just "test-llm") False}
-        </div></div>
+        <div class="row g-4 mb-2">
+            <div class="col-lg-6">
+                {sectionHeaderHtml (tr "Effective configuration") mempty}
+                <div class="card"><div class="card-body">
+                    <table class="table" data-testid="llm-config">
+                        <tbody>
+                            <tr><td>{tr "Endpoint"}</td><td>{fromMaybe "-" endpoint}</td></tr>
+                            <tr><td>{tr "Model"}</td><td>{fromMaybe "-" model}</td></tr>
+                            <tr><td>{tr "Tools (read-only)"}</td><td>{if toolsEnabled then tr "enabled" else tr "disabled"}</td></tr>
+                            <tr><td>{tr "Daily token budget"}</td><td data-testid="llm-daily-budget">{dailyBudget}</td></tr>
+                            <tr><td>{tr "Rate limit"}</td><td data-testid="llm-rate-limit">{trp "{count} requests/min" [("count", tshow rateLimit)]}</td></tr>
+                        </tbody>
+                    </table>
+                    {inlinePostFormHtml (pathTo TestLlmConnectionAction) (tr "Test connection") "btn btn-ghost" (Just "test-llm") False}
+                </div></div>
+            </div>
+            <div class="col-lg-6">
+                {sectionHeaderHtml (tr "Tool cache") mempty}
+                <div class="card"><div class="card-body">
+                    <p class="text-muted">{tr "Short-lived memoization of agent tool calls (cmdb_lookup, jira_search, jira_issue_details, assets_lookup), keyed by tool + arguments. Failures are never cached."} {trp "Entries cached: {count}" [("count", tshow toolCacheSize)]}</p>
+                    <form method="POST" action={UpdateToolCacheAction} data-testid="tool-cache-form">
+                        <div class="form-check mb-2">
+                            <input name="enabled" type="checkbox" class="form-check-input" checked={isJust toolCacheTtl} data-testid="tool-cache-enabled"/>
+                            <label class="form-check-label">{tr "Enabled"}</label>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">{tr "TTL (seconds)"}</label>
+                            <input name="ttlSeconds" type="number" class="form-control" value={ttlValue} data-testid="tool-cache-ttl"/>
+                        </div>
+                        <button type="submit" class="btn btn-ghost" data-testid="tool-cache-submit">{tr "Save"}</button>
+                    </form>
+                </div></div>
+            </div>
+        </div>
 
         {sectionHeaderHtml (tr "Auto-analysis") mempty}
-        <div class="card maxw-700"><div class="card-body">
+        <div class="card mb-4"><div class="card-body">
             <p class="text-muted">{tr "New alerts (and enrichment re-triggers) get an LLM analysis only when the alert matches the selected statuses and severities. Manual re-analyze from the alert card is never gated."}</p>
             <form method="POST" action={UpdateAutoAnalyzeAction} data-testid="auto-analyze-form">
-                <div class="form-check mb-2">
-                    <input name="enabled" type="checkbox" class="form-check-input" checked={autoAnalyze.aaEnabled} data-testid="auto-analyze-enabled"/>
-                    <label class="form-check-label">{tr "Enabled"}</label>
-                </div>
                 <div class="row mb-2">
-                    <div class="col">
+                    <div class="col-md-3">
+                        <div class="form-check mb-2">
+                            <input name="enabled" type="checkbox" class="form-check-input" checked={autoAnalyze.aaEnabled} data-testid="auto-analyze-enabled"/>
+                            <label class="form-check-label">{tr "Enabled"}</label>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
                         <div class="form-label">{tr "Statuses"}</div>
                         {forEach allStatuses (flagCheckbox "statuses" autoAnalyze.aaStatuses "auto-analyze-status")}
                     </div>
-                    <div class="col">
+                    <div class="col-md-3">
                         <div class="form-label">{tr "Severities"}</div>
                         {forEach allSeverities (flagCheckbox "severities" autoAnalyze.aaSeverities "auto-analyze-severity")}
                     </div>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label">{tr "Environments (comma-separated, empty = all; matches the effective env)"}</label>
-                    <input name="environments" type="text" class="form-control" value={Text.intercalate ", " autoAnalyze.aaEnvironments} placeholder="dev, prod" data-testid="auto-analyze-envs"/>
+                    <div class="col-md-3">
+                        <label class="form-label">{tr "Environments (comma-separated, empty = all; matches the effective env)"}</label>
+                        <input name="environments" type="text" class="form-control" value={Text.intercalate ", " autoAnalyze.aaEnvironments} placeholder="dev, prod" data-testid="auto-analyze-envs"/>
+                    </div>
                 </div>
                 <button type="submit" class="btn btn-ghost" data-testid="auto-analyze-submit">{tr "Save"}</button>
-            </form>
-        </div></div>
-
-        {sectionHeaderHtml (tr "Tool cache") mempty}
-        <div class="card maxw-700"><div class="card-body">
-            <p class="text-muted">{tr "Short-lived memoization of agent tool calls (cmdb_lookup, jira_search, jira_issue_details, assets_lookup), keyed by tool + arguments. Failures are never cached."} {trp "Entries cached: {count}" [("count", tshow toolCacheSize)]}</p>
-            <form method="POST" action={UpdateToolCacheAction} data-testid="tool-cache-form">
-                <div class="form-check mb-2">
-                    <input name="enabled" type="checkbox" class="form-check-input" checked={isJust toolCacheTtl} data-testid="tool-cache-enabled"/>
-                    <label class="form-check-label">{tr "Enabled"}</label>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label">{tr "TTL (seconds)"}</label>
-                    <input name="ttlSeconds" type="number" class="form-control" value={ttlValue} data-testid="tool-cache-ttl"/>
-                </div>
-                <button type="submit" class="btn btn-ghost" data-testid="tool-cache-submit">{tr "Save"}</button>
             </form>
         </div></div>
 
