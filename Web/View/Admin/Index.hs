@@ -2,7 +2,7 @@ module Web.View.Admin.Index where
 
 import Application.Service.JobMetrics (FailedJobRow (..), JobTypeMetrics (..))
 import qualified Data.Text as Text
-import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
+import Web.View.Fragments (emptyStateHtml, inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -14,63 +14,90 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
+    <div data-page-wide="">
         {pageHeaderHtml (tr "Admin") mempty}
         {sectionHeaderHtml (tr "Job metrics (last 24h)") mempty}
-        <table class="table" data-testid="job-metrics-table">
-            <thead>
-                <tr>
-                    <th>{tr "Job type"}</th>
-                    <th>{tr "Succeeded"}</th>
-                    <th>{tr "Retried"}</th>
-                    <th>{tr "Failed"}</th>
-                </tr>
-            </thead>
-            <tbody>
-                {forEach metrics renderMetricsRow}
-            </tbody>
-        </table>
+        {metricsTable}
         {sectionHeaderHtml (tr "Recent job failures") mempty}
-        <table class="table" data-testid="job-failures-table">
-            <thead>
-                <tr>
-                    <th>{tr "Job type"}</th>
-                    <th>{tr "Job"}</th>
-                    <th>{tr "Error"}</th>
-                    <th>{tr "Updated"}</th>
-                </tr>
-            </thead>
-            <tbody>
-                {forEach failures renderFailureRow}
-            </tbody>
-        </table>
+        {failuresTable}
         {sectionHeaderHtml (tr "API tokens") mempty}
-        <table class="table" data-testid="admin-api-tokens-table">
-            <thead>
-                <tr>
-                    <th>{tr "Owner"}</th>
-                    <th>{tr "Name"}</th>
-                    <th>{tr "Prefix"}</th>
-                    <th>{tr "Scopes"}</th>
-                    <th>{tr "Last used"}</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                {forEach apiTokens renderApiTokenRow}
-            </tbody>
-        </table>
+        {tokensTable}
         {sectionHeaderHtml (tr "Provisioning") provisionLinks}
-        <p class="text-muted">{tr "Snapshot of users, roles, sources, teams, LLM config and agent roles, field mappings, dashboards, grouping, notification and escalation rules and integrations in the provision format. Webhook tokens are exported as env references when the token value matches a process env var; tokens with no env match and hostGroupsFile are not exported."}</p>
+        <div class="card"><div class="card-body">
+            <p class="text-muted mb-2">{tr "Snapshot of users, roles, sources, teams, LLM config and agent roles, field mappings, dashboards, grouping, notification and escalation rules and integrations in the provision format. Webhook tokens are exported as env references when the token value matches a process env var; tokens with no env match and hostGroupsFile are not exported."}</p>
+        </div></div>
         {sectionHeaderHtml (tr "Danger zone") mempty}
-        <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
-            <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">{tr "Purge all alerts"}</button>
-        </form>
+        <div class="card"><div class="card-body">
+            <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
+                <button type="submit" class="btn btn-ghost btn-ghost-critical" data-testid="purge-alerts">{tr "Purge all alerts"}</button>
+            </form>
+        </div></div>
+    </div>
     |]
       where
+        metricsTable =
+            if null metrics
+                then emptyStateHtml "job-metrics-empty" (tr "No jobs recorded in the last 24 hours.")
+                else
+                    [hsx|
+                    <table class="table" data-testid="job-metrics-table">
+                        <thead>
+                            <tr>
+                                <th>{tr "Job type"}</th>
+                                <th>{tr "Succeeded"}</th>
+                                <th>{tr "Retried"}</th>
+                                <th>{tr "Failed"}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {forEach metrics renderMetricsRow}
+                        </tbody>
+                    </table>
+                    |]
+        failuresTable =
+            if null failures
+                then emptyStateHtml "job-failures-empty" (tr "No failed jobs — nothing to review.")
+                else
+                    [hsx|
+                    <table class="table" data-testid="job-failures-table">
+                        <thead>
+                            <tr>
+                                <th>{tr "Job type"}</th>
+                                <th>{tr "Job"}</th>
+                                <th>{tr "Error"}</th>
+                                <th>{tr "Updated"}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {forEach failures renderFailureRow}
+                        </tbody>
+                    </table>
+                    |]
+        tokensTable =
+            if null apiTokens
+                then emptyStateHtml "admin-api-tokens-empty" (tr "No API tokens exist yet.")
+                else
+                    [hsx|
+                    <table class="table" data-testid="admin-api-tokens-table">
+                        <thead>
+                            <tr>
+                                <th>{tr "Owner"}</th>
+                                <th>{tr "Name"}</th>
+                                <th>{tr "Prefix"}</th>
+                                <th>{tr "Scopes"}</th>
+                                <th>{tr "Last used"}</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {forEach apiTokens renderApiTokenRow}
+                        </tbody>
+                    </table>
+                    |]
         provisionLinks =
             [hsx|
-                <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} download="provision.yaml" data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
-                <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} download="provision.json" data-testid="export-provision-json">{tr "Download provision.json"}</a>
+                <a class="btn btn-sm btn-ghost" href={exportYamlUrl} download="provision.yaml" data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
+                <a class="btn btn-sm btn-ghost" href={exportJsonUrl} download="provision.json" data-testid="export-provision-json">{tr "Download provision.json"}</a>
             |]
         exportYamlUrl :: Text
         exportYamlUrl = pathTo AdminExportProvisionAction <> "?format=yaml"
@@ -121,4 +148,4 @@ renderApiTokenRow (token, ownerEmail) =
   where
     revokeCell revoked
         | revoked = [hsx|<span class="badge bg-secondary">{tr "revoked"}</span>|]
-        | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) (tr "Revoke") "btn btn-sm btn-outline-danger" (Just "admin-api-token-revoke") False
+        | otherwise = inlinePostFormHtml (pathTo (AdminRevokeApiTokenAction (get #id token))) (tr "Revoke") "btn btn-sm btn-ghost btn-ghost-critical" (Just "admin-api-token-revoke") True

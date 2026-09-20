@@ -13,6 +13,7 @@ instance View NewView where
         <p class="text-muted">
             {tr "Placeholders:"} {forEach templateSlotNames placeholderChip}
         </p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={CreateLlmTemplateAction} data-testid="llm-template-new-form">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>
@@ -34,9 +35,10 @@ instance View NewView where
                 <label class="form-label">{tr "Notes"}</label>
                 <input name="notes" type="text" class="form-control" data-testid="llm-template-notes"/>
             </div>
-            <button type="submit" class="btn btn-primary" data-testid="llm-template-create">{tr "Create template"}</button>
-            <a href={LlmAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="llm-template-create">{tr "Create template"}</button>
+            <a href={LlmAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]
       where
         placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]

@@ -12,6 +12,7 @@ instance View NewProviderView where
         <p class="text-muted">
             {tr "API key env holds the NAME of the environment variable containing the key, not the key itself. Providers are created disabled; enable one from the list (enabling disables the others)."}
         </p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={CreateLlmProviderAction} data-testid="llm-provider-new-form">
             <div class="mb-3">
                 <label class="form-label">{tr "Provider name"}</label>
@@ -33,7 +34,8 @@ instance View NewProviderView where
                 <input name="toolsEnabled" type="checkbox" class="form-check-input" data-testid="llm-provider-tools"/>
                 <label class="form-check-label">{tr "Tools (read-only)"}</label>
             </div>
-            <button type="submit" class="btn btn-primary" data-testid="llm-provider-create">{tr "Create provider"}</button>
-            <a href={LlmAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="llm-provider-create">{tr "Create provider"}</button>
+            <a href={LlmAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]

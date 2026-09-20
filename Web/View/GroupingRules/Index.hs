@@ -2,7 +2,7 @@ module Web.View.GroupingRules.Index where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
-import Web.View.Fragments (editDeleteActionsHtml, enabledBadgeHtml, pageHeaderHtml)
+import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, enabledBadgeHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView {rules :: [GroupingRule]}
@@ -11,6 +11,14 @@ instance View IndexView where
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Grouping rules") newButton}
+        {tableOrEmpty}
+    |]
+      where
+        tableOrEmpty =
+            if null rules
+                then emptyStateHtml "grouping-rules-empty" (tr "No grouping rules yet — alerts stay ungrouped.")
+                else
+                    [hsx|
         <table class="table" data-testid="grouping-rules-table">
             <thead>
                 <tr>
@@ -26,9 +34,8 @@ instance View IndexView where
                 {forEach rules renderRule}
             </tbody>
         </table>
-    |]
-      where
-        newButton = [hsx|<a href={NewGroupingRuleAction} class="btn btn-sm btn-primary" data-testid="new-grouping-rule">{tr "New rule"}</a>|]
+                    |]
+        newButton = [hsx|<a href={NewGroupingRuleAction} class="btn btn-brand" data-testid="new-grouping-rule">{tr "New rule"}</a>|]
 
 renderRule :: (CurrentUserRecord ~ User, ?request :: Request) => GroupingRule -> Html
 renderRule rule =
@@ -40,7 +47,7 @@ renderRule rule =
         <td data-testid="grouping-rule-version">{rule.version}</td>
         <td><code>{rule.groupKeyTemplate}</code></td>
         <td>
-            <a href={PreviewGroupingRuleAction rule.id} class="btn btn-sm btn-outline-secondary" data-testid="preview-grouping-rule">{tr "Preview"}</a>
+            <a href={PreviewGroupingRuleAction rule.id} class="btn btn-sm btn-ghost" data-testid="preview-grouping-rule">{tr "Preview"}</a>
             {editDeleteActionsHtml (pathTo (EditGroupingRuleAction rule.id)) (pathTo (DeleteGroupingRuleAction rule.id)) "edit-grouping-rule"}
         </td>
     </tr>

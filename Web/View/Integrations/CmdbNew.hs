@@ -10,8 +10,9 @@ instance View CmdbNewView where
     html CmdbNewView =
         [hsx|
         {pageHeaderHtml (tr "New CMDB (Confluence) connection") mempty}
-        <form method="POST" action={CreateCmdbConfigAction} data-testid="cmdb-config-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={CreateCmdbConfigAction} data-testid="cmdb-config-form">
             {cmdbConfigFormFields Nothing}
-            <button type="submit" class="btn btn-primary" data-testid="cmdb-config-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="cmdb-config-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]

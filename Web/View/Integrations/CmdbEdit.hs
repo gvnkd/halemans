@@ -10,8 +10,9 @@ instance View CmdbEditView where
     html CmdbEditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit CMDB (Confluence) connection") mempty}
-        <form method="POST" action={UpdateCmdbConfigAction config.id} data-testid="cmdb-config-edit-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={UpdateCmdbConfigAction config.id} data-testid="cmdb-config-edit-form">
             {cmdbConfigFormFields (Just config)}
-            <button type="submit" class="btn btn-primary" data-testid="cmdb-config-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="cmdb-config-submit">{tr "Save"}</button>
         </form>
-    |]
+        </div></div>|]

@@ -11,11 +11,12 @@ instance View NewView where
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New field mapping") mempty}
-        <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form">
             {fieldMappingFormFields "" 100 "field" "" True}
-            <button type="submit" class="btn btn-primary" data-testid="field-mapping-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="field-mapping-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]
 
 fieldMappingFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => Text -> Int -> Text -> Text -> Bool -> Html
 fieldMappingFormFields facet rank kind key enabled =

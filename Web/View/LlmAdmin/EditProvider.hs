@@ -14,6 +14,7 @@ instance View EditProviderView where
         <p class="text-muted">
             {trp "{name} is {state}. Enabling/disabling happens from the provider list." [("name", provider.providerName), ("state", stateText)]}
         </p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={UpdateLlmProviderAction (get #id provider)} data-testid="llm-provider-form">
             <div class="mb-3">
                 <label class="form-label">{tr "Provider name"}</label>
@@ -35,9 +36,10 @@ instance View EditProviderView where
                 <input name="toolsEnabled" type="checkbox" class="form-check-input" checked={provider.toolsEnabled} data-testid="llm-provider-tools"/>
                 <label class="form-check-label">{tr "Tools (read-only)"}</label>
             </div>
-            <button type="submit" class="btn btn-primary" data-testid="llm-provider-save">{tr "Save provider"}</button>
-            <a href={LlmAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="llm-provider-save">{tr "Save provider"}</button>
+            <a href={LlmAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]
       where
         stateText :: Text

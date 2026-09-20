@@ -1,6 +1,6 @@
 module Web.View.LlmAdmin.Queue where
 
-import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml)
+import Web.View.Fragments (emptyStateHtml, inlinePostFormHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data QueueRow = QueueRow
@@ -29,14 +29,16 @@ data QueueView = QueueView
 instance View QueueView where
     html QueueView{..} =
         [hsx|
+        <div data-page-wide="">
         {pageHeaderHtml (tr "LLM queue") backLink}
         {queueTable}
+        </div>
     |]
       where
-        backLink = [hsx|<a href={LlmAdminAction} class="btn btn-sm btn-outline-secondary">{tr "Back to LLM"}</a>|]
+        backLink = [hsx|<a href={LlmAdminAction} class="btn btn-sm btn-ghost">{tr "Back to LLM"}</a>|]
         queueTable =
             if null queue
-                then [hsx|<p class="text-muted" data-testid="llm-queue-empty">{tr "No pending LLM requests."}</p>|]
+                then emptyStateHtml "llm-queue-empty" (tr "No pending LLM requests.")
                 else
                     [hsx|
                     <table class="table" data-testid="llm-queue-table">
@@ -90,5 +92,5 @@ queueRowHtml row =
         (Nothing, Nothing) -> ""
     dropForm =
         if row.analysisStatus == "queued"
-            then inlinePostFormHtml (pathTo (DropLlmAnalysisAction row.analysisId)) (tr "Drop") "btn btn-sm btn-outline-danger" (Just "llm-queue-drop") False
+            then inlinePostFormHtml (pathTo (DropLlmAnalysisAction row.analysisId)) (tr "Drop") "btn btn-sm btn-ghost btn-ghost-critical" (Just "llm-queue-drop") True
             else mempty

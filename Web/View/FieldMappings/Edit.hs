@@ -10,8 +10,9 @@ instance View EditView where
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit field mapping") mempty}
-        <form method="POST" action={UpdateFieldMappingAction mapping.id} data-testid="field-mapping-edit-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={UpdateFieldMappingAction mapping.id} data-testid="field-mapping-edit-form">
             {fieldMappingFormFields mapping.facet mapping.rank mapping.kind mapping.key mapping.enabled}
-            <button type="submit" class="btn btn-primary" data-testid="field-mapping-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="field-mapping-submit">{tr "Save"}</button>
         </form>
-    |]
+        </div></div>|]

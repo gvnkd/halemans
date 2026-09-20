@@ -13,9 +13,11 @@ instance View NewRoleView where
         <p class="text-muted">
             {tr "A role bundles a prompt template name with a tool whitelist for LLM enrichment. Tools: comma-separated subset of cmdb_lookup, jira_search, jira_issue_details, assets_lookup (empty = no tools)."}
         </p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={CreateLlmRoleAction} data-testid="llm-role-new-form">
             {roleFormFields Nothing []}
-            <button type="submit" class="btn btn-primary" data-testid="llm-role-save">{tr "Create role"}</button>
-            <a href={LlmAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="llm-role-save">{tr "Create role"}</button>
+            <a href={LlmAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]

@@ -13,9 +13,11 @@ instance View NewView where
         <p class="text-muted">
             {tr "Token env holds the NAME of the environment variable containing the bearer token, not the token itself. base_url points at the Assets REST base (.../rest/assets/latest)."}
         </p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={CreateAssetsConfigAction} data-testid="assets-config-new-form">
             {assetsConfigFormFields Nothing}
-            <button type="submit" class="btn btn-primary" data-testid="assets-config-save">{tr "Create info source"}</button>
-            <a href={AssetsAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="assets-config-save">{tr "Create info source"}</button>
+            <a href={AssetsAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]

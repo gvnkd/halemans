@@ -10,8 +10,9 @@ instance View JiraNewView where
     html JiraNewView =
         [hsx|
         {pageHeaderHtml (tr "New Jira connection") mempty}
-        <form method="POST" action={CreateJiraConfigAction} data-testid="jira-config-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={CreateJiraConfigAction} data-testid="jira-config-form">
             {jiraConfigFormFields Nothing}
-            <button type="submit" class="btn btn-primary" data-testid="jira-config-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="jira-config-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]

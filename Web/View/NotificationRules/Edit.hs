@@ -16,11 +16,12 @@ instance View EditView where
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit notification rule") mempty}
-        <form method="POST" action={UpdateNotificationRuleAction rule.id} data-testid="notification-rule-edit-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={UpdateNotificationRuleAction rule.id} data-testid="notification-rule-edit-form">
             {notificationRuleFormFields teams users policies rule.name rule.position rule.enabled (matchFieldsText rule.match) (matchLabelsText rule.match) rule.severityThreshold target rule.throttleSeconds rule.escalationPolicyId}
-            <button type="submit" class="btn btn-primary" data-testid="notification-rule-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="notification-rule-submit">{tr "Save"}</button>
         </form>
-    |]
+        </div></div>|]
       where
         target :: Text
         target = case (rule.teamId, rule.userId) of

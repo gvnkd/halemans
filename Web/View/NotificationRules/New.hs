@@ -15,11 +15,12 @@ instance View NewView where
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New notification rule") mempty}
-        <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form">
             {notificationRuleFormFields teams users policies "" 0 True "" "" "high" "" 300 Nothing}
-            <button type="submit" class="btn btn-primary" data-testid="notification-rule-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="notification-rule-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]
 
 -- Shared with Edit. `target` is "team:<uuid>" | "user:<uuid>" | "".
 notificationRuleFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => [Team] -> [User] -> [EscalationPolicy] -> Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Int -> Maybe (Id EscalationPolicy) -> Html

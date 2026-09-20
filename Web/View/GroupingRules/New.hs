@@ -11,11 +11,12 @@ instance View NewView where
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New grouping rule") mempty}
-        <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form">
             {groupingRuleFormFields "" 0 True "" "" "" ""}
-            <button type="submit" class="btn btn-primary" data-testid="grouping-rule-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="grouping-rule-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]
 
 -- Shared with Edit. Text fields are the match-editor's comma-separated
 -- inputs (Application.Helper.RuleForm).

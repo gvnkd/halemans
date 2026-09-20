@@ -13,11 +13,13 @@ instance View EditView where
         [hsx|
         {pageHeaderHtml (tr "Edit Assets info source") mempty}
         <p class="text-muted">{trp "{name} is {state}. Enabling/disabling happens from the list." [("name", config.name), ("state", stateText)]}</p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={UpdateAssetsConfigAction (get #id config)} data-testid="assets-config-form">
             {assetsConfigFormFields (Just config)}
-            <button type="submit" class="btn btn-primary" data-testid="assets-config-save">{tr "Save info source"}</button>
-            <a href={AssetsAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="assets-config-save">{tr "Save info source"}</button>
+            <a href={AssetsAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]
       where
         stateText :: Text

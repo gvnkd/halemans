@@ -14,11 +14,13 @@ instance View EditRoleView where
         [hsx|
         {pageHeaderHtml (tr "Edit agent role") mempty}
         <p class="text-muted">{trp "{name} is {state}. Enable/default actions live on the roles list." [("name", role.name), ("state", stateText)]}</p>
+        <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={UpdateLlmRoleAction (get #id role)} data-testid="llm-role-form">
             {roleFormFields (Just role) toolNames}
-            <button type="submit" class="btn btn-primary" data-testid="llm-role-save">{tr "Save role"}</button>
-            <a href={LlmAdminAction} class="btn btn-outline-secondary">{tr "Cancel"}</a>
+            <button type="submit" class="btn btn-brand" data-testid="llm-role-save">{tr "Save role"}</button>
+            <a href={LlmAdminAction} class="btn btn-ghost">{tr "Cancel"}</a>
         </form>
+        </div></div>
     |]
       where
         stateText :: Text

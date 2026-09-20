@@ -15,15 +15,16 @@ instance View NewView where
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New escalation policy") mempty}
-        <form method="POST" action={CreateEscalationPolicyAction} data-testid="escalation-policy-form" class="maxw-700">
+        <div class="card maxw-700"><div class="card-body">
+        <form method="POST" action={CreateEscalationPolicyAction} data-testid="escalation-policy-form">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>
                 <input name="name" type="text" class="form-control" data-testid="policy-name" required="required"/>
             </div>
             {stepEditor teams users []}
-            <button type="submit" class="btn btn-primary" data-testid="policy-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="policy-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]
 
 -- Step list editor: fixed slots, empty rows are dropped server-side. Shared
 -- with Edit (prefilled from the stored steps).

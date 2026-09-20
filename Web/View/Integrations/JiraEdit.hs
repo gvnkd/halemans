@@ -10,8 +10,9 @@ instance View JiraEditView where
     html JiraEditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit Jira connection") mempty}
-        <form method="POST" action={UpdateJiraConfigAction config.id} data-testid="jira-config-edit-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={UpdateJiraConfigAction config.id} data-testid="jira-config-edit-form">
             {jiraConfigFormFields (Just config)}
-            <button type="submit" class="btn btn-primary" data-testid="jira-config-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="jira-config-submit">{tr "Save"}</button>
         </form>
-    |]
+        </div></div>|]

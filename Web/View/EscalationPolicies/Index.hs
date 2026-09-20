@@ -4,7 +4,7 @@ import Application.Pipeline.Escalation (EscalationStep (..), stepsFromJSON)
 import qualified Data.Text as Text
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
-import Web.View.Fragments (editDeleteActionsHtml, pageHeaderHtml)
+import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView {policies :: [EscalationPolicy]}
@@ -13,6 +13,14 @@ instance View IndexView where
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Escalation policies") newButton}
+        {tableOrEmpty}
+    |]
+      where
+        tableOrEmpty =
+            if null policies
+                then emptyStateHtml "escalation-policies-empty" (tr "No escalation policies yet.")
+                else
+                    [hsx|
         <table class="table" data-testid="escalation-policies-table">
             <thead>
                 <tr>
@@ -25,9 +33,8 @@ instance View IndexView where
                 {forEach policies renderPolicy}
             </tbody>
         </table>
-    |]
-      where
-        newButton = [hsx|<a href={NewEscalationPolicyAction} class="btn btn-sm btn-primary" data-testid="new-escalation-policy">{tr "New policy"}</a>|]
+                    |]
+        newButton = [hsx|<a href={NewEscalationPolicyAction} class="btn btn-brand" data-testid="new-escalation-policy">{tr "New policy"}</a>|]
 
 renderPolicy :: (CurrentUserRecord ~ User, ?request :: Request) => EscalationPolicy -> Html
 renderPolicy policy =
@@ -44,7 +51,7 @@ renderPolicy policy =
 renderStep :: (CurrentUserRecord ~ User, ?request :: Request) => EscalationStep -> Html
 renderStep step =
     [hsx|
-    <span class="badge bg-secondary">
+    <span class="badge">
         {trp "after {seconds}s → {target}{unless}" [("seconds", tshow step.esAfterSeconds), ("target", targetLabel), ("unless", unlessLabel)]}
     </span>
 |]

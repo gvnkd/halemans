@@ -11,18 +11,19 @@ newtype DatabaseView = DatabaseView
 instance View DatabaseView where
     html DatabaseView{..} =
         [hsx|
+        <div data-page-wide="">
         {pageHeaderHtml (tr "Database") mempty}
-        <p>
+        <p class="text-muted">
             <span data-testid="db-name">{stats.databaseName}</span>
             —
             <span data-testid="db-size">{formatBytes stats.databaseBytes}</span>
         </p>
         <div class="d-flex gap-2 mb-4">
             <form method="POST" action={AdminDbAnalyzeAction}>
-                <button type="submit" class="btn btn-sm btn-outline-primary" data-testid="db-analyze-all">{tr "ANALYZE all tables"}</button>
+                <button type="submit" class="btn btn-ghost" data-testid="db-analyze-all">{tr "ANALYZE all tables"}</button>
             </form>
             <form method="POST" action={AdminDbVacuumAction} data-confirm={tr "Run VACUUM ANALYZE on the whole database? This can take a while."}>
-                <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="db-vacuum-all">{tr "VACUUM ANALYZE database"}</button>
+                <button type="submit" class="btn btn-ghost btn-ghost-critical" data-testid="db-vacuum-all">{tr "VACUUM ANALYZE database"}</button>
             </form>
         </div>
         {sectionHeaderHtml (tr "Tables") mempty}
@@ -42,6 +43,7 @@ instance View DatabaseView where
                 {forEach stats.tables renderTableRow}
             </tbody>
         </table>
+        </div>
     |]
 
 renderTableRow :: TableStats -> Html
@@ -55,7 +57,7 @@ renderTableRow row =
         <td>{formatBytes row.totalBytes}</td>
         <td>{utcTimeOrHtml (tr "never") row.lastVacuum}</td>
         <td>{utcTimeOrHtml (tr "never") row.lastAnalyze}</td>
-        <td>{inlinePostFormHtml (pathTo (AdminDbAnalyzeTableAction row.tableName)) (tr "Analyze") "btn btn-sm btn-outline-secondary" (Just "db-table-analyze") False}</td>
+        <td>{inlinePostFormHtml (pathTo (AdminDbAnalyzeTableAction row.tableName)) (tr "Analyze") "btn btn-sm btn-ghost" (Just "db-table-analyze") False}</td>
     </tr>
 |]
   where
