@@ -99,6 +99,9 @@ with sync_playwright() as pw:
     ])
     browser.on("disconnected", lambda _: print("  [browser disconnected]", flush=True))
     context = browser.new_context()
+    # Destructive UI actions carry a data-confirm step (window.confirm);
+    # auto-accept dialogs so delete/revoke/drop clicks proceed in tests.
+    context.on("page", lambda page: page.on("dialog", lambda dialog: dialog.accept()))
 
     @check("login as each role lands on the dashboard")
     def _():
