@@ -40,6 +40,7 @@ instance View ShowView where
                     , dtTotal = fromIntegral (length members)
                     , dtRows = members
                     , dtRowHtml = \visible alert -> alertRowHtmlCols Nothing (map colKey visible) alert
+                    , dtEmptyText = tr "No alerts in this group."
                     }
         tableConfig =
             TableConfig
@@ -68,7 +69,7 @@ instance View ShowView where
                 then
                     [hsx|
                     <form method="POST" action={AckGroupAction group.id} class="mb-3">
-                        <button type="submit" class="btn btn-sm btn-warning" data-testid="ack-group">{tr "Ack all firing"}</button>
+                        <button type="submit" class="btn btn-brand" data-testid="ack-group">{tr "Ack all firing"}</button>
                     </form>
                 |]
                 else mempty

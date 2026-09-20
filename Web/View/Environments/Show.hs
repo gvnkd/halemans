@@ -8,7 +8,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import Network.HTTP.Types.URI (renderQuery)
 import Web.View.DynTable (DynTable (..), dynTableHtml)
-import Web.View.Fragments (alertListColumns, alertRowHtmlCols, groupedAlertsTableHtml, pageHeaderHtml)
+import Web.View.Fragments (alertListColumns, alertRowHtmlCols, calloutWarningHtml, groupedAlertsTableHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data EnvFilters = EnvFilters
@@ -140,10 +140,10 @@ data ShowView = ShowView
 instance View ShowView where
     html ShowView{..} =
         [hsx|
-        <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters}>
+        <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters} data-page-wide="">
             {pageHeaderHtml environmentName mempty}
             {activeBlackoutNotice}
-            <div class="mb-2" data-testid="view-toggle">
+            <div class="seg mb-3" data-testid="view-toggle">
                 <a href={toggleUrl "flat"} class={toggleClass "flat"} data-testid="view-flat">{tr "Flat"}</a>
                 <a href={toggleUrl "grouped"} class={toggleClass "grouped"} data-testid="view-grouped">{tr "Grouped"}</a>
             </div>
@@ -159,14 +159,10 @@ instance View ShowView where
             if null blackouts
                 then mempty
                 else
-                    [hsx|
-                    <div class="alert alert-secondary blackout-notice" data-testid="blackout-notice">
-                        {tr "Blackout active — new alerts are suppressed."}
-                    </div>
-                |]
+                    calloutWarningHtml "blackout-notice" (tr "Blackout active") [hsx|{tr "Blackout active — new alerts are suppressed."}|]
         toggleUrl mode = pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (envBaseItems filters mode))
         toggleClass :: Text -> Text
-        toggleClass mode = if viewMode == mode then "btn btn-sm btn-secondary" else "btn btn-sm btn-outline-secondary"
+        toggleClass mode = "seg-item" <> if viewMode == mode then " active" else ""
         content =
             if viewMode == "grouped"
                 then groupedAlertsTableHtml (Just "env-groups-table") "env-groups-tbody" groups
@@ -188,6 +184,7 @@ instance View ShowView where
                     , dtTotal = total
                     , dtRows = alerts
                     , dtRowHtml = rowHtml
+                    , dtEmptyText = tr "No alerts match the current filters."
                     }
         rowHtml visible alert =
             alertRowHtmlCols (alert.groupId >>= (`lookup` groupKeys)) (map colKey visible) alert

@@ -22,9 +22,11 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
+    <div data-page-wide="">
         {pageHeaderHtml (tr "Alerts") mempty}
         {severityCounts}
         {table}
+    </div>
     |]
       where
         table =
@@ -47,6 +49,7 @@ instance View IndexView where
                     , dtTotal = total
                     , dtRows = alerts
                     , dtRowHtml = rowHtml
+                    , dtEmptyText = tr "No alerts match the current filters."
                     }
         rowHtml visible alert =
             alertRowHtmlCols (alert.groupId >>= (`lookup` groupKeys)) (map colKey visible) alert
