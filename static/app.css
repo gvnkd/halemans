@@ -25,10 +25,11 @@
        reserved for the active nav underline and primary CTAs */
     --brand-signal: #FF5A1F;
     --brand-signal-hover: #E8480F;
-    /* CTA foreground: paper white, matching the "Hale" half of the
-       wordmark (owner decision over the WCAG AA optimum of brand ink —
-       white on the signal fill measures ~3.1:1) */
-    --on-brand-signal: #F5F3EE;
+    /* CTA foreground: warm dark brown (latte --badge-fg-warm), not cold
+       ink — cold blue-black on warm orange reads harsh even though it
+       measures higher; white fails AA at ~3.1:1. #2E2300 = 4.96:1 on
+       #FF5A1F and harmonizes with the warm fill */
+    --on-brand-signal: #2E2300;
     --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
     --text-xs: 0.7rem;
@@ -594,6 +595,7 @@ a:hover { color: var(--accent-hover); }
 /* brand CTA: signal orange on every pack — theme accents never apply here
    (brand tokens §1: primary CTAs carry the brand color) */
 .btn-brand {
+    font-weight: 600;
     --bs-btn-color: var(--on-brand-signal);
     --bs-btn-bg: var(--brand-signal);
     --bs-btn-border-color: var(--brand-signal);

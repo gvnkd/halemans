@@ -50,6 +50,9 @@ Brand constants (defined once in app.css :root, never per-pack)
                      signal orange + foreground; reserved for primary
                      CTAs (.btn-brand), the active nav underline, and
                      the navbar hairline — packs must not restyle them
+  --on-brand-signal  #2E2300 (warm ink — AA 4.96:1 on #FF5A1F; preferred over
+                     cold ink #101820, 5.7:1 but reads harsh on warm fills;
+                     white/paper ~3.1:1 fails AA)
 
 Pack: dark (Catppuccin Mocha) — default
   bg #1e1e2e  surface #2a2a3c  border #45475a  text #cdd6f4  muted #9399b2
@@ -104,8 +107,9 @@ Pack: halemans-dark (brand, 2026-09)
   status: firing #E5484D  ack #F5A524  resolved #98A2AD (notice pip —
           the brand palette has no green)  stalled #F5A524
           closed #66707B  suppressed #3A4556
-  on-accent #101820 (ink — the only AA foreground on these saturated
-          fills; white tops ~3.7:1)  badge-fg #101820  badge-fg-warm #101820
+  on-accent #101820 (ink — white tops ~3.7:1 on these saturated fills)
+          badge-fg #101820  badge-fg-warm #101820 (brand packs pin ink for
+          badges; the brand-signal CTA uses the warmer --on-brand-signal)
 
 Pack: halemans-light (brand, 2026-09)
   bg #F5F3EE (paper)  surface #FFFFFF  border #DFDCD4 (faint)
