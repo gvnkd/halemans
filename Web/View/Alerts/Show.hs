@@ -2,7 +2,7 @@ module Web.View.Alerts.Show where
 
 import Application.Service.Timeline (groupTimeline)
 import qualified Data.Aeson as Aeson
-import Web.View.Fragments (alertDetailsCardHtml, alertStatusBadgeHtml, assetsPanelHtml, cmdbPanelHtml, detailsJsonHtml, inlinePostFormHtml, jiraLinksHtml, llmPanelHtml, panelHtml, severityBadgeHtml, timelineDomId, timelineGroupHtml, writeBackChipHtml)
+import Web.View.Fragments (alertDetailsCardHtml, alertStatusBadgeHtml, assetsPanelHtml, cmdbPanelHtml, detailsJsonHtml, inlinePostFormHtml, jiraLinksHtml, llmPanelHtml, pageHeaderTestIdHtml, panelHtml, sectionHeaderHtml, severityBadgeHtml, timelineDomId, timelineGroupHtml, writeBackChipHtml)
 import Web.View.Prelude
 
 data ShowView = ShowView
@@ -29,7 +29,7 @@ instance View ShowView where
     html ShowView{..} =
         [hsx|
         <div data-testid="alert-card" data-live-scope={"alert:" <> tshow alert.id}>
-            <h1 data-testid="alert-title">{alert.title}</h1>
+            {pageHeaderTestIdHtml alert.title "alert-title" mempty}
             <p>
                 {alertStatusBadgeHtml alert}
                 {severityBadgeHtml alert.severity (Just "alert-severity")}
@@ -51,12 +51,12 @@ instance View ShowView where
 
             {panelHtml "jira-panel" Nothing "Jira" mempty jiraPanelBody}
 
-            <h2>{tr "Timeline"}</h2>
+            {sectionHeaderHtml (tr "Timeline") mempty}
             <ul class="timeline" id={timelineDomId} data-testid="alert-timeline">
                 {forEach (groupTimeline events) timelineGroupHtml}
             </ul>
 
-            <h2>{tr "Comments"}</h2>
+            {sectionHeaderHtml (tr "Comments") mempty}
             <ul class="comments" data-testid="alert-comments">
                 {forEach (zip comments commentAuthors) renderComment}
             </ul>
@@ -67,9 +67,9 @@ instance View ShowView where
                 <button type="submit" class="btn btn-sm btn-primary" data-testid="comment-submit">{tr "Comment"}</button>
             </form>
 
-            <h2>{tr "Labels"}</h2>
+            {sectionHeaderHtml (tr "Labels") mempty}
             {detailsJsonHtml "alert-labels" "labels.json" (prettyJson alert.labels)}
-            <h2>{tr "Annotations"}</h2>
+            {sectionHeaderHtml (tr "Annotations") mempty}
             {detailsJsonHtml "alert-annotations" "annotations.json" (prettyJson alert.annotations)}
         </div>
     |]

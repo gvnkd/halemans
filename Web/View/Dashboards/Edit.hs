@@ -1,6 +1,7 @@
 module Web.View.Dashboards.Edit where
 
 import Web.View.Dashboards.Form (dashboardFormFields)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data EditView = EditView
@@ -11,7 +12,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit dashboard"}</h1>
+        {pageHeaderHtml (tr "Edit dashboard") mempty}
         <form method="POST" action={UpdateDashboardAction dashboard.id} data-testid="dashboard-form" class="maxw-600">
             {dashboardFormFields dashboard.name configText dashboard.isDefault}
             <button type="submit" class="btn btn-primary" data-testid="dashboard-submit">{tr "Save"}</button>

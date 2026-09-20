@@ -27,6 +27,7 @@ module Web.View.Fragments (
     filterMultiSelect,
     filterTextInput,
     pageHeaderHtml,
+    pageHeaderTestIdHtml,
     sectionHeaderHtml,
     inlinePostFormHtml,
     editDeleteActionsHtml,
@@ -345,7 +346,7 @@ groupHeaderHtml :: AlertGroup -> Html
 groupHeaderHtml group =
     [hsx|
     <div id={groupHeaderDomId group} data-testid="group-header">
-        <h1>{group.title}</h1>
+        {pageHeaderHtml groupTitle mempty}
         <p>
             <code>{group.groupKey}</code>
             {statusBadgeHtml group.status}
@@ -355,6 +356,7 @@ groupHeaderHtml group =
     </div>
 |]
   where
+    groupTitle = group.title
     memberCountText :: Text
     memberCountText = trp "{count} members" [("count", tshow group.memberCount)]
 
@@ -923,23 +925,44 @@ stateBadgeHtml enabled base
     | enabled = [hsx|<span class="badge status-resolved" data-testid={base <> "-enabled"}>{tr "enabled"}</span>|]
     | otherwise = [hsx|<span class="badge bg-secondary" data-testid={base <> "-disabled"}>{tr "disabled"}</span>|]
 
--- | List-page header: title left, action buttons right.
+-- | List-page header: title left, action buttons right, branded hairline
+-- (same chrome as the topbar; CSS: .page-header).
 pageHeaderHtml :: Text -> Html -> Html
 pageHeaderHtml title actions =
     [hsx|
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="page-header">
         <h1>{title}</h1>
-        {actions}
+        <div class="page-header-actions">{actions}</div>
     </div>
 |]
 
--- | Same shape for h2-level sections inside a page (LlmAdmin).
+-- | Same shape for h2-level sections inside a page.
 sectionHeaderHtml :: Text -> Html -> Html
 sectionHeaderHtml title actions =
     [hsx|
-    <div class="d-flex justify-content-between align-items-center mt-4">
+    <div class="section-header">
         <h2>{title}</h2>
-        {actions}
+        <div class="page-header-actions">{actions}</div>
+    </div>
+|]
+
+-- | Variants carrying a data-testid on the heading (pages whose tests
+-- address the title directly).
+pageHeaderTestIdHtml :: Text -> Text -> Html -> Html
+pageHeaderTestIdHtml title testId actions =
+    [hsx|
+    <div class="page-header">
+        <h1 data-testid={testId}>{title}</h1>
+        <div class="page-header-actions">{actions}</div>
+    </div>
+|]
+
+sectionHeaderTestIdHtml :: Text -> Text -> Html -> Html
+sectionHeaderTestIdHtml title testId actions =
+    [hsx|
+    <div class="section-header">
+        <h2 data-testid={testId}>{title}</h2>
+        <div class="page-header-actions">{actions}</div>
     </div>
 |]
 

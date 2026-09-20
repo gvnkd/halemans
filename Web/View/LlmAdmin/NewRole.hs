@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.NewRole where
 
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.LlmAdmin.RoleForm (roleFormFields)
 import Web.View.Prelude
 
@@ -8,7 +9,7 @@ data NewRoleView = NewRoleView
 instance View NewRoleView where
     html NewRoleView =
         [hsx|
-        <h1>{tr "New agent role"}</h1>
+        {pageHeaderHtml (tr "New agent role") mempty}
         <p class="text-muted">
             {tr "A role bundles a prompt template name with a tool whitelist for LLM enrichment. Tools: comma-separated subset of cmdb_lookup, jira_search, jira_issue_details, assets_lookup (empty = no tools)."}
         </p>

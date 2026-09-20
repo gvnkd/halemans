@@ -2,6 +2,7 @@ module Web.View.GroupingRules.New where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -9,7 +10,7 @@ data NewView = NewView
 instance View NewView where
     html NewView =
         [hsx|
-        <h1>{tr "New grouping rule"}</h1>
+        {pageHeaderHtml (tr "New grouping rule") mempty}
         <form method="POST" action={CreateGroupingRuleAction} data-testid="grouping-rule-form" class="maxw-600">
             {groupingRuleFormFields "" 0 True "" "" "" ""}
             <button type="submit" class="btn btn-primary" data-testid="grouping-rule-submit">{tr "Create"}</button>

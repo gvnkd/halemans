@@ -3,6 +3,7 @@ module Web.View.EscalationPolicies.New where
 import Application.Pipeline.Escalation (EscalationStep (..))
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -13,7 +14,7 @@ data NewView = NewView
 instance View NewView where
     html NewView{..} =
         [hsx|
-        <h1>{tr "New escalation policy"}</h1>
+        {pageHeaderHtml (tr "New escalation policy") mempty}
         <form method="POST" action={CreateEscalationPolicyAction} data-testid="escalation-policy-form" class="maxw-700">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>

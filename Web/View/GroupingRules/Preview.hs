@@ -1,5 +1,6 @@
 module Web.View.GroupingRules.Preview where
 
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data PreviewView = PreviewView
@@ -10,7 +11,7 @@ data PreviewView = PreviewView
 instance View PreviewView where
     html PreviewView{..} =
         [hsx|
-        <h1>{tr "Preview"}: {rule.name}</h1>
+        {pageHeaderHtml (tr "Preview" <> ": " <> rule.name) mempty}
         <p class="text-secondary">{tr "Recent alerts this rule would group, with the rendered group key."}</p>
         <table class="table" data-testid="grouping-rule-preview-table">
             <thead>

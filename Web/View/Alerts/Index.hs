@@ -5,7 +5,7 @@ import Application.Service.AlertList (AlertListFilters (..), alertFiltersToValue
 import Application.Service.DynTable
 import qualified Data.Aeson as Aeson
 import Web.View.DynTable (DynTable (..), dynTableHtml)
-import Web.View.Fragments (alertListColumns, alertRowHtmlCols, alertSeverityOptions)
+import Web.View.Fragments (alertListColumns, alertRowHtmlCols, alertSeverityOptions, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -22,7 +22,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Alerts"}</h1>
+        {pageHeaderHtml (tr "Alerts") mempty}
         {severityCounts}
         {table}
     |]

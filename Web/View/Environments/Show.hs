@@ -8,7 +8,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import Network.HTTP.Types.URI (renderQuery)
 import Web.View.DynTable (DynTable (..), dynTableHtml)
-import Web.View.Fragments (alertListColumns, alertRowHtmlCols, groupedAlertsTableHtml)
+import Web.View.Fragments (alertListColumns, alertRowHtmlCols, groupedAlertsTableHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data EnvFilters = EnvFilters
@@ -141,7 +141,7 @@ instance View ShowView where
     html ShowView{..} =
         [hsx|
         <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters}>
-            <h1>{environmentName}</h1>
+            {pageHeaderHtml environmentName mempty}
             {activeBlackoutNotice}
             <div class="mb-2" data-testid="view-toggle">
                 <a href={toggleUrl "flat"} class={toggleClass "flat"} data-testid="view-flat">{tr "Flat"}</a>

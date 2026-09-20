@@ -3,7 +3,7 @@ module Web.View.Integrations.Index where
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
-import Web.View.Fragments (inlinePostFormHtml, sectionHeaderHtml, stateBadgeHtml)
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml, stateBadgeHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -29,7 +29,7 @@ data JiraCacheStats = JiraCacheStats
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Integrations"}</h1>
+        {pageHeaderHtml (tr "Integrations") mempty}
 
         {sectionHeaderHtml (tr "Jira connections") newJiraButton}
         <table class="table" data-testid="jira-configs">
@@ -51,13 +51,13 @@ instance View IndexView where
             </tbody>
         </table>
 
-        <h2 class="mt-4">{tr "CMDB cache"}</h2>
+        {sectionHeaderHtml (tr "CMDB cache") mempty}
         <p data-testid="cmdb-cache-stats">
             {trp "Cached entries: {total} (fresh: {fresh}, negative lookups: {negative})" [("total", tshow cmdbCache.cmdbTotal), ("fresh", tshow cmdbCache.cmdbFresh), ("negative", tshow cmdbCache.cmdbNegative)]}
             {cmdbLastFetch}
         </p>
 
-        <h2>{tr "Jira cache"}</h2>
+        {sectionHeaderHtml (tr "Jira cache") mempty}
         <p data-testid="jira-cache-stats">
             {trp "Tracked tickets: {total} (awaiting sync: {stale})" [("total", tshow jiraCache.jiraTotal), ("stale", tshow jiraCache.jiraStale)]}
             {jiraLastSync}

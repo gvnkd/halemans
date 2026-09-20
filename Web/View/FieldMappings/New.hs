@@ -2,6 +2,7 @@ module Web.View.FieldMappings.New where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -9,7 +10,7 @@ data NewView = NewView
 instance View NewView where
     html NewView =
         [hsx|
-        <h1>{tr "New field mapping"}</h1>
+        {pageHeaderHtml (tr "New field mapping") mempty}
         <form method="POST" action={CreateFieldMappingAction} data-testid="field-mapping-form" class="maxw-600">
             {fieldMappingFormFields "" 100 "field" "" True}
             <button type="submit" class="btn btn-primary" data-testid="field-mapping-submit">{tr "Create"}</button>

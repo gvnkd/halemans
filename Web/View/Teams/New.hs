@@ -2,6 +2,7 @@ module Web.View.Teams.New where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -13,7 +14,7 @@ data NewView = NewView
 instance View NewView where
     html NewView{..} =
         [hsx|
-        <h1>{tr "New team"}</h1>
+        {pageHeaderHtml (tr "New team") mempty}
         <form method="POST" action={CreateTeamAction} data-testid="team-form" class="maxw-600">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>

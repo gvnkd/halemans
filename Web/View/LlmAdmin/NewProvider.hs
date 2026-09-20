@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.NewProvider where
 
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewProviderView = NewProviderView
@@ -7,7 +8,7 @@ data NewProviderView = NewProviderView
 instance View NewProviderView where
     html NewProviderView =
         [hsx|
-        <h1>{tr "New LLM provider"}</h1>
+        {pageHeaderHtml (tr "New LLM provider") mempty}
         <p class="text-muted">
             {tr "API key env holds the NAME of the environment variable containing the key, not the key itself. Providers are created disabled; enable one from the list (enabling disables the others)."}
         </p>

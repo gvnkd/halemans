@@ -2,6 +2,7 @@ module Web.View.NotificationRules.New where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -13,7 +14,7 @@ data NewView = NewView
 instance View NewView where
     html NewView{..} =
         [hsx|
-        <h1>{tr "New notification rule"}</h1>
+        {pageHeaderHtml (tr "New notification rule") mempty}
         <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form" class="maxw-600">
             {notificationRuleFormFields teams users policies "" 0 True "" "" "high" "" 300 Nothing}
             <button type="submit" class="btn btn-primary" data-testid="notification-rule-submit">{tr "Create"}</button>

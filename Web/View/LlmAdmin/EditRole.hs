@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.EditRole where
 
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.LlmAdmin.RoleForm (roleFormFields)
 import Web.View.Prelude
 
@@ -11,7 +12,7 @@ data EditRoleView = EditRoleView
 instance View EditRoleView where
     html EditRoleView{..} =
         [hsx|
-        <h1>{tr "Edit agent role"}</h1>
+        {pageHeaderHtml (tr "Edit agent role") mempty}
         <p class="text-muted">{trp "{name} is {state}. Enable/default actions live on the roles list." [("name", role.name), ("state", stateText)]}</p>
         <form method="POST" action={UpdateLlmRoleAction (get #id role)} data-testid="llm-role-form">
             {roleFormFields (Just role) toolNames}

@@ -3,7 +3,7 @@ module Web.View.LlmAdmin.Index where
 import Application.Service.Llm.AutoAnalyze (AutoAnalyzeRules (..), allSeverities, allStatuses)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
-import Web.View.Fragments (inlinePostFormHtml, sectionHeaderHtml, stateBadgeHtml)
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml, stateBadgeHtml)
 import Web.View.Prelude
 
 data TemplateRow = TemplateRow
@@ -43,9 +43,9 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>LLM</h1>
+        {pageHeaderHtml "LLM" mempty}
 
-        <h2>{tr "Effective configuration"}</h2>
+        {sectionHeaderHtml (tr "Effective configuration") mempty}
         <table class="table maxw-700" data-testid="llm-config">
             <tbody>
                 <tr><td>{tr "Endpoint"}</td><td>{fromMaybe "-" endpoint}</td></tr>
@@ -125,7 +125,7 @@ instance View IndexView where
             </tbody>
         </table>
 
-        <h2 class="mt-4">{tr "Budget counters"}</h2>
+        {sectionHeaderHtml (tr "Budget counters") mempty}
         <table class="table" data-testid="llm-counters">
             <thead>
                 <tr><th>{tr "Provider"}</th><th>{tr "Day"}</th><th>{tr "Tokens in"}</th><th>{tr "Tokens out"}</th><th>{tr "Requests"}</th></tr>

@@ -8,7 +8,7 @@ import qualified Data.Text as Text
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.HTTP.Types (urlEncode)
 import Web.View.DynTable (DynTable (..), dynTableHtml)
-import Web.View.Fragments (RollupCard (..), alertRowHtmlCols, alertStaticColumns, rollupCardHtml, severityBadgeHtml, statusBadgeHtml)
+import Web.View.Fragments (RollupCard (..), alertRowHtmlCols, alertStaticColumns, pageHeaderTestIdHtml, rollupCardHtml, severityBadgeHtml, statusBadgeHtml)
 import Web.View.Prelude
 
 data ShowView = ShowView
@@ -32,17 +32,18 @@ instance View ShowView where
     html ShowView{..} =
         [hsx|
         <div data-live-scope={liveScope}>
-            <h1 data-testid="dashboard-title">{dashboard.name}</h1>
-            <p>
-                <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary">{tr "Edit"}</a>
-                <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">{tr "All dashboards"}</a>
-            </p>
+            {pageHeaderTestIdHtml dashboard.name "dashboard-title" headerActions}
             <div id="dashboard-cards">
                 {forEach cardSections (renderCardSection dashboard.id)}
             </div>
         </div>
     |]
       where
+        headerActions =
+            [hsx|
+                <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary">{tr "Edit"}</a>
+                <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">{tr "All dashboards"}</a>
+            |]
         liveScope :: Text
         liveScope = "dash:" <> tshow dashboard.id
 

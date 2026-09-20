@@ -1,7 +1,7 @@
 module Web.View.Admin.Database where
 
 import Application.Service.DatabaseStats (DatabaseStats (..), TableStats (..))
-import Web.View.Fragments (inlinePostFormHtml)
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
 import Web.View.Prelude
 
 newtype DatabaseView = DatabaseView
@@ -11,7 +11,7 @@ newtype DatabaseView = DatabaseView
 instance View DatabaseView where
     html DatabaseView{..} =
         [hsx|
-        <h1>{tr "Database"}</h1>
+        {pageHeaderHtml (tr "Database") mempty}
         <p>
             <span data-testid="db-name">{stats.databaseName}</span>
             —
@@ -25,7 +25,7 @@ instance View DatabaseView where
                 <button type="submit" class="btn btn-sm btn-outline-danger" data-testid="db-vacuum-all">{tr "VACUUM ANALYZE database"}</button>
             </form>
         </div>
-        <h2>{tr "Tables"}</h2>
+        {sectionHeaderHtml (tr "Tables") mempty}
         <table class="table" data-testid="db-tables-table">
             <thead>
                 <tr>

@@ -7,7 +7,7 @@ import IHP.QueryBuilder (orderByAsc)
 import qualified IHP.QueryBuilder as QB (query)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.TypedSql.RowType (SqlRow)
-import Web.View.Fragments (RollupCard (..), rollupCardHtml)
+import Web.View.Fragments (RollupCard (..), pageHeaderHtml, rollupCardHtml)
 import Web.View.Prelude
 
 data EnvCard = EnvCard
@@ -99,7 +99,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Overview"}</h1>
+        {pageHeaderHtml (tr "Overview") mempty}
         {teamDefaultBanner}
         <div id="env-cards" data-testid="env-cards" data-live-scope="dashboard">
             {forEach cards renderCard}

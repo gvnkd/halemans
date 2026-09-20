@@ -7,7 +7,7 @@ import Application.Service.I18n (Language, languageCode, languages)
 import qualified Data.Text as Text
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
-import Web.View.Fragments (inlinePostFormHtml)
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
 import Web.View.Prelude
 
 data ShowView = ShowView
@@ -23,15 +23,15 @@ data ShowView = ShowView
 instance View ShowView where
     html ShowView{..} =
         [hsx|
-        <h1>{tr "Profile"}</h1>
+        {pageHeaderHtml (tr "Profile") mempty}
         <p>{currentUser.email}</p>
 
-        <h2>{tr "Theme"}</h2>
+        {sectionHeaderHtml (tr "Theme") mempty}
         <div class="theme-picker mb-3" data-testid="theme-picker">
             {forEach themes themeButton}
         </div>
 
-        <h2>{tr "Timezone"}</h2>
+        {sectionHeaderHtml (tr "Timezone") mempty}
         <form method="POST" action={UpdateTimezoneAction} class="mb-3" data-testid="timezone-form">
             <select name="timezone" class="form-select w-auto" data-autosubmit="" data-testid="timezone-select">
                 <option value="" selected={isNothing currentTimezone}>{tr "Browser default"}</option>
@@ -40,7 +40,7 @@ instance View ShowView where
             <p class="form-text mb-0">{tr "Timestamps render in this timezone; the default follows your browser."}</p>
         </form>
 
-        <h2>{tr "Language"}</h2>
+        {sectionHeaderHtml (tr "Language") mempty}
         <form method="POST" action={UpdateLanguageAction} class="mb-3" data-testid="language-form">
             <select name="language" class="form-select w-auto" data-autosubmit="" data-testid="language-select">
                 {forEach languages languageOption}
@@ -48,7 +48,7 @@ instance View ShowView where
             <p class="form-text mb-0">{tr "UI language; also used as the prompt language for LLM analyses you queue."}</p>
         </form>
 
-        <h2>{tr "API tokens"}</h2>
+        {sectionHeaderHtml (tr "API tokens") mempty}
         {newTokenBanner}
         <form method="POST" action={CreateApiTokenAction} class="mb-3" data-testid="api-token-create-form">
             <div class="row g-2 align-items-end">
@@ -80,13 +80,13 @@ instance View ShowView where
             </tbody>
         </table>
 
-        <h2>{tr "Push notifications"}</h2>
+        {sectionHeaderHtml (tr "Push notifications") mempty}
         {pushSection}
 
-        <h2>{tr "Dashboards"}</h2>
-        <p><a href={DashboardsAction} data-testid="profile-dashboards-link">{tr "Manage my dashboards"}</a></p>
+        {sectionHeaderHtml (tr "Dashboards") dashboardsLink}
     |]
       where
+        dashboardsLink = [hsx|<a href={DashboardsAction} data-testid="profile-dashboards-link">{tr "Manage my dashboards"}</a>|]
         themeButton theme = themeChoiceButton currentTheme theme
         timezoneOption timezone =
             [hsx|<option value={timezone} selected={currentTimezone == Just timezone}>{timezone}</option>|]

@@ -1,6 +1,7 @@
 module Web.View.Blackouts.New where
 
 import Web.View.Blackouts.Form (blackoutFormFields)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -12,7 +13,7 @@ data NewView = NewView
 instance View NewView where
     html NewView{..} =
         [hsx|
-        <h1>{tr "New blackout"}</h1>
+        {pageHeaderHtml (tr "New blackout") mempty}
         <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form" class="maxw-500">
             {blackoutFormFields Nothing environments hosts services}
             <button type="submit" class="btn btn-primary" data-testid="blackout-submit">{tr "Create"}</button>

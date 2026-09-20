@@ -1,6 +1,7 @@
 module Web.View.LlmAdmin.Edit where
 
 import Application.Service.Llm.Prompt (templateSlotNames)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data EditView = EditView
@@ -10,7 +11,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit prompt template"}</h1>
+        {pageHeaderHtml (tr "Edit prompt template") mempty}
         <p class="text-muted">
             {trp "{name} v{version} — saving creates v{nextVersion} (inactive until activated)." [("name", template.name), ("version", tshow template.version), ("nextVersion", tshow (template.version + 1))]}
             {tr "Placeholders:"} {forEach templateSlotNames placeholderChip}

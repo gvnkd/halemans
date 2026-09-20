@@ -1,5 +1,6 @@
 module Web.View.Sources.Edit where
 
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 import Web.View.Sources.Form (SourceFormValues (..), sourceFormFields)
 
@@ -17,7 +18,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit source"}</h1>
+        {pageHeaderHtml (tr "Edit source") mempty}
         <form method="POST" action={UpdateSourceAction source.id} data-testid="source-edit-form" class="maxw-500">
             {sourceFormFields values}
             <button type="submit" class="btn btn-primary" data-testid="source-submit">{tr "Save"}</button>

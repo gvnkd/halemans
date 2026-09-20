@@ -1,6 +1,6 @@
 module Web.View.LlmAdmin.Queue where
 
-import Web.View.Fragments (inlinePostFormHtml)
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data QueueRow = QueueRow
@@ -29,11 +29,11 @@ data QueueView = QueueView
 instance View QueueView where
     html QueueView{..} =
         [hsx|
-        <h1>{tr "LLM queue"}</h1>
-        <p><a href={LlmAdminAction} class="btn btn-sm btn-outline-secondary">{tr "Back to LLM"}</a></p>
+        {pageHeaderHtml (tr "LLM queue") backLink}
         {queueTable}
     |]
       where
+        backLink = [hsx|<a href={LlmAdminAction} class="btn btn-sm btn-outline-secondary">{tr "Back to LLM"}</a>|]
         queueTable =
             if null queue
                 then [hsx|<p class="text-muted" data-testid="llm-queue-empty">{tr "No pending LLM requests."}</p>|]

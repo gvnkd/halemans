@@ -1,6 +1,6 @@
 module Web.View.Reports.Index where
 
-import Web.View.Fragments (filterMultiSelect)
+import Web.View.Fragments (filterMultiSelect, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -23,7 +23,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Reports"}</h1>
+        {pageHeaderHtml (tr "Reports") mempty}
         <form method="GET" action={ReportsAction} class="row g-2 align-items-end mb-4" data-testid="reports-form">
             <div class="col-auto">
                 <label class="form-label">{tr "Window"}</label>

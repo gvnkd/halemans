@@ -2,7 +2,7 @@ module Web.View.Admin.Index where
 
 import Application.Service.JobMetrics (FailedJobRow (..), JobTypeMetrics (..))
 import qualified Data.Text as Text
-import Web.View.Fragments (inlinePostFormHtml)
+import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -14,8 +14,8 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Admin"}</h1>
-        <h2>{tr "Job metrics (last 24h)"}</h2>
+        {pageHeaderHtml (tr "Admin") mempty}
+        {sectionHeaderHtml (tr "Job metrics (last 24h)") mempty}
         <table class="table" data-testid="job-metrics-table">
             <thead>
                 <tr>
@@ -29,7 +29,7 @@ instance View IndexView where
                 {forEach metrics renderMetricsRow}
             </tbody>
         </table>
-        <h2>{tr "Recent job failures"}</h2>
+        {sectionHeaderHtml (tr "Recent job failures") mempty}
         <table class="table" data-testid="job-failures-table">
             <thead>
                 <tr>
@@ -43,7 +43,7 @@ instance View IndexView where
                 {forEach failures renderFailureRow}
             </tbody>
         </table>
-        <h2>{tr "API tokens"}</h2>
+        {sectionHeaderHtml (tr "API tokens") mempty}
         <table class="table" data-testid="admin-api-tokens-table">
             <thead>
                 <tr>
@@ -59,18 +59,19 @@ instance View IndexView where
                 {forEach apiTokens renderApiTokenRow}
             </tbody>
         </table>
-        <h2>{tr "Provisioning"}</h2>
-        <p>
-            <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} download="provision.yaml" data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
-            <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} download="provision.json" data-testid="export-provision-json">{tr "Download provision.json"}</a>
-        </p>
+        {sectionHeaderHtml (tr "Provisioning") provisionLinks}
         <p class="text-muted">{tr "Snapshot of users, roles, sources, teams, LLM config and agent roles, field mappings, dashboards, grouping, notification and escalation rules and integrations in the provision format. Webhook tokens are exported as env references when the token value matches a process env var; tokens with no env match and hostGroupsFile are not exported."}</p>
-        <h2>{tr "Danger zone"}</h2>
+        {sectionHeaderHtml (tr "Danger zone") mempty}
         <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
             <button type="submit" class="btn btn-sm btn-danger" data-testid="purge-alerts">{tr "Purge all alerts"}</button>
         </form>
     |]
       where
+        provisionLinks =
+            [hsx|
+                <a class="btn btn-sm btn-outline-secondary" href={exportYamlUrl} download="provision.yaml" data-testid="export-provision-yaml">{tr "Download provision.yaml"}</a>
+                <a class="btn btn-sm btn-outline-secondary" href={exportJsonUrl} download="provision.json" data-testid="export-provision-json">{tr "Download provision.json"}</a>
+            |]
         exportYamlUrl :: Text
         exportYamlUrl = pathTo AdminExportProvisionAction <> "?format=yaml"
         exportJsonUrl :: Text

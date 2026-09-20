@@ -1,5 +1,6 @@
 module Web.View.LlmAdmin.EditProvider where
 
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data EditProviderView = EditProviderView
@@ -9,7 +10,7 @@ data EditProviderView = EditProviderView
 instance View EditProviderView where
     html EditProviderView{..} =
         [hsx|
-        <h1>{tr "Edit LLM provider"}</h1>
+        {pageHeaderHtml (tr "Edit LLM provider") mempty}
         <p class="text-muted">
             {trp "{name} is {state}. Enabling/disabling happens from the provider list." [("name", provider.providerName), ("state", stateText)]}
         </p>

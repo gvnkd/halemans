@@ -1,6 +1,7 @@
 module Web.View.LlmAdmin.New where
 
 import Application.Service.Llm.Prompt (templateSlotNames)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -8,7 +9,7 @@ data NewView = NewView
 instance View NewView where
     html NewView =
         [hsx|
-        <h1>{tr "New prompt template"}</h1>
+        {pageHeaderHtml (tr "New prompt template") mempty}
         <p class="text-muted">
             {tr "Placeholders:"} {forEach templateSlotNames placeholderChip}
         </p>

@@ -1,6 +1,7 @@
 module Web.View.Audit.Index where
 
 import qualified Data.Aeson as Aeson
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -11,7 +12,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Audit exports"}</h1>
+        {pageHeaderHtml (tr "Audit exports") mempty}
         <form method="GET" action={ExportAuditAction} class="row g-2 align-items-end mb-4" data-testid="export-form">
             <div class="col-auto">
                 <label class="form-label">{tr "From"}</label>

@@ -1,7 +1,7 @@
 module Web.View.Flapping.Index where
 
 import Application.Service.Flapping (FlapReport (..), FlapSubject (..))
-import Web.View.Fragments (severityBadgeHtml)
+import Web.View.Fragments (pageHeaderHtml, severityBadgeHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -14,7 +14,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <h1>{tr "Flapping alerts"}</h1>
+        {pageHeaderHtml (tr "Flapping alerts") mempty}
         <form method="GET" action={FlappingAction} class="row g-2 align-items-end mb-4" data-testid="flapping-form">
             <div class="col-auto">
                 <label class="form-label">{tr "Window"}</label>

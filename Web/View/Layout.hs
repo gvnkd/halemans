@@ -22,7 +22,7 @@ defaultLayout inner =
 <!DOCTYPE html>
 <html lang={activeLanguage} data-theme={activeTheme} data-bs-theme={activeBsTheme} data-tz={activeTimezone}>
     <head>
-        {metaTags}
+        {metaTags activeTheme}
 
         {stylesheets}
         {scripts}
@@ -187,13 +187,13 @@ devScripts =
         <script id="livereload-script" src={assetPath "/livereload.js"} data-ws={liveReloadWebsocketUrl}></script>
     |]
 
-metaTags :: Html
-metaTags =
+metaTags :: Text -> Html
+metaTags activeTheme =
     [hsx|
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"/>
     <meta name="description" content="Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks"/>
-    <meta name="theme-color" content="#2a2a3c"/>
+    <meta name="theme-color" content={themeColor activeTheme}/>
     <meta property="og:title" content="Halemans"/>
     <meta property="og:type" content="website"/>
     <meta property="og:description" content="Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks"/>
@@ -206,3 +206,16 @@ metaTags =
     <link rel="apple-touch-icon" href={assetPath "/halemans-app-icon-180.png"}/>
     {autoRefreshMeta}
 |]
+
+-- PWA/status-bar color follows the active pack's --bg (static/app.css);
+-- mirrors themeFromSettings' default of "dark" for anonymous users.
+themeColor :: Text -> Text
+themeColor theme = case theme of
+    "latte" -> "#eff1f5"
+    "light" -> "#eff1f5"
+    "frappe" -> "#303446"
+    "macchiato" -> "#24273a"
+    "dracula" -> "#282a36"
+    "halemans-dark" -> "#0C121D"
+    "halemans-light" -> "#F5F3EE"
+    _ -> "#1e1e2e"

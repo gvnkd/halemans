@@ -1,6 +1,7 @@
 module Web.View.Teams.Edit where
 
 import qualified Data.Aeson as Aeson
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 import Web.View.Teams.New (hostGroupPicker, memberPicker)
 
@@ -15,7 +16,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit team"}</h1>
+        {pageHeaderHtml (tr "Edit team") mempty}
         <form method="POST" action={UpdateTeamAction team.id} data-testid="team-edit-form" class="maxw-600">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>

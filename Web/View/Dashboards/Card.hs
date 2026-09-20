@@ -5,7 +5,7 @@ import Application.Service.DashboardCards (ExpandedCard (..))
 import Application.Service.DynTable
 import Web.View.Dashboards.Show (cardTitleText)
 import Web.View.DynTable (DynTable (..), dynTableHtml)
-import Web.View.Fragments (alertBaseColumns, alertRowHtmlCols)
+import Web.View.Fragments (alertBaseColumns, alertRowHtmlCols, pageHeaderHtml)
 import Web.View.Prelude
 
 data CardView = CardView
@@ -20,15 +20,13 @@ data CardView = CardView
 instance View CardView where
     html CardView{..} =
         [hsx|
-        <h1>{dashboard.name}</h1>
+        {pageHeaderHtml dashboard.name backLink}
         <h2 data-testid="dashboard-card-title">{cardTitleText expandedCard.ecCard}</h2>
-        <p>
-            <a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-outline-secondary">{tr "Back to dashboard"}</a>
-        </p>
         {table}
         {emptyNote}
     |]
       where
+        backLink = [hsx|<a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-outline-secondary">{tr "Back to dashboard"}</a>|]
         table =
             dynTableHtml
                 DynTable

@@ -2,6 +2,7 @@ module Web.View.EscalationPolicies.Edit where
 
 import Application.Pipeline.Escalation (stepsFromJSON)
 import Web.View.EscalationPolicies.New (stepEditor)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data EditView = EditView
@@ -13,7 +14,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit escalation policy"}</h1>
+        {pageHeaderHtml (tr "Edit escalation policy") mempty}
         <form method="POST" action={UpdateEscalationPolicyAction policy.id} data-testid="escalation-policy-edit-form" class="maxw-700">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>

@@ -1,6 +1,7 @@
 module Web.View.NotificationRules.Edit where
 
 import Application.Helper.RuleForm (matchFieldsText, matchLabelsText)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.NotificationRules.New (notificationRuleFormFields)
 import Web.View.Prelude
 
@@ -14,7 +15,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit notification rule"}</h1>
+        {pageHeaderHtml (tr "Edit notification rule") mempty}
         <form method="POST" action={UpdateNotificationRuleAction rule.id} data-testid="notification-rule-edit-form" class="maxw-600">
             {notificationRuleFormFields teams users policies rule.name rule.position rule.enabled (matchFieldsText rule.match) (matchLabelsText rule.match) rule.severityThreshold target rule.throttleSeconds rule.escalationPolicyId}
             <button type="submit" class="btn btn-primary" data-testid="notification-rule-submit">{tr "Save"}</button>

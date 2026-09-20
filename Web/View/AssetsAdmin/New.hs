@@ -1,6 +1,7 @@
 module Web.View.AssetsAdmin.New where
 
 import Web.View.AssetsAdmin.Form (assetsConfigFormFields)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data NewView = NewView
@@ -8,7 +9,7 @@ data NewView = NewView
 instance View NewView where
     html NewView =
         [hsx|
-        <h1>{tr "New Assets info source"}</h1>
+        {pageHeaderHtml (tr "New Assets info source") mempty}
         <p class="text-muted">
             {tr "Token env holds the NAME of the environment variable containing the bearer token, not the token itself. base_url points at the Assets REST base (.../rest/assets/latest)."}
         </p>

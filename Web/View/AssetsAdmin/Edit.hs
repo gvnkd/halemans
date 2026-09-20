@@ -1,6 +1,7 @@
 module Web.View.AssetsAdmin.Edit where
 
 import Web.View.AssetsAdmin.Form (assetsConfigFormFields)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data EditView = EditView
@@ -10,7 +11,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit Assets info source"}</h1>
+        {pageHeaderHtml (tr "Edit Assets info source") mempty}
         <p class="text-muted">{trp "{name} is {state}. Enabling/disabling happens from the list." [("name", config.name), ("state", stateText)]}</p>
         <form method="POST" action={UpdateAssetsConfigAction (get #id config)} data-testid="assets-config-form">
             {assetsConfigFormFields (Just config)}

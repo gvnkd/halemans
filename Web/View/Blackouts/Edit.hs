@@ -1,6 +1,7 @@
 module Web.View.Blackouts.Edit where
 
 import Web.View.Blackouts.Form (blackoutFormFields)
+import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
 data EditView = EditView
@@ -13,7 +14,7 @@ data EditView = EditView
 instance View EditView where
     html EditView{..} =
         [hsx|
-        <h1>{tr "Edit blackout"}</h1>
+        {pageHeaderHtml (tr "Edit blackout") mempty}
         <form method="POST" action={UpdateBlackoutAction blackout.id} data-testid="blackout-edit-form" class="maxw-500">
             {blackoutFormFields (Just blackout) environments hosts services}
             <button type="submit" class="btn btn-primary" data-testid="blackout-submit">{tr "Save"}</button>
