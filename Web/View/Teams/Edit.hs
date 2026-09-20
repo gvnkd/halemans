@@ -17,7 +17,8 @@ instance View EditView where
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit team") mempty}
-        <form method="POST" action={UpdateTeamAction team.id} data-testid="team-edit-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={UpdateTeamAction team.id} data-testid="team-edit-form">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>
                 <input name="name" type="text" class="form-control" value={team.name} data-testid="team-name" required="required"/>
@@ -33,8 +34,9 @@ instance View EditView where
                 <textarea name="defaultDashboardConfig" class="form-control font-monospace" rows="4" data-testid="team-default-dashboard-config">{defaultConfig}</textarea>
                 <div class="form-text">{trp "Template offered to team members with no own dashboard (e.g. {example}). Empty clears it." [("example", exampleConfig)]}</div>
             </div>
-            <button type="submit" class="btn btn-primary" data-testid="team-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="team-submit">{tr "Save"}</button>
         </form>
+        </div></div>
     |]
       where
         defaultConfig :: Text

@@ -10,8 +10,10 @@ instance View NewView where
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New source") mempty}
-        <form method="POST" action={CreateSourceAction} data-testid="source-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={CreateSourceAction} data-testid="source-form">
             {sourceFormFields defaultSourceFormValues}
-            <button type="submit" class="btn btn-primary" data-testid="source-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="source-submit">{tr "Create"}</button>
         </form>
+        </div></div>
     |]

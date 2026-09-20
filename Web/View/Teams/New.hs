@@ -15,7 +15,8 @@ instance View NewView where
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New team") mempty}
-        <form method="POST" action={CreateTeamAction} data-testid="team-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={CreateTeamAction} data-testid="team-form">
             <div class="mb-3">
                 <label class="form-label">{tr "Name"}</label>
                 <input name="name" type="text" class="form-control" data-testid="team-name" required="required"/>
@@ -26,8 +27,9 @@ instance View NewView where
             </div>
             {hostGroupPicker availableGroups []}
             {memberPicker users currentRoles}
-            <button type="submit" class="btn btn-primary" data-testid="team-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="team-submit">{tr "Create"}</button>
         </form>
+        </div></div>
     |]
 
 -- | Multi-select of zabbix host groups gathered into zabbix_host_groups by
@@ -87,6 +89,6 @@ memberPicker users currentRoles =
                         <option value="member" selected={current == Just "member"}>member</option>
                         <option value="lead" selected={current == Just "lead"}>lead</option>
                     </select>
-                    <button type="button" class="btn btn-outline-danger" data-member-remove="" data-testid={"remove-" <> user.email}>×</button>
+                    <button type="button" class="btn btn-ghost btn-ghost-critical" data-member-remove="" data-testid={"remove-" <> user.email}>×</button>
                 </div>
             |]

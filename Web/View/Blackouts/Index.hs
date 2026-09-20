@@ -1,6 +1,6 @@
 module Web.View.Blackouts.Index where
 
-import Web.View.Fragments (editDeleteActionsHtml, pageHeaderHtml)
+import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView {blackouts :: [(Blackout, Text)]}
@@ -9,6 +9,14 @@ instance View IndexView where
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Blackouts") newButton}
+        {tableOrEmpty}
+    |]
+      where
+        tableOrEmpty =
+            if null blackouts
+                then emptyStateHtml "blackouts-empty" (tr "No blackouts scheduled — new alerts notify as usual.")
+                else
+                    [hsx|
         <table class="table" data-testid="blackouts-table">
             <thead>
                 <tr>
@@ -23,9 +31,8 @@ instance View IndexView where
                 {forEach blackouts renderBlackout}
             </tbody>
         </table>
-    |]
-      where
-        newButton = [hsx|<a href={NewBlackoutAction} class="btn btn-sm btn-primary" data-testid="new-blackout">{tr "New blackout"}</a>|]
+                    |]
+        newButton = [hsx|<a href={NewBlackoutAction} class="btn btn-brand" data-testid="new-blackout">{tr "New blackout"}</a>|]
 
 renderBlackout :: (Blackout, Text) -> Html
 renderBlackout (blackout, scopeName) =

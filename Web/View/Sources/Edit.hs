@@ -19,10 +19,12 @@ instance View EditView where
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit source") mempty}
-        <form method="POST" action={UpdateSourceAction source.id} data-testid="source-edit-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={UpdateSourceAction source.id} data-testid="source-edit-form">
             {sourceFormFields values}
-            <button type="submit" class="btn btn-primary" data-testid="source-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="source-submit">{tr "Save"}</button>
         </form>
+        </div></div>
     |]
       where
         values =

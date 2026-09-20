@@ -14,8 +14,10 @@ instance View NewView where
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New blackout") mempty}
-        <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={CreateBlackoutAction} data-testid="blackout-form">
             {blackoutFormFields Nothing environments hosts services}
-            <button type="submit" class="btn btn-primary" data-testid="blackout-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="blackout-submit">{tr "Create"}</button>
         </form>
+        </div></div>
     |]

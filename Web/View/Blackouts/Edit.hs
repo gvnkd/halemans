@@ -15,8 +15,10 @@ instance View EditView where
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit blackout") mempty}
-        <form method="POST" action={UpdateBlackoutAction blackout.id} data-testid="blackout-edit-form" class="maxw-500">
+        <div class="card maxw-500"><div class="card-body">
+        <form method="POST" action={UpdateBlackoutAction blackout.id} data-testid="blackout-edit-form">
             {blackoutFormFields (Just blackout) environments hosts services}
-            <button type="submit" class="btn btn-primary" data-testid="blackout-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="blackout-submit">{tr "Save"}</button>
         </form>
+        </div></div>
     |]

@@ -2,7 +2,7 @@ module Web.View.Sources.Index where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
-import Web.View.Fragments (enabledBadgeHtml, inlinePostFormHtml, pageHeaderHtml)
+import Web.View.Fragments (emptyStateHtml, enabledBadgeHtml, inlinePostFormHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -13,7 +13,17 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
+        <div data-page-wide="">
         {pageHeaderHtml (tr "Sources") newButton}
+        {tableOrEmpty}
+        </div>
+    |]
+      where
+        tableOrEmpty =
+            if null sources
+                then emptyStateHtml "sources-empty" (tr "No sources yet — create one to start ingesting alerts.")
+                else
+                    [hsx|
         <table class="table" data-testid="sources-table">
             <thead>
                 <tr>
@@ -35,11 +45,10 @@ instance View IndexView where
                 {forEach sources (renderSourceRow canManage)}
             </tbody>
         </table>
-    |]
-      where
+                    |]
         newButton =
             if canManage
-                then [hsx|<a href={NewSourceAction} class="btn btn-sm btn-primary" data-testid="new-source">{tr "New source"}</a>|]
+                then [hsx|<a href={NewSourceAction} class="btn btn-brand" data-testid="new-source">{tr "New source"}</a>|]
                 else mempty
         actionsHeader =
             if canManage
@@ -78,14 +87,14 @@ renderSourceRow canManage source =
             else
                 [hsx|
                 <td>
-                    <a href={EditSourceAction source.id} class="btn btn-sm btn-outline-secondary" data-testid="edit-source">{tr "Edit"}</a>
-                    {inlinePostFormHtml (pathTo (ToggleSourceAction source.id)) toggleLabel "btn btn-sm btn-outline-warning" (Just "toggle-source") False}
+                    <a href={EditSourceAction source.id} class="btn btn-sm btn-ghost" data-testid="edit-source">{tr "Edit"}</a>
+                    {inlinePostFormHtml (pathTo (ToggleSourceAction source.id)) toggleLabel "btn btn-sm btn-ghost" (Just "toggle-source") False}
                     {syncButton}
                 </td>
             |]
     syncButton =
         if sourceType == "zabbix"
-            then inlinePostFormHtml (pathTo (SyncHostGroupsAction source.id)) (tr "Sync host groups") "btn btn-sm btn-outline-secondary" (Just "sync-host-groups") False
+            then inlinePostFormHtml (pathTo (SyncHostGroupsAction source.id)) (tr "Sync host groups") "btn btn-sm btn-ghost" (Just "sync-host-groups") False
             else mempty
     toggleLabel :: Text
     toggleLabel = if source.enabled then tr "Disable" else tr "Enable"

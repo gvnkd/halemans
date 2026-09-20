@@ -1,6 +1,6 @@
 module Web.View.Teams.Index where
 
-import Web.View.Fragments (editDeleteActionsHtml, pageHeaderHtml)
+import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView {teamsWithMembers :: [(Team, [(User, Text)])]}
@@ -9,6 +9,14 @@ instance View IndexView where
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Teams") newButton}
+        {tableOrEmpty}
+    |]
+      where
+        tableOrEmpty =
+            if null teamsWithMembers
+                then emptyStateHtml "teams-empty" (tr "No teams yet — create one to group members and route notifications.")
+                else
+                    [hsx|
         <table class="table" data-testid="teams-table">
             <thead>
                 <tr>
@@ -22,9 +30,8 @@ instance View IndexView where
                 {forEach teamsWithMembers renderTeam}
             </tbody>
         </table>
-    |]
-      where
-        newButton = [hsx|<a href={NewTeamAction} class="btn btn-sm btn-primary" data-testid="new-team">{tr "New team"}</a>|]
+                    |]
+        newButton = [hsx|<a href={NewTeamAction} class="btn btn-brand" data-testid="new-team">{tr "New team"}</a>|]
 
 renderTeam :: (Team, [(User, Text)]) -> Html
 renderTeam (team, members) =
@@ -41,5 +48,5 @@ renderTeam (team, members) =
   where
     memberList = forEach members \(user, role) ->
         [hsx|
-            <span class="badge bg-secondary">{user.email} ({role})</span>
+            <span class="badge">{user.email} ({role})</span>
         |]
