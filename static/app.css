@@ -25,7 +25,9 @@
        reserved for the active nav underline and primary CTAs */
     --brand-signal: #FF5A1F;
     --brand-signal-hover: #E8480F;
-    --on-brand-signal: #ffffff;
+    /* brand ink: AA on the signal fill (5.7:1; white tops out at 3.1:1) —
+       the brand packs pin the same foreground for saturated fills */
+    --on-brand-signal: #101820;
     --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
     --text-xs: 0.7rem;
@@ -250,6 +252,19 @@ a:hover { color: var(--accent-hover); }
 .table { --bs-table-bg: var(--surface); --bs-table-color: var(--text); --bs-table-border-color: var(--border); }
 
 .form-control, .form-select { border: 1px solid var(--border); }
+
+/* Bootstrap's form-select caret is a data-URI SVG background, which the
+   CSP img-src blocks — draw the chevron with gradients instead. */
+.form-select:not([multiple]) {
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+        linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 1.15rem) 55%,
+        calc(100% - 0.85rem) 55%;
+    background-size: 0.32rem 0.32rem, 0.32rem 0.32rem;
+    background-repeat: no-repeat;
+}
 .form-control::placeholder { color: var(--text-muted); opacity: 1; }
 .form-control:focus, .form-select:focus {
     background: var(--surface);
