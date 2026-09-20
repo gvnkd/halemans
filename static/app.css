@@ -1091,3 +1091,191 @@ a:hover { color: var(--accent-hover); }
     padding-left: 1rem;
 }
 .blackout-notice { border-left: 3px solid var(--status-ack); }
+
+/* ================= brand component layer (2026-09 UI pass) =================
+   Component classes driven by the tokens above, theme-pack-agnostic: every
+   [data-theme] pack renders the same chrome, only tokens differ. Values not
+   present in the token file are layout constants from the brand UI spec
+   (page widths 960/1200, control height 34px, radii 8/10/12px). */
+
+:root {
+    --page-max: 960px;        /* standard page container */
+    --page-max-wide: 1200px;  /* tables/data-heavy pages */
+    --radius-btn: 8px;
+    --radius-callout: 10px;
+    --radius-card: 12px;
+}
+
+/* Page container: centered, padded; pages opt into the wide limit by
+   carrying data-page-wide on their root element (Layout.hs renders <main
+   id="content"> around every view). Flash messages share the column. */
+.page-messages {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 1.25rem 24px 0;
+}
+main#content {
+    max-width: var(--page-max);
+    margin: 0 auto;
+    padding: 0 24px 80px;
+}
+main#content:has(> [data-page-wide]) { max-width: var(--page-max-wide); }
+
+/* Links: accent color, underline only on hover (no raw default-blue links). */
+a { text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Buttons: single chrome for both kinds. Height 34px, radius 8px, --text-md;
+   .btn-sm row actions stay compact. */
+.btn {
+    border-radius: var(--radius-btn);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+}
+.btn-brand, .btn-ghost {
+    min-height: 34px;
+    font-size: var(--text-md);
+}
+.btn-sm.btn-brand, .btn-sm.btn-ghost { min-height: 28px; }
+
+/* Secondary = ghost/outline. One kind only. */
+.btn-ghost {
+    --bs-btn-color: var(--text);
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: var(--border);
+    --bs-btn-hover-color: var(--text);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--text) 7%, transparent);
+    --bs-btn-hover-border-color: color-mix(in srgb, var(--border) 70%, var(--text));
+    --bs-btn-active-color: var(--text);
+    --bs-btn-active-bg: color-mix(in srgb, var(--text) 12%, transparent);
+    --bs-btn-active-border-color: var(--border);
+    --bs-btn-disabled-color: var(--text-muted);
+    --bs-btn-disabled-bg: transparent;
+    --bs-btn-disabled-border-color: var(--border);
+}
+/* Destructive actions: critical-colored ghost, never a filled red button. */
+.btn-ghost-critical {
+    --bs-btn-color: var(--status-firing);
+    --bs-btn-border-color: var(--status-firing);
+    --bs-btn-hover-color: var(--status-firing);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--status-firing) 12%, transparent);
+    --bs-btn-hover-border-color: var(--status-firing);
+    --bs-btn-active-color: var(--status-firing);
+    --bs-btn-active-bg: color-mix(in srgb, var(--status-firing) 18%, transparent);
+    --bs-btn-active-border-color: var(--status-firing);
+}
+
+/* Voted state for LLM feedback buttons: accent = interactive selection. */
+.btn-voted {
+    --bs-btn-color: var(--accent);
+    --bs-btn-border-color: var(--accent);
+}
+
+/* Segmented control (theme picker, env view toggle): pill buttons on the
+   page background; active = signal border + 2px signal bottom keyline +
+   small signal dot (the spec's severity-neutral "active" marker). */
+.seg {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem;
+}
+.seg-item {
+    position: relative;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--text-md);
+    font-weight: 500;
+    padding: 0.3rem 0.85rem 0.5rem 1.2rem;
+}
+.seg-item:hover {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.seg-item.active {
+    border-color: var(--brand-signal);
+    color: var(--text);
+}
+.seg-item.active::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0.5rem;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--brand-signal);
+}
+.seg-item.active::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 0.3rem;
+    transform: translateX(-50%);
+    width: 0.9rem;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--brand-signal);
+}
+
+/* Empty states: one muted line in a dashed frame; tables use the
+   .dyn-empty-row variant (a full-width tbody row that CSS hides as soon as
+   real rows exist, so websocket inserts need no extra logic). */
+.empty-state {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    text-align: center;
+    padding: 1.1rem 1rem;
+    margin: 0.5rem 0 1rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-callout);
+}
+tr.dyn-empty-row td {
+    border-bottom: none;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    text-align: center;
+    padding: 1.25rem 1rem;
+}
+tbody:has(> tr:not(.dyn-empty-row)) > tr.dyn-empty-row { display: none; }
+
+/* Callouts: warning = severity-warning border + ▲ glyph; info/notice =
+   border token + ◆ glyph. Title stays in text color; raw colored
+   paragraphs are not used for status messages. */
+.callout {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-callout);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+}
+.callout-glyph { flex: none; }
+.callout-warning { border-color: var(--severity-warning); }
+.callout-warning .callout-glyph { color: var(--severity-warning); }
+.callout-info .callout-glyph { color: var(--text-muted); }
+.callout-body { min-width: 0; }
+
+/* Tables: comfortable row height (10px vertical padding on data cells;
+   .table-sm stays dense). Identifiers/timestamps render mono. */
+.table:not(.table-sm) > tbody > tr > td {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+}
+time.utc-time {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+}
+
+/* Flatpickr popups sit above the navbar hairline. */
+.flatpickr-calendar { z-index: 2000; }

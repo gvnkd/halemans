@@ -32,13 +32,13 @@ defaultLayout inner =
     <body>
         <a href="#content" class="skip-to-content">{tr "Skip to content"}</a>
         {navigation}
-        <div class="container-fluid mt-4 px-4">
+        <div class="page-messages">
             {renderFlashMessages}
             <div id="push-banner" class="alert alert-warning d-none" data-testid="push-banner"></div>
-            <main id="content">
-                {inner}
-            </main>
         </div>
+        <main id="content">
+            {inner}
+        </main>
     </body>
 </html>
 |]

@@ -31,6 +31,10 @@ module Web.View.Fragments (
     sectionHeaderHtml,
     inlinePostFormHtml,
     editDeleteActionsHtml,
+    emptyStateHtml,
+    calloutHtml,
+    calloutInfoHtml,
+    calloutWarningHtml,
     enabledBadgeHtml,
     stateBadgeHtml,
     statusBadgeHtml,
@@ -207,11 +211,22 @@ groupedAlertsTableHtml testId tbodyId groups =
                 <th></th>
             </tr>
         </thead>
-        <tbody id={tbodyId}>
-            {forEach groups groupRowHtml}
-        </tbody>
-    </table>
+    <tbody id={tbodyId}>
+        {forEach groups groupRowHtml}
+        {emptyRow}
+    </tbody>
+</table>
 |]
+  where
+    emptyRow =
+        if null groups
+            then
+                [hsx|
+                <tr class="dyn-empty-row" data-testid="env-groups-empty">
+                    <td colspan="4">{tr "No alerts match the current filters."}</td>
+                </tr>
+                |]
+            else mempty
 
 alertStatusDomId :: Alert -> Text
 alertStatusDomId alert = "alert-status-" <> tshow (get #id alert)
@@ -433,7 +448,7 @@ cmdbPanelDomId = "cmdb-panel"
 cmdbPanelHtml :: Alert -> Maybe CmdbEntry -> Html
 cmdbPanelHtml alert entry = panelHtml "cmdb-panel" (Just cmdbPanelDomId) "CMDB" refreshButton body
   where
-    refreshButton = inlinePostFormHtml (pathTo (RefreshCmdbAction (get #id alert))) (tr "Refresh") "btn btn-sm btn-outline-secondary" (Just "cmdb-refresh") False
+    refreshButton = inlinePostFormHtml (pathTo (RefreshCmdbAction (get #id alert))) (tr "Refresh") "btn btn-sm btn-ghost" (Just "cmdb-refresh") False
     body = case entry of
         Nothing -> [hsx|<p class="text-muted" data-testid="cmdb-empty">{tr "No CMDB entry (no host/service subject, or lookup pending)."}</p>|]
         Just cached
@@ -460,7 +475,7 @@ assetsPanelDomId = "assets-panel"
 assetsPanelHtml :: Alert -> [(AssetAlertLink, AssetsObject, AssetsConfig)] -> Html
 assetsPanelHtml alert linked = panelHtml "assets-panel" (Just assetsPanelDomId) (tr "Assets") refreshButton body
   where
-    refreshButton = inlinePostFormHtml (pathTo (RefreshAssetsAction (get #id alert))) (tr "Refresh") "btn btn-sm btn-outline-secondary" (Just "assets-refresh") False
+    refreshButton = inlinePostFormHtml (pathTo (RefreshAssetsAction (get #id alert))) (tr "Refresh") "btn btn-sm btn-ghost" (Just "assets-refresh") False
     body = case linked of
         [] -> [hsx|<p class="text-muted" data-testid="assets-empty">{tr "No linked assets (no info source configured, or lookup pending)."}</p>|]
         entries -> [hsx|<div>{forEach entries assetEntryHtml}</div>|]
@@ -552,7 +567,7 @@ jiraLinkItem alert link =
   where
     unlinkForm =
         if link.origin == "manual"
-            then inlinePostFormHtml (pathTo (DeleteJiraLinkAction (get #id alert) (get #id link))) (tr "unlink") "btn btn-sm btn-outline-danger" (Just "jira-unlink") True
+            then inlinePostFormHtml (pathTo (DeleteJiraLinkAction (get #id alert) (get #id link))) (tr "unlink") "btn btn-sm btn-ghost btn-ghost-critical" (Just "jira-unlink") True
             else mempty
 
 writeBackChipDomId :: Text
@@ -587,7 +602,7 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
         [hsx|
             <form method="POST" action={ReanalyzeAlertAction (get #id alert)} class="d-inline">
                 {roleSelect}
-                <button type="submit" class="btn btn-sm btn-outline-secondary" data-testid="llm-reanalyze">{tr "Re-analyze"}</button>
+                <button type="submit" class="btn btn-sm btn-ghost" data-testid="llm-reanalyze">{tr "Re-analyze"}</button>
             </form>
         |]
     -- Agent-role choice (milestone_8.md §7): empty = the is_default role
@@ -756,9 +771,10 @@ llmFeedbackHtml alert analysis feedback =
         (own : _) -> Just own.score
         [] -> Nothing
     upClass :: Text
-    upClass = if vote == Just 1 then "btn btn-sm btn-success" else "btn btn-sm btn-outline-secondary"
+    upClass = voteClass (vote == Just 1)
     downClass :: Text
-    downClass = if vote == Just (-1) then "btn btn-sm btn-danger" else "btn btn-sm btn-outline-secondary"
+    downClass = voteClass (vote == Just (-1))
+    voteClass voted = "btn btn-sm btn-ghost" <> if voted then " btn-voted" else ""
 
 -- Checkbox dropdown multi-select shared by the /alerts and /env/:name
 -- filter panels. The menu stays open while options are toggled
@@ -768,7 +784,7 @@ filterMultiSelect :: Text -> Text -> [Text] -> [Text] -> Html
 filterMultiSelect name label options selected =
     [hsx|
     <div class="col-auto dropdown" data-testid={"filter-" <> name} data-filter-dropdown="true">
-        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{buttonLabel}</button>
+        <button class="btn btn-sm btn-ghost dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{buttonLabel}</button>
         <div class="dropdown-menu p-2">
             {forEach options optionItem}
         </div>
@@ -967,25 +983,64 @@ sectionHeaderTestIdHtml title testId actions =
 |]
 
 -- | Inline one-button POST form (row toggles, refreshes, deletes). jsDelete
--- adds the JS confirm hook class used by destructive actions.
+-- = destructive: the form carries data-confirm, which app.js turns into a
+-- confirm step before submitting (CSP-friendly, no inline handlers).
 inlinePostFormHtml :: Text -> Text -> Text -> Maybe Text -> Bool -> Html
 inlinePostFormHtml actionPath label buttonClass testId jsDelete =
     [hsx|
-    <form method="POST" action={actionPath} class={formClass}>
+    <form method="POST" action={actionPath} class="d-inline" data-confirm={confirmAttr}>
         <button type="submit" class={buttonClass} data-testid={testId}>{label}</button>
     </form>
 |]
   where
-    formClass :: Text
-    formClass = "d-inline" <> if jsDelete then " js-delete" else ""
+    confirmAttr :: Maybe Text
+    confirmAttr = if jsDelete then Just (tr "Are you sure?") else Nothing
 
--- | Standard row actions: Edit link + Delete form.
+-- | Standard row actions: Edit link + Delete form (ghost + confirm).
 editDeleteActionsHtml :: Text -> Text -> Text -> Html
 editDeleteActionsHtml editPath deletePath editTestId =
     [hsx|
-    <a href={editPath} class="btn btn-sm btn-outline-secondary" data-testid={editTestId}>{tr "Edit"}</a>
-    {inlinePostFormHtml deletePath (tr "Delete") "btn btn-sm btn-outline-danger" Nothing False}
+    <a href={editPath} class="btn btn-sm btn-ghost" data-testid={editTestId}>{tr "Edit"}</a>
+    {inlinePostFormHtml deletePath (tr "Delete") "btn btn-sm btn-ghost btn-ghost-critical" Nothing True}
 |]
+
+-- | Designed empty state: one muted line in a dashed frame. Pages render it
+-- instead of (or, for live tables, alongside — see Web.View.DynTable) a bare
+-- table when there is nothing to show.
+emptyStateHtml :: Text -> Text -> Html
+emptyStateHtml testId message =
+    [hsx|
+    <div class="empty-state" data-testid={testId}>{message}</div>
+|]
+
+-- | Callout (see static/app.css .callout): kind is "warning" (severity-warning
+-- border, colored ▲ glyph) or "info" (border token, muted ◆ glyph). Title
+-- renders in text color, body is free-form Html.
+calloutHtml :: Text -> Text -> Maybe Text -> Html -> Html
+calloutHtml testId kind title body =
+    [hsx|
+    <div class={calloutClass} data-testid={testId} role="status">
+        <span class="callout-glyph" aria-hidden="true">{glyph}</span>
+        <div class="callout-body">
+            {titleLine}
+            {body}
+        </div>
+    </div>
+|]
+  where
+    calloutClass :: Text
+    calloutClass = "callout callout-" <> kind
+    glyph :: Text
+    glyph = if kind == "warning" then "▲" else "◆"
+    titleLine = case title of
+        Just t -> [hsx|<p class="mb-1"><strong>{t}</strong></p>|]
+        Nothing -> mempty
+
+calloutInfoHtml :: Text -> Html -> Html
+calloutInfoHtml testId body = calloutHtml testId "info" Nothing body
+
+calloutWarningHtml :: Text -> Text -> Html -> Html
+calloutWarningHtml testId title body = calloutHtml testId "warning" (Just title) body
 
 -- | Card panel scaffolding (card > card-body > title + header action).
 -- sectionId is the live-update DOM id when the panel is WS-replaceable.

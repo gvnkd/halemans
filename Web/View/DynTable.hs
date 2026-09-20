@@ -33,6 +33,10 @@ data DynTable row = DynTable
     , dtRows :: [row]
     , dtRowHtml :: [TableColumn] -> row -> Html
     -- ^ Renders one <tr> for the given visible columns.
+    , dtEmptyText :: Text
+    -- ^ Designed empty state (one muted line) rendered as a full-width tbody
+    -- row when there are no rows; CSS hides it as soon as live updates add
+    -- real rows (tbody:has in static/app.css).
     }
 
 dynTableHtml :: DynTable row -> Html
@@ -121,7 +125,7 @@ dynTableHtml DynTable{..} =
     multiFilter col cf =
         [hsx|
         <div class="dropdown" data-testid={"filter-" <> cf.cfParam} data-filter-dropdown="true">
-            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{buttonLabel}</button>
+            <button class="btn btn-sm btn-ghost dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{buttonLabel}</button>
             <div class="dropdown-menu p-2">
                 {forEach cf.cfOptions optionItem}
             </div>
@@ -160,7 +164,7 @@ dynTableHtml DynTable{..} =
             then
                 [hsx|
                 <div class="dropdown" data-testid={testid "cols"} data-filter-dropdown="true">
-                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{pickerLabel}</button>
+                    <button class="btn btn-sm btn-ghost dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">{pickerLabel}</button>
                     <div class="dropdown-menu p-2">
                         {forEach cfg.cfgColumns columnOption}
                     </div>
@@ -194,8 +198,19 @@ dynTableHtml DynTable{..} =
             |]
 
     resetLink = case dtResetUrl of
-        Just url -> [hsx|<a href={url} class="btn btn-sm btn-outline-secondary" data-testid={testid "filters-reset"}>{tr "Reset"}</a>|]
+        Just url -> [hsx|<a href={url} class="btn btn-sm btn-ghost" data-testid={testid "filters-reset"}>{tr "Reset"}</a>|]
         Nothing -> mempty
+
+    emptyRow =
+        if null dtRows
+            then
+                [hsx|
+                <tr class="dyn-empty-row" data-testid={testid "empty"}>
+                    <td colspan={colspan}>{dtEmptyText}</td>
+                </tr>
+                |]
+            else mempty
+    colspan = tshow (max 1 (length visible)) :: Text
 
     tableHtml =
         [hsx|
@@ -208,6 +223,7 @@ dynTableHtml DynTable{..} =
             </thead>
             <tbody id={dtTbodyId}>
                 {forEach dtRows (dtRowHtml visible)}
+                {emptyRow}
             </tbody>
         </table>
     |]
