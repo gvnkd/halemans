@@ -47,9 +47,9 @@ instance View IndexView where
         {pageHeaderHtml "LLM" mempty}
 
         <div class="row g-4 mb-2">
-            <div class="col-lg-6">
+            <div class="col-lg-6 d-flex flex-column">
                 {sectionHeaderHtml (tr "Effective configuration") mempty}
-                <div class="card"><div class="card-body">
+                <div class="card flex-fill"><div class="card-body">
                     <table class="table" data-testid="llm-config">
                         <tbody>
                             <tr><td>{tr "Endpoint"}</td><td>{fromMaybe "-" endpoint}</td></tr>
@@ -62,9 +62,9 @@ instance View IndexView where
                     {inlinePostFormHtml (pathTo TestLlmConnectionAction) (tr "Test connection") "btn btn-ghost" (Just "test-llm") False}
                 </div></div>
             </div>
-            <div class="col-lg-6">
+            <div class="col-lg-6 d-flex flex-column">
                 {sectionHeaderHtml (tr "Tool cache") mempty}
-                <div class="card"><div class="card-body">
+                <div class="card flex-fill"><div class="card-body">
                     <p class="text-muted">{tr "Short-lived memoization of agent tool calls (cmdb_lookup, jira_search, jira_issue_details, assets_lookup), keyed by tool + arguments. Failures are never cached."} {trp "Entries cached: {count}" [("count", tshow toolCacheSize)]}</p>
                     <form method="POST" action={UpdateToolCacheAction} data-testid="tool-cache-form">
                         <div class="form-check mb-2">
