@@ -5,7 +5,7 @@ import Application.Service.DashboardCards (ExpandedCard (..))
 import Application.Service.DynTable
 import Web.View.Dashboards.Show (cardTitleText)
 import Web.View.DynTable (DynTable (..), dynTableHtml)
-import Web.View.Fragments (alertBaseColumns, alertRowHtmlCols, pageHeaderHtml)
+import Web.View.Fragments (alertBaseColumns, alertRowHtmlCols, emptyStateHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data CardView = CardView
@@ -20,13 +20,15 @@ data CardView = CardView
 instance View CardView where
     html CardView{..} =
         [hsx|
+    <div data-page-wide="">
         {pageHeaderHtml dashboard.name backLink}
         <h2 data-testid="dashboard-card-title">{cardTitleText expandedCard.ecCard}</h2>
         {table}
         {emptyNote}
+    </div>
     |]
       where
-        backLink = [hsx|<a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-outline-secondary">{tr "Back to dashboard"}</a>|]
+        backLink = [hsx|<a href={ShowDashboardAction dashboard.id} class="btn btn-sm btn-ghost">{tr "Back to dashboard"}</a>|]
         table =
             dynTableHtml
                 DynTable
@@ -45,6 +47,7 @@ instance View CardView where
                     , dtTotal = fromIntegral (length alerts)
                     , dtRows = alerts
                     , dtRowHtml = \visible alert -> alertRowHtmlCols Nothing (map colKey visible) alert
+                    , dtEmptyText = tr "No matching alerts."
                     }
         tableConfig =
             TableConfig
@@ -70,5 +73,5 @@ instance View CardView where
         valueItem = maybe [] (\value -> [("value", Just (cs value))]) expandedCard.ecValue
         emptyNote =
             if null alerts
-                then [hsx|<p class="text-secondary" data-testid="dashboard-card-empty">{tr "No matching alerts."}</p>|]
+                then emptyStateHtml "dashboard-card-empty" (tr "No matching alerts.")
                 else mempty

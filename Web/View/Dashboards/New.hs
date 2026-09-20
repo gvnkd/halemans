@@ -10,11 +10,12 @@ instance View NewView where
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New dashboard") mempty}
-        <form method="POST" action={CreateDashboardAction} data-testid="dashboard-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={CreateDashboardAction} data-testid="dashboard-form">
             {dashboardFormFields "" defaultConfig False}
-            <button type="submit" class="btn btn-primary" data-testid="dashboard-submit">{tr "Create"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="dashboard-submit">{tr "Create"}</button>
         </form>
-    |]
+        </div></div>|]
       where
         defaultConfig :: Text
         defaultConfig = "[{\"env\":\"dev\",\"filters\":{\"status\":[],\"severity\":[]}}]"

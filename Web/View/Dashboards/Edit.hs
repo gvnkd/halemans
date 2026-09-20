@@ -13,8 +13,9 @@ instance View EditView where
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit dashboard") mempty}
-        <form method="POST" action={UpdateDashboardAction dashboard.id} data-testid="dashboard-form" class="maxw-600">
+        <div class="card maxw-600"><div class="card-body">
+        <form method="POST" action={UpdateDashboardAction dashboard.id} data-testid="dashboard-form">
             {dashboardFormFields dashboard.name configText dashboard.isDefault}
-            <button type="submit" class="btn btn-primary" data-testid="dashboard-submit">{tr "Save"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="dashboard-submit">{tr "Save"}</button>
         </form>
-    |]
+        </div></div>|]

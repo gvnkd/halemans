@@ -42,7 +42,7 @@ instance View IndexView where
                 <input type="hidden" name="from" value={rangeFrom}/>
                 <div class="input-group">
                     <input class="form-control" placeholder={tr "now() - 7d or pick a date"} value={rangeFrom} data-local-datetime="from" data-testid="reports-from"/>
-                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="from" data-testid="reports-from-calendar" aria-label={tr "Pick from date"}>{calendarIcon}</button>
+                    <button type="button" class="btn btn-ghost" data-calendar-toggle="from" data-testid="reports-from-calendar" aria-label={tr "Pick from date"}>{calendarIcon}</button>
                 </div>
             </div>
             <div class="col-auto">
@@ -50,7 +50,7 @@ instance View IndexView where
                 <input type="hidden" name="to" value={rangeTo}/>
                 <div class="input-group">
                     <input class="form-control" placeholder={tr "now() or pick a date"} value={rangeTo} data-local-datetime="to" data-testid="reports-to"/>
-                    <button type="button" class="btn btn-outline-secondary" data-calendar-toggle="to" data-testid="reports-to-calendar" aria-label={tr "Pick to date"}>{calendarIcon}</button>
+                    <button type="button" class="btn btn-ghost" data-calendar-toggle="to" data-testid="reports-to-calendar" aria-label={tr "Pick to date"}>{calendarIcon}</button>
                 </div>
             </div>
             <div class="col-auto">
@@ -70,7 +70,7 @@ instance View IndexView where
                 {filterMultiSelect "severity" (tr "severity") severityOptions severities}
             </div>
             <div class="col-auto">
-                <button type="submit" class="btn btn-primary" data-testid="reports-submit">{tr "Render"}</button>
+                <button type="submit" class="btn btn-brand" data-testid="reports-submit">{tr "Render"}</button>
             </div>
         </form>
         <div class="card mb-4" data-testid="report-volume">

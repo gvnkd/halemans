@@ -7,7 +7,7 @@ import IHP.QueryBuilder (orderByAsc)
 import qualified IHP.QueryBuilder as QB (query)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.TypedSql.RowType (SqlRow)
-import Web.View.Fragments (RollupCard (..), pageHeaderHtml, rollupCardHtml)
+import Web.View.Fragments (RollupCard (..), calloutInfoHtml, emptyStateHtml, pageHeaderHtml, rollupCardHtml)
 import Web.View.Prelude
 
 data EnvCard = EnvCard
@@ -101,30 +101,37 @@ instance View IndexView where
         [hsx|
         {pageHeaderHtml (tr "Overview") mempty}
         {teamDefaultBanner}
-        <div id="env-cards" data-testid="env-cards" data-live-scope="dashboard">
-            {forEach cards renderCard}
-            {forEach unassigned renderCard}
-        </div>
+        {cardsContent}
     |]
       where
+        cardsContent =
+            if null cards && null unassigned
+                then emptyStateHtml "env-cards-empty" (tr "No active alerts across all environments.")
+                else
+                    [hsx|
+                    <div id="env-cards" data-testid="env-cards" data-live-scope="dashboard">
+                        {forEach cards renderCard}
+                        {forEach unassigned renderCard}
+                    </div>
+                    |]
         teamDefaultBanner = case teamDefault of
             Nothing -> mempty
             Just config -> teamBanner config
 
 -- Team default fallback (milestone_3.md §7): a user with no dashboards sees
 -- the team's default_dashboard_config offer and can copy it in one click.
-teamBanner :: Aeson.Value -> Html
+teamBanner :: (?request :: Request) => Aeson.Value -> Html
 teamBanner config =
-    [hsx|
-    <div class="alert alert-info d-flex justify-content-between align-items-center" data-testid="team-default-banner">
-        <span>{tr "Your team has a default dashboard template."}</span>
+    calloutInfoHtml
+        "team-default-banner"
+        [hsx|
+        <p class="mb-2">{tr "Your team has a default dashboard template."}</p>
         <form method="POST" action={CreateDashboardAction}>
             <input type="hidden" name="name" value="Team default"/>
             <input type="hidden" name="config" value={cs (Aeson.encode config) :: Text}/>
-            <button type="submit" class="btn btn-sm btn-primary" data-testid="save-team-default">{tr "Save as my dashboard"}</button>
+            <button type="submit" class="btn btn-brand" data-testid="save-team-default">{tr "Save as my dashboard"}</button>
         </form>
-    </div>
-|]
+        |]
 
 renderCard :: EnvCard -> Html
 renderCard card =

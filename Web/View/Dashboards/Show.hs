@@ -41,8 +41,8 @@ instance View ShowView where
       where
         headerActions =
             [hsx|
-                <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-outline-primary">{tr "Edit"}</a>
-                <a href={DashboardsAction} class="btn btn-sm btn-outline-secondary">{tr "All dashboards"}</a>
+                <a href={EditDashboardAction dashboard.id} class="btn btn-sm btn-ghost">{tr "Edit"}</a>
+                <a href={DashboardsAction} class="btn btn-sm btn-ghost">{tr "All dashboards"}</a>
             |]
         liveScope :: Text
         liveScope = "dash:" <> tshow dashboard.id
@@ -140,7 +140,7 @@ renderGroup cardId group =
         <h3>
             {group.cgValue}
             {severityBadgeHtml group.cgWorstSeverity Nothing}
-            <span class="badge bg-secondary" data-testid="dashboard-group-count">{group.cgTotal}</span>
+            <span class="badge" data-testid="dashboard-group-count">{group.cgTotal}</span>
         </h3>
         {membersTable}
     </div>
@@ -190,4 +190,5 @@ staticAlertsTable tbodyId alerts =
             , dtTotal = fromIntegral (length alerts)
             , dtRows = alerts
             , dtRowHtml = \visible alert -> alertRowHtmlCols Nothing (map colKey visible) alert
+            , dtEmptyText = tr "No alerts match this card."
             }

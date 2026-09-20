@@ -1,7 +1,7 @@
 module Web.View.Audit.Index where
 
 import qualified Data.Aeson as Aeson
-import Web.View.Fragments (pageHeaderHtml)
+import Web.View.Fragments (emptyStateHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -12,6 +12,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
+        <div data-page-wide="">
         {pageHeaderHtml (tr "Audit exports") mempty}
         <form method="GET" action={ExportAuditAction} class="row g-2 align-items-end mb-4" data-testid="export-form">
             <div class="col-auto">
@@ -34,9 +35,18 @@ instance View IndexView where
                 </select>
             </div>
             <div class="col-auto">
-                <button type="submit" class="btn btn-primary" data-testid="export-submit">{tr "Export"}</button>
+                <button type="submit" class="btn btn-brand" data-testid="export-submit">{tr "Export"}</button>
             </div>
         </form>
+        {tableOrEmpty}
+        </div>
+    |]
+      where
+        tableOrEmpty =
+            if null exports
+                then emptyStateHtml "audit-exports-empty" (tr "No audit exports yet — submit the form above to generate one.")
+                else
+                    [hsx|
         <table class="table" data-testid="audit-exports-table">
             <thead>
                 <tr>
@@ -51,7 +61,7 @@ instance View IndexView where
                 {forEach exports (renderExportRow users)}
             </tbody>
         </table>
-    |]
+                    |]
 
 renderExportRow :: [User] -> AuditExport -> Html
 renderExportRow users export =

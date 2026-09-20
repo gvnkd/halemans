@@ -1,7 +1,8 @@
 module Web.View.Flapping.Index where
 
 import Application.Service.Flapping (FlapReport (..), FlapSubject (..))
-import Web.View.Fragments (pageHeaderHtml, severityBadgeHtml)
+import Network.Wai (Request)
+import Web.View.Fragments (emptyStateHtml, pageHeaderHtml, severityBadgeHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -14,6 +15,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
+        <div data-page-wide="">
         {pageHeaderHtml (tr "Flapping alerts") mempty}
         <form method="GET" action={FlappingAction} class="row g-2 align-items-end mb-4" data-testid="flapping-form">
             <div class="col-auto">
@@ -31,14 +33,15 @@ instance View IndexView where
                 <input type="number" name="maxGapSeconds" class="form-control maxw-400" min="60" value={show maxGapSeconds :: Text} data-testid="flapping-max-gap"/>
             </div>
             <div class="col-auto">
-                <button type="submit" class="btn btn-primary" data-testid="flapping-submit">{tr "Analyze"}</button>
+                <button type="submit" class="btn btn-brand" data-testid="flapping-submit">{tr "Analyze"}</button>
             </div>
         </form>
         {resultsTable reports}
+        </div>
     |]
 
-resultsTable :: [FlapReport] -> Html
-resultsTable [] = [hsx|<p class="text-muted" data-testid="flapping-empty">{tr "No flapping alerts in the selected window."}</p>|]
+resultsTable :: (?request :: Request) => [FlapReport] -> Html
+resultsTable [] = emptyStateHtml "flapping-empty" (tr "No flapping alerts in the selected window.")
 resultsTable reports =
     [hsx|
     <table class="table" data-testid="flapping-table">
