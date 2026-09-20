@@ -7,7 +7,7 @@ import Application.Service.I18n (Language, languageCode, languages)
 import qualified Data.Text as Text
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
-import Web.View.Fragments (inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
+import Web.View.Fragments (calloutInfoHtml, calloutWarningHtml, emptyStateHtml, inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
 import Web.View.Prelude
 
 data ShowView = ShowView
@@ -24,10 +24,10 @@ instance View ShowView where
     html ShowView{..} =
         [hsx|
         {pageHeaderHtml (tr "Profile") mempty}
-        <p>{currentUser.email}</p>
+        <p class="text-muted">{currentUser.email}</p>
 
         {sectionHeaderHtml (tr "Theme") mempty}
-        <div class="theme-picker mb-3" data-testid="theme-picker">
+        <div class="seg mb-3" data-testid="theme-picker">
             {forEach themes themeButton}
         </div>
 
@@ -60,10 +60,23 @@ instance View ShowView where
                     {forEach allScopes scopeCheckbox}
                 </div>
                 <div class="col-auto">
-                    <button type="submit" class="btn btn-primary" data-testid="api-token-create">{tr "Create token"}</button>
+                    <button type="submit" class="btn btn-brand" data-testid="api-token-create">{tr "Create token"}</button>
                 </div>
             </div>
         </form>
+        {tokenTable}
+
+        {sectionHeaderHtml (tr "Push notifications") mempty}
+        {pushSection}
+
+        {sectionHeaderHtml (tr "Dashboards") dashboardsLink}
+    |]
+      where
+        tokenTable =
+            if null apiTokens
+                then emptyStateHtml "api-tokens-empty" (tr "No tokens yet — create one to get a hlm_… key")
+                else
+                    [hsx|
         <table class="table" data-testid="api-tokens-table">
             <thead>
                 <tr>
@@ -79,13 +92,7 @@ instance View ShowView where
                 {forEach apiTokens renderApiTokenRow}
             </tbody>
         </table>
-
-        {sectionHeaderHtml (tr "Push notifications") mempty}
-        {pushSection}
-
-        {sectionHeaderHtml (tr "Dashboards") dashboardsLink}
-    |]
-      where
+                    |]
         dashboardsLink = [hsx|<a href={DashboardsAction} data-testid="profile-dashboards-link">{tr "Manage my dashboards"}</a>|]
         themeButton theme = themeChoiceButton currentTheme theme
         timezoneOption timezone =
@@ -95,23 +102,16 @@ instance View ShowView where
         newTokenBanner = case newToken of
             Nothing -> mempty
             Just plaintext ->
-                [hsx|
-                    <div class="alert alert-success" data-testid="api-token-created">
-                        <p class="mb-1">{tr "Token created. Copy it now — it is shown exactly once and never stored."}</p>
-                        <code data-testid="api-token-plaintext">{plaintext}</code>
-                    </div>
-                |]
+                calloutInfoHtml "api-token-created" [hsx|<p class="mb-1">{tr "Token created. Copy it now — it is shown exactly once and never stored."}</p> <code data-testid="api-token-plaintext">{plaintext}</code>|]
         pushSection = case pushPublicKey of
             Nothing ->
-                [hsx|
-                    <p class="text-warning" data-testid="push-unavailable">{tr "Push is not configured on this server (no VAPID keys)."}</p>
-                |]
+                calloutWarningHtml "push-unavailable" (tr "Push unavailable") [hsx|{tr "Push is not configured on this server (no VAPID keys)."}|]
             Just publicKey ->
                 [hsx|
                     <div data-testid="push-settings" data-vapid-key={publicKey}>
                         <p>{trp "Push subscriptions registered for this account: {n}" [("n", tshow (length subscriptions))]}</p>
-                        <button class="btn btn-sm btn-primary" id="push-subscribe-button" data-testid="push-subscribe">{tr "Enable push for this browser"}</button>
-                        <button class="btn btn-sm btn-outline-secondary" id="push-unsubscribe-button" data-testid="push-unsubscribe">{tr "Disable"}</button>
+                        <button class="btn btn-sm btn-ghost" id="push-subscribe-button" data-testid="push-subscribe">{tr "Enable push for this browser"}</button>
+                        <button class="btn btn-sm btn-ghost" id="push-unsubscribe-button" data-testid="push-unsubscribe">{tr "Disable"}</button>
                         <span id="push-status" data-testid="push-status"></span>
                     </div>
                 |]
@@ -145,7 +145,7 @@ renderApiTokenRow token =
   where
     revokeCell revoked
         | revoked = [hsx|<span class="badge bg-secondary" data-testid="api-token-revoked">{tr "revoked"}</span>|]
-        | otherwise = inlinePostFormHtml (pathTo (RevokeApiTokenAction (get #id token))) (tr "Revoke") "btn btn-sm btn-outline-danger" (Just "api-token-revoke") False
+        | otherwise = inlinePostFormHtml (pathTo (RevokeApiTokenAction (get #id token))) (tr "Revoke") "btn btn-sm btn-ghost btn-ghost-critical" (Just "api-token-revoke") True
 
 -- Clicking a choice swaps data-theme live and persists via POST
 -- /profile/theme (static/app.js halemansApplyTheme).
@@ -156,4 +156,4 @@ themeChoiceButton currentTheme theme =
 |]
   where
     buttonClass :: Text
-    buttonClass = "btn btn-sm btn-outline-secondary me-1" <> (if theme == currentTheme then " active" else "")
+    buttonClass = "seg-item" <> (if theme == currentTheme then " active" else "")
