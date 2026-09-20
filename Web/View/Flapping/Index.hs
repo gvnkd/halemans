@@ -15,7 +15,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <div data-page-wide="">
+        <div>
         {pageHeaderHtml (tr "Flapping alerts") mempty}
         <form method="GET" action={FlappingAction} class="row g-2 align-items-end mb-4" data-testid="flapping-form">
             <div class="col-auto">

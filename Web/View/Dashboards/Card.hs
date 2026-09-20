@@ -20,7 +20,7 @@ data CardView = CardView
 instance View CardView where
     html CardView{..} =
         [hsx|
-    <div data-page-wide="">
+    <div>
         {pageHeaderHtml dashboard.name backLink}
         <h2 data-testid="dashboard-card-title">{cardTitleText expandedCard.ecCard}</h2>
         {table}

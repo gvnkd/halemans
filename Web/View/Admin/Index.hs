@@ -14,7 +14,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-    <div data-page-wide="">
+    <div>
         {pageHeaderHtml (tr "Admin") mempty}
         {sectionHeaderHtml (tr "Job metrics (last 24h)") mempty}
         {metricsTable}

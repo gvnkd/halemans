@@ -29,7 +29,7 @@ data JiraCacheStats = JiraCacheStats
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-    <div data-page-wide="">
+    <div>
         {pageHeaderHtml (tr "Integrations") mempty}
 
         {sectionHeaderHtml (tr "Jira connections") newJiraButton}

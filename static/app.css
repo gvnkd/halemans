@@ -438,14 +438,12 @@ a:hover { color: var(--accent-hover); }
 .maxw-500 { max-width: 500px; }
 .maxw-600 { max-width: 600px; }
 .maxw-700 { max-width: 700px; }
+.minw-260 { min-width: 260px; }
 
 /* utility classes replacing residual inline style attributes */
 .member-email { min-width: 220px; }
 .resize-vertical { resize: vertical; }
 .w-5rem { width: 5rem; }
-
-/* branding (milestone 12 §5) */
-.navbar-glyph { width: 24px; height: 24px; margin-right: 0.5rem; vertical-align: -0.35em; }
 
 /* ================= UI polish patch (design pass 2026-09) =================
    1. Contrast fixes: badge/button text on saturated fills (latte FAILed
@@ -736,24 +734,43 @@ a:hover { color: var(--accent-hover); }
     background: linear-gradient(180deg,
         color-mix(in srgb, var(--surface) 92%, var(--text) 8%),
         var(--surface));
+    /* 2px signal hairline on top of the navbar (brand spec); the bottom
+       edge stays a plain border. */
+    border-top: 2px solid var(--brand-signal);
     border-bottom: 1px solid var(--border);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--brand-signal) 35%, transparent);
     min-height: 56px;
 }
+/* Two-tone text wordmark: "Hale" in text color + "mans" in signal orange —
+   no glyph image (brand tokens §1: the wordmark is lowercase text). Space
+   Grotesk is the brand face but not vendored yet; the sans stack fills in. */
 .navbar-brand {
     display: inline-flex;
-    align-items: center;
-    gap: 0.55rem;
-    font-size: 1.05rem;
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    align-items: baseline;
+    gap: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
 }
-.navbar-glyph {
-    width: 26px;
-    height: 26px;
-    margin-right: 0;
-    border-radius: 7px;
-    vertical-align: 0;
+.brand-word-accent { color: var(--brand-signal); }
+a.navbar-brand:hover .brand-word-accent { color: var(--brand-signal-hover); }
+/* Primary nav reads as one line: "Overview · Dashboards · …". */
+.navbar .app-nav > .nav-item {
+    display: flex;
+    align-items: center;
+}
+.navbar .app-nav > .nav-item + .nav-item::before {
+    content: "·";
+    color: var(--text-muted);
+    font-size: var(--text-lg);
+    line-height: 1;
+    margin: 0 0.4rem;
+    align-self: center;
+}
+/* The user menu sits at the end of the nav line, after a divider. */
+.navbar .nav-user {
+    border-left: 1px solid var(--border);
+    margin-left: 0.9rem;
+    padding-left: 0.5rem;
 }
 .navbar .nav-link {
     position: relative;
@@ -801,32 +818,6 @@ a:hover { color: var(--accent-hover); }
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 0.15em 0.6em;
-}
-
-/* logged-in user chip (Layout.hs: wraps email in a dropdown) */
-.user-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.55rem;
-}
-.user-chip-avatar {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--on-accent);
-    background: var(--accent);
-}
-.user-chip-name {
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 /* ---- typography polish ---- */
@@ -1012,6 +1003,19 @@ a:hover { color: var(--accent-hover); }
     font-weight: 600;
     letter-spacing: 0.01em;
 }
+/* Section cards (one card = one concern): heading + one-line muted
+   description, matching the profile reference layout. */
+.card-heading {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin-bottom: 0.25rem;
+}
+.card-desc {
+    color: var(--text-muted);
+    font-size: var(--text-base);
+    margin-bottom: 1.25rem;
+}
 
 /* Dashboard cards get the same card chrome (they are custom <section>
    elements, not Bootstrap .card; overview env cards ARE .card already). */
@@ -1099,27 +1103,21 @@ a:hover { color: var(--accent-hover); }
    (page widths 960/1200, control height 34px, radii 8/10/12px). */
 
 :root {
-    --page-max: 960px;        /* standard page container */
-    --page-max-wide: 1200px;  /* tables/data-heavy pages */
     --radius-btn: 8px;
     --radius-callout: 10px;
     --radius-card: 12px;
 }
 
-/* Page container: centered, padded; pages opt into the wide limit by
-   carrying data-page-wide on their root element (Layout.hs renders <main
-   id="content"> around every view). Flash messages share the column. */
+/* Page container: fluid and LEFT-ALIGNED with the navbar brand (same 24px
+   gutter as the navbar's container-fluid), full width on large screens —
+   centering a narrow column looks odd on 4K displays. Flash messages share
+   the padding. */
 .page-messages {
-    max-width: var(--page-max);
-    margin: 0 auto;
     padding: 1.25rem 24px 0;
 }
 main#content {
-    max-width: var(--page-max);
-    margin: 0 auto;
     padding: 0 24px 80px;
 }
-main#content:has(> [data-page-wide]) { max-width: var(--page-max-wide); }
 
 /* Links: accent color, underline only on hover (no raw default-blue links). */
 a { text-decoration: none; }

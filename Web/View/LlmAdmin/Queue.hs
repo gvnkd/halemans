@@ -29,7 +29,7 @@ data QueueView = QueueView
 instance View QueueView where
     html QueueView{..} =
         [hsx|
-        <div data-page-wide="">
+        <div>
         {pageHeaderHtml (tr "LLM queue") backLink}
         {queueTable}
         </div>

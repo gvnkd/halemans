@@ -11,7 +11,7 @@ newtype DatabaseView = DatabaseView
 instance View DatabaseView where
     html DatabaseView{..} =
         [hsx|
-        <div data-page-wide="">
+        <div>
         {pageHeaderHtml (tr "Database") mempty}
         <p class="text-muted">
             <span data-testid="db-name">{stats.databaseName}</span>

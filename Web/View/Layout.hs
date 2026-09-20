@@ -62,12 +62,12 @@ navigation :: Html
 navigation =
     [hsx|
     <nav class="navbar navbar-expand-lg" data-testid="nav">
-    <div class="container-fluid">
+    <div class="container-fluid px-4">
         <div class="d-flex align-items-center">
-            <a class="navbar-brand" href={DashboardAction}><img src={assetPath "/halemans-micromark-ondark.svg"} alt="" class="navbar-glyph"/>Halemans</a>
+            <a class="navbar-brand" href={DashboardAction}><span class="brand-word">Hale</span><span class="brand-word-accent">mans</span></a>
             <span class="app-version-badge" data-testid="app-version">v{appVersion}</span>
         </div>
-        <ul class="navbar-nav me-auto">
+        <ul class="navbar-nav app-nav flex-wrap">
             {navLink DashboardAction (tr "Overview") "nav-overview"}
             {navLink DashboardsAction (tr "Dashboards") "nav-dashboards"}
             {navLink AlertsAction (tr "Alerts") "nav-alerts"}
@@ -92,8 +92,6 @@ navigation =
                     <li><a class="dropdown-item" href={FlappingAction}>{tr "Flapping"}</a></li>
                 </ul>
             </li>
-        </ul>
-        <ul class="navbar-nav">
             {userMenu}
         </ul>
     </div>
@@ -104,11 +102,8 @@ userMenu :: Html
 userMenu = case currentUserOrNothing of
     Just user ->
         [hsx|
-        <li class="nav-item dropdown">
-            <a class="nav-link user-chip dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" data-testid="user-menu">
-                <span class="user-chip-avatar" aria-hidden="true">{initialsOf user.email}</span>
-                <span class="user-chip-name">{user.email}</span>
-            </a>
+        <li class="nav-item dropdown nav-user">
+            <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" data-testid="user-menu">{user.email}</a>
             <ul class="dropdown-menu dropdown-menu-end">
                 <li><a class="dropdown-item" href={ProfileAction}>{tr "Profile"}</a></li>
                 <li><hr class="dropdown-divider"/></li>
@@ -140,15 +135,6 @@ navLink action label testId =
         if isActivePath target || (target /= "/" && isActivePathOrSub target)
             then "nav-link active"
             else "nav-link"
-
--- Avatar initials from the local part of the email: "sara.reyes@x" -> "SR",
--- "sara@x" -> "S". Falls back to "?" for empty input.
-initialsOf :: Text -> Text
-initialsOf email =
-    let local = fst (Text.breakOn "@" email)
-        parts = filter (not . Text.null) (Text.split (== '.') local)
-        initials = Text.concat (map (Text.take 1) (take 2 parts))
-     in if Text.null initials then "?" else Text.toUpper initials
 
 -- The 'assetPath' function used below appends a `?v=SOME_VERSION` to the static assets in production
 -- This is useful to avoid users having old CSS and JS files in their browser cache once a new version is deployed

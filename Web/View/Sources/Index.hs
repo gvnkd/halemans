@@ -13,7 +13,7 @@ data IndexView = IndexView
 instance View IndexView where
     html IndexView{..} =
         [hsx|
-        <div data-page-wide="">
+        <div>
         {pageHeaderHtml (tr "Sources") newButton}
         {tableOrEmpty}
         </div>

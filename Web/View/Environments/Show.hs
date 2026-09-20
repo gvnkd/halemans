@@ -140,7 +140,7 @@ data ShowView = ShowView
 instance View ShowView where
     html ShowView{..} =
         [hsx|
-        <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters} data-page-wide="">
+        <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters}>
             {pageHeaderHtml environmentName mempty}
             {activeBlackoutNotice}
             <div class="seg mb-3" data-testid="view-toggle">

@@ -113,6 +113,10 @@ renderProfile newToken = do
             |> filterWhere (#userId, currentUserId)
             |> orderByDesc #createdAt
             |> fetch
+    dashboardCount <-
+        query @Dashboard
+            |> filterWhere (#userId, currentUserId)
+            |> fetchCount
     pushPublicKey <- vapidPublicKey
     let currentTheme = themeFromSettings currentUser.settings
         currentTimezone = timezoneFromSettings currentUser.settings
