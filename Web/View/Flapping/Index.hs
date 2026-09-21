@@ -70,7 +70,7 @@ resultsTable reports =
 renderReportRow :: FlapReport -> Html
 renderReportRow report =
     let subject = report.subject
-        rate = show (fromIntegral (round (report.flapRatePerHour * 100) :: Int) / (100 :: Double)) :: Text
+        rate = formatRate report.flapRatePerHour
         flapCount = show report.flapCount :: Text
      in [hsx|
     <tr data-testid="flapping-row">
@@ -101,6 +101,16 @@ windowOption selected value =
      in if value == selected
             then [hsx|<option value={valueText} selected="selected">{label}</option>|]
             else [hsx|<option value={valueText}>{label}</option>|]
+
+formatRate :: Double -> Text
+formatRate rate
+    | cents `mod` 100 == 0 = show whole
+    | cents `mod` 10 == 0 = show whole <> "." <> show (frac `div` 10)
+    | otherwise = show whole <> "." <> (if frac < 10 then "0" else "") <> show frac
+  where
+    cents = round (rate * 100) :: Int
+    whole = cents `div` 100
+    frac = cents `mod` 100
 
 formatSeconds :: Maybe Double -> Text
 formatSeconds Nothing = "-"
