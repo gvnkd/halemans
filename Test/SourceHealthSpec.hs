@@ -44,6 +44,11 @@ spec = describe "Application.Service.SourceHealth" do
             let source = newRecord @Source |> set #nextPollAt (Just (addUTCTime 60 epoch))
             pollDue epoch source `shouldBe` False
 
+    describe "halemansHostName" do
+        it "returns the non-empty local hostname" do
+            name <- halemansHostName
+            name `shouldSatisfy` (/= "")
+
     describe "expectedIntervalSeconds" do
         it "is unset by default (silence detection disabled)" do
             expectedIntervalSeconds (newRecord @Source) `shouldBe` Nothing

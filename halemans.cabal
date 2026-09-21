@@ -72,6 +72,7 @@ library
         , directory
         , filepath
         , process
+        , unix
     exposed-modules:
         -- BEGIN GENERATED MODULES (docker/prepare-cabal-build.sh refreshes this list)
         Application.Connector.Alertmanager
