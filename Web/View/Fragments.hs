@@ -611,7 +611,7 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
         [] -> mempty
         _ ->
             [hsx|
-                <select name="roleId" class="form-select form-select-sm d-inline-block w-auto" data-testid="llm-role-select">
+                <select name="roleId" class="select select-sm d-inline-block w-auto" data-testid="llm-role-select">
                     <option value="">{defaultLabel}</option>
                     {forEach roles roleOption}
                 </select>

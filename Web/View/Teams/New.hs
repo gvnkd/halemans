@@ -84,7 +84,7 @@ memberPicker users currentRoles =
          in [hsx|
                 <div class="input-group input-group-sm mb-1" data-member-row="" data-email={user.email}>
                     <span class="input-group-text member-email">{user.email}</span>
-                    <select name={"member-" <> tshow (get #id user)} class="form-select" data-testid={"member-" <> user.email}>
+                    <select name={"member-" <> tshow (get #id user)} class="select" data-testid={"member-" <> user.email}>
                         <option value="" selected={isNothing current}>—</option>
                         <option value="member" selected={current == Just "member"}>member</option>
                         <option value="lead" selected={current == Just "lead"}>lead</option>

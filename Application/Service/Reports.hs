@@ -1,192 +1,127 @@
 module Application.Service.Reports (
-    severityChartSvg,
-    envChartSvg,
     volumeChartSvg,
-    mttrChartSvg,
+    formatPct,
     formatDuration,
+    formatDurationHm,
+    formatHours,
     severityCssClass,
+    severityFillClass,
     severityRank,
     truncateLabel,
 ) where
 
 import Data.Int (Int64)
 import qualified Data.Text as Text
-import qualified Diagrams.Backend.SVG as DS
-import qualified Diagrams.Prelude as D
-import qualified Graphics.Svg as SvgBuilder
 import IHP.Prelude
+import Text.Printf (printf)
 
--- Static report charts (/reports). Charts are drawn on a pixel grid (1 unit =
--- 1 px at the design width) and rendered to inline SVG. NO colors are baked
--- in: every painted element carries a CSS class (chart-*) and app.css maps
--- those onto the active theme pack's tokens, so charts follow data-theme.
+-- Static report charts (/reports). The volume chart is a hand-rolled inline
+-- SVG on a pixel grid; the horizontal charts are plain HTML bar rows (see
+-- Web.View.Reports.Index). NO colors are baked in: every painted element
+-- carries a CSS class (chart-* for SVG fills, sev-*/bar-accent for HTML bar
+-- backgrounds) and app.css maps those onto the active theme pack's tokens,
+-- so charts follow data-theme.
 
-type Chart = D.QDiagram DS.SVG D.V2 Double D.Any
-
-data BarDatum = BarDatum
-    { barLabel :: Text
-    , barValue :: Double
-    , barValueText :: Text
-    , barClass :: Text
-    }
-
-data StackedBarDatum = StackedBarDatum
-    { sbdLabel :: Text
-    , sbdSegments :: [(Text, Text, Double)] -- (css class, series name, value), bottom-to-top
-    , sbdTotal :: Int64
-    }
-
-fontSizePx :: Double
-fontSizePx = 12
-
-severityChartSvg :: [(Text, Int64)] -> Text
-severityChartSvg rows = hbarChartSvg 900 (map mk rows)
-  where
-    mk (severity, n) =
-        BarDatum
-            { barLabel = severity
-            , barValue = fromIntegral n
-            , barValueText = show n
-            , barClass = severityCssClass severity
-            }
-
-envChartSvg :: [(Text, Int64)] -> Text
-envChartSvg rows = hbarChartSvg 900 (map mk rows)
-  where
-    mk (env, n) =
-        BarDatum
-            { barLabel = truncateLabel 20 env
-            , barValue = fromIntegral n
-            , barValueText = show n
-            , barClass = "chart-bar-accent"
-            }
-
--- Volume chart: one bar per bucket, segments stacked by severity in
--- canonical severity order (critical at the bottom). The label above a bar
--- shows the bucket total.
+-- | Stacked vertical bar chart, one bar per bucket, segments stacked by
+-- severity in canonical severity order (critical at the bottom). Buckets
+-- with no alerts render as a baseline tick, not a zero-height bar. The
+-- label above a bar shows the bucket total; every segment carries a native
+-- <title> tooltip with the full severity breakdown.
 volumeChartSvg :: [(Text, [(Text, Int64)])] -> Text
-volumeChartSvg rows = stackedVbarChartSvg 1800 (map mk rows)
-  where
-    mk (bucket, segments) =
-        StackedBarDatum
-            { sbdLabel = bucket
-            , sbdSegments = [(severityCssClass severity, severity, fromIntegral n) | (severity, n) <- sortOn (severityRank . fst) segments]
-            , sbdTotal = sum (map snd segments)
-            }
-
-mttrChartSvg :: [(Text, Double)] -> Text
-mttrChartSvg rows = hbarChartSvg 900 (map mk rows)
-  where
-    mk (severity, seconds) =
-        BarDatum
-            { barLabel = severity
-            , barValue = seconds
-            , barValueText = formatDuration seconds
-            , barClass = severityCssClass severity
-            }
-
-hbarChartSvg :: Double -> [BarDatum] -> Text
-hbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
-hbarChartSvg w rows = renderChartSvg w h (D.vsep rowGap (map row rows))
-  where
-    maxVal = maximum (map barValue rows)
-    padding = 4
-    labelCol = 150
-    valueCol = 64
-    gap = 12
-    barH = 18
-    rowGap = 10
-    marginV = 8
-    h = fromIntegral (length rows) * (barH + rowGap) - rowGap + 2 * marginV
-    barArea = w - 2 * padding - labelCol - valueCol - 2 * gap
-    row datum =
-        D.hcat
-            [ D.strutX padding
-            , labelBox datum
-            , D.strutX gap
-            , barBox datum
-            , D.strutX gap
-            , valueBox datum
-            , D.strutX padding
-            ]
-    labelBox datum = D.alignR (chartText "chart-text" 1 0.5 datum.barLabel) D.<> D.alignR (D.strutX labelCol)
-    barBox datum = D.alignL (bar (scaled datum) barH datum.barClass) D.<> D.alignL (D.strutX barArea)
-    valueBox datum = D.alignL (chartText "chart-text-muted" 0 0.5 datum.barValueText) D.<> D.alignL (D.strutX valueCol)
-    scaled datum = if maxVal <= 0 then 0 else max 2 (datum.barValue / maxVal * barArea)
-
-stackedVbarChartSvg :: Double -> [StackedBarDatum] -> Text
-stackedVbarChartSvg w [] = renderChartSvg w 60 (emptyChart w)
-stackedVbarChartSvg w rows = foldl injectTitle (renderChartSvg w h (D.position (bars <> valueLabels <> dayLabels <> [baseline]))) tooltips
-  where
-    padding = 8
-    plotH = 180
-    bottomGap = 6
-    topMargin = 24
-    bottomMargin = 28
-    h = topMargin + plotH + bottomMargin
-    plotW = w - 2 * padding
-    n = length rows
-    slot = plotW / fromIntegral n
-    barW = min 60 (slot * 0.7)
-    maxVal = maximum (map (fromIntegral . sbdTotal) rows)
-    colH value = if maxVal <= 0 then 0 else max 2 (value / maxVal * plotH)
-    xCenter i = padding + slot * (fromIntegral i + 0.5)
-    -- horizontal labels only: shrink the font until the longest label fits
-    -- its slot (avg glyph width ≈ 0.55 em), never rotate
-    maxLabelChars = maximum (map (Text.length . sbdLabel) rows)
-    dayFontSize = max 7 (min fontSizePx (slot * 0.9 / (0.55 * fromIntegral maxLabelChars)))
-    indexed = zip [0 ..] rows
-    -- each segment sits on the accumulated height of the segments below it;
-    -- the svgId marks the rect so injectTitle can graft a <title> (native
-    -- hover tooltip with the exact count) onto it after rendering
-    segments i datum = (visible, zip3 visible (scanl (+) 0 heights) heights)
-      where
-        visible = filter (\(_, _, value) -> value > 0) datum.sbdSegments
-        heights = map (\(_, _, value) -> colH value) visible
-    segId i j = "volseg-" <> show i <> "-" <> show j
-    bars =
-        [ (D.p2 (xCenter i, yBase), D.alignB (bar barW segH cls) D.# DS.svgId (cs (segId i j)))
-        | (i, datum) <- indexed
-        , let (_, placed) = segments i datum
-        , (j, ((cls, _, _), yBase, segH)) <- zip [0 ..] placed
+volumeChartSvg [] =
+    "<svg viewBox=\"0 0 1140 120\" width=\"100%\">"
+        <> "<text x=\"570\" y=\"60\" text-anchor=\"middle\" font-size=\"12\" class=\"chart-text-muted\">no data</text>"
+        <> "</svg>"
+volumeChartSvg rows =
+    Text.concat
+        [ "<svg viewBox=\"0 0 1140 240\" width=\"100%\" role=\"img\">"
+        , gridLines
+        , Text.concat (zipWith bar [0 ..] bars)
+        , Text.concat (zipWith xLabel [0 ..] bars)
+        , "</svg>"
         ]
-    -- every segment of a bar carries the same tooltip: the full severity
-    -- breakdown of that bar, one line per severity, total last. Newlines
-    -- render as line breaks in native <title> tooltips.
+  where
+    bars = map mk rows
+    mk (bucket, segments) =
+        VolumeBar
+            { vbLabel = bucket
+            , vbSegments = [(severityCssClass severity, severity, n) | (severity, n) <- sortOn (severityRank . fst) segments]
+            , vbTotal = sum (map snd segments)
+            }
+    slot = (plotRight - plotLeft) / fromIntegral (length rows)
+    barW = min 56 (slot * 0.7)
+    pxPerUnit = plotH / fromIntegral (max 1 (maximum (map vbTotal bars)))
+    xCenter i = plotLeft + slot * (fromIntegral i + 0.5)
+    -- Shrink labels until the longest one fits its slot (mono glyph advance
+    -- ≈ 0.6em), so dense buckets (24h "per hour" mode) never overlap.
+    maxLabelChars = max 1 (maximum (map (Text.length . vbLabel) bars))
+    labelFont = max 8 (min 12 (slot * 0.9 / (0.6 * fromIntegral maxLabelChars)))
+    maxTotalChars = max 1 (maximum (map (Text.length . tshow . vbTotal) bars))
+    totalFont = max 8 (min 12 (barW * 0.9 / (0.6 * fromIntegral maxTotalChars)))
+    gridLines =
+        Text.concat
+            [ "<line x1=\"" <> fmt plotLeft <> "\" y1=\"" <> fmt y <> "\" x2=\"" <> fmt plotRight <> "\" y2=\"" <> fmt y <> "\" class=\"chart-grid\"/>"
+            | y <- [30, 90, 150]
+            ]
+            <> "<line x1=\""
+            <> fmt plotLeft
+            <> "\" y1=\""
+            <> fmt baseline
+            <> "\" x2=\""
+            <> fmt plotRight
+            <> "\" y2=\""
+            <> fmt baseline
+            <> "\" class=\"chart-grid-strong\"/>"
+    bar i datum
+        | vbTotal datum == 0 =
+            "<rect x=\"" <> fmt (xCenter i - barW / 2) <> "\" y=\"" <> fmt (baseline - 2) <> "\" width=\"" <> fmt barW <> "\" height=\"2\" class=\"chart-tick\"/>"
+        | otherwise =
+            "<g><title>" <> escapeXml (barTip datum) <> "</title>" <> Text.concat segRects <> totalLabel <> "</g>"
+      where
+        x = xCenter i - barW / 2
+        heights = [max 1.5 (fromIntegral n * pxPerUnit) | (_, _, n) <- vbSegments datum, n > 0]
+        segRects = zipWith seg (scanl (flip subtract) baseline heights) [(cls, n, hgt) | ((cls, _, n), hgt) <- zip (filter (\(_, _, n) -> n > 0) (vbSegments datum)) heights]
+        seg yTop (cls, _, hgt) =
+            "<rect x=\"" <> fmt x <> "\" y=\"" <> fmt (yTop - hgt) <> "\" width=\"" <> fmt barW <> "\" height=\"" <> fmt hgt <> "\" rx=\"3\" class=\"" <> cls <> "\"/>"
+        totalLabel =
+            text (xCenter i) (max 16 (baseline - sum heights - 8)) totalFont "chart-text-muted chart-text-c chart-mono" (tshow (vbTotal datum))
     barTip datum =
         Text.intercalate "\n" $
-            [name <> ": " <> show (round value :: Int) | (_, name, value) <- datum.sbdSegments, value > 0]
-                <> ["total: " <> show datum.sbdTotal]
-    tooltips =
-        [ (segId i j, barTip datum)
-        | (i, datum) <- indexed
-        , (j, _) <- zip [0 ..] (fst (segments i datum))
-        ]
-    valueLabels =
-        [ (D.p2 (xCenter i, colH (fromIntegral datum.sbdTotal) + 4 + descent), baselineTextC fontSizePx "chart-text-muted" (show datum.sbdTotal))
-        | (i, datum) <- indexed
-        , datum.sbdTotal > 0
-        ]
-    dayLabels = zipWith mkDay [0 ..] rows
-    mkDay i datum = (D.p2 (xCenter i, negate (bottomGap + capHeight)), baselineTextC dayFontSize "chart-text-muted" datum.sbdLabel)
-    -- Inter vertical metrics (fractions of em): digits ride on the baseline
-    -- up to cap height; the em box extends a descent below it
-    capHeight = 0.73 * dayFontSize
-    descent = 0.25 * fontSizePx
-    baseline = (D.p2 (padding, 0), D.alignL (D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid"))
+            [name <> ": " <> tshow n | (_, name, n) <- vbSegments datum, n > 0]
+                <> ["total: " <> tshow (vbTotal datum)]
+    xLabel i datum = text (xCenter i) 224 labelFont "chart-text-muted chart-text-c chart-mono" datum.vbLabel
 
--- Insert a <title> as the first child of the <g id="..."> that diagrams-svg
--- emits around each stacked-bar segment, so browsers show a native tooltip
--- on hover. String surgery is safe here: the SVG is our own output and the
--- marker ids are unique.
-injectTitle :: Text -> (Text, Text) -> Text
-injectTitle svg (marker, tip) =
-    case Text.breakOn ("id=\"" <> marker <> "\"") svg of
-        (before, rest)
-            | not (Text.null rest) ->
-                let (tag, after) = Text.breakOn ">" rest
-                 in before <> tag <> "><title>" <> escapeXml tip <> "</title>" <> Text.drop 1 after
-        _ -> svg
+data VolumeBar = VolumeBar
+    { vbLabel :: Text
+    , vbSegments :: [(Text, Text, Int64)] -- (css class, series name, value), bottom-to-top
+    , vbTotal :: Int64
+    }
+
+-- Geometry constants from the redesign mockup (viewBox 0 0 1140 240).
+plotLeft, plotRight, baseline :: Double
+plotLeft = 40
+plotRight = 1120
+baseline = 200
+
+plotH :: Double
+plotH = baseline - 30
+
+text :: Double -> Double -> Double -> Text -> Text -> Text
+text x y sizePx cls content =
+    "<text x=\""
+        <> fmt x
+        <> "\" y=\""
+        <> fmt y
+        <> "\" font-size=\""
+        <> fmt sizePx
+        <> "\" class=\""
+        <> cls
+        <> "\">"
+        <> escapeXml content
+        <> "</text>"
+
+fmt :: Double -> Text
+fmt = Text.pack . printf "%.1f"
 
 escapeXml :: Text -> Text
 escapeXml = Text.concatMap escape
@@ -196,58 +131,55 @@ escapeXml = Text.concatMap escape
     escape '>' = "&gt;"
     escape c = Text.singleton c
 
-emptyChart :: Double -> Chart
-emptyChart w = chartText "chart-text-muted" 0.5 0.5 "no data"
+-- | Percentage for CSS widths, one decimal ("66.7%").
+formatPct :: Double -> Text
+formatPct pct = Text.pack (printf "%.1f" pct) <> "%"
 
-renderChartSvg :: Double -> Double -> Chart -> Text
-renderChartSvg w h dia = cs (SvgBuilder.renderBS (D.renderDia DS.SVG opts framed))
-  where
-    opts = DS.SVGOptions (D.mkWidth w) Nothing "" [] False
-    -- invisible backdrop fixes the viewport: diagrams' text envelopes
-    -- underestimate real glyph extents, so without an explicit frame the
-    -- viewBox clips edge labels
-    framed = D.centerXY dia D.<> (D.rect w h D.# D.fcA D.transparent D.# D.lw D.none)
+-- | Seconds as "42s" / "10m" / "2h" (coarse single-unit form).
+formatDuration :: Double -> Text
+formatDuration seconds
+    | seconds < 90 = tshow (round seconds :: Int) <> "s"
+    | seconds < 5400 = tshow (round (seconds / 60) :: Int) <> "m"
+    | otherwise = tshow (round (seconds / 3600) :: Int) <> "h"
 
-bar :: Double -> Double -> Text -> Chart
-bar len h cls =
-    D.rect len h
-        -- explicit fill: diagrams' default fill is fully transparent
-        -- (fill-opacity=0); the neutral gray is only a fallback — app.css
-        -- re-colors via the chart-* class
-        D.# D.fc (D.sRGB24read "#6c757d")
-        D.# D.lw D.none
-        D.# DS.svgClass (cs cls)
+-- | Seconds as "42s" / "58m" / "1h 22m" / "8h 04m" (mockup MTTR form:
+-- hours always carry the minutes remainder, zero-padded).
+formatDurationHm :: Double -> Text
+formatDurationHm seconds
+    | seconds < 90 = tshow (round seconds :: Int) <> "s"
+    | seconds < 3600 = tshow (round (seconds / 60) :: Int) <> "m"
+    | otherwise =
+        let (hours, mins) = totalMinutes `divMod` 60
+            totalMinutes = round (seconds / 60) :: Int
+         in tshow hours <> "h " <> Text.pack (printf "%02d" mins) <> "m"
 
-chartText :: Text -> Double -> Double -> Text -> Chart
-chartText = chartTextSized fontSizePx
+-- | Seconds as decimal hours ("4.2") for the KPI tile.
+formatHours :: Double -> Text
+formatHours = Text.pack . printf "%.1f" . (/ 3600)
 
-chartTextSized :: Double -> Text -> Double -> Double -> Text -> Chart
-chartTextSized sizePx cls ax ay content =
-    D.alignedText ax ay (cs content)
-        D.# D.fontSizeL sizePx
-        D.# DS.svgClass (cs cls)
-
--- Centered text anchored on the alphabetic baseline. alignedText's vertical
--- anchors become dominant-baseline="text-before-edge"/"text-after-edge",
--- which Firefox positions differently than Chrome (volume-chart labels drift
--- up and overlap bars); every engine agrees on the alphabetic baseline.
--- Horizontal centering comes from the chart-text-c rule in app.css.
-baselineTextC :: Double -> Text -> Text -> Chart
-baselineTextC sizePx cls content =
-    D.baselineText (cs content)
-        D.# D.fontSizeL sizePx
-        D.# DS.svgClass (cs cls <> " chart-text-c")
-
+-- | SVG fill class for a severity (volume chart tooltips keep the raw name).
 severityCssClass :: Text -> Text
 severityCssClass severity = case Text.toLower severity of
     "critical" -> "chart-sev-critical"
     "disaster" -> "chart-sev-critical"
     "high" -> "chart-sev-high"
     "average" -> "chart-sev-high"
-    "warning" -> "chart-sev-warning"
+    "warning" -> "chart-sev-warning-dim"
     "info" -> "chart-sev-info"
     "information" -> "chart-sev-info"
     _ -> "chart-sev-other"
+
+-- | HTML background class for a severity bar row / legend swatch.
+severityFillClass :: Text -> Text
+severityFillClass severity = case Text.toLower severity of
+    "critical" -> "sev-critical"
+    "disaster" -> "sev-critical"
+    "high" -> "sev-high"
+    "average" -> "sev-high"
+    "warning" -> "sev-warning"
+    "info" -> "sev-info"
+    "information" -> "sev-info"
+    _ -> "sev-other"
 
 -- Canonical severity ordering (most severe first); drives stacked-bar
 -- segment order and severity option lists. Unknown severities sort last.
@@ -260,9 +192,3 @@ truncateLabel :: Int -> Text -> Text
 truncateLabel maxChars label
     | Text.length label <= maxChars = label
     | otherwise = Text.take (maxChars - 1) label <> "…"
-
-formatDuration :: Double -> Text
-formatDuration seconds
-    | seconds < 90 = show (round seconds :: Int) <> "s"
-    | seconds < 5400 = show (round (seconds / 60) :: Int) <> "m"
-    | otherwise = show (round (seconds / 3600) :: Int) <> "h"

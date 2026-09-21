@@ -20,7 +20,7 @@ assetsConfigFormFields config =
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Auth mode"}</label>
-        <select name="authMode" class="form-select" data-testid="assets-config-auth-mode">
+        <select name="authMode" class="select" data-testid="assets-config-auth-mode">
             <option value="bearer" selected={modeIs "bearer"}>bearer</option>
             <option value="basic" selected={modeIs "basic"}>basic</option>
         </select>

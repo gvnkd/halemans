@@ -29,7 +29,7 @@ instance View IndexView where
             </div>
             <div class="col-auto">
                 <label class="form-label">{tr "Format"}</label>
-                <select name="format" class="form-select" data-testid="export-format">
+                <select name="format" class="select" data-testid="export-format">
                     <option value="csv">csv</option>
                     <option value="jsonl">jsonl</option>
                 </select>

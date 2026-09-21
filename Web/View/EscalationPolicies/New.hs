@@ -50,12 +50,12 @@ stepEditor teams users steps =
                 <div class="input-group input-group-sm mb-1" data-testid={"policy-step-" <> show index}>
                     <span class="input-group-text">{tr "after (s)"}</span>
                     <input name="stepAfter" type="number" class="form-control" value={afterValue} data-testid="step-after"/>
-                    <select name="stepTarget" class="form-select" data-testid="step-target">
+                    <select name="stepTarget" class="select" data-testid="step-target">
                         <option value="" selected={targetValue == ""}>—</option>
                         {forEach teams (teamOption targetValue)}
                         {forEach users (userOption targetValue)}
                     </select>
-                    <select name="stepUnless" class="form-select" data-testid="step-unless">
+                    <select name="stepUnless" class="select" data-testid="step-unless">
                         <option value="" selected={unlessValue == ""}>{tr "unless: —"}</option>
                         <option value="ack" selected={unlessValue == "ack"}>{tr "unless ack"}</option>
                     </select>

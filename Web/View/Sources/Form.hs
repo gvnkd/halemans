@@ -50,7 +50,7 @@ sourceFormFields values =
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Type"}</label>
-        <select name="type" class="form-select" data-testid="source-type">
+        <select name="type" class="select" data-testid="source-type">
             {forEach ["webhook", "zabbix", "grafana", "alertmanager"] typeOption}
         </select>
     </div>
@@ -92,7 +92,7 @@ sourceFormFields values =
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Host group scope (zabbix)"}</label>
-        <select name="hostGroupScope" class="form-select" data-testid="source-host-group-scope">
+        <select name="hostGroupScope" class="select" data-testid="source-host-group-scope">
             <option value="all" selected={values.formHostGroupScope /= "teams"}>{tr "all — fetch every alert"}</option>
             <option value="teams" selected={values.formHostGroupScope == "teams"}>{tr "teams — only host groups configured on teams"}</option>
         </select>

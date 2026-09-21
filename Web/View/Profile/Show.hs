@@ -43,14 +43,14 @@ instance View ShowView where
                     <p class="card-desc">{tr "Timezone and UI language."}</p>
                     <form method="POST" action={UpdateTimezoneAction} class="mb-3" data-testid="timezone-form">
                         <label class="form-label">{tr "Timezone"}</label>
-                        <select name="timezone" class="form-select" data-autosubmit="" data-testid="timezone-select">
+                        <select name="timezone" class="select" data-autosubmit="" data-testid="timezone-select">
                             <option value="" selected={isNothing currentTimezone}>{tr "Browser default"}</option>
                             {forEach timezones timezoneOption}
                         </select>
                     </form>
                     <form method="POST" action={UpdateLanguageAction} data-testid="language-form">
                         <label class="form-label">{tr "Language"}</label>
-                        <select name="language" class="form-select" data-autosubmit="" data-testid="language-select">
+                        <select name="language" class="select" data-autosubmit="" data-testid="language-select">
                             {forEach languages languageOption}
                         </select>
                     </form>

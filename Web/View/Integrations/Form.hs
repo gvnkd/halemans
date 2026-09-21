@@ -25,7 +25,7 @@ jiraConfigFormFields config =
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "REST API version"}</label>
-        <select name="apiVersion" class="form-select" data-testid="jira-config-api-version">
+        <select name="apiVersion" class="select" data-testid="jira-config-api-version">
             <option value="3" selected={versionIs "3"}>3 (Jira Cloud)</option>
             <option value="2" selected={versionIs "2"}>2 (Jira Server / Data Center)</option>
         </select>

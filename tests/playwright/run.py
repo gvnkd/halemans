@@ -1269,19 +1269,22 @@ with sync_playwright() as pw:
         admin.close()
         login(page, "sre")
 
-    @check("reports: /reports renders all four SVG chart panels, window and env selectors filter")
+    @check("reports: /reports renders KPIs, volume chart, and bar panels; window and env selectors filter")
     def _():
         page.goto(f"{APP}/reports")
-        for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
+        page.get_by_test_id("report-kpis").wait_for()
+        volume = page.get_by_test_id("report-volume")
+        volume.wait_for()
+        assert volume.locator("svg").count() > 0, "no <svg> in report-volume"
+        for test_id in ["report-severity", "report-env", "report-mttr", "report-sources"]:
             panel = page.get_by_test_id(test_id)
             panel.wait_for()
-            assert panel.locator("svg").count() > 0, f"no <svg> in {test_id}"
+            assert panel.locator(".bar-row, .empty-state").count() > 0, f"no bars in {test_id}"
         # real navigations: server-rendered state is what we're asserting
         page.goto(f"{APP}/reports?from=now()%20-%2024h")
         page.get_by_test_id("report-volume").wait_for()
         assert page.get_by_test_id("reports-window").input_value() == "now() - 24h"
-        for test_id in ["report-volume", "report-severity", "report-env", "report-mttr"]:
-            assert page.get_by_test_id(test_id).locator("svg").count() > 0, f"no <svg> in {test_id} after re-render"
+        assert page.get_by_test_id("report-volume").locator("svg").count() > 0, "no <svg> in report-volume after re-render"
         # env selector: one env turns the env card into a per-host breakdown
         page.goto(f"{APP}/reports?env=dev")
         page.get_by_test_id("report-env").wait_for()

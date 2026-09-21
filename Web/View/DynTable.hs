@@ -290,7 +290,7 @@ dynTableHtml DynTable{..} =
 
     pageSizeSelect =
         [hsx|
-        <select name="pageSize" class="form-select form-select-sm w-auto" data-autosubmit="" data-testid={testid "page-size"}>
+        <select name="pageSize" class="select select-sm w-auto" data-autosubmit="" data-testid={testid "page-size"}>
             {forEach cfg.cfgPageSizes sizeOption}
         </select>
     |]

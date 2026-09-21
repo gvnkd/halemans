@@ -37,6 +37,13 @@
     --text-md: 0.85rem;
     --text-base: 1rem;
     --text-lg: 1.25rem;
+    /* Primary button fill. Every theme pack may restyle the primary button;
+       the fallback is the pack accent, the two halemans brand packs pin it
+       to the signal orange (see their blocks), and the signin form
+       re-pins the orange regardless of pack (.login-card scope). */
+    --button-bg: var(--accent);
+    --button-hover: var(--accent-hover);
+    --on-button: var(--on-accent);
 }
 
 /* Halemans theme tokens (milestone_3.md §7). Theme packs switched via
@@ -152,8 +159,10 @@
 
 /* Brand packs (design_docs/halemans-brand-tokens.txt): built strictly from
    the brand palette — ink/paper/dark/signal + the four severity pips and
-   neutrals. Signal orange stays reserved for brand elements (--brand-signal
-   CTAs, active nav underline); the pack accent is the info blue.
+   neutrals. The primary button IS the brand CTA here: it carries the signal
+   orange (unlike every other pack, where buttons follow the accent). The
+   active nav underline, navbar hairline and seg keyline keep --brand-signal
+   on ALL packs — only buttons are pack-colored.
    on-accent/badge foregrounds are brand ink: it is the only AA-safe
    foreground on the #4C8DFF / #E5484D / #F5A524 fills (white tops at ~3.7:1). */
 [data-theme="halemans-dark"] {
@@ -168,6 +177,9 @@
     --on-accent: #101820;
     --badge-fg: #101820;
     --badge-fg-warm: #101820;
+    --button-bg: #FF5A1F;
+    --button-hover: #E8480F;
+    --on-button: #2E2300;
     --severity-critical: #E5484D;
     --severity-high: #F5A524;
     --severity-warning: #F5A524;
@@ -191,6 +203,9 @@
     --on-accent: #101820;
     --badge-fg: #101820;
     --badge-fg-warm: #101820;
+    --button-bg: #FF5A1F;
+    --button-hover: #E8480F;
+    --on-button: #2E2300;
     --severity-critical: #E5484D;
     --severity-high: #F5A524;
     --severity-warning: #F5A524;
@@ -256,16 +271,11 @@ a:hover { color: var(--accent-hover); }
 .form-control, .form-select { border: 1px solid var(--border); }
 
 /* Bootstrap's form-select caret is a data-URI SVG background, which the
-   CSP img-src blocks — draw the chevron with gradients instead. */
+   CSP img-src blocks. Non-multiple selects use the .select widget above;
+   this rule remains only for the multi-select case (no caret needed, but
+   keep the data-URI stripped so a stray select never shows a broken icon). */
 .form-select:not([multiple]) {
-    background-image:
-        linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
-        linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
-    background-position:
-        calc(100% - 1.15rem) 55%,
-        calc(100% - 0.85rem) 55%;
-    background-size: 0.32rem 0.32rem, 0.32rem 0.32rem;
-    background-repeat: no-repeat;
+    background-image: none;
 }
 .form-control::placeholder { color: var(--text-muted); opacity: 1; }
 .form-control:focus, .form-select:focus {
@@ -423,20 +433,65 @@ a:hover { color: var(--accent-hover); }
 
 #push-banner { cursor: pointer; }
 
-/* Report charts (/reports): inline SVGs from diagrams-svg carry baked fill
-   attributes; class rules below re-map them onto the active theme pack's
-   tokens, so charts follow data-theme like the rest of the UI. */
+/* Report page (/reports redesign mockup): the volume timeline is a
+   hand-rolled inline SVG, the horizontal charts are HTML bar rows. Painted
+   elements carry chart-*/sev-* classes and the rules below map them onto the
+   active theme pack's tokens, so charts follow data-theme. */
 .report-chart svg { display: block; width: 100%; height: auto; }
 .report-chart .chart-text { fill: var(--text); }
 .report-chart .chart-text-muted { fill: var(--text-muted); }
-.report-chart .chart-text-c text { text-anchor: middle; }
+.report-chart .chart-text-c, .report-chart .chart-text-c text { text-anchor: middle; }
+.report-chart .chart-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .report-chart .chart-grid { stroke: var(--border); fill: none; }
+.report-chart .chart-grid-strong { stroke: color-mix(in srgb, var(--border) 70%, var(--text-muted)); fill: none; }
+.report-chart .chart-tick { fill: color-mix(in srgb, var(--border) 55%, var(--text-muted)); }
 .report-chart .chart-bar-accent { fill: var(--accent); }
 .report-chart .chart-sev-critical { fill: var(--severity-critical); }
 .report-chart .chart-sev-high { fill: var(--severity-high); }
 .report-chart .chart-sev-warning { fill: var(--severity-warning); }
+.report-chart .chart-sev-warning-dim { fill: color-mix(in srgb, var(--severity-warning) 55%, transparent); }
 .report-chart .chart-sev-info { fill: var(--severity-info); }
 .report-chart .chart-sev-other { fill: var(--text-muted); }
+
+/* Reports page chrome: KPI row, filter toolbar, panel cards, bar rows.
+   Layout constants come from the mockup; every color is a token. */
+.page-subtitle { color: var(--text-muted); font-size: var(--text-md); margin: -0.5rem 0 1.25rem; }
+.report-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px; }
+.report-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 14px 18px; }
+.report-kpi-label { font-size: var(--text-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); }
+.report-kpi-value { font-size: 1.45rem; font-weight: 600; margin-top: 4px; }
+.report-kpi-value .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.report-kpi-value small { font-size: 0.8rem; color: var(--text-muted); font-weight: 400; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+@media (max-width: 991.98px) { .report-kpis { grid-template-columns: repeat(2, 1fr); } }
+
+.report-toolbar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 14px 18px; display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.report-toolbar .fld { display: flex; flex-direction: column; gap: 5px; min-width: 120px; }
+.report-toolbar .fld-grow { flex: 1; min-width: 170px; }
+.report-toolbar .fld > label { font-size: 0.68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0; }
+.report-toolbar .form-control { height: 36px; background: var(--bg); font-size: var(--text-md); }
+
+.report-panel { margin-bottom: 16px; }
+.report-panel .card-body { padding: 18px 22px; }
+.report-panel h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+.report-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 10px; flex-wrap: wrap; }
+.report-legend { display: flex; gap: 14px; align-items: center; font-size: 0.78rem; color: var(--text-muted); }
+.report-legend .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+.report-legend .swatch.sev-critical, .report-bars .fill.sev-critical { background: var(--severity-critical); }
+.report-legend .swatch.sev-high, .report-bars .fill.sev-high { background: var(--severity-high); }
+.report-legend .swatch.sev-warning, .report-bars .fill.sev-warning { background: color-mix(in srgb, var(--severity-warning) 55%, transparent); }
+.report-legend .swatch.sev-info, .report-bars .fill.sev-info { background: var(--severity-info); }
+.report-legend .swatch.sev-other, .report-bars .fill.sev-other { background: var(--text-muted); }
+.report-bars .fill.bar-accent { background: var(--accent); }
+
+.report-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+@media (max-width: 991.98px) { .report-grid-2 { grid-template-columns: 1fr; } }
+
+.report-bars .bar-row { display: grid; grid-template-columns: 76px 1fr 56px; align-items: center; gap: 10px; margin: 9px 0; font-size: var(--text-md); }
+.report-bars .bar-row .name { color: var(--text-muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-bars .bar-row .track { height: 16px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.report-bars .bar-row .fill { height: 100%; border-radius: 4px; }
+.report-bars .bar-row .val { text-align: right; color: var(--text-muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+.report-axis-note { font-size: 0.72rem; color: var(--text-muted); margin-top: 10px; }
 
 /* Alert metric chart (alert detail lazy-load widget): same theme-token
    approach as the report charts; lines stroke, legend chips fill. */
@@ -592,25 +647,35 @@ a:hover { color: var(--accent-hover); }
 .btn:focus-visible, .btn:focus {
     box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--accent) 30%, transparent);
 }
-/* brand CTA: signal orange on every pack — theme accents never apply here
-   (brand tokens §1: primary CTAs carry the brand color) */
+/* Primary CTA (.btn-brand): filled with the pack's button token — accent on
+   every pack except the two halemans brand packs, which pin the signal
+   orange. The signin card is the one place the orange stays regardless of
+   pack (#sessions-new re-pins the token). Navbar hairline, active-nav
+   underline and seg keyline keep --brand-signal on all packs. */
 .btn-brand {
     font-weight: 600;
-    --bs-btn-color: var(--on-brand-signal);
-    --bs-btn-bg: var(--brand-signal);
-    --bs-btn-border-color: var(--brand-signal);
-    --bs-btn-hover-color: var(--on-brand-signal);
-    --bs-btn-hover-bg: var(--brand-signal-hover);
-    --bs-btn-hover-border-color: var(--brand-signal-hover);
-    --bs-btn-active-color: var(--on-brand-signal);
-    --bs-btn-active-bg: var(--brand-signal-hover);
-    --bs-btn-active-border-color: var(--brand-signal-hover);
-    --bs-btn-disabled-color: var(--on-brand-signal);
-    --bs-btn-disabled-bg: var(--brand-signal);
-    --bs-btn-disabled-border-color: var(--brand-signal);
+    --bs-btn-color: var(--on-button);
+    --bs-btn-bg: var(--button-bg);
+    --bs-btn-border-color: var(--button-bg);
+    --bs-btn-hover-color: var(--on-button);
+    --bs-btn-hover-bg: var(--button-hover);
+    --bs-btn-hover-border-color: var(--button-hover);
+    --bs-btn-active-color: var(--on-button);
+    --bs-btn-active-bg: var(--button-hover);
+    --bs-btn-active-border-color: var(--button-hover);
+    --bs-btn-disabled-color: var(--on-button);
+    --bs-btn-disabled-bg: var(--button-bg);
+    --bs-btn-disabled-border-color: var(--button-bg);
 }
 .btn-brand:focus-visible, .btn-brand:focus {
-    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--brand-signal) 35%, transparent);
+    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--button-bg) 35%, transparent);
+}
+/* Signin is the brand moment: the login button stays signal orange on
+   every theme pack. Token re-pin keeps .btn-brand's rule shared. */
+#sessions-new {
+    --button-bg: var(--brand-signal);
+    --button-hover: var(--brand-signal-hover);
+    --on-button: var(--on-brand-signal);
 }
 
 /* text-bg utility: needs !important to beat Bootstrap's own utility */
@@ -1199,6 +1264,42 @@ a:hover { text-decoration: underline; }
     --bs-btn-color: var(--accent);
     --bs-btn-border-color: var(--accent);
 }
+
+/* String dropdown widget: the ONE chrome for every plain <select> in forms
+   (data-testid-bearing selects use this class instead of Bootstrap's
+   .form-select). Height/radius/chevron/focus live here only — no per-form
+   overrides. The chevron is drawn with gradient triangles because the CSP
+   img-src blocks Bootstrap's data-URI caret. Multi-selects (e.g. the team
+   host-group picker) keep Bootstrap .form-select. */
+.select {
+    display: block;
+    width: 100%;
+    height: 36px;
+    padding: 0 2rem 0 12px;
+    font: inherit;
+    font-size: var(--text-md);
+    color: var(--text);
+    background-color: var(--bg);
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+        linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 1.15rem) 55%,
+        calc(100% - 0.85rem) 55%;
+    background-size: 0.32rem 0.32rem, 0.32rem 0.32rem;
+    background-repeat: no-repeat;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    appearance: none;
+    -webkit-appearance: none;
+}
+.select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--accent) 25%, transparent);
+    outline: none;
+}
+/* Compact variant for toolbar/table rows (mirrors .btn-sm height). */
+.select-sm.select { height: 28px; padding-left: 10px; font-size: var(--text-sm); }
 
 /* Segmented control (theme picker, env view toggle): squared buttons on
    the page background; active = signal border + 2px signal bottom keyline

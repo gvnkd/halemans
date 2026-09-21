@@ -176,7 +176,7 @@ jiraTicketForm alert =
     [hsx|
     <form method="POST" action={CreateJiraTicketAction alert.id} data-testid="jira-create-form">
         <div class="mb-2">
-            <select name="issueType" class="form-select form-select-sm w-auto d-inline-block" data-testid="jira-issue-type">
+            <select name="issueType" class="select select-sm w-auto d-inline-block" data-testid="jira-issue-type">
                 <option value="Task">Task</option>
                 <option value="Bug">Bug</option>
                 <option value="Incident">Incident</option>

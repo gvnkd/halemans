@@ -14,7 +14,7 @@ blackoutFormFields blackout environments hosts services =
     [hsx|
     <div class="mb-3">
         <label class="form-label">{tr "Scope type"}</label>
-        <select name="scopeType" class="form-select" data-testid="blackout-scope-type">
+        <select name="scopeType" class="select" data-testid="blackout-scope-type">
             <option value="environment" selected={scopeIs (.environmentId)}>environment</option>
             <option value="host" selected={scopeIs (.hostId)}>host</option>
             <option value="service" selected={scopeIs (.serviceId)}>service</option>
@@ -22,7 +22,7 @@ blackoutFormFields blackout environments hosts services =
     </div>
     <div class="mb-3" data-scope="environment">
         <label class="form-label">{tr "Scope"}</label>
-        <select name="scopeId" class="form-select" data-testid="blackout-scope-id">
+        <select name="scopeId" class="select" data-testid="blackout-scope-id">
             {forEach environments environmentOption}
             {forEach hosts hostOption}
             {forEach services serviceOption}

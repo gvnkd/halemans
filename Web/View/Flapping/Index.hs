@@ -20,7 +20,7 @@ instance View IndexView where
         <form method="GET" action={FlappingAction} class="row g-2 align-items-end mb-4" data-testid="flapping-form">
             <div class="col-auto">
                 <label class="form-label">{tr "Window"}</label>
-                <select name="windowHours" class="form-select" data-testid="flapping-window">
+                <select name="windowHours" class="select" data-testid="flapping-window">
                     {forEach [6, 24, 168, 720] (windowOption windowHours)}
                 </select>
             </div>

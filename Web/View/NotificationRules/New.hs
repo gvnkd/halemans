@@ -48,13 +48,13 @@ notificationRuleFormFields teams users policies name position enabled matchField
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Severity threshold (fires when alert severity ≥ this)"}</label>
-        <select name="severityThreshold" class="form-select" data-testid="rule-severity-threshold">
+        <select name="severityThreshold" class="select" data-testid="rule-severity-threshold">
             {forEach ["info", "warning", "high", "critical"] severityOption}
         </select>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Target"}</label>
-        <select name="target" class="form-select" data-testid="rule-target">
+        <select name="target" class="select" data-testid="rule-target">
             <option value="" selected={target == ""}>—</option>
             {forEach teams teamOption}
             {forEach users userOption}
@@ -66,7 +66,7 @@ notificationRuleFormFields teams users policies name position enabled matchField
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Escalation policy"}</label>
-        <select name="escalationPolicyId" class="form-select" data-testid="rule-escalation-policy">
+        <select name="escalationPolicyId" class="select" data-testid="rule-escalation-policy">
             <option value="" selected={isNothing policyRef}>—</option>
             {forEach policies policyOption}
         </select>

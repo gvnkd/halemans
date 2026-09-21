@@ -2,6 +2,7 @@ module Web.Controller.Reports where
 
 import qualified Application.Service.Reports as Reports
 import Application.Service.TimeRange (resolveTimeExpr)
+import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..))
 import qualified Data.Time.Format as TimeFormat
@@ -9,8 +10,9 @@ import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Web.Controller.Prelude
 import Web.View.Reports.Index
 
--- Static SVG reports (charts rendered server-side with diagrams, embedded
--- inline). On-demand only; no live updates by design.
+-- Static reports page (charts rendered server-side: one hand-rolled SVG for
+-- the volume timeline, HTML bar rows for the horizontal charts). On-demand
+-- only; no live updates by design.
 instance Controller ReportsController where
     beforeAction = ensureIsUser
 
@@ -86,6 +88,20 @@ instance Controller ReportsController where
                 GROUP BY a.host
                 ORDER BY n DESC
                 LIMIT 12 |]
+        -- Top sources card: alerts per source name over the window
+        sourceRows <-
+            sqlQueryTyped
+                [typedSql|
+            SELECT coalesce(s.name, 'unknown') AS label, count(*) AS n
+            FROM alerts a
+            LEFT JOIN sources s ON s.id = a.source_id
+            WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
+                AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
+                AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+            GROUP BY 1
+            ORDER BY n DESC
+            LIMIT 8 |]
         -- Bucket granularity picked via the `bucket` param; default follows
         -- the window (24h -> hour, longer -> day). "hour" is NOT a timeline:
         -- it profiles the hour of day (0-23) across the whole window, so the
@@ -131,16 +147,26 @@ instance Controller ReportsController where
                 AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
             GROUP BY a.severity
             ORDER BY avg_seconds DESC |]
-        let severitySvg = Reports.severityChartSvg (map (\row -> (get #severity row, get #n row)) severityRows)
-            envs = case selectedEnv of
+        -- KPI tile: mean resolution across ALL resolved alerts in the window
+        avgRows <-
+            sqlQueryTyped
+                [typedSql|
+            SELECT avg(extract(epoch from (a.resolved_at - a.started_at)))::float8 AS avg_seconds
+            FROM alerts a
+            WHERE a.resolved_at IS NOT NULL AND a.started_at IS NOT NULL
+                AND a.resolved_at >= a.started_at
+                AND coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
+                AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
+                AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
+                AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities})) |]
+        let envs = case selectedEnv of
                 -- keep a manually-typed/unknown selection visible in the dropdown
                 Just env | env `notElem` knownEnvs -> env : knownEnvs
                 _ -> knownEnvs
             knownEnvs = [env | Just env <- envRows]
             -- keep manually-typed/unknown selections visible in the dropdown
             severityOptions = sortOn Reports.severityRank (nub (severityOptionRows <> severities))
-            breakdownSvg = Reports.envChartSvg (map (\row -> (fromMaybe "unknown" (get #label row), get #n row)) breakdownRows)
-            breakdownTitle = if isJust selectedEnv then tr "Alerts by host" else tr "Alerts by environment"
+            envPanelTitle = if isJust selectedEnv then tr "Alerts by host" else tr "Alerts by environment"
             hourCounts = Map.fromListWith (<>) (mapMaybe (\row -> (,[(get #severity row, get #n row)]) <$> get #hour_of_day row) hourRows)
             hourLabel :: Int -> Text
             hourLabel h = (if h < 10 then "0" else "") <> show h <> ":00"
@@ -151,11 +177,45 @@ instance Controller ReportsController where
                 if bucketKind == "hour"
                     then [(hourLabel h, Map.findWithDefault [] h hourCounts) | h <- [0 .. 23]]
                     else [(dayLabel bucket, Map.findWithDefault [] bucket dayCounts) | bucket <- dayBuckets]
+            hasEmptyBuckets = not (null volumeData) && any (\(_, segments) -> sum (map snd segments) == 0) volumeData
             volumeSeverities = sortOn Reports.severityRank (nub (concatMap (map fst . snd) volumeData))
             volumeSvg = Reports.volumeChartSvg volumeData
             volumeTitle = if bucketKind == "hour" then tr "Alert volume per hour" else tr "Alert volume per day"
-            mttrSvg = Reports.mttrChartSvg (map (\row -> (get #severity row, fromMaybe 0 (get #avg_seconds row))) mttrRows)
+            avgResolution = case avgRows of (value : _) -> value; [] -> Nothing
+            -- KPI tiles (all derived from the same filtered rows as the charts)
+            severityCounts = [(Reports.severityCssClass (get #severity row), get #n row) | row <- severityRows]
+            totalAlerts = sum (map snd severityCounts)
+            criticalCount = sum [n | (cls, n) <- severityCounts, cls == "chart-sev-critical"]
+            highCount = sum [n | (cls, n) <- severityCounts, cls == "chart-sev-high"]
+            (topBreakdownLabel, topBreakdownCount, topBreakdownPct) = case breakdownRows of
+                (row : _) ->
+                    let n = get #n row
+                     in (fromMaybe "unknown" (get #label row), n, round (fromIntegral n / fromIntegral (max 1 totalAlerts) * 100))
+                [] -> ("—", 0, 0)
+            -- Horizontal bar panels: (label, value text, width %, fill class)
+            severityBarData =
+                sortOn
+                    (\(name, n) -> (negate n, Reports.severityRank name))
+                    [ (option, Map.findWithDefault 0 option severityCountsByName)
+                    | option <- severityOptions
+                    ]
+            severityCountsByName = Map.fromList [(get #severity row, get #n row) | row <- severityRows]
+            severityBars = [(name, tshow n, pctOf (fromIntegral n) (maxOf (map (fromIntegral . snd) severityBarData)), Reports.severityFillClass name) | (name, n) <- severityBarData]
+            envBarData = [(fromMaybe "unknown" (get #label row), get #n row) | row <- breakdownRows]
+            envBars = [(name, tshow n, pctOf (fromIntegral n) (maxOf (map (fromIntegral . snd) envBarData)), "bar-accent") | (name, n) <- envBarData]
+            mttrData = [(get #severity row, fromMaybe 0 (get #avg_seconds row)) | row <- mttrRows]
+            mttrBars = [(name, Reports.formatDurationHm secs, pctOf secs (maxOf (map snd mttrData)), Reports.severityFillClass name) | (name, secs) <- mttrData]
+            sourceBars =
+                [ (name, tshow n, pctOf (fromIntegral n) (maxOf (map (fromIntegral . snd) sourceBarData)), "bar-accent")
+                | (name, n) <- sourceBarData
+                ]
+            sourceBarData = [(get #label row, get #n row) | row <- sourceRows]
         render IndexView{..}
+      where
+        pctOf :: Double -> Double -> Double
+        pctOf value maxValue = value / max 1 maxValue * 100
+        maxOf :: [Double] -> Double
+        maxOf values = if null values then 1 else maximum values
 
 -- Align a timestamp down to its day boundary so chart slots are positional
 -- in time, not in row order.

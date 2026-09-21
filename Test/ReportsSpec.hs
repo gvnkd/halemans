@@ -7,36 +7,31 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Service.Reports" do
-    describe "chart rendering" do
-        it "renders the severity chart as inline SVG" do
-            let svg = severityChartSvg [("critical", 5), ("warning", 12)]
-            svg `shouldSatisfy` Text.isInfixOf "<svg"
-            svg `shouldSatisfy` Text.isInfixOf "critical"
-            svg `shouldSatisfy` Text.isInfixOf "12"
-
-        it "renders the env chart as inline SVG" do
-            let svg = envChartSvg [("prod", 7)]
-            svg `shouldSatisfy` Text.isInfixOf "<svg"
-            svg `shouldSatisfy` Text.isInfixOf "prod"
-
-        it "renders the volume chart as inline SVG" do
+    describe "volumeChartSvg" do
+        it "renders a stacked bar per bucket with the total above it" do
             let svg = volumeChartSvg [("09-10", [("critical", 3)]), ("09-11", [("critical", 4), ("warning", 5)])]
             svg `shouldSatisfy` Text.isInfixOf "<svg"
             svg `shouldSatisfy` Text.isInfixOf "09-11"
             svg `shouldSatisfy` Text.isInfixOf "chart-sev-critical"
+            svg `shouldSatisfy` Text.isInfixOf "chart-sev-warning-dim"
             -- value label above a stacked bar shows the bucket total
             svg `shouldSatisfy` Text.isInfixOf ">9<"
             -- hover tooltip lists every severity in the bar plus the total
             svg `shouldSatisfy` Text.isInfixOf "<title>critical: 4\nwarning: 5\ntotal: 9</title>"
 
-        it "renders the mttr chart as inline SVG" do
-            let svg = mttrChartSvg [("critical", 300)]
-            svg `shouldSatisfy` Text.isInfixOf "<svg"
+        it "renders empty buckets as baseline ticks" do
+            let svg = volumeChartSvg [("09-10", []), ("09-11", [("info", 2)])]
+            svg `shouldSatisfy` Text.isInfixOf "chart-tick"
 
-        it "renders a placeholder for empty data" do
-            let svg = severityChartSvg []
+        it "renders a placeholder when there is no data" do
+            let svg = volumeChartSvg []
             svg `shouldSatisfy` Text.isInfixOf "<svg"
             svg `shouldSatisfy` Text.isInfixOf "no data"
+
+    describe "formatPct" do
+        it "formats a percentage with one decimal" do
+            formatPct 66.6667 `shouldBe` "66.7%"
+            formatPct 100 `shouldBe` "100.0%"
 
     describe "formatDuration" do
         it "formats seconds below 90 as seconds" do
@@ -48,16 +43,42 @@ spec = describe "Application.Service.Reports" do
         it "formats hours" do
             formatDuration 7200 `shouldBe` "2h"
 
+    describe "formatDurationHm" do
+        it "formats seconds below 90 as seconds" do
+            formatDurationHm 42 `shouldBe` "42s"
+
+        it "formats sub-hour values as minutes" do
+            formatDurationHm 3480 `shouldBe` "58m"
+
+        it "formats hours with a zero-padded minutes remainder" do
+            formatDurationHm 29040 `shouldBe` "8h 04m"
+
+        it "rounds to the nearest minute" do
+            formatDurationHm 4980 `shouldBe` "1h 23m"
+
+    describe "formatHours" do
+        it "formats seconds as decimal hours" do
+            formatHours 15120 `shouldBe` "4.2"
+
     describe "severityCssClass" do
         it "maps known severities to their theme classes" do
             severityCssClass "critical" `shouldBe` "chart-sev-critical"
-            severityCssClass "Warning" `shouldBe` "chart-sev-warning"
+            severityCssClass "Warning" `shouldBe` "chart-sev-warning-dim"
             severityCssClass "disaster" `shouldBe` "chart-sev-critical"
             severityCssClass "average" `shouldBe` "chart-sev-high"
             severityCssClass "information" `shouldBe` "chart-sev-info"
 
         it "falls back to the neutral class for unknown severities" do
             severityCssClass "notice" `shouldBe` "chart-sev-other"
+
+    describe "severityFillClass" do
+        it "maps known severities to their bar fill classes" do
+            severityFillClass "critical" `shouldBe` "sev-critical"
+            severityFillClass "warning" `shouldBe` "sev-warning"
+            severityFillClass "info" `shouldBe` "sev-info"
+
+        it "falls back to the neutral fill for unknown severities" do
+            severityFillClass "notice" `shouldBe` "sev-other"
 
     describe "truncateLabel" do
         it "keeps short labels" do

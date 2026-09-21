@@ -31,7 +31,7 @@ fieldMappingFormFields facet rank kind key enabled =
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Kind"}</label>
-        <select name="kind" class="form-select" data-testid="mapping-kind">
+        <select name="kind" class="select" data-testid="mapping-kind">
             {forEach ["field", "label", "attr"] (kindOption kind)}
         </select>
     </div>
