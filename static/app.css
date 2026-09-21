@@ -503,6 +503,10 @@ a:hover { color: var(--accent-hover); }
 .metric-chart .chart-line-2 { stroke: var(--severity-info); fill: none; }
 .metric-chart .chart-line-3 { stroke: var(--severity-warning); fill: none; }
 .metric-chart .chart-line-4 { stroke: var(--text-muted); fill: none; }
+.metric-chart .chart-dot-1 { fill: var(--severity-critical); }
+.metric-chart .chart-dot-2 { fill: var(--severity-info); }
+.metric-chart .chart-dot-3 { fill: var(--severity-warning); }
+.metric-chart .chart-dot-4 { fill: var(--text-muted); }
 .metric-chart-container { margin-top: 0.5rem; }
 
 /* shared width limits replacing per-view inline styles */

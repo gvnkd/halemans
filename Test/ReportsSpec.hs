@@ -11,6 +11,12 @@ spec = describe "Application.Service.Reports" do
         it "renders a stacked bar per bucket with the total above it" do
             let svg = volumeChartSvg [("09-10", [("critical", 3)]), ("09-11", [("critical", 4), ("warning", 5)])]
             svg `shouldSatisfy` Text.isInfixOf "<svg"
+            -- fluid width: fills the card at any viewport, never clipped
+            svg `shouldSatisfy` Text.isInfixOf "width=\"100%\""
+            (Text.isInfixOf "width=\"1140" svg) `shouldBe` False
+            -- shapes are visible: diagrams' default fill is transparent
+            -- (fill-opacity=0); the widget must pin fill-opacity=1
+            svg `shouldSatisfy` Text.isInfixOf "fill-opacity=\"1.0\""
             svg `shouldSatisfy` Text.isInfixOf "09-11"
             svg `shouldSatisfy` Text.isInfixOf "chart-sev-critical"
             svg `shouldSatisfy` Text.isInfixOf "chart-sev-warning-dim"
@@ -18,6 +24,10 @@ spec = describe "Application.Service.Reports" do
             svg `shouldSatisfy` Text.isInfixOf ">9<"
             -- hover tooltip lists every severity in the bar plus the total
             svg `shouldSatisfy` Text.isInfixOf "<title>critical: 4\nwarning: 5\ntotal: 9</title>"
+            -- z-order: grid lines paint BEHIND the bars (diagrams-svg would
+            -- otherwise paint stroked segments over filled shapes)
+            let (beforeBars, _) = Text.breakOn "class=\"chart-sev-critical" svg
+            Text.isInfixOf "class=\"chart-grid" beforeBars `shouldBe` True
 
         it "renders empty buckets as baseline ticks" do
             let svg = volumeChartSvg [("09-10", []), ("09-11", [("info", 2)])]

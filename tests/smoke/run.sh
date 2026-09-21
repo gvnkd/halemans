@@ -194,6 +194,22 @@ else
     fail "grafana metric chart (no mock alert row)"
 fi
 
+# ------------------------------------------------- zabbix metric chart
+# Milestone 13: same lazy-load widget against the mock zabbix (trigger.get
+# selectItems + history.get, no trends.get).
+scenario "zabbix metric chart"
+login_as "sre@dev" "$(cat "$STATE/halemans/sre-password")" > /dev/null 2>&1
+zbx_alert_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM alerts WHERE fingerprint = 'zabbix:trigger:42' LIMIT 1" 2>/dev/null)
+if [ -n "$zbx_alert_id" ]; then
+    chart_body=$(curl -s -b "$COOKIES" "$APP_URL/alerts/$zbx_alert_id/metrics-chart")
+    printf '%s' "$chart_body" | grep -q 'data-testid="metric-chart-svg"' \
+        && pass "zabbix metric chart endpoint returns SVG" || fail "zabbix metric chart endpoint returns SVG"
+    printf '%s' "$chart_body" | grep -q 'CPU load' \
+        && pass "zabbix metric chart renders trigger item series" || fail "zabbix metric chart renders trigger item series"
+else
+    fail "zabbix metric chart (no mock alert row)"
+fi
+
 # ------------------------------------------------- grafana poller reconcile
 # milestone 2 §8: with the webhook token removed, the poller must still pick
 # up the fire AND the resolve (single fingerprint, no duplicate).

@@ -58,9 +58,22 @@ let
             exec python3 ${./mocks/mock_grafana.py}
         '';
     };
+
+    # Mock Zabbix JSON-RPC subset (milestone 13 metric chart): trigger.get
+    # with selectItems + history.get. Token from ZABBIX_TOKEN.
+    mockZabbix = pkgs.writeShellApplication {
+        name = "mock-zabbix";
+        runtimeInputs = [ pkgs.python3 halemansLib.ensureTokens ];
+        text = ''
+            halemans-ensure-tokens
+            # shellcheck disable=SC1091
+            source "''${DEVENV_STATE:?}/halemans/env.sh"
+            exec python3 ${./mocks/mock_zabbix.py}
+        '';
+    };
 in
 {
-    packages = [ mockConfluence mockJira mockLlm mockAssets mockGrafana ];
+    packages = [ mockConfluence mockJira mockLlm mockAssets mockGrafana mockZabbix ];
 
     processes.mock-confluence = {
         exec = "${mockConfluence}/bin/mock-confluence";
@@ -112,6 +125,17 @@ in
             readiness_probe.http_get = {
                 host = "127.0.0.1";
                 port = 18086;
+                path = "/health";
+            };
+        };
+    };
+
+    processes.mock-zabbix = {
+        exec = "${mockZabbix}/bin/mock-zabbix";
+        process-compose = {
+            readiness_probe.http_get = {
+                host = "127.0.0.1";
+                port = 18087;
                 path = "/health";
             };
         };

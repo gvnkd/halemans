@@ -4,6 +4,8 @@ module Application.Service.MetricChart (
     seriesChartSvg,
     metricWindowFor,
     fetchAlertMetricSeries,
+    downsample,
+    missingRanges,
 ) where
 
 import Application.Connector.GrafanaMetrics (
@@ -12,27 +14,27 @@ import Application.Connector.GrafanaMetrics (
     ruleQueryGet,
     ruleUidFromSourceUrl,
  )
+import Application.Connector.Zabbix (ZabbixTriggerItem (..), historyGet, triggerItemsGet)
+import qualified Application.Service.Chart as Chart
+import Application.Service.MetricCache (readCachedSeries, storeSeries)
 import Control.Exception (SomeException, try)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (FromJSON, parseMaybe)
-import Data.List (foldl')
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Text as Text
 import qualified Data.Time.Clock.POSIX as POSIX
 import qualified Data.Time.Format as TimeFormat
-import qualified Diagrams.Backend.SVG as DS
-import qualified Diagrams.Prelude as D
 import Generated.Types
-import qualified Graphics.Svg as SvgBuilder
+import IHP.ModelSupport (Id' (..), ModelContext)
 import IHP.Prelude
 import System.Environment (lookupEnv)
+import qualified "cryptonite" Crypto.Hash as CryptoHash
 
 -- Alert detail metric chart. Series come from the alert's own rule re-run as
 -- a range query (see Application.Connector.GrafanaMetrics); rendering follows
 -- Application.Service.Reports conventions: pixel grid, theme via CSS classes
 -- (chart-*), inline SVG, native <title> tooltips.
-
-type Chart = D.QDiagram DS.SVG D.V2 Double D.Any
 
 -- | Effective fetch window: lead minutes before alert start; resolved alerts
 -- show trail minutes past the resolve time, firing alerts run to now.
@@ -53,42 +55,47 @@ metricWindowFor source alert now =
         }
   where
     start = fromMaybe alert.firstSeenAt alert.startedAt
-    lead = fromMaybe 60 (cfg "leadMinutes")
-    trail = fromMaybe 15 (cfg "trailMinutes")
-    maxPoints = fromMaybe 500 (cfg "maxPoints")
+    lead = fromMaybe 60 (metricsCfg source "leadMinutes")
+    trail = fromMaybe 15 (metricsCfg source "trailMinutes")
+    maxPoints = fromMaybe 500 (metricsCfg source "maxPoints")
     to = case alert.resolvedAt of
         Just resolvedAt -> min now (addUTCTime (trail * 60) resolvedAt)
         Nothing -> now
-    cfg :: (FromJSON a) => Text -> Maybe a
-    cfg key = join results
-      where
-        results =
-            parseMaybe
-                ( Aeson.withObject
-                    "source.config"
-                    ( \o -> do
-                        metrics <- o Aeson..:? "metrics" Aeson..!= Aeson.Object mempty
-                        Aeson.withObject "metrics" (\m -> m Aeson..:? Key.fromText key) metrics
-                    )
-                )
-                source.config
 
--- | Grafana path: alert generatorURL -> rule uid -> rule query -> ds/query.
--- Fails cleanly (Left) for non-grafana sources, missing token, or any
--- upstream error — the widget renders the message instead of the chart.
-fetchAlertMetricSeries :: Source -> Alert -> MetricWindow -> IO (Either Text [MetricSeries])
+-- Per-source overrides in sources.config.metrics (documented in
+-- design_docs/milestone_13.md): leadMinutes, trailMinutes, maxPoints,
+-- cacheRetentionDays (default 7), freshenSeconds (default 60).
+metricsCfg :: (FromJSON a) => Source -> Text -> Maybe a
+metricsCfg source key = join results
+  where
+    results =
+        parseMaybe
+            ( Aeson.withObject
+                "source.config"
+                ( \o -> do
+                    metrics <- o Aeson..:? "metrics" Aeson..!= Aeson.Object mempty
+                    Aeson.withObject "metrics" (\m -> m Aeson..:? Key.fromText key) metrics
+                )
+            )
+            source.config
+
+-- | Fetch the series backing the alert's chart, source-type specific:
+-- grafana resolves the alert rule's expr through the datasource proxy,
+-- zabbix resolves the trigger's items and pulls raw history.get (no
+-- trends.get needed). Both paths cache hourly buckets locally
+-- (Application.Service.MetricCache) and only re-fetch uncovered
+-- sub-ranges. Fails cleanly (Left) — the widget renders the message.
+fetchAlertMetricSeries :: (?modelContext :: ModelContext) => Source -> Alert -> MetricWindow -> IO (Either Text [MetricSeries])
 fetchAlertMetricSeries source alert window = do
     outcome <- try (fetchAlertMetricSeriesUnchecked source alert window)
     pure case outcome of
         Left ex -> Left (tshow (ex :: SomeException))
         Right result -> result
 
-fetchAlertMetricSeriesUnchecked :: Source -> Alert -> MetricWindow -> IO (Either Text [MetricSeries])
+fetchAlertMetricSeriesUnchecked :: (?modelContext :: ModelContext) => Source -> Alert -> MetricWindow -> IO (Either Text [MetricSeries])
 fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
     "grafana" -> do
-        token <- case tokenEnv of
-            Just envVar -> fmap cs <$> lookupEnv (cs envVar)
-            Nothing -> pure Nothing
+        token <- tokenFromEnv
         case (token, ruleUidFromSourceUrl =<< alert.sourceUrl) of
             (Nothing, _) -> pure (Left "No Grafana token configured (sources.config.tokenEnv)")
             (_, Nothing) -> pure (Left "Alert has no Grafana rule link")
@@ -96,151 +103,185 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                 ruleResult <- ruleQueryGet source.baseUrl token ruleUid
                 case ruleResult of
                     Left err -> pure (Left err)
-                    Right (datasourceUid, expr) ->
-                        dsQueryRange source.baseUrl token datasourceUid expr window.mwFrom window.mwTo window.mwMaxPoints
-    _ -> pure (Left "Metrics are only available for Grafana-sourced alerts")
+                    Right (datasourceUid, expr) -> do
+                        let digest = tshow (CryptoHash.hashWith CryptoHash.SHA256 (cs expr :: ByteString))
+                        forEachSeries
+                            source
+                            (\name -> "g:" <> datasourceUid <> ":" <> digest <> ":" <> name)
+                            (\from to -> dsQueryRange source.baseUrl token datasourceUid expr from to window.mwMaxPoints)
+                            window
+    "zabbix" -> do
+        token <- tokenFromEnv
+        case token of
+            Nothing -> pure (Left "No Zabbix token configured (sources.config.tokenEnv)")
+            Just token -> case Text.stripPrefix "zabbix:trigger:" alert.fingerprint of
+                Nothing -> pure (Left "Alert fingerprint is not zabbix trigger-scoped")
+                Just triggerId -> do
+                    itemsResult <- triggerItemsGet source.baseUrl token [triggerId]
+                    case itemsResult of
+                        Left err -> pure (Left err)
+                        Right items -> do
+                            let numericItems = [item | item <- items, item.ztiValueType `elem` (["0", "3"] :: [Text])]
+                            case numericItems of
+                                [] -> pure (Left "No numeric metric for this trigger")
+                                _ -> do
+                                    perItem <- forM numericItems \item -> do
+                                        pointsResult <-
+                                            cachedSeries
+                                                source
+                                                ("z:" <> item.ztiItemId)
+                                                window
+                                                (\from to -> historyGet source.baseUrl token item.ztiItemId (historyTable item) (posixFloor from) (posixCeil to) historyPageLimit)
+                                        pure ((\points -> MetricSeries (seriesLabel item) (limitPoints window points)) <$> pointsResult)
+                                    pure (sequenceEither perItem)
+    _ -> pure (Left "Metrics are only available for Grafana- and Zabbix-sourced alerts")
   where
+    tokenFromEnv :: IO (Maybe Text)
+    tokenFromEnv = case tokenEnv of
+        Just envVar -> fmap cs <$> lookupEnv (cs envVar)
+        Nothing -> pure Nothing
     tokenEnv :: Maybe Text
     tokenEnv = parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: "tokenEnv")) source.config
+    historyTable item = if item.ztiValueType == "3" then 3 else 0 :: Int
+    historyPageLimit = 10000
+    seriesLabel item =
+        if Text.null item.ztiUnits
+            then item.ztiName
+            else item.ztiName <> " (" <> item.ztiUnits <> ")"
 
--- | Multi-series line chart, 900px wide, inline SVG. Series beyond four
--- colors reuse the palette cyclically; the legend row shows name + range.
+-- Grafana frames arrive as several named series; each gets its own cache
+-- key, gap fetch, and merge. Left short-circuits the whole widget.
+forEachSeries ::
+    (?modelContext :: ModelContext) =>
+    Source ->
+    (Text -> Text) ->
+    (UTCTime -> UTCTime -> IO (Either Text [MetricSeries])) ->
+    MetricWindow ->
+    IO (Either Text [MetricSeries])
+forEachSeries source seriesKey fetchRange window = do
+    seed <- fetchRange window.mwFrom window.mwTo
+    case seed of
+        Left err -> pure (Left err)
+        Right series -> do
+            perSeries <- forM series \s -> do
+                pointsResult <-
+                    cachedSeries
+                        source
+                        (seriesKey s.seriesName)
+                        window
+                        ( \from to ->
+                            fetchRange from to >>= \case
+                                Left err -> pure (Left err)
+                                Right fetched -> pure (Right (concat [f.seriesPoints | f <- fetched, f.seriesName == s.seriesName]))
+                        )
+                pure ((\points -> s{seriesPoints = limitPoints window points}) <$> pointsResult)
+            pure (sequenceEither perSeries)
+
+-- Read cached coverage for [from, to], fetch only the missing sub-ranges,
+-- merge, and store the freshly fetched points. Closed buckets are immutable;
+-- the bucket containing now is trusted only within the freshen window.
+cachedSeries ::
+    (?modelContext :: ModelContext) =>
+    Source ->
+    Text ->
+    MetricWindow ->
+    (UTCTime -> UTCTime -> IO (Either Text [(UTCTime, Double)])) ->
+    IO (Either Text [(UTCTime, Double)])
+cachedSeries source seriesKey window fetchRange = do
+    let freshen = fromMaybe 60 (metricsCfg source "freshenSeconds")
+    cached <- readCachedSeries (sourceUuid source) seriesKey window.mwFrom window.mwTo freshen
+    let gaps = missingRanges maxGap window.mwFrom window.mwTo cached
+    fetchedResults <- forM gaps (uncurry fetchRange)
+    case [err | Left err <- fetchedResults] of
+        (err : _) -> pure (Left err)
+        [] -> do
+            let fetched = concat [points | Right points <- fetchedResults]
+                merged = nubBy (\a b -> fst a == fst b) (sortOn fst (cached ++ fetched))
+            storeSeries (sourceUuid source) seriesKey fetched retentionDays
+            pure (Right merged)
+  where
+    retentionDays = fromMaybe 7 (metricsCfg source "cacheRetentionDays")
+    maxGap = 120 -- sampling slower than this breaks one run into two
+    sourceUuid s = case s.id of
+        Id uuid -> uuid
+
+-- Complement of the cached point coverage within [from, to]: cached points
+-- are grouped into maximal runs (consecutive spacing <= maxGap) and the
+-- returned intervals are what still needs an upstream fetch.
+missingRanges :: NominalDiffTime -> UTCTime -> UTCTime -> [(UTCTime, Double)] -> [(UTCTime, UTCTime)]
+missingRanges maxGap from to cached = go from (map runRange (toRuns (filter inRange cached)))
+  where
+    inRange (t, _) = t >= from && t <= to
+    toRuns :: [(UTCTime, Double)] -> [[(UTCTime, Double)]]
+    toRuns [] = []
+    toRuns (p : ps) = reverse run : restRuns
+      where
+        (run, rest) = spanAdjacent [p] ps
+        restRuns = case rest of
+            [] -> []
+            (q : qs) -> toRuns (q : qs)
+        spanAdjacent :: [(UTCTime, Double)] -> [(UTCTime, Double)] -> ([(UTCTime, Double)], [(UTCTime, Double)])
+        spanAdjacent acc [] = (acc, [])
+        spanAdjacent acc@(a : _) (q : qs)
+            | fst q `diffUTCTime` fst a <= maxGap = spanAdjacent (q : acc) qs
+            | otherwise = (acc, q : qs)
+        spanAdjacent [] qs = ([], qs)
+    runRange :: [(UTCTime, Double)] -> (UTCTime, UTCTime)
+    runRange run = case run of
+        (firstPoint : _) -> (fst firstPoint, fst (lastOf run))
+        [] -> (from, to) -- unreachable: runs start non-empty
+      where
+        lastOf [single] = single
+        lastOf (_ : more) = lastOf more
+        lastOf [] = error "runRange: empty run"
+    go cursor []
+        | to `diffUTCTime` cursor > maxGap = [(cursor, to)]
+        | otherwise = []
+    go cursor ((runFrom, runTo) : rest) =
+        [(cursor, runFrom) | runFrom `diffUTCTime` cursor > maxGap] ++ go (max cursor runTo) rest
+
+sequenceEither :: [Either a b] -> Either a [b]
+sequenceEither = go []
+  where
+    go acc (Right x : rest) = go (acc ++ [x]) rest
+    go _ (Left e : _) = Left e
+    go acc [] = Right acc
+
+limitPoints :: MetricWindow -> [(UTCTime, Double)] -> [(UTCTime, Double)]
+limitPoints window = downsample window.mwMaxPoints
+
+-- | Fixed-count time-bucket downsampling (mean per bucket), so a week of
+-- 1-minute samples renders at maxPoints points without trends.get.
+downsample :: Int -> [(UTCTime, Double)] -> [(UTCTime, Double)]
+downsample maxPoints points
+    | maxPoints <= 0 = points
+    | length points <= maxPoints = points
+    | otherwise =
+        [ (fromPosix (tMin + (fromIntegral idx + 0.5) * bucketDur), avg vals)
+        | (idx, vals) <- IntMap.toList (IntMap.fromListWith (++) [(bucketIdx t, [v]) | (t, v) <- points])
+        ]
+  where
+    times = map fst points
+    tMin = posix (minimum times)
+    tMax = posix (maximum times)
+    bucketDur = max 1e-9 ((tMax - tMin) / fromIntegral maxPoints)
+    bucketIdx t = min (maxPoints - 1) (floor ((posix t - tMin) / bucketDur) :: Int)
+    avg vals = sum vals / fromIntegral (length vals)
+
+posixFloor :: UTCTime -> Integer
+posixFloor t = floor (POSIX.utcTimeToPOSIXSeconds t)
+
+posixCeil :: UTCTime -> Integer
+posixCeil t = ceiling (POSIX.utcTimeToPOSIXSeconds t)
+
+-- | Multi-series line chart, rendered by the standard chart widget
+-- Application.Service.Chart (fixed frame, CSS-class theme, tooltips).
 seriesChartSvg :: [MetricSeries] -> Text
 seriesChartSvg series =
-    foldl' injectTitle (renderChartSvg w h (D.position (gridLines <> axisLabels <> legend <> plotted))) tooltips
-  where
-    w = 900
-    paddingL = 60
-    paddingR = 12
-    paddingB = 28
-    plotW = w - paddingL - paddingR
-    plotH = 180
-    legendH = 22
-    h = legendH + plotH + paddingB
-    nonEmpty = [s | s <- series, not (null s.seriesPoints)]
-    allPoints = concatMap seriesPoints nonEmpty
-    ts = map (posix . fst) allPoints
-    vs = map snd allPoints
-    tMin = minimumDef 0 ts
-    tMax = maximumDef 1 ts
-    vMin = minimumDef 0 vs
-    vMax = maximumDef 1 vs
-    tSpan = max 1e-9 (tMax - tMin)
-    vRange = vMax - vMin
-    vLo = vMin - vRange * 0.05
-    vHi = vMax + vRange * 0.05
-    vSpan = max 1e-9 (vHi - vLo)
-    xOf t = paddingL + (posix t - tMin) / tSpan * plotW
-    yOf v = paddingB + (v - vLo) / vSpan * plotH
-    lineCls i = "chart-line-" <> show (i `mod` 4 + 1 :: Int)
-    seriesDomId i = "metricseries-" <> show (i :: Int)
-    plotted =
-        [ ( D.p2 (0, 0)
-          , D.stroke (D.fromVertices [D.p2 (xOf t, yOf v) | (t, v) <- s.seriesPoints] :: D.Path D.V2 Double)
-                D.# D.lw D.veryThin
-                D.# DS.svgClass (cs (lineCls i))
-                D.# DS.svgId (cs (seriesDomId i))
-          )
-        | (i, s) <- zip [0 ..] nonEmpty
-        ]
-    tooltips =
-        [ ( seriesDomId i
-          , s.seriesName
-                <> ": "
-                <> show (length s.seriesPoints)
-                <> " points, "
-                <> formatValue lo
-                <> " .. "
-                <> formatValue hi
-          )
-        | (i, s) <- zip [0 ..] nonEmpty
-        , let pts = map snd s.seriesPoints
-        , let lo = minimumDef 0 pts
-        , let hi = maximumDef 0 pts
-        ]
-    gridValues = [vLo + vSpan * fromIntegral i / 4 | i <- [0 .. 4] :: [Int]]
-    tickTimes =
-        [ addUTCTime (realToFrac (tSpan * fromIntegral i / 5 :: Double)) (fromPosix tMin)
-        | i <- [0 .. 5] :: [Int]
-        ]
-    gridLines =
-        [ (D.p2 (paddingL, yOf v), D.hrule plotW D.# D.lw D.thin D.# DS.svgClass "chart-grid")
-        | v <- gridValues
-        ]
-            <> [ (D.p2 (xOf t, paddingB), D.vrule plotH D.# D.lw D.thin D.# DS.svgClass "chart-grid")
-               | t <- tickTimes
-               ]
-    axisLabels =
-        [ (D.p2 (paddingL - 6, yOf v), chartText "chart-text-muted" 1 0.5 (formatValue v))
-        | v <- gridValues
-        ]
-            <> [ (D.p2 (xOf t, 6), chartText "chart-text-muted" 0.5 0.5 (formatTick t))
-               | t <- tickTimes
-               ]
-    legend =
-        [ ( D.p2 (legendX i, h - 6)
-          , legendChip i D.<> D.strutX 4 D.<> chartText "chart-text-muted" 0 0.5 (truncateLabel 28 s.seriesName)
-          )
-        | (i, s) <- zip [0 ..] nonEmpty
-        ]
-    legendX i = paddingL + sum [legendWidth j + 24 | j <- [0 .. i - 1]]
-    legendWidth j = 12 + 4 + 0.55 * 12 * fromIntegral (Text.length (truncateLabel 28 (nonEmpty !! j).seriesName))
-    legendChip i = D.rect 12 4 D.# D.fc (D.sRGB24read "#6c757d") D.# D.lw D.none D.# DS.svgClass (cs (lineCls i))
-    formatTick t = cs (TimeFormat.formatTime TimeFormat.defaultTimeLocale "%H:%M" t)
-    formatValue v
-        | abs v >= 1000 = show (round v :: Integer)
-        | abs v >= 1 = show (roundTo 2 v)
-        | otherwise = show (roundTo 4 v)
-
-minimumDef :: Double -> [Double] -> Double
-minimumDef d [] = d
-minimumDef _ xs = minimum xs
-
-maximumDef :: Double -> [Double] -> Double
-maximumDef d [] = d
-maximumDef _ xs = maximum xs
-
-roundTo :: Int -> Double -> Double
-roundTo n v = fromIntegral (round (v * 10 ^ n) :: Integer) / 10 ^ n
+    Chart.lineChartSvg [Chart.LineSeries s.seriesName s.seriesPoints | s <- series]
 
 posix :: UTCTime -> Double
 posix = realToFrac . POSIX.utcTimeToPOSIXSeconds
 
 fromPosix :: Double -> UTCTime
 fromPosix = POSIX.posixSecondsToUTCTime . realToFrac
-
-chartText :: Text -> Double -> Double -> Text -> Chart
-chartText cls ax ay content =
-    D.alignedText ax ay (cs content)
-        D.# D.fontSizeL 12
-        D.# DS.svgClass (cs cls)
-
-truncateLabel :: Int -> Text -> Text
-truncateLabel maxChars label
-    | Text.length label <= maxChars = label
-    | otherwise = Text.take (maxChars - 1) label <> "…"
-
--- Duplicated from Application.Service.Reports (not exported there): the
--- invisible backdrop pins the viewBox so edge labels don't clip.
-renderChartSvg :: Double -> Double -> Chart -> Text
-renderChartSvg w h dia = cs (SvgBuilder.renderBS (D.renderDia DS.SVG opts framed))
-  where
-    opts = DS.SVGOptions (D.mkWidth w) Nothing "" [] False
-    framed = D.centerXY dia D.<> (D.rect w h D.# D.fcA D.transparent D.# D.lw D.none)
-
-injectTitle :: Text -> (Text, Text) -> Text
-injectTitle svg (marker, tip) =
-    case Text.breakOn ("id=\"" <> marker <> "\"") svg of
-        (before, rest)
-            | not (Text.null rest) ->
-                let (tag, after) = Text.breakOn ">" rest
-                 in before <> tag <> "><title>" <> escapeXml tip <> "</title>" <> Text.drop 1 after
-        _ -> svg
-
-escapeXml :: Text -> Text
-escapeXml = Text.concatMap escape
-  where
-    escape '&' = "&amp;"
-    escape '<' = "&lt;"
-    escape '>' = "&gt;"
-    escape c = Text.singleton c

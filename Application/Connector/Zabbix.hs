@@ -11,6 +11,9 @@ module Application.Connector.Zabbix (
     ZabbixTriggerState (..),
     triggerStateGet,
     usersGet,
+    ZabbixTriggerItem (..),
+    triggerItemsGet,
+    historyGet,
 ) where
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
@@ -357,3 +360,123 @@ usersGet baseUrl token userIds = do
                     then Data.Text.unwords (filter (not . null) [name, surname])
                     else username
         pure (userId, display)
+
+-- Metric chart support (milestone 13): the alert fingerprint carries the
+-- trigger id, trigger.get with selectItems returns the items referenced by
+-- the trigger expression (server-resolved, templates included), and raw
+-- numeric history is enough to plot — trends.get is not required.
+
+data ZabbixTriggerItem = ZabbixTriggerItem
+    { ztiTriggerId :: Text
+    , ztiItemId :: Text
+    , ztiKey :: Text
+    , ztiName :: Text
+    , ztiValueType :: Text -- "0" float, "3" unsigned are numeric; others skipped
+    , ztiUnits :: Text
+    }
+    deriving (Eq, Show)
+
+-- | Items referenced by the given triggers' expressions. Requires no mapping
+-- table and no expression parsing; trigger read permission covers the items.
+triggerItemsGet :: Text -> Text -> [Text] -> IO (Either Text [ZabbixTriggerItem])
+triggerItemsGet baseUrl token triggerIds = do
+    let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("trigger.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "triggerids" .= triggerIds
+                        , "output" .= (["triggerid"] :: [Text])
+                        , "selectItems" .= (["itemid", "key_", "name", "value_type", "units"] :: [Text])
+                        ]
+                ]
+    result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+    case result of
+        Left err -> pure (Left (tshow (err :: SomeException)))
+        Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
+            Left err -> pure (Left (cs err))
+            Right decoded ->
+                case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
+                    Just triggers -> pure (Right (concatMap flatten (triggers :: [Aeson.Value])))
+                    Nothing -> pure (Left (rpcError decoded))
+  where
+    flatten trigger =
+        [ ZabbixTriggerItem
+            { ztiTriggerId = triggerId
+            , ztiItemId = itemId
+            , ztiKey = key
+            , ztiName = name
+            , ztiValueType = valueType
+            , ztiUnits = units
+            }
+        | value <- itemList trigger
+        , Just (itemId, key, name, valueType, units) <- [itemOf value]
+        ]
+      where
+        triggerId = fromMaybe "" (parseMaybe (Aeson.withObject "trigger" (.: "triggerid")) trigger)
+    itemOf value = parseMaybe (Aeson.withObject "item" parseItem) value
+    parseItem o = do
+        itemId <- o .: "itemid"
+        key <- o .:? "key_" .!= ""
+        name <- o .:? "name" .!= ""
+        valueType <- o .:? "value_type" .!= ""
+        units <- o .:? "units" .!= ""
+        pure (itemId, key, name, valueType, units)
+    itemList trigger = fromMaybe [] (parseMaybe (Aeson.withObject "trigger" (.: "items")) trigger)
+
+-- | Raw history points for one item, ascending by clock. historyType is the
+-- zabbix history table selector (0 = float, 3 = unsigned); the caller picks
+-- it from the item's value_type. Pages with limit + clock cursor because the
+-- server caps results per call; time_from is inclusive, so the boundary
+-- second is re-fetched and deduped here. Non-numeric values are skipped.
+historyGet :: Text -> Text -> Text -> Int -> Integer -> Integer -> Int -> IO (Either Text [(UTCTime, Double)])
+historyGet baseUrl token itemId historyType timeFrom timeTill pageLimit = do
+    result <- go timeFrom []
+    pure (map toUtcPoint . dedupPoints <$> result)
+  where
+    go cursor acc = do
+        page <- historyPage cursor
+        case page of
+            Left err -> pure (Left err)
+            Right rows ->
+                let acc' = acc ++ rows
+                    nextCursor = maximum (map (fst . toPair) rows)
+                 in if length rows < pageLimit || nextCursor <= cursor
+                        then pure (Right (map toPair acc'))
+                        else go nextCursor acc'
+    historyPage cursor = do
+        let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
+            body =
+                Aeson.object
+                    [ "jsonrpc" .= ("2.0" :: Text)
+                    , "method" .= ("history.get" :: Text)
+                    , "id" .= (1 :: Int)
+                    , "params"
+                        .= Aeson.object
+                            [ "itemids" .= ([itemId] :: [Text])
+                            , "history" .= historyType
+                            , "time_from" .= cursor
+                            , "time_till" .= timeTill
+                            , "sortfield" .= (["clock"] :: [Text])
+                            , "sortorder" .= ("ASC" :: Text)
+                            , "limit" .= pageLimit
+                            ]
+                    ]
+        rpcResult <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+        case rpcResult of
+            Left err -> pure (Left (tshow (err :: SomeException)))
+            Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
+                Left err -> pure (Left (cs err))
+                Right decoded ->
+                    case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
+                        Just rows -> pure (Right (rows :: [Aeson.Value]))
+                        Nothing -> pure (Left (rpcError decoded))
+    toPair value =
+        let clock = fromMaybe 0 (parseMaybe (Aeson.withObject "history" (.: "clock")) value >>= readMaybe)
+            number = parseMaybe (Aeson.withObject "history" (.: "value")) value >>= readMaybe
+         in (clock, fromMaybe 0 number :: Double)
+    toUtcPoint (clock, value) = (posixSecondsToUTCTime (fromIntegral clock) :: UTCTime, value)
+    dedupPoints = nubBy (\a b -> fst a == fst b)

@@ -966,6 +966,7 @@ strictDeleteSources items = do
         result <- try do
             void $ sqlExecTyped [typedSql| DELETE FROM webhook_tokens WHERE source_id = ${sourceId} |]
             void $ sqlExecTyped [typedSql| DELETE FROM zabbix_host_groups WHERE source_id = ${sourceId} |]
+            void $ sqlExecTyped [typedSql| DELETE FROM metric_cache WHERE source_id = ${sourceId} |]
             deleteRecord source
         case result of
             Left err -> throwIO $ ProvisionError ("sources: cannot delete source \"" <> source.name <> "\" (referenced rows must go first; or keep it with \"enabled\": false): " <> tshow (err :: SomeException))

@@ -1,5 +1,6 @@
 module Web.Controller.Alerts where
 
+import Application.Connector.GrafanaMetrics (ruleUidFromSourceUrl)
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize)
 import qualified Application.Helper.FilterPrefs as FilterPrefs
 import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
@@ -18,6 +19,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.List as List
+import qualified Data.Text as Text
 import IHP.HSX.Markup (renderMarkupText)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.ViewPrelude (Html, preEscapedToHtml)
@@ -161,9 +163,18 @@ instance Controller AlertsController where
         jiraWritable <- case alert.sourceId of
             Nothing -> pure False
             Just sourceId -> sourceConfigBool "jiraWritable" <$> fetch sourceId
+        -- The button is only offered when the alert actually carries a metric
+        -- identity: grafana alerts need a rule link (generatorURL) and zabbix
+        -- alerts a trigger-scoped fingerprint. Source-health alerts and
+        -- webhook-ingested alerts without those render no button at all.
         metricsAvailable <- case alert.sourceId of
             Nothing -> pure False
-            Just sourceId -> (\source -> source.type_ == "grafana") <$> fetch sourceId
+            Just sourceId -> do
+                source <- fetch sourceId
+                pure case source.type_ of
+                    "grafana" -> isJust (ruleUidFromSourceUrl =<< alert.sourceUrl)
+                    "zabbix" -> isJust (Text.stripPrefix "zabbix:trigger:" alert.fingerprint)
+                    _ -> False
         render ShowView{..}
     action RenderMetricChartAction{alertId} = do
         requirePrivilege "view"

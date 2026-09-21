@@ -264,6 +264,10 @@ export HALEMANS_ASSETS_URL="http://127.0.0.1:18085/rest/assets/latest"
 # source (alert ingestion) keeps its own token.
 export MOCK_GRAFANA_TOKEN="test-grafana-token"
 export MOCK_GRAFANA_URL="http://127.0.0.1:18086"
+# Mock Zabbix (milestone 13 metric chart): JSON-RPC trigger.get/history.get
+# for the lazy-load chart widget. Dedicated token env like the grafana mock.
+export MOCK_ZABBIX_TOKEN="test-zabbix-token"
+export MOCK_ZABBIX_URL="http://127.0.0.1:18087"
 # Flatten write-back retry backoff (1m/5m/15m) so the failure-chip smoke
 # scenario reaches terminal 'failed' fast; inherited by the worker.
 export HALEMANS_WRITEBACK_BACKOFF_SECONDS="0,0,0"
@@ -278,21 +282,25 @@ python3 "$MOCK_ASSETS_PY" > "$T/mock-assets.log" 2>&1 &
 pids="$pids $!"
 python3 "$MOCK_GRAFANA_PY" > "$T/mock-grafana.log" 2>&1 &
 pids="$pids $!"
+python3 "$MOCK_ZABBIX_PY" > "$T/mock-zabbix.log" 2>&1 &
+pids="$pids $!"
 for i in $(seq 1 30); do
     curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null 2>&1 \
         && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null 2>&1 \
         && curl -sf "$LLM_ENDPOINT/health" > /dev/null 2>&1 \
         && curl -sf "http://127.0.0.1:18085/health" > /dev/null 2>&1 \
-        && curl -sf "$MOCK_GRAFANA_URL/health" > /dev/null 2>&1 && break
+        && curl -sf "$MOCK_GRAFANA_URL/health" > /dev/null 2>&1 \
+        && curl -sf "$MOCK_ZABBIX_URL/health" > /dev/null 2>&1 && break
     sleep 1
 done
 curl -sf "$HALEMANS_CONFLUENCE_URL/health" > /dev/null \
     && curl -sf "$HALEMANS_JIRA_URL/health" > /dev/null \
     && curl -sf "$LLM_ENDPOINT/health" > /dev/null \
     && curl -sf "http://127.0.0.1:18085/health" > /dev/null \
-    && curl -sf "$MOCK_GRAFANA_URL/health" > /dev/null || {
+    && curl -sf "$MOCK_GRAFANA_URL/health" > /dev/null \
+    && curl -sf "$MOCK_ZABBIX_URL/health" > /dev/null || {
         echo "mocks never came up" >&2
-        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" "$T/mock-llm.log" "$T/mock-assets.log" "$T/mock-grafana.log" >&2
+        tail -20 "$T/mock-confluence.log" "$T/mock-jira.log" "$T/mock-llm.log" "$T/mock-assets.log" "$T/mock-grafana.log" "$T/mock-zabbix.log" >&2
         exit 1
     }
 
@@ -340,6 +348,21 @@ SELECT 'grafana-mock-rule-cpu',
        'http://127.0.0.1:18086/alerting/grafana/mock-rule-cpu/view?orgId=1',
        NOW() - INTERVAL '30 minutes'
 WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE fingerprint = 'grafana-mock-rule-cpu');
+INSERT INTO sources (id, type, name, base_url, env, poll_interval_seconds, enabled, config) VALUES
+    ('a0000000-0000-0000-0000-000000000005', 'zabbix', 'zabbix-mock',
+     'http://127.0.0.1:18087', 'dev', 30, false,
+     '{"tokenEnv":"MOCK_ZABBIX_TOKEN","metrics":{"leadMinutes":60,"trailMinutes":15,"maxPoints":500}}')
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO alerts (fingerprint, source_id, external_id, title, severity, status, source_url, started_at)
+SELECT 'zabbix:trigger:42',
+       'a0000000-0000-0000-0000-000000000005',
+       '42',
+       'Mock CPU load high',
+       'warning',
+       'firing',
+       'http://127.0.0.1:18087/tr_events.php?triggerid=42&eventid=1',
+       NOW() - INTERVAL '30 minutes'
+WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE fingerprint = 'zabbix:trigger:42');
 SQL
 
 # Milestone 9 §9: a v2-JSON dashboard exercising match + groupBy over
