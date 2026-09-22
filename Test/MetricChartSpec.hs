@@ -107,6 +107,47 @@ spec = do
                 Right series -> do
                     length series `shouldBe` 1
                     map (map snd . seriesPoints) series `shouldBe` [[1, 4, 7]]
+        it "names series from labels when the value field is the generic 'Value'" do
+            let frame =
+                    object
+                        [ "schema"
+                            .= object
+                                [ "fields"
+                                    .= [ object ["name" .= ("Time" :: Text), "type" .= ("time" :: Text)]
+                                       , object
+                                            [ "name" .= ("Value" :: Text)
+                                            , "type" .= ("number" :: Text)
+                                            , "labels" .= object ["__name__" .= ("up" :: Text), "instance" .= ("host1" :: Text)]
+                                            ]
+                                       ]
+                                ]
+                        , "data" .= object ["values" .= [[1000, 2000], [1, 2] :: [Double]]]
+                        ]
+                response = object ["results" .= object ["A" .= object ["status" .= (200 :: Int), "frames" .= [frame]]]]
+            case seriesFromResponse 500 response of
+                Left err -> expectationFailure (Text.unpack err)
+                Right series -> map seriesName series `shouldBe` ["up{instance=\"host1\"}"]
+        it "prefers config.displayNameFromDS over labels" do
+            let frame =
+                    object
+                        [ "schema"
+                            .= object
+                                [ "fields"
+                                    .= [ object ["name" .= ("Time" :: Text), "type" .= ("time" :: Text)]
+                                       , object
+                                            [ "name" .= ("Value" :: Text)
+                                            , "type" .= ("number" :: Text)
+                                            , "labels" .= object ["instance" .= ("host1" :: Text)]
+                                            , "config" .= object ["displayNameFromDS" .= ("node_load1 host1" :: Text)]
+                                            ]
+                                       ]
+                                ]
+                        , "data" .= object ["values" .= [[1000, 2000], [1, 2] :: [Double]]]
+                        ]
+                response = object ["results" .= object ["A" .= object ["status" .= (200 :: Int), "frames" .= [frame]]]]
+            case seriesFromResponse 500 response of
+                Left err -> expectationFailure (Text.unpack err)
+                Right series -> map seriesName series `shouldBe` ["node_load1 host1"]
 
     describe "metricWindowFor" do
         it "defaults to 60m lead and runs to now for firing alerts" do

@@ -119,7 +119,7 @@ frameToSeries maxPoints frame = do
     schema <- lookupKey "schema" frame
     fields <- lookupKey "fields" schema >>= asArray
     valueField <- fields Vector.!? 1
-    name <- lookupKey "name" valueField >>= asString
+    let name = frameDisplayName valueField
     data_ <- lookupKey "data" frame
     values <- lookupKey "values" data_ >>= asArray
     times <- values Vector.!? 0 >>= asArray
@@ -136,6 +136,41 @@ frameToSeries maxPoints frame = do
     asMs _ = Nothing
     asDouble (Number n) = Just (realToFrac n)
     asDouble _ = Nothing
+
+-- Series title for the legend: real grafana range frames name the value
+-- field "Value" and carry the identity in labels ({"__name__": "up",
+-- "instance": "..."}) or config.displayNameFromDS; the mock names the field
+-- directly. Precedence mirrors what the Grafana UI shows.
+frameDisplayName :: Value -> Text
+frameDisplayName valueField = case configName of
+    Just n -> n
+    Nothing -> case labelsName of
+        Just n -> n
+        Nothing -> fromMaybe "Value" (lookupKey "name" valueField >>= asString)
+  where
+    config = lookupKey "config" valueField
+    configName =
+        (config >>= lookupKey "displayNameFromDS" >>= asString)
+            `orElse` (config >>= lookupKey "displayName" >>= asString)
+    labelsName = do
+        labelsObj <- lookupKey "labels" valueField
+        pairs <- case labelsObj of
+            Object o ->
+                Just
+                    [ (Key.toText k, v)
+                    | (k, String v) <- KeyMap.toList o
+                    ]
+            _ -> Nothing
+        let metricName = lookup "__name__" pairs
+            labelPairs = [(k, v) | (k, v) <- pairs, k /= "__name__"]
+            inner = Text.intercalate ", " [k <> "=\"" <> v <> "\"" | (k, v) <- sortOn fst labelPairs]
+        pure case metricName of
+            Just n | Text.null inner -> n
+            Just n -> n <> "{" <> inner <> "}"
+            Nothing | Text.null inner -> "Value"
+            Nothing -> "{" <> inner <> "}"
+    orElse (Just a) _ = Just a
+    orElse Nothing b = b
 
 -- | Stride-thin a series to at most maxPoints samples (first sample kept,
 -- then every stride-th). Defense against datasources ignoring maxDataPoints.
