@@ -19,6 +19,8 @@ module Application.Service.MetricChart (
 
 import Application.Connector.GrafanaMetrics (
     MetricSeries (..),
+    buildExploreUrl,
+    datasourceTypeGet,
     dsQueryRange,
     ruleQueryGet,
     ruleUidFromSourceUrl,
@@ -110,10 +112,13 @@ data MetricSeriesInfo = MetricSeriesInfo
 metricSeriesInfo :: MetricSeries -> Maybe Text -> MetricSeriesInfo
 metricSeriesInfo = MetricSeriesInfo
 
--- | Series plus reference lines for the alert's chart.
+-- | Series plus reference lines for the alert's chart. mcdLinks are
+-- (label, url) pairs rendered above the chart — the upstream graph/explore
+-- deep links (zabbix item graphs, grafana explore).
 data MetricChartData = MetricChartData
     { mcdSeries :: [MetricSeriesInfo]
     , mcdThresholds :: [Chart.ChartThreshold]
+    , mcdLinks :: [(Text, Text)]
     }
     deriving (Eq, Show)
 
@@ -162,12 +167,18 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                     Left err -> pure (Left err)
                     Right (datasourceUid, expr) -> do
                         let digest = tshow (CryptoHash.hashWith CryptoHash.SHA256 (cs expr :: ByteString))
-                        fmap (\series -> MetricChartData [metricSeriesInfo s Nothing | s <- series] [])
-                            <$> forEachSeries
+                        seriesResult <-
+                            forEachSeries
                                 source
                                 (\name -> "g:" <> datasourceUid <> ":" <> digest <> ":" <> name)
                                 (\from to -> dsQueryRange source.baseUrl token datasourceUid expr from to window.mwMaxPoints)
                                 window
+                        case seriesResult of
+                            Left err -> pure (Left err)
+                            Right series -> do
+                                dsType <- datasourceTypeGet source.baseUrl token datasourceUid
+                                let exploreUrl = buildExploreUrl source.baseUrl datasourceUid dsType expr
+                                pure (Right (MetricChartData [metricSeriesInfo s Nothing | s <- series] [] [("Explore in Grafana", exploreUrl)]))
     "zabbix" -> do
         token <- tokenFromEnv
         case token of
@@ -195,7 +206,11 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                                                 window
                                                 (\from to -> historyGet source.baseUrl token item.ztiItemId (historyTable item) (posixFloor from) (posixCeil to) historyPageLimit)
                                         pure ((\points -> metricSeriesInfo (MetricSeries (seriesLabel item) (limitPoints window points)) (itemUnits item)) <$> pointsResult)
-                                    pure ((\infos -> MetricChartData infos thresholds) <$> sequenceEither perItem)
+                                    let links =
+                                            [ ("Zabbix graph: " <> seriesLabel item, source.baseUrl <> "/history.php?action=showgraph&itemid=" <> item.ztiItemId)
+                                            | item <- numericItems
+                                            ]
+                                    pure ((\infos -> MetricChartData infos thresholds links) <$> sequenceEither perItem)
     _ -> pure (Left "Metrics are only available for Grafana- and Zabbix-sourced alerts")
   where
     tokenFromEnv :: IO (Maybe Text)

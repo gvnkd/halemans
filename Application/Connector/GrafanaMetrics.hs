@@ -5,9 +5,12 @@ module Application.Connector.GrafanaMetrics (
     ruleQueryFromRule,
     dsQueryRange,
     seriesFromResponse,
+    datasourceTypeGet,
+    buildExploreUrl,
 ) where
 
 import Application.Service.Http (getFollowing, postFollowing)
+import Control.Exception (SomeException, try)
 import Control.Lens ((&), (.~), (^.))
 import Data.Aeson
 import qualified Data.Aeson as Aeson
@@ -19,6 +22,7 @@ import Data.Time (UTCTime, diffUTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Data.Vector as Vector
 import IHP.Prelude
+import Network.HTTP.Types.URI (urlEncode)
 import qualified Network.Wreq as Wreq
 
 -- | Metrics fetch for grafana sources (alert detail chart widget). The alert
@@ -99,6 +103,52 @@ utcToMs :: UTCTime -> Integer
 utcToMs t = floor (realToFrac (t `diffUTCTime` posixEpoch) * 1000 :: Double)
   where
     posixEpoch = posixSecondsToUTCTime 0
+
+-- | Best-effort datasource type lookup, for the Explore link's datasource
+-- ref. Nothing when the lookup fails — Grafana resolves uid-only refs.
+datasourceTypeGet :: Text -> Text -> Text -> IO (Maybe Text)
+datasourceTypeGet baseUrl token uid = do
+    outcome <- try do
+        let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
+        response <- getFollowing opts (cs (baseUrl <> "/api/datasources/uid/" <> uid))
+        pure (eitherDecode (response ^. Wreq.responseBody))
+    pure case outcome of
+        Left (_ :: SomeException) -> Nothing
+        Right (Left _) -> Nothing
+        Right (Right value) -> lookupKey "type" value >>= asString
+
+-- | Grafana Explore URL preloaded with the alert rule's query, so the card
+-- links straight to the full metrics explorer. datasourceType is included
+-- when known (see datasourceTypeGet).
+buildExploreUrl :: Text -> Text -> Maybe Text -> Text -> Text
+buildExploreUrl baseUrl datasourceUid datasourceType expr =
+    baseUrl <> "/explore?orgId=1&schemaVersion=1&panes=" <> encodedPanes
+  where
+    encodedPanes =
+        cs (urlEncode True (cs (Aeson.encode panes)))
+    panes =
+        Aeson.object
+            [ "pane-1"
+                .= Aeson.object
+                    [ "datasource" .= datasourceRef
+                    , "queries"
+                        .= [ Aeson.object
+                                [ "refId" .= ("A" :: Text)
+                                , "datasource" .= datasourceRef
+                                , "expr" .= expr
+                                , "range" .= True
+                                ]
+                           ]
+                    , "range"
+                        .= Aeson.object
+                            [ "from" .= ("now-3h" :: Text)
+                            , "to" .= ("now" :: Text)
+                            ]
+                    ]
+            ]
+    datasourceRef = case datasourceType of
+        Just t -> Aeson.object ["type" .= t, "uid" .= datasourceUid]
+        Nothing -> Aeson.object ["uid" .= datasourceUid]
 
 -- Response decoding: {"results": {"A": {"status": 200, "frames": [...]}}}.
 -- Each frame carries schema.fields [Time, Value] and data.values as two
