@@ -14,6 +14,7 @@ TOKEN = os.environ.get("MOCK_ZABBIX_TOKEN") or os.environ.get("ZABBIX_TOKEN", ""
 TRIGGERS = {
     "42": {
         "triggerid": "42",
+        "expression": "last(/mock/system.cpu.load)>80 or last(/mock/vm.memory.util)>70",
         "items": [
             {
                 "itemid": "1001",

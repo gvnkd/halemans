@@ -1,6 +1,16 @@
 module Application.Service.Chart (
     LineSeries (..),
     lineChartSvg,
+    ScaleMode (..),
+    ChartThreshold (..),
+    LineChartOptions (..),
+    defaultLineChartOptions,
+    lineChartSvgWith,
+    lineChartTimeDomain,
+    ChartLayout (..),
+    lineChartLayout,
+    formatWithUnits,
+    roundTo,
     BarSegment (..),
     StackedBar (..),
     stackedBarChartSvg,
@@ -96,12 +106,119 @@ moveGridBehind svg =
 data LineSeries = LineSeries
     { seriesName :: Text
     , seriesPoints :: [(UTCTime, Double)]
+    , seriesUnits :: Maybe Text -- zabbix item units ("B", "s", "%"); Nothing = plain
     }
     deriving (Eq, Show)
 
+-- Y-axis scaling. ScaleAuto picks logarithmic when the data spans more
+-- than ~1.3 orders of magnitude (ratio >= 20): a trigger chart mixing
+-- e.g. memory % (~65) with a leak score (~8) squashes the small series
+-- onto the baseline on a linear scale. Log scales come in base-10 and
+-- base-2 flavours.
+data ScaleMode = ScaleLinear | ScaleLog10 | ScaleLog2 | ScaleAuto
+    deriving (Eq, Show)
+
+-- Horizontal reference line, e.g. a zabbix trigger threshold.
+data ChartThreshold = ChartThreshold
+    { ctValue :: Double
+    , ctLabel :: Text
+    }
+    deriving (Eq, Show)
+
+data LineChartOptions = LineChartOptions
+    { lcScale :: ScaleMode
+    , lcThresholds :: [ChartThreshold]
+    }
+    deriving (Eq, Show)
+
+defaultLineChartOptions :: LineChartOptions
+defaultLineChartOptions = LineChartOptions ScaleAuto []
+
+-- | The padded [tLo, tHi] epoch-second domain the line chart renders its
+-- x axis over (5% margins, degenerate-span guard). The hover-tooltip JSON
+-- embeds this so the browser maps cursor x back to a timestamp using the
+-- exact geometry the server rendered with.
+lineChartTimeDomain :: [LineSeries] -> (Double, Double)
+lineChartTimeDomain series = (tLo, tHi)
+  where
+    ts = concatMap (map (posix . fst) . seriesPoints) series
+    tMin = minimumDef 0 ts
+    tMax = maximumDef 1 ts
+    tPad = max 30 ((tMax - tMin) * 0.05)
+    tLo = tMin - tPad
+    tHi = tMax + tPad
+
 -- | Multi-series line chart as a self-contained inline SVG.
 lineChartSvg :: [LineSeries] -> Text
-lineChartSvg series =
+lineChartSvg = lineChartSvgWith defaultLineChartOptions
+
+-- | The resolved geometry of a line chart: effective scale (Auto
+-- resolved), padded time/value domains, and the x plot strip. Exported so
+-- the hover-tooltip payload (app.js) replicates the exact server-side
+-- coordinate mapping for hit-testing.
+data ChartLayout = ChartLayout
+    { clScale :: ScaleMode
+    , clTimeDomain :: (Double, Double)
+    , clValueDomain :: (Double, Double)
+    , clPlotLeft :: Double
+    , clPlotRight :: Double
+    }
+    deriving (Eq, Show)
+
+lineChartLayout :: LineChartOptions -> [LineSeries] -> ChartLayout
+lineChartLayout opts series =
+    ChartLayout
+        { clScale = scale
+        , clTimeDomain = lineChartTimeDomain series
+        , clValueDomain = (dLo, dHi)
+        , clPlotLeft = plotLeft
+        , clPlotRight = plotRight
+        }
+  where
+    nonEmpty = [s | s <- series, not (null s.seriesPoints)]
+    vs = concatMap (map snd . seriesPoints) nonEmpty
+    thrValues = [ctValue t | t <- lcThresholds opts, scale == ScaleLinear || ctValue t > 0]
+    vMinRaw = minimumDef 1 vs
+    vMaxRaw = maximumDef (vMinRaw + 1) vs
+    scale = case lcScale opts of
+        ScaleLinear -> ScaleLinear
+        ScaleLog10 -> ScaleLog10
+        ScaleLog2 -> ScaleLog2
+        ScaleAuto
+            | vMinRaw > 0 && vMaxRaw / vMinRaw >= 20 -> ScaleLog10
+            | otherwise -> ScaleLinear
+    minPositive = minimumDef 1 [v | v <- vs ++ thrValues, v > 0]
+    floorVal = minPositive / logBaseOf scale
+    logBaseOf ScaleLog2 = 2
+    logBaseOf _ = 10
+    toDom v = case scale of
+        ScaleLinear -> v
+        _ -> logBase (logBaseOf scale) (max v floorVal)
+    (dMin, dMax) =
+        let lo = minimumDef 0 (map toDom (vs ++ thrValues))
+            hi = maximumDef 1 (map toDom (vs ++ thrValues))
+         in (lo, hi)
+    dRange = dMax - dMin
+    (dLo, dHi)
+        | dRange < 1e-9 = (dMin - 1, dMax + 1)
+        | otherwise = (dMin - dRange * 0.05, dMax + dRange * 0.05)
+    dSpan = dHi - dLo
+    gridValues = gridValuesFor scale dLo dSpan
+    -- The y axis is formatted in the series' units when every series
+    -- agrees on them ("B" -> GB-short labels); mixed or unit-less series
+    -- get compact plain numbers so long byte counts stay on screen.
+    axisUnits = case nub [u | s <- nonEmpty, Just u <- [s.seriesUnits], not (Text.null u)] of
+        [u] -> Just u
+        _ -> Nothing
+    axisLabelTexts = map (formatWithUnits axisUnits) gridValues
+    -- Widen the left margin to the widest axis label instead of clipping
+    -- ("1234567890" at the fixed 60px margin rendered out of frame).
+    plotLeft = max 60 (9 * maximumDef 4 (map (fromIntegral . Text.length) axisLabelTexts) + 14)
+    plotRight = 900 - 30
+
+-- | Multi-series line chart with explicit scale and threshold lines.
+lineChartSvgWith :: LineChartOptions -> [LineSeries] -> Text
+lineChartSvgWith opts series =
     renderFluidSvg frameW frameH framed
   where
     framed = D.position elements D.<> frameBackdrop
@@ -116,41 +233,45 @@ lineChartSvg series =
     elements =
         case nonEmpty of
             [] -> [(D.p2 (frameW / 2, frameH / 2), textD ("no data" :: Text) 0.5 0.5)]
-            _ -> gridLinesE <> axisLabelsE <> legendE <> seriesLinesE <> dotMarkersE
+            _ -> gridLinesE <> axisLabelsE <> legendE <> thresholdE <> seriesLinesE <> dotMarkersE
 
     -- frame geometry (diagrams coordinates, y up; svg flips on output)
     frameW = 900
     frameH = 250
     legendH = 24
-    plotLeft = 60
-    plotRight = frameW - 30
+    layout = lineChartLayout opts series
+    plotLeft = layout.clPlotLeft
+    plotRight = layout.clPlotRight
     plotTop = frameH - legendH - 8
     plotBottom = 34
     plotW = plotRight - plotLeft
     plotH = plotTop - plotBottom
 
     nonEmpty = [s | s <- series, not (null s.seriesPoints)]
-    allPoints = concatMap seriesPoints nonEmpty
-    ts = map (posix . fst) allPoints
-    vs = map snd allPoints
-    tMin = minimumDef 0 ts
-    tMax = maximumDef 1 ts
-    vMin = minimumDef 0 vs
-    vMax = maximumDef 1 vs
-    -- Degenerate domains (e.g. a single fresh sample) pad to a readable
-    -- window instead of exploding through a tiny-span guard.
-    tPad = max 30 ((tMax - tMin) * 0.05)
-    tLo = tMin - tPad
-    tHi = tMax + tPad
-    vRange = vMax - vMin
-    (vLo, vHi)
-        | vRange < 1e-9 = (vMin - 1, vMax + 1)
-        | otherwise = (vMin - vRange * 0.05, vMax + vRange * 0.05)
+    scale = layout.clScale
+    (tLo, tHi) = layout.clTimeDomain
+    (dLo, dHi) = layout.clValueDomain
     tSpan = tHi - tLo
-    vSpan = vHi - vLo
+    dSpan = dHi - dLo
+    logBaseOf ScaleLog2 = 2
+    logBaseOf _ = 10
+    toDom v = case scale of
+        ScaleLinear -> v
+        _ -> logBase (logBaseOf scale) (max v floorVal)
+    floorVal = case scale of
+        ScaleLinear -> 1
+        _ -> 10 ^^ floor (logBase (logBaseOf scale) (max minPositive 1e-12)) / logBaseOf scale
+    minPositive = minimumDef 1 [v | v <- vs ++ map ctValue (lcThresholds opts), v > 0]
+    vs = concatMap (map snd . seriesPoints) nonEmpty
+    fromDom d = case scale of
+        ScaleLinear -> d
+        _ -> logBaseOf scale ** d
     xOfT t = plotLeft + (posix t - tLo) / tSpan * plotW
-    yOfV v = plotBottom + (v - vLo) / vSpan * plotH
-    gridValues = [vLo + vSpan * fromIntegral i / 4 | i <- [0 .. 4] :: [Int]]
+    yOfV v = min plotTop (max plotBottom (plotBottom + (toDom v - dLo) / dSpan * plotH))
+    gridValues = gridValuesFor scale dLo dSpan
+    axisUnits = case nub [u | s <- nonEmpty, Just u <- [s.seriesUnits], not (Text.null u)] of
+        [u] -> Just u
+        _ -> Nothing
     tickTimes =
         [ addUTCTime (realToFrac (tSpan * fromIntegral i / 5 :: Double)) (fromPosix tLo)
         | i <- [0 .. 5] :: [Int]
@@ -163,7 +284,7 @@ lineChartSvg series =
         D.stroke (D.fromVertices [D.p2 (x1, y1), D.p2 (x2, y2)] :: D.Path D.V2 Double)
     textD :: Text -> Double -> Double -> D.Diagram DS.SVG
     textD content ax ay =
-        D.alignedText ax ay (cs content) D.# D.fontSizeL 12 D.# DS.svgClass "chart-text-muted"
+        D.alignedText ax ay (cs content) D.# D.fontSizeL 14 D.# DS.svgClass "chart-text-muted"
 
     gridLinesE :: [(D.P2 Double, D.Diagram DS.SVG)]
     gridLinesE =
@@ -175,25 +296,65 @@ lineChartSvg series =
                ]
     axisLabelsE :: [(D.P2 Double, D.Diagram DS.SVG)]
     axisLabelsE =
-        [ (D.p2 (plotLeft - 6, yOfV v), textD (formatValue v) 1 0.5)
+        [ (D.p2 (plotLeft - 6, yOfV v), textD (formatWithUnits axisUnits v) 1 0.5)
         | v <- gridValues
         ]
-            <> [ (D.p2 (xOfT t, 16), textD (formatTick t) 0.5 0.5)
-               | t <- tickTimes
+            <> [ let isLastTick = i == length tickTimes - 1
+                     -- the last tick's centered label would overhang the
+                     -- right frame edge (worse with day.month labels)
+                     tickX = if isLastTick then plotRight else xOfT t
+                     tickAlign = if isLastTick then 1 else 0.5
+                  in (D.p2 (tickX, 16), textD (formatTick t) tickAlign 0.5)
+               | (i, t) <- zip [0 :: Int ..] tickTimes
                ]
     legendE :: [(D.P2 Double, D.Diagram DS.SVG)]
     legendE =
         [ ( D.p2 (legendX i + 6, frameH - 13)
-          , D.hcat
-                [ D.rect 12 4 D.# D.lw D.none D.# D.fc D.black D.# D.fillOpacity 1 D.# DS.svgClass (cs (dotCls i))
-                , D.strutX 4
-                , textD (truncateLabel 28 s.seriesName) 0 0.5
-                ]
+          , DS.svgTitle
+                (cs s.seriesName)
+                ( D.hcat
+                    [ D.rect 12 4 D.# D.lw D.none D.# D.fc D.black D.# D.fillOpacity 1 D.# DS.svgClass (cs (dotCls i))
+                    , D.strutX 4
+                    , textD (truncateLabel 28 s.seriesName) 0 0.5
+                    ]
+                )
           )
         | (i, s) <- zip [0 ..] nonEmpty
         ]
     legendX i = plotLeft + sum [legendWidth j + 24 | j <- [0 .. i - 1]]
-    legendWidth j = 18 + 7 * fromIntegral (Text.length (truncateLabel 28 (nonEmpty !! j).seriesName))
+    -- ~8px per glyph at the pinned 14px chart font
+    legendWidth j = 18 + 8 * fromIntegral (Text.length (truncateLabel 28 (nonEmpty !! j).seriesName))
+    thresholdE :: [(D.P2 Double, D.Diagram DS.SVG)]
+    thresholdE = concat (zipWith thresholdPair placedThresholds labelYs)
+      where
+        -- Bottom-up pass keeps labels of close threshold lines from
+        -- overlapping (two zabbix constants 10 units apart land ~15px
+        -- apart on a small frame).
+        placedThresholds = sortOn ctValue (lcThresholds opts)
+        rawLabelYs =
+            [ min (plotTop - 4) (max (plotBottom + 6) (if thrY > plotTop - 20 then thrY - 14 else thrY + 14))
+            | t <- placedThresholds
+            , let thrY = yOfV (ctValue t)
+            ]
+        labelYs :: [Double]
+        labelYs = go (plotBottom + 6) rawLabelYs
+        go _ [] = []
+        go prev (raw : rest) =
+            let y = max raw (prev + 13)
+             in y : go y rest
+    thresholdPair t thrLabelY = [(D.p2 (0, 0), lineD), (D.p2 (plotRight - 4, thrLabelY), labelD)]
+      where
+        thrY = yOfV (ctValue t)
+        lineD =
+            segD (plotLeft, thrY) (plotRight, thrY)
+                D.# D.lw D.thin
+                D.# D.dashing [5, 3] 0
+                D.# DS.svgClass "chart-threshold"
+                D.# DS.svgTitle (cs (ctLabel t))
+        labelD =
+            D.alignedText 1 0.5 (cs (truncateLabel 24 (ctLabel t)))
+                D.# D.fontSizeL 14
+                D.# DS.svgClass "chart-text-muted chart-threshold-label"
     seriesLinesE :: [(D.P2 Double, D.Diagram DS.SVG)]
     seriesLinesE =
         [ ( D.p2 (0, 0)
@@ -219,15 +380,15 @@ lineChartSvg series =
                 <> ": "
                 <> show (length s.seriesPoints)
                 <> " points, "
-                <> formatValue (minimumDef 0 pts)
+                <> formatWithUnits s.seriesUnits (minimumDef 0 pts)
                 <> " .. "
-                <> formatValue (maximumDef 0 pts)
+                <> formatWithUnits s.seriesUnits (maximumDef 0 pts)
     formatTick :: UTCTime -> Text
-    formatTick t = cs (TimeFormat.formatTime TimeFormat.defaultTimeLocale "%H:%M" t)
-    formatValue v
-        | abs v >= 1000 = show (round v :: Integer)
-        | abs v >= 1 = show (roundTo 2 v)
-        | otherwise = show (roundTo 4 v)
+    -- Multi-day ranges (the past-week view) need the date, otherwise all
+    -- ticks read as bare times.
+    formatTick t
+        | tSpan > 2 * 86400 = cs (TimeFormat.formatTime TimeFormat.defaultTimeLocale "%d.%m %H:%M" t)
+        | otherwise = cs (TimeFormat.formatTime TimeFormat.defaultTimeLocale "%H:%M" t)
 
 minimumDef :: Double -> [Double] -> Double
 minimumDef d [] = d
@@ -250,6 +411,95 @@ truncateLabel :: Int -> Text -> Text
 truncateLabel maxChars label
     | Text.length label <= maxChars = label
     | otherwise = Text.take (maxChars - 1) label <> "…"
+
+-- Grid line values for a resolved scale/domain: 1/2/5*10^k ticks for
+-- base-10 logs, pure 2^k for base-2 logs (when enough exist inside the
+-- domain), else even spacing in domain space.
+gridValuesFor :: ScaleMode -> Double -> Double -> [Double]
+gridValuesFor scale dLo dSpan =
+    let logTicks = case scale of
+            ScaleLog10 ->
+                [ m * 10 ^^ k
+                | k <- [floor dLo :: Int .. ceiling dHi]
+                , m <- [1, 2, 5 :: Double]
+                , let d = logBase 10 m + fromIntegral k
+                , d > dLo + dSpan * 0.01
+                , d < dHi - dSpan * 0.01
+                ]
+            ScaleLog2 ->
+                [ 2 ^^ k
+                | k <- [floor dLo :: Int .. ceiling dHi]
+                , let d = fromIntegral k
+                , d > dLo + dSpan * 0.01
+                , d < dHi - dSpan * 0.01
+                ]
+            _ -> []
+     in case scale of
+            ScaleLinear -> evenSpacing
+            _ | length logTicks >= 3 -> take 8 logTicks
+            _ -> evenSpacing
+  where
+    dHi = dLo + dSpan
+    evenSpacing = [domainToValue (dLo + dSpan * fromIntegral i / 4) | i <- [0 .. 4] :: [Int]]
+    domainToValue d = case scale of
+        ScaleLinear -> d
+        ScaleLog2 -> 2 ** d
+        _ -> 10 ** d
+
+-- Value formatting with zabbix-style unit awareness. Bytes scale
+-- 1024-based into KB..PB, seconds into s/m/h/d compounds, everything
+-- else gets a compact plain number (K/M/G/T for magnitudes) with the
+-- unit appended when known. Decimal only — `show 0.05` would render
+-- "5.0e-2".
+formatWithUnits :: Maybe Text -> Double -> Text
+formatWithUnits mUnits v = case fmap Text.toLower mUnits of
+    Just "b" -> scaledSuffix 1024 ["B", "KB", "MB", "GB", "TB", "PB"] v
+    Just "bytes" -> scaledSuffix 1024 ["B", "KB", "MB", "GB", "TB", "PB"] v
+    Just "s" -> humanSeconds v
+    Just "uptime" -> humanSeconds v
+    Just "%" -> formatPlain v <> "%"
+    Just "" -> formatPlain v
+    Just u -> formatPlain v <> " " <> u
+    Nothing -> formatPlain v
+
+formatPlain :: Double -> Text
+formatPlain v
+    | abs v >= 1e12 = trimZeros (Text.pack (printf "%.1fT" (v / 1e12)))
+    | abs v >= 1e9 = trimZeros (Text.pack (printf "%.1fG" (v / 1e9)))
+    | abs v >= 1e6 = trimZeros (Text.pack (printf "%.1fM" (v / 1e6)))
+    | abs v >= 1e4 = trimZeros (Text.pack (printf "%.1fK" (v / 1e3)))
+    | abs v >= 1000 = tshow (round v :: Integer)
+    | abs v >= 1 = trimZeros (Text.pack (printf "%.2f" v))
+    | otherwise = trimZeros (Text.pack (printf "%.4f" v))
+  where
+    trimZeros t =
+        let t' = Text.dropWhileEnd (== '0') t
+         in if Text.isSuffixOf "." t' then Text.dropEnd 1 t' else t'
+
+-- CorePrelude's head/!! are Maybe-returning; pattern-match instead.
+scaledSuffix :: Double -> [Text] -> Double -> Text
+scaledSuffix _ suffixes v
+    | v == 0 = case suffixes of (s0 : _) -> "0 " <> s0; [] -> "0"
+scaledSuffix base suffixes v = case drop e suffixes of
+    (s : _) -> trimZeros (Text.pack (printf "%.1f" scaled)) <> " " <> s
+    [] -> trimZeros (Text.pack (printf "%.1f" v))
+  where
+    e = max 0 (min (length suffixes - 1) (floor (logBase base (abs v)) :: Int))
+    scaled = v / (base ^^ e)
+    trimZeros t =
+        let t' = Text.dropWhileEnd (== '0') t
+         in if Text.isSuffixOf "." t' then Text.dropEnd 1 t' else t'
+
+humanSeconds :: Double -> Text
+humanSeconds v
+    | v < 0 = "-" <> humanSeconds (abs v)
+    | v < 60 = formatPlain v <> "s"
+    | v < 3600 = formatPlain (v / 60) <> "m"
+    | v < 86400 = formatPlain (v / 3600) <> "h"
+    | otherwise =
+        let days = floor (v / 86400) :: Int
+            hours = floor ((v - fromIntegral days * 86400) / 3600) :: Int
+         in tshow days <> "d " <> tshow hours <> "h"
 
 -- ---------------------------------------------------------------------------
 -- Stacked vertical bar chart (the /reports volume widget)

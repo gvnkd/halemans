@@ -1,9 +1,18 @@
 module Application.Service.MetricChart (
     MetricSeries,
     MetricWindow (..),
+    MetricChartData (..),
+    MetricSeriesInfo (..),
+    metricSeriesInfo,
     seriesChartSvg,
+    chartDataSvg,
+    chartHoverJson,
+    chartRenderMeta,
     metricWindowFor,
+    metricWindowForRange,
+    parseScaleParam,
     fetchAlertMetricSeries,
+    thresholdsFromExpression,
     downsample,
     missingRanges,
 ) where
@@ -21,14 +30,17 @@ import Control.Exception (SomeException, try)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (FromJSON, parseMaybe)
+import Data.Char (isDigit)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Text as Text
 import qualified Data.Time.Clock.POSIX as POSIX
 import qualified Data.Time.Format as TimeFormat
+import qualified Data.Vector as Vector
 import Generated.Types
 import IHP.ModelSupport (Id' (..), ModelContext)
 import IHP.Prelude
 import System.Environment (lookupEnv)
+import Text.Read (readMaybe, reads)
 import qualified "cryptonite" Crypto.Hash as CryptoHash
 
 -- Alert detail metric chart. Series come from the alert's own rule re-run as
@@ -62,6 +74,48 @@ metricWindowFor source alert now =
         Just resolvedAt -> min now (addUTCTime (trail * 60) resolvedAt)
         Nothing -> now
 
+-- SRE-selected relative windows (the chart's range control): "1h", "6h",
+-- "24h", "7d" end at now; anything else (including "alert" and missing)
+-- falls back to the alert-centric metricWindowFor.
+metricWindowForRange :: Source -> Alert -> UTCTime -> Text -> MetricWindow
+metricWindowForRange source alert now range = case range of
+    "1h" -> rel 1
+    "6h" -> rel 6
+    "24h" -> rel 24
+    "7d" -> rel (7 * 24)
+    _ -> metricWindowFor source alert now
+  where
+    rel hours = MetricWindow (addUTCTime (negate (fromIntegral hours * 3600)) now) now maxPoints
+    maxPoints = fromMaybe 500 (metricsCfg source "maxPoints")
+
+-- The chart's scale control: "linear"/"log10"/"log2" select a mode
+-- explicitly ("log" is accepted as log10), everything else
+-- (missing/unknown/"auto") lets the widget pick from the data spread.
+parseScaleParam :: Maybe Text -> Chart.ScaleMode
+parseScaleParam (Just "linear") = Chart.ScaleLinear
+parseScaleParam (Just "log10") = Chart.ScaleLog10
+parseScaleParam (Just "log2") = Chart.ScaleLog2
+parseScaleParam (Just "log") = Chart.ScaleLog10
+parseScaleParam _ = Chart.ScaleAuto
+
+-- One plotted series plus its zabbix item units ("B", "s", "%"), when the
+-- source reports them — the chart formats axis/tooltip values with them.
+data MetricSeriesInfo = MetricSeriesInfo
+    { msiSeries :: MetricSeries
+    , msiUnits :: Maybe Text
+    }
+    deriving (Eq, Show)
+
+metricSeriesInfo :: MetricSeries -> Maybe Text -> MetricSeriesInfo
+metricSeriesInfo = MetricSeriesInfo
+
+-- | Series plus reference lines for the alert's chart.
+data MetricChartData = MetricChartData
+    { mcdSeries :: [MetricSeriesInfo]
+    , mcdThresholds :: [Chart.ChartThreshold]
+    }
+    deriving (Eq, Show)
+
 -- Per-source overrides in sources.config.metrics (documented in
 -- design_docs/milestone_13.md): leadMinutes, trailMinutes, maxPoints,
 -- cacheRetentionDays (default 7), freshenSeconds (default 60).
@@ -79,20 +133,21 @@ metricsCfg source key = join results
             )
             source.config
 
--- | Fetch the series backing the alert's chart, source-type specific:
+-- | Fetch the data backing the alert's chart, source-type specific:
 -- grafana resolves the alert rule's expr through the datasource proxy,
 -- zabbix resolves the trigger's items and pulls raw history.get (no
--- trends.get needed). Both paths cache hourly buckets locally
+-- trends.get needed) plus the trigger expression for threshold lines.
+-- Both paths cache hourly buckets locally
 -- (Application.Service.MetricCache) and only re-fetch uncovered
 -- sub-ranges. Fails cleanly (Left) — the widget renders the message.
-fetchAlertMetricSeries :: (?modelContext :: ModelContext) => Source -> Alert -> MetricWindow -> IO (Either Text [MetricSeries])
+fetchAlertMetricSeries :: (?modelContext :: ModelContext) => Source -> Alert -> MetricWindow -> IO (Either Text MetricChartData)
 fetchAlertMetricSeries source alert window = do
     outcome <- try (fetchAlertMetricSeriesUnchecked source alert window)
     pure case outcome of
         Left ex -> Left (tshow (ex :: SomeException))
         Right result -> result
 
-fetchAlertMetricSeriesUnchecked :: (?modelContext :: ModelContext) => Source -> Alert -> MetricWindow -> IO (Either Text [MetricSeries])
+fetchAlertMetricSeriesUnchecked :: (?modelContext :: ModelContext) => Source -> Alert -> MetricWindow -> IO (Either Text MetricChartData)
 fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
     "grafana" -> do
         token <- tokenFromEnv
@@ -105,11 +160,12 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                     Left err -> pure (Left err)
                     Right (datasourceUid, expr) -> do
                         let digest = tshow (CryptoHash.hashWith CryptoHash.SHA256 (cs expr :: ByteString))
-                        forEachSeries
-                            source
-                            (\name -> "g:" <> datasourceUid <> ":" <> digest <> ":" <> name)
-                            (\from to -> dsQueryRange source.baseUrl token datasourceUid expr from to window.mwMaxPoints)
-                            window
+                        fmap (\series -> MetricChartData [metricSeriesInfo s Nothing | s <- series] [])
+                            <$> forEachSeries
+                                source
+                                (\name -> "g:" <> datasourceUid <> ":" <> digest <> ":" <> name)
+                                (\from to -> dsQueryRange source.baseUrl token datasourceUid expr from to window.mwMaxPoints)
+                                window
     "zabbix" -> do
         token <- tokenFromEnv
         case token of
@@ -125,6 +181,10 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                             case numericItems of
                                 [] -> pure (Left "No numeric metric for this trigger")
                                 _ -> do
+                                    let thresholds =
+                                            [ Chart.ChartThreshold v ("trigger threshold " <> formatThreshold v)
+                                            | v <- nub (concatMap (thresholdsFromExpression . ztiExpression) items)
+                                            ]
                                     perItem <- forM numericItems \item -> do
                                         pointsResult <-
                                             cachedSeries
@@ -132,8 +192,8 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                                                 ("z:" <> item.ztiItemId)
                                                 window
                                                 (\from to -> historyGet source.baseUrl token item.ztiItemId (historyTable item) (posixFloor from) (posixCeil to) historyPageLimit)
-                                        pure ((\points -> MetricSeries (seriesLabel item) (limitPoints window points)) <$> pointsResult)
-                                    pure (sequenceEither perItem)
+                                        pure ((\points -> metricSeriesInfo (MetricSeries (seriesLabel item) (limitPoints window points)) (itemUnits item)) <$> pointsResult)
+                                    pure ((\infos -> MetricChartData infos thresholds) <$> sequenceEither perItem)
     _ -> pure (Left "Metrics are only available for Grafana- and Zabbix-sourced alerts")
   where
     tokenFromEnv :: IO (Maybe Text)
@@ -148,6 +208,9 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
         if Text.null item.ztiUnits
             then item.ztiName
             else item.ztiName <> " (" <> item.ztiUnits <> ")"
+    -- Zabbix "B" units mean bytes; "" means plain. Anything else ("s",
+    -- "ms", "bps", custom) passes through to the formatter.
+    itemUnits item = if Text.null item.ztiUnits then Nothing else Just item.ztiUnits
 
 -- Grafana frames arrive as several named series; each gets its own cache
 -- key, gap fetch, and merge. Left short-circuits the whole widget.
@@ -278,7 +341,109 @@ posixCeil t = ceiling (POSIX.utcTimeToPOSIXSeconds t)
 -- Application.Service.Chart (fixed frame, CSS-class theme, tooltips).
 seriesChartSvg :: [MetricSeries] -> Text
 seriesChartSvg series =
-    Chart.lineChartSvg [Chart.LineSeries s.seriesName s.seriesPoints | s <- series]
+    Chart.lineChartSvg [Chart.LineSeries s.seriesName s.seriesPoints Nothing | s <- series]
+
+-- | Full chart render: series plus thresholds, with the requested scale.
+chartDataSvg :: Chart.ScaleMode -> MetricChartData -> Text
+chartDataSvg scale data_ =
+    Chart.lineChartSvgWith (chartOptions scale data_) lineSeries
+  where
+    lineSeries = toLineSeries data_
+
+-- | Hover-tooltip payload: per series the points as [epochSeconds, raw,
+-- display] triples (display is the unit-aware formatted value, so the
+-- browser shows "5.3 GB" without unit logic in JS) plus the chart layout
+-- (scale, padded domains, plot strip) so the cursor position maps back to
+-- the exact server-rendered coordinates for hit-testing.
+chartHoverJson :: MetricChartData -> Text
+chartHoverJson data_ =
+    cs (Aeson.encode [seriesJson s | s <- data_.mcdSeries])
+  where
+    seriesJson s =
+        Aeson.object
+            [ "name" Aeson..= s.msiSeries.seriesName
+            , "points" Aeson..= map (pointJson s.msiUnits) s.msiSeries.seriesPoints
+            ]
+    pointJson units (t, v) =
+        Aeson.Array
+            ( Vector.fromList
+                [ Aeson.toJSON (posix t)
+                , Aeson.toJSON v
+                , Aeson.toJSON (Chart.formatWithUnits units v)
+                ]
+            )
+
+-- (scale text, padded time domain, padded value domain, plot x strip)
+chartRenderMeta :: Chart.ScaleMode -> MetricChartData -> (Text, (Double, Double), (Double, Double), (Double, Double))
+chartRenderMeta scale data_ =
+    (scaleText layout.clScale, layout.clTimeDomain, layout.clValueDomain, (layout.clPlotLeft, layout.clPlotRight))
+  where
+    layout = Chart.lineChartLayout (chartOptions scale data_) (toLineSeries data_)
+    scaleText Chart.ScaleLinear = "linear"
+    scaleText Chart.ScaleLog10 = "log10"
+    scaleText Chart.ScaleLog2 = "log2"
+    scaleText Chart.ScaleAuto = "linear"
+
+chartOptions :: Chart.ScaleMode -> MetricChartData -> Chart.LineChartOptions
+chartOptions scale data_ = Chart.LineChartOptions scale data_.mcdThresholds
+
+toLineSeries :: MetricChartData -> [Chart.LineSeries]
+toLineSeries data_ = [Chart.LineSeries s.msiSeries.seriesName s.msiSeries.seriesPoints s.msiUnits | s <- data_.mcdSeries]
+
+-- Threshold constants out of a zabbix trigger expression. Expressions
+-- compare item functions against constants: "last(/h/k)>70",
+-- "{h:k.last()}>=80 and {h:k2.avg(5m)}<5"; the constants become reference
+-- lines. {$MACRO} right-hand sides are unresolvable here and skipped, as
+-- are non-numeric string comparisons (={#...}).
+thresholdsFromExpression :: Text -> [Double]
+thresholdsFromExpression = go
+  where
+    go :: Text -> [Double]
+    go t = case Text.uncons t of
+        Nothing -> []
+        Just (c, rest)
+            | c == '>' || c == '<' || c == '=' ->
+                let (afterOp, consumedTwo) = case Text.uncons rest of
+                        Just ('=', after) -> (after, True)
+                        Just ('>', after) | c == '<' -> (after, True) -- <>
+                        _ -> (rest, False)
+                    -- "=#..." is a string comparison, not numeric
+                    isStringEq = c == '=' && not consumedTwo && maybe False ((== '#') . fst) (Text.uncons afterOp)
+                 in (if isStringEq then [] else parseConstant afterOp) ++ go afterOp
+            | otherwise -> go rest
+    parseConstant :: Text -> [Double]
+    parseConstant t0 =
+        let t1 = Text.dropWhile isSpaceText t0
+         in case Text.uncons t1 of
+                Just (c, _)
+                    | isDigitChar c || c == '-' || c == '.' ->
+                        let (numText, afterNum) = Text.span isNumberChar t1
+                            (mult, _) = Text.span isSuffixChar afterNum
+                         in case readScaled numText mult of
+                                Just v -> [v]
+                                Nothing -> []
+                _ -> []
+    isSpaceText c = c == ' ' || c == '\t'
+    isDigitChar c = isDigit c
+    isNumberChar c = isDigitChar c || c == '.' || c == '-' || c == '+'
+    isSuffixChar c = c == 'K' || c == 'M' || c == 'G' || c == 'T'
+    readScaled :: Text -> Text -> Maybe Double
+    readScaled numText suffix = do
+        base <- case reads (Text.unpack numText) of
+            [(v, "")] -> Just (v :: Double)
+            _ -> Nothing
+        pure (base * multiplier suffix)
+    multiplier :: Text -> Double
+    multiplier "K" = 1e3
+    multiplier "M" = 1e6
+    multiplier "G" = 1e9
+    multiplier "T" = 1e12
+    multiplier _ = 1
+
+formatThreshold :: Double -> Text
+formatThreshold v
+    | v == fromIntegral (round v :: Integer) = tshow (round v :: Integer)
+    | otherwise = tshow v
 
 posix :: UTCTime -> Double
 posix = realToFrac . POSIX.utcTimeToPOSIXSeconds

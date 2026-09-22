@@ -104,9 +104,28 @@ instance View ShowView where
                     <section class="card mb-3" data-testid="metric-panel">
                         <div class="card-body">
                             <h5 class="card-title">{tr "Metrics"}</h5>
-                            <button type="button" class="btn btn-sm btn-ghost" data-testid="metric-chart-load"
-                                data-metric-chart-url={pathTo (RenderMetricChartAction alert.id)}
-                                data-metric-chart-target="metric-chart-container">{tr "Show metrics"}</button>
+                            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                                <label class="text-muted small mb-0" for="metric-chart-range">{tr "Range"}</label>
+                                <select id="metric-chart-range" class="form-select form-select-sm w-auto" data-testid="metric-chart-range">
+                                    <option value="alert" selected="selected">{tr "Alert window"}</option>
+                                    <option value="1h">{tr "Past hour"}</option>
+                                    <option value="6h">{tr "Past 6 hours"}</option>
+                                    <option value="24h">{tr "Past 24 hours"}</option>
+                                    <option value="7d">{tr "Past week"}</option>
+                                </select>
+                                <label class="text-muted small mb-0" for="metric-chart-scale">{tr "Scale"}</label>
+                                <select id="metric-chart-scale" class="form-select form-select-sm w-auto" data-testid="metric-chart-scale">
+                                    <option value="auto" selected="selected">{tr "Auto"}</option>
+                                    <option value="linear">{tr "Linear"}</option>
+                                    <option value="log10">{tr "Log10"}</option>
+                                    <option value="log2">{tr "Log2"}</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-ghost" data-testid="metric-chart-load"
+                                    data-metric-chart-url={pathTo (RenderMetricChartAction alert.id)}
+                                    data-metric-chart-target="metric-chart-container"
+                                    data-label-open={tr "Show metrics"}
+                                    data-label-close={tr "Close metrics"}>{tr "Show metrics"}</button>
+                            </div>
                             <div id="metric-chart-container" class="metric-chart-container" data-testid="metric-chart-container"></div>
                         </div>
                     </section>

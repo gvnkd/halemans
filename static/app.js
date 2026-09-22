@@ -435,30 +435,148 @@
     });
 })();
 
-// [data-metric-chart-url] buttons lazy-load the alert metric chart: one fetch
-// into the target container, then the button goes away (one shot per page
-// load; the fetch re-runs the upstream query each time).
+// [data-metric-chart-url] buttons lazy-load the alert metric chart into the
+// target container and then toggle to a close button; the range/scale
+// selects (#metric-chart-range, #metric-chart-scale) become query params and
+// re-fetch the chart on change while it is open (window switches without a
+// page reload). The chart SVG gets a cursor-tracking hover tooltip built
+// from the data-chart-series / data-chart-tlo/thi payload the fragment
+// embeds (points as [epochSeconds, value]).
 (function () {
-    document.addEventListener('click', function (event) {
-        var btn = event.target.closest && event.target.closest('[data-metric-chart-url]');
-        if (!btn) return;
-        event.preventDefault();
-        var target = document.getElementById(btn.getAttribute('data-metric-chart-target'));
-        if (!target) return;
-        btn.disabled = true;
+    function chartParams() {
+        var p = [];
+        var range = document.getElementById('metric-chart-range');
+        var scale = document.getElementById('metric-chart-scale');
+        if (range && range.value !== 'alert') p.push('range=' + encodeURIComponent(range.value));
+        if (scale && scale.value !== 'auto') p.push('scale=' + encodeURIComponent(scale.value));
+        return p.length ? '?' + p.join('&') : '';
+    }
+    function loadChart(url, target, btn) {
+        if (btn) btn.disabled = true;
         target.textContent = '…';
-        fetch(btn.getAttribute('data-metric-chart-url'), { headers: { 'X-Requested-With': 'fetch' } })
+        fetch(url + chartParams(), { headers: { 'X-Requested-With': 'fetch' } })
             .then(function (response) {
                 if (!response.ok) throw new Error('http ' + response.status);
                 return response.text();
             })
             .then(function (html) {
                 target.innerHTML = html;
-                btn.remove();
+                target.setAttribute('data-metric-chart-url', url);
+                attachChartTooltip(target);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.setAttribute('data-metric-chart-open', '1');
+                    btn.textContent = btn.getAttribute('data-label-close') || 'Close metrics';
+                }
             })
             .catch(function () {
                 target.textContent = '';
-                btn.disabled = false;
+                if (btn) btn.disabled = false;
             });
+    }
+    function closeChart(target, btn) {
+        target.innerHTML = '';
+        target.removeAttribute('data-metric-chart-url');
+        btn.removeAttribute('data-metric-chart-open');
+        btn.textContent = btn.getAttribute('data-label-open') || 'Show metrics';
+    }
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+    function formatTipTime(t, withDate) {
+        var d = new Date(t * 1000);
+        var hms = pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+        if (!withDate) return hms;
+        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + hms;
+    }
+    function attachChartTooltip(container) {
+        var host = container.querySelector('[data-chart-series]') || container;
+        var svg = host.querySelector('svg');
+        var raw = host.getAttribute('data-chart-series');
+        var tLo = parseFloat(host.getAttribute('data-chart-tlo'));
+        var tHi = parseFloat(host.getAttribute('data-chart-thi'));
+        var yLo = parseFloat(host.getAttribute('data-chart-ylo'));
+        var yHi = parseFloat(host.getAttribute('data-chart-yhi'));
+        var scale = host.getAttribute('data-chart-scale') || 'linear';
+        var plotLeft = parseFloat(host.getAttribute('data-chart-plotleft')) || 60;
+        var plotRight = parseFloat(host.getAttribute('data-chart-plotright')) || 870;
+        if (!svg || !raw || isNaN(tLo) || isNaN(tHi) || isNaN(yLo) || isNaN(yHi)) return;
+        var series;
+        try { series = JSON.parse(raw); } catch (e) { return; }
+        if (!series.length) return;
+        // viewBox constants mirrored from Application/Service/Chart.hs
+        var plotW = plotRight - plotLeft;
+        var plotBottom = 34, plotTop = 218; // frameH 250 - legend 24 - 8
+        var span = tHi - tLo;
+        var ySpan = yHi - yLo;
+        var withDate = span > 2 * 86400;
+        function toDom(v) {
+            if (scale === 'linear') return v;
+            return Math.log(Math.max(v, 1e-12)) / Math.log(scale === 'log2' ? 2 : 10);
+        }
+        function pointY(v) {
+            var y = plotBottom + (toDom(v) - yLo) / ySpan * (plotTop - plotBottom);
+            return Math.min(plotTop, Math.max(plotBottom, y));
+        }
+        var tip = document.createElement('div');
+        tip.className = 'metric-chart-tooltip';
+        host.appendChild(tip);
+        svg.addEventListener('mousemove', function (event) {
+            var rect = svg.getBoundingClientRect();
+            var vx = (event.clientX - rect.left) / rect.width * 900;
+            // svg y grows downward, viewBox y is up: flip
+            var vy = (rect.height - (event.clientY - rect.top)) / rect.height * 250;
+            if (vx < plotLeft || vx > plotRight || vy < plotBottom - 20 || vy > plotTop + 20) {
+                tip.style.display = 'none';
+                return;
+            }
+            var t = tLo + (vx - plotLeft) / plotW * span;
+            // tolerances: nearest sample within ~8 units horizontally AND
+            // ~14 vertically — points close in x but far apart in y no
+            // longer fight over the tooltip (no flicker)
+            var maxGap = span / plotW * 8;
+            var rows = [];
+            for (var i = 0; i < series.length; i++) {
+                var pts = series[i].points;
+                if (!pts.length) continue;
+                var lo = 0, hi = pts.length - 1;
+                while (hi - lo > 1) {
+                    var mid = (lo + hi) >> 1;
+                    if (pts[mid][0] < t) lo = mid; else hi = mid;
+                }
+                var near = Math.abs(pts[lo][0] - t) <= Math.abs(pts[hi][0] - t) ? lo : hi;
+                if (Math.abs(pts[near][0] - t) > maxGap) continue;
+                if (Math.abs(pointY(pts[near][1]) - vy) > 14) continue;
+                rows.push({ name: series[i].name, value: pts[near][2] });
+            }
+            if (!rows.length) { tip.style.display = 'none'; return; }
+            var lines = [formatTipTime(t, withDate)];
+            for (var j = 0; j < rows.length; j++) {
+                lines.push(rows[j].name + ': ' + rows[j].value);
+            }
+            tip.textContent = lines.join('\n');
+            tip.style.display = 'block';
+            var x = event.clientX - rect.left + 14;
+            var y = event.clientY - rect.top + 12;
+            if (x + 220 > rect.width) x = event.clientX - rect.left - 220;
+            tip.style.left = x + 'px';
+            tip.style.top = y + 'px';
+        });
+        svg.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+    }
+    document.addEventListener('click', function (event) {
+        var btn = event.target.closest && event.target.closest('button[data-metric-chart-url]');
+        if (!btn) return;
+        event.preventDefault();
+        var target = document.getElementById(btn.getAttribute('data-metric-chart-target'));
+        if (!target) return;
+        if (btn.getAttribute('data-metric-chart-open')) closeChart(target, btn);
+        else loadChart(btn.getAttribute('data-metric-chart-url'), target, btn);
+    });
+    document.addEventListener('change', function (event) {
+        var sel = event.target;
+        if (!sel.id || (sel.id !== 'metric-chart-range' && sel.id !== 'metric-chart-scale')) return;
+        var container = document.getElementById('metric-chart-container');
+        if (!container || !container.querySelector('svg')) return; // not open yet
+        var url = container.getAttribute('data-metric-chart-url');
+        if (url) loadChart(url, container, null);
     });
 })();

@@ -496,6 +496,28 @@ a:hover { color: var(--accent-hover); }
 /* Alert metric chart (alert detail lazy-load widget): same theme-token
    approach as the report charts; lines stroke, legend chips fill. */
 .metric-chart svg { display: block; width: 100%; height: auto; }
+/* Charts inherit the themed font family (diagrams-svg emits none, so text
+   fell back to the browser default). Size is pinned server-side
+   (textD/fontSizeL) so envelope margins see the real glyph extents; the
+   report bars compute per-bucket sizes server-side too. */
+.metric-chart svg text { font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
+.report-chart svg text { font-family: var(--font-sans); }
+.metric-chart { position: relative; }
+.metric-chart-tooltip {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    z-index: 20;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
 .metric-chart .chart-text { fill: var(--text); }
 .metric-chart .chart-text-muted { fill: var(--text-muted); }
 .metric-chart .chart-grid { stroke: var(--border); fill: none; }
@@ -507,6 +529,11 @@ a:hover { color: var(--accent-hover); }
 .metric-chart .chart-dot-2 { fill: var(--severity-info); }
 .metric-chart .chart-dot-3 { fill: var(--severity-warning); }
 .metric-chart .chart-dot-4 { fill: var(--text-muted); }
+/* threshold lines use the brand signal orange — the severity palette is
+   taken by the metric series (line-1 is severity-critical red), so a
+   red threshold would be indistinguishable */
+.metric-chart .chart-threshold { stroke: var(--brand-signal); fill: none; }
+.metric-chart .chart-threshold-label { fill: var(--brand-signal); }
 .metric-chart-container { margin-top: 0.5rem; }
 
 /* shared width limits replacing per-view inline styles */

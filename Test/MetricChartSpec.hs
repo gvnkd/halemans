@@ -6,6 +6,7 @@ import Application.Connector.GrafanaMetrics (
     ruleUidFromSourceUrl,
     seriesFromResponse,
  )
+import qualified Application.Service.Chart as Chart
 import qualified Application.Service.MetricChart as MetricChart
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Text as Text
@@ -134,6 +135,117 @@ spec = do
             Text.isInfixOf "<circle" svg `shouldBe` False
             Text.isInfixOf "chart-line-1" svg `shouldBe` True
 
+    describe "chartDataSvg" do
+        it "renders threshold lines with labels" do
+            let series = [MetricChart.metricSeriesInfo (MetricSeries "cpu" [(utc "2026-09-19T10:00:00Z", 50.0), (utc "2026-09-19T10:01:00Z", 60.0)]) Nothing]
+                data_ = MetricChart.MetricChartData series [Chart.ChartThreshold 70 "trigger threshold 70"]
+                svg = MetricChart.chartDataSvg Chart.ScaleAuto data_
+            Text.isInfixOf "chart-threshold" svg `shouldBe` True
+            Text.isInfixOf "trigger threshold 70" svg `shouldBe` True
+        it "log scale handles wide magnitude spreads without NaN" do
+            let mkInfo name pts = MetricChart.metricSeriesInfo (MetricSeries name pts) Nothing
+                series =
+                    [ mkInfo "big" [(addUTCTime (fromIntegral (i * 60)) t0, 1000 + fromIntegral i) | i <- [0 .. 20 :: Int]]
+                    , mkInfo "small" [(addUTCTime (fromIntegral (i * 60)) t0, 1 + fromIntegral i * 0.1) | i <- [0 .. 20 :: Int]]
+                    ]
+                svg = MetricChart.chartDataSvg Chart.ScaleLog10 (MetricChart.MetricChartData series [])
+            Text.isInfixOf "NaN" svg `shouldBe` False
+            Text.isInfixOf "Infinity" svg `shouldBe` False
+        it "log2 scale renders power-of-two ticks" do
+            let series = [MetricChart.metricSeriesInfo (MetricSeries "m" [(addUTCTime (fromIntegral (i * 60)) t0, 2 ^^ i) | i <- [0 .. 8 :: Int]]) Nothing]
+                svg = MetricChart.chartDataSvg Chart.ScaleLog2 (MetricChart.MetricChartData series [])
+            Text.isInfixOf "NaN" svg `shouldBe` False
+            Text.isInfixOf "Infinity" svg `shouldBe` False
+            hasScientificNotation svg `shouldBe` False
+        it "axis labels never use scientific notation" do
+            let series = [MetricChart.metricSeriesInfo (MetricSeries "m" [(addUTCTime (fromIntegral (i * 60)) t0, 0.05 * fromIntegral i) | i <- [0 .. 20 :: Int]]) Nothing]
+                svg = MetricChart.chartDataSvg Chart.ScaleLinear (MetricChart.MetricChartData series [])
+            hasScientificNotation svg `shouldBe` False
+        it "unit-aware axis labels shorten bytes and widen the left margin" do
+            let series = [MetricChart.metricSeriesInfo (MetricSeries "disk" [(addUTCTime (fromIntegral (i * 3600)) t0, 5.5e9 + fromIntegral i * 1e6) | i <- [0 .. 20 :: Int]]) (Just "B")]
+                svg = MetricChart.chartDataSvg Chart.ScaleLinear (MetricChart.MetricChartData series [])
+                (_, _, _, (plotLeft, _)) = MetricChart.chartRenderMeta Chart.ScaleLinear (MetricChart.MetricChartData series [])
+            Text.isInfixOf "GB" svg `shouldBe` True
+            plotLeft `shouldSatisfy` (>= 60)
+        it "log scale clamps non-positive samples to the baseline" do
+            let series = [MetricChart.metricSeriesInfo (MetricSeries "mixed" [(addUTCTime (fromIntegral (i * 60)) t0, v) | (i, v) <- zip [0 ..] [5, 0, -3, 50, 500 :: Double]]) Nothing]
+                svg = MetricChart.chartDataSvg Chart.ScaleLog10 (MetricChart.MetricChartData series [])
+            Text.isInfixOf "NaN" svg `shouldBe` False
+            Text.isInfixOf "Infinity" svg `shouldBe` False
+        it "emits hover payload points and the padded time domain" do
+            let series = [MetricChart.metricSeriesInfo (MetricSeries "m" [(addUTCTime (fromIntegral (i * 60)) t0, fromIntegral i) | i <- [0 .. 5 :: Int]]) Nothing]
+                data_ = MetricChart.MetricChartData series []
+                json = MetricChart.chartHoverJson data_
+                (_, (tLo, tHi), (yLo, yHi), _) = MetricChart.chartRenderMeta Chart.ScaleAuto data_
+            Text.isInfixOf "\"name\":\"m\"" json `shouldBe` True
+            Text.isInfixOf "\"points\"" json `shouldBe` True
+            tHi - tLo `shouldSatisfy` (> 300)
+            yHi - yLo `shouldSatisfy` (> 0.1)
+
+    describe "formatWithUnits" do
+        it "scales bytes 1024-based" do
+            Chart.formatWithUnits (Just "B") 5.5e9 `shouldBe` "5.1 GB"
+            Chart.formatWithUnits (Just "B") 2048 `shouldBe` "2 KB"
+            Chart.formatWithUnits (Just "B") 0 `shouldBe` "0 B"
+        it "turns seconds into compounds" do
+            Chart.formatWithUnits (Just "s") 45 `shouldBe` "45s"
+            Chart.formatWithUnits (Just "s") 300 `shouldBe` "5m"
+            Chart.formatWithUnits (Just "s") 7200 `shouldBe` "2h"
+            Chart.formatWithUnits (Just "s") 180000 `shouldBe` "2d 2h"
+        it "appends known units and compacts big plain numbers" do
+            Chart.formatWithUnits (Just "%") 66.7 `shouldBe` "66.7%"
+            Chart.formatWithUnits (Just "ms") 42 `shouldBe` "42 ms"
+            Chart.formatWithUnits Nothing 123456789 `shouldBe` "123.5M"
+            Chart.formatWithUnits Nothing 0.05 `shouldBe` "0.05"
+
+    describe "thresholdsFromExpression" do
+        it "extracts constants from new-style functions" do
+            MetricChart.thresholdsFromExpression "last(/h/system.cpu.load)>80"
+                `shouldBe` [80]
+        it "extracts constants from old-style braces and multiple clauses" do
+            MetricChart.thresholdsFromExpression "{h:k.last()}>=70 and {h:k2.last()}<5"
+                `shouldBe` [70, 5]
+        it "supports <=, <>, negative and decimal constants" do
+            MetricChart.thresholdsFromExpression "{h:k.last()}<=0.5 or {h:k2.last()}<>-3"
+                `shouldBe` [0.5, -3]
+        it "supports K/M/G/T suffixes" do
+            MetricChart.thresholdsFromExpression "last(/h/net.if.in)>1.5K"
+                `shouldBe` [1500]
+        it "skips macros and string comparisons" do
+            MetricChart.thresholdsFromExpression "last(/h/k)>{$THRESHOLD}"
+                `shouldBe` []
+            MetricChart.thresholdsFromExpression "last(/h/k)=#DOWN"
+                `shouldBe` []
+        it "skips time-looking constants after comparison operators" do
+            MetricChart.thresholdsFromExpression "{h:k.last(5m)}>70"
+                `shouldBe` [70]
+
+    describe "parseScaleParam" do
+        it "maps query params to scale modes" do
+            MetricChart.parseScaleParam (Just "linear") `shouldBe` Chart.ScaleLinear
+            MetricChart.parseScaleParam (Just "log10") `shouldBe` Chart.ScaleLog10
+            MetricChart.parseScaleParam (Just "log2") `shouldBe` Chart.ScaleLog2
+            MetricChart.parseScaleParam (Just "log") `shouldBe` Chart.ScaleLog10
+            MetricChart.parseScaleParam (Just "auto") `shouldBe` Chart.ScaleAuto
+            MetricChart.parseScaleParam Nothing `shouldBe` Chart.ScaleAuto
+            MetricChart.parseScaleParam (Just "bogus") `shouldBe` Chart.ScaleAuto
+
+    describe "metricWindowForRange" do
+        it "anchors relative ranges at now" do
+            let source = newRecord @Source
+                alert = newRecord @Alert
+                now = utc "2026-09-19T12:00:00Z"
+                window = MetricChart.metricWindowForRange source alert now "24h"
+            diffSeconds window.mwFrom (utc "2026-09-19T12:00:00Z") `shouldBe` -86400
+            diffSeconds window.mwTo now `shouldBe` 0
+            window.mwMaxPoints `shouldBe` 500
+        it "falls back to the alert window for unknown ranges" do
+            let source = newRecord @Source
+                alert = newRecord @Alert |> set #startedAt (Just (utc "2026-09-19T10:00:00Z"))
+                now = utc "2026-09-19T10:30:00Z"
+                window = MetricChart.metricWindowForRange source alert now "bogus"
+            diffSeconds window.mwFrom (utc "2026-09-19T09:00:00Z") `shouldBe` 0
+
     describe "downsample" do
         it "passes through when under the point cap" do
             let points = [(utc "2026-09-19T10:00:00Z", 1.0), (utc "2026-09-19T10:01:00Z", 2.0)]
@@ -168,6 +280,11 @@ spec = do
             MetricChart.missingRanges 120 from farTo cached
                 `shouldBe` [(addUTCTime 1740 from, farTo)]
   where
+    -- scientific notation can only appear inside <text> labels; the
+    -- attribute soup ("stroke-linejoin", "fill-opacity") contains "e-"
+    -- substrings and would false-positive a raw "e-" search
+    hasScientificNotation svg =
+        any (Text.isInfixOf "e-") [label | frag <- drop 1 (Text.splitOn "<text" svg), let label = Text.takeWhile (/= '<') (Text.drop 1 (Text.dropWhile (/= '>') frag))]
     from = utc "2026-09-19T10:00:00Z"
     to = utc "2026-09-19T11:00:00Z"
     t0 = utc "2026-09-19T09:00:00Z"

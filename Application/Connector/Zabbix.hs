@@ -373,6 +373,7 @@ data ZabbixTriggerItem = ZabbixTriggerItem
     , ztiName :: Text
     , ztiValueType :: Text -- "0" float, "3" unsigned are numeric; others skipped
     , ztiUnits :: Text
+    , ztiExpression :: Text -- trigger-level expression (copied per item); may be ""
     }
     deriving (Eq, Show)
 
@@ -389,7 +390,7 @@ triggerItemsGet baseUrl token triggerIds = do
                 , "params"
                     .= Aeson.object
                         [ "triggerids" .= triggerIds
-                        , "output" .= (["triggerid"] :: [Text])
+                        , "output" .= (["triggerid", "expression"] :: [Text])
                         , "selectItems" .= (["itemid", "key_", "name", "value_type", "units"] :: [Text])
                         ]
                 ]
@@ -411,12 +412,14 @@ triggerItemsGet baseUrl token triggerIds = do
             , ztiName = name
             , ztiValueType = valueType
             , ztiUnits = units
+            , ztiExpression = triggerExpression
             }
         | value <- itemList trigger
         , Just (itemId, key, name, valueType, units) <- [itemOf value]
         ]
       where
         triggerId = fromMaybe "" (parseMaybe (Aeson.withObject "trigger" (.: "triggerid")) trigger)
+        triggerExpression = fromMaybe "" (parseMaybe (Aeson.withObject "trigger" (\o -> o .:? "expression" .!= "")) trigger)
     itemOf value = parseMaybe (Aeson.withObject "item" parseItem) value
     parseItem o = do
         itemId <- o .: "itemid"

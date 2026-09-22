@@ -1,7 +1,9 @@
 module Test.Integration.MetricChartSpec (spec) where
 
 import Application.Connector.GrafanaMetrics (MetricSeries (..))
-import Application.Service.MetricChart (fetchAlertMetricSeries, metricWindowFor, seriesChartSvg)
+import Application.Service.Chart (ScaleMode (..))
+import qualified Application.Service.Chart as Chart
+import Application.Service.MetricChart (MetricChartData (..), MetricSeriesInfo (..), chartDataSvg, fetchAlertMetricSeries, metricWindowFor, seriesChartSvg)
 import Control.Lens ((^.))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
@@ -39,10 +41,10 @@ spec = do
             result <- fetchAlertMetricSeries source alert (metricWindowFor source alert now)
             case result of
                 Left err -> expectationFailure (Text.unpack err)
-                Right series -> do
-                    length series `shouldBe` 2
-                    map seriesName series `shouldBe` ["instance-1", "instance-2"]
-                    let svg = seriesChartSvg series
+                Right chartData -> do
+                    length chartData.mcdSeries `shouldBe` 2
+                    map (seriesName . msiSeries) chartData.mcdSeries `shouldBe` ["instance-1", "instance-2"]
+                    let svg = seriesChartSvg [msiSeries s | s <- chartData.mcdSeries]
                     Text.isInfixOf "<svg" svg `shouldBe` True
                     Text.isInfixOf "instance-1" svg `shouldBe` True
         it "returns Left for an unknown rule uid" do
@@ -77,11 +79,16 @@ spec = do
             result <- fetchAlertMetricSeries source alert (metricWindowFor source alert now)
             case result of
                 Left err -> expectationFailure (Text.unpack err)
-                Right series -> do
-                    map seriesName series `shouldBe` ["CPU load", "Memory utilization (%)"]
-                    let svg = seriesChartSvg series
+                Right chartData -> do
+                    map (seriesName . msiSeries) chartData.mcdSeries `shouldBe` ["CPU load", "Memory utilization (%)"]
+                    -- the mock item carries zabbix units through to the chart
+                    map msiUnits chartData.mcdSeries `shouldBe` [Nothing, Just "%"]
+                    -- the mock trigger expression carries constants 80 and 70
+                    map Chart.ctValue chartData.mcdThresholds `shouldMatchList` [80, 70]
+                    let svg = chartDataSvg ScaleAuto chartData
                     Text.isInfixOf "<svg" svg `shouldBe` True
                     Text.isInfixOf "CPU load" svg `shouldBe` True
+                    Text.isInfixOf "chart-threshold" svg `shouldBe` True
         it "serves a second view from the cache without re-hitting history.get" do
             baseUrl <- zabbixMockUrl
             suffix <- tshow <$> nextRandom

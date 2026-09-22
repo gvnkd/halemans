@@ -7,13 +7,14 @@ import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAler
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, validSortColumns)
 import qualified Application.Service.AlertList as AlertList
 import qualified Application.Service.Assets.Cache as AssetsCache
+import qualified Application.Service.Chart as Chart
 import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import Application.Service.DynTable (pageCountFor)
 import qualified Application.Service.Facets as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
 import qualified Application.Service.Jira.DbConfig as Jira
 import Application.Service.Llm.Queue (latestJobErrors)
-import Application.Service.MetricChart (fetchAlertMetricSeries, metricWindowFor, seriesChartSvg)
+import Application.Service.MetricChart (MetricChartData, chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -180,14 +181,17 @@ instance Controller AlertsController where
         requirePrivilege "view"
         alert <- fetch alertId
         now <- getCurrentTime
+        let rangeParam = paramOrNothing @Text "range"
+            scaleParam = paramOrNothing @Text "scale"
         chartHtml <- case alert.sourceId of
             Nothing -> pure (metricChartErrorHtml (tr "Alert has no source; cannot fetch metrics"))
             Just sourceId -> do
                 source <- fetch sourceId
-                result <- fetchAlertMetricSeries source alert (metricWindowFor source alert now)
+                let window = metricWindowForRange source alert now (fromMaybe "alert" rangeParam)
+                result <- fetchAlertMetricSeries source alert window
                 pure case result of
                     Left err -> metricChartErrorHtml (trp "Metrics unavailable: {error}" [("error", err)])
-                    Right series -> [hsx|<div class="metric-chart" data-testid="metric-chart-svg">{preEscapedToHtml (seriesChartSvg series)}</div>|]
+                    Right chartData -> metricChartHtml (parseScaleParam scaleParam) chartData
         respondAndExit (responseLBS status200 [("Content-Type", "text/html; charset=utf-8")] (cs (renderMarkupText chartHtml)))
     action AckAlertAction{alertId} = do
         requirePrivilege "ack"
@@ -322,3 +326,25 @@ metricChartErrorHtml message =
         {message}
     </div>
 |]
+
+-- Metric chart fragment: inline SVG plus the hover-tooltip payload (series
+-- points + the exact rendered layout, consumed by static/app.js). Values
+-- are JSON in attributes — hsx escapes the quotes for us.
+metricChartHtml :: Chart.ScaleMode -> MetricChartData -> Html
+metricChartHtml scale chartData =
+    [hsx|
+    <div class="metric-chart" data-testid="metric-chart-svg"
+        data-chart-series={seriesJson :: Text}
+        data-chart-scale={scaleText}
+        data-chart-tlo={tshow tLo}
+        data-chart-thi={tshow tHi}
+        data-chart-ylo={tshow yLo}
+        data-chart-yhi={tshow yHi}
+        data-chart-plotleft={tshow plotLeft}
+        data-chart-plotright={tshow plotRight}>
+        {preEscapedToHtml (chartDataSvg scale chartData)}
+    </div>
+|]
+  where
+    seriesJson = chartHoverJson chartData
+    (scaleText, (tLo, tHi), (yLo, yHi), (plotLeft, plotRight)) = chartRenderMeta scale chartData
