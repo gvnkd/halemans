@@ -23,7 +23,7 @@ import Control.Lens ((&), (.~), (^.))
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
-import Data.List (nubBy)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import IHP.Prelude
@@ -440,15 +440,18 @@ historyGet baseUrl token itemId historyType timeFrom timeTill pageLimit = do
     result <- go timeFrom []
     pure (map toUtcPoint . dedupPoints <$> result)
   where
+    -- acc is the accumulated points in reverse: prepending the reversed page
+    -- keeps each step O(pageLen) instead of the O(total) of acc ++ rows on
+    -- long histories.
     go cursor acc = do
         page <- historyPage cursor
         case page of
             Left err -> pure (Left err)
             Right rows ->
-                let acc' = acc ++ rows
+                let acc' = reverse (map toPair rows) ++ acc
                     nextCursor = maximum (map (fst . toPair) rows)
                  in if length rows < pageLimit || nextCursor <= cursor
-                        then pure (Right (map toPair acc'))
+                        then pure (Right (reverse acc'))
                         else go nextCursor acc'
     historyPage cursor = do
         let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
@@ -482,4 +485,6 @@ historyGet baseUrl token itemId historyType timeFrom timeTill pageLimit = do
             number = parseMaybe (Aeson.withObject "history" (.: "value")) value >>= readMaybe
          in (clock, fromMaybe 0 number :: Double)
     toUtcPoint (clock, value) = (posixSecondsToUTCTime (fromIntegral clock) :: UTCTime, value)
-    dedupPoints = nubBy (\a b -> fst a == fst b)
+    -- The pages overlap at the cursor second (time_from is inclusive);
+    -- first occurrence wins. nubBy is quadratic on week-range histories.
+    dedupPoints = Map.toAscList . Map.fromListWith (\new old -> old)

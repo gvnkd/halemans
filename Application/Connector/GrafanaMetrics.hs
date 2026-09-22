@@ -93,7 +93,7 @@ dsQueryRange baseUrl token datasourceUid expr from to maxPoints = do
     response <- postFollowing opts (cs (baseUrl <> "/api/ds/query")) body
     case eitherDecode (response ^. Wreq.responseBody) of
         Left err -> pure (Left (cs err))
-        Right value -> pure (seriesFromResponse value)
+        Right value -> pure (seriesFromResponse maxPoints value)
 
 utcToMs :: UTCTime -> Integer
 utcToMs t = floor (realToFrac (t `diffUTCTime` posixEpoch) * 1000 :: Double)
@@ -103,17 +103,19 @@ utcToMs t = floor (realToFrac (t `diffUTCTime` posixEpoch) * 1000 :: Double)
 -- Response decoding: {"results": {"A": {"status": 200, "frames": [...]}}}.
 -- Each frame carries schema.fields [Time, Value] and data.values as two
 -- parallel arrays (epoch-ms timestamps, sample values); multiple frames are
--- multiple series.
-seriesFromResponse :: Value -> Either Text [MetricSeries]
-seriesFromResponse value = do
+-- multiple series. maxPoints caps each decoded series: datasources may ignore
+-- maxDataPoints (or a recording rule may pre-aggregate densely), and an
+-- uncapped frame would blow the heap on a wide window.
+seriesFromResponse :: Int -> Value -> Either Text [MetricSeries]
+seriesFromResponse maxPoints value = do
     results <- maybe (Left "ds/query: missing results") Right (lookupKey "results" value)
     a <- maybe (Left "ds/query: missing result A") Right (lookupKey "A" results)
     frames <- maybe (Left "ds/query: missing frames") Right (lookupKey "frames" a >>= asArray)
-    let series = mapMaybe frameToSeries (Vector.toList frames)
+    let series = mapMaybe (frameToSeries maxPoints) (Vector.toList frames)
     if null series then Left "ds/query: no data frames" else Right series
 
-frameToSeries :: Value -> Maybe MetricSeries
-frameToSeries frame = do
+frameToSeries :: Int -> Value -> Maybe MetricSeries
+frameToSeries maxPoints frame = do
     schema <- lookupKey "schema" frame
     fields <- lookupKey "fields" schema >>= asArray
     valueField <- fields Vector.!? 1
@@ -123,15 +125,31 @@ frameToSeries frame = do
     times <- values Vector.!? 0 >>= asArray
     numbers <- values Vector.!? 1 >>= asArray
     let points =
-            [ (posixSecondsToUTCTime (realToFrac ms / 1000), v)
-            | (Just ms, Just v) <- zip (map asMs (Vector.toList times)) (map asDouble (Vector.toList numbers))
-            ]
+            thinPoints
+                maxPoints
+                [ (posixSecondsToUTCTime (realToFrac ms / 1000), v)
+                | (Just ms, Just v) <- zip (map asMs (Vector.toList times)) (map asDouble (Vector.toList numbers))
+                ]
     pure (MetricSeries name points)
   where
     asMs (Number n) = either (const Nothing) (Just . fromInteger) (floatingOrInteger n :: Either Double Integer)
     asMs _ = Nothing
     asDouble (Number n) = Just (realToFrac n)
     asDouble _ = Nothing
+
+-- | Stride-thin a series to at most maxPoints samples (first sample kept,
+-- then every stride-th). Defense against datasources ignoring maxDataPoints.
+thinPoints :: Int -> [(UTCTime, Double)] -> [(UTCTime, Double)]
+thinPoints maxPoints points
+    | maxPoints <= 0 = points
+    | length points <= maxPoints = points
+    | otherwise = go 0 points
+  where
+    stride = (length points + maxPoints - 1) `div` maxPoints
+    go _ [] = []
+    go i (p : rest)
+        | i `mod` stride == 0 = p : go (i + 1) rest
+        | otherwise = go (i + 1) rest
 
 lookupKey :: Text -> Value -> Maybe Value
 lookupKey k (Object o) = KeyMap.lookup (Key.fromText k) o

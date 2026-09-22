@@ -78,7 +78,7 @@ spec = do
                                         ]
                                 ]
                         ]
-            case seriesFromResponse response of
+            case seriesFromResponse 500 response of
                 Left err -> expectationFailure (Text.unpack err)
                 Right series -> do
                     map seriesName series `shouldBe` ["instance-1", "instance-2"]
@@ -86,8 +86,27 @@ spec = do
                     map (firstPointTime . seriesPoints) series
                         `shouldBe` [utc "1970-01-01T00:00:01Z", utc "1970-01-01T00:00:01Z"]
         it "fails on an empty results payload" do
-            seriesFromResponse (object ["results" .= object ["A" .= object ["status" .= (200 :: Int), "frames" .= ([] :: [Value])]]])
+            seriesFromResponse 500 (object ["results" .= object ["A" .= object ["status" .= (200 :: Int), "frames" .= ([] :: [Value])]]])
                 `shouldBe` Left "ds/query: no data frames"
+        it "thins frames denser than the point cap" do
+            let response =
+                    object
+                        [ "results"
+                            .= object
+                                [ "A"
+                                    .= object
+                                        [ "status" .= (200 :: Int)
+                                        , "frames"
+                                            .= [ responseFrame "instance-1" [1000, 2000, 3000, 4000, 5000, 6000, 7000] [1, 2, 3, 4, 5, 6, 7]
+                                               ]
+                                        ]
+                                ]
+                        ]
+            case seriesFromResponse 3 response of
+                Left err -> expectationFailure (Text.unpack err)
+                Right series -> do
+                    length series `shouldBe` 1
+                    map (map snd . seriesPoints) series `shouldBe` [[1, 4, 7]]
 
     describe "metricWindowFor" do
         it "defaults to 60m lead and runs to now for firing alerts" do

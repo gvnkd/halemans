@@ -32,6 +32,7 @@ import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (FromJSON, parseMaybe)
 import Data.Char (isDigit)
 import qualified Data.IntMap.Strict as IntMap
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Time.Clock.POSIX as POSIX
 import qualified Data.Time.Format as TimeFormat
@@ -118,7 +119,8 @@ data MetricChartData = MetricChartData
 
 -- Per-source overrides in sources.config.metrics (documented in
 -- design_docs/milestone_13.md): leadMinutes, trailMinutes, maxPoints,
--- cacheRetentionDays (default 7), freshenSeconds (default 60).
+-- maxSeries (default 8, grafana only), cacheRetentionDays (default 7),
+-- freshenSeconds (default 60).
 metricsCfg :: (FromJSON a) => Source -> Text -> Maybe a
 metricsCfg source key = join results
   where
@@ -212,8 +214,13 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
     -- "ms", "bps", custom) passes through to the formatter.
     itemUnits item = if Text.null item.ztiUnits then Nothing else Just item.ztiUnits
 
--- Grafana frames arrive as several named series; each gets its own cache
--- key, gap fetch, and merge. Left short-circuits the whole widget.
+-- One seed fetch covers the whole window and doubles as the gap-filler: the
+-- per-series cache merge draws missing sub-ranges from the seed instead of
+-- re-running the query per series. The old design re-fetched the full
+-- multi-frame response once per series, which is quadratic in the rule's
+-- frame count and OOMs the server on many-series exprs. The chart keeps at
+-- most maxSeries (sources.config.metrics.maxSeries, default 8) — a line
+-- chart can't usefully show more anyway. Left short-circuits the widget.
 forEachSeries ::
     (?modelContext :: ModelContext) =>
     Source ->
@@ -225,20 +232,19 @@ forEachSeries source seriesKey fetchRange window = do
     seed <- fetchRange window.mwFrom window.mwTo
     case seed of
         Left err -> pure (Left err)
-        Right series -> do
+        Right allSeries -> do
+            let series = take maxSeries allSeries
             perSeries <- forM series \s -> do
                 pointsResult <-
                     cachedSeries
                         source
                         (seriesKey s.seriesName)
                         window
-                        ( \from to ->
-                            fetchRange from to >>= \case
-                                Left err -> pure (Left err)
-                                Right fetched -> pure (Right (concat [f.seriesPoints | f <- fetched, f.seriesName == s.seriesName]))
-                        )
+                        (\from to -> pure (Right [p | p <- s.seriesPoints, fst p >= from, fst p <= to]))
                 pure ((\points -> s{seriesPoints = limitPoints window points}) <$> pointsResult)
             pure (sequenceEither perSeries)
+  where
+    maxSeries = fromMaybe 8 (metricsCfg source "maxSeries")
 
 -- Read cached coverage for [from, to], fetch only the missing sub-ranges,
 -- merge, and store the freshly fetched points. Closed buckets are immutable;
@@ -259,7 +265,7 @@ cachedSeries source seriesKey window fetchRange = do
         (err : _) -> pure (Left err)
         [] -> do
             let fetched = concat [points | Right points <- fetchedResults]
-                merged = nubBy (\a b -> fst a == fst b) (sortOn fst (cached ++ fetched))
+                merged = dedupPoints (cached ++ fetched)
             storeSeries (sourceUuid source) seriesKey fetched retentionDays
             pure (Right merged)
   where
@@ -314,14 +320,17 @@ limitPoints :: MetricWindow -> [(UTCTime, Double)] -> [(UTCTime, Double)]
 limitPoints window = downsample window.mwMaxPoints
 
 -- | Fixed-count time-bucket downsampling (mean per bucket), so a week of
--- 1-minute samples renders at maxPoints points without trends.get.
+-- 1-minute samples renders at maxPoints points without trends.get. Single
+-- strict pass over (sum, count) buckets — the previous fromListWith (++)
+-- copy-accumulated per bucket, which is quadratic on week-range zabbix
+-- history.
 downsample :: Int -> [(UTCTime, Double)] -> [(UTCTime, Double)]
 downsample maxPoints points
     | maxPoints <= 0 = points
     | length points <= maxPoints = points
     | otherwise =
-        [ (fromPosix (tMin + (fromIntegral idx + 0.5) * bucketDur), avg vals)
-        | (idx, vals) <- IntMap.toList (IntMap.fromListWith (++) [(bucketIdx t, [v]) | (t, v) <- points])
+        [ (fromPosix (tMin + (fromIntegral idx + 0.5) * bucketDur), s / fromIntegral c)
+        | (idx, (s, c)) <- IntMap.toList buckets
         ]
   where
     times = map fst points
@@ -329,7 +338,17 @@ downsample maxPoints points
     tMax = posix (maximum times)
     bucketDur = max 1e-9 ((tMax - tMin) / fromIntegral maxPoints)
     bucketIdx t = min (maxPoints - 1) (floor ((posix t - tMin) / bucketDur) :: Int)
-    avg vals = sum vals / fromIntegral (length vals)
+    buckets :: IntMap.IntMap (Double, Int)
+    buckets =
+        IntMap.fromListWithKey
+            (\_ (s1, c1) (s2, c2) -> (s1 + s2, c1 + c2))
+            [(bucketIdx t, (v, 1)) | (t, v) <- points]
+
+-- nubBy is quadratic on sorted input; week-range history runs into hundreds
+-- of thousands of points. First occurrence wins (cached beats freshly
+-- fetched), matching the old nubBy-after-sort semantics.
+dedupPoints :: [(UTCTime, Double)] -> [(UTCTime, Double)]
+dedupPoints = Map.toAscList . Map.fromListWith (\new old -> old)
 
 posixFloor :: UTCTime -> Integer
 posixFloor t = floor (POSIX.utcTimeToPOSIXSeconds t)
