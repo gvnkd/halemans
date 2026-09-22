@@ -1,4 +1,4 @@
-module Test.Integration.PipelineSpec (spec) where
+module Test.Integration.PipelineSpec (spec, grafanaMappingSpec) where
 
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
@@ -61,6 +61,42 @@ import Data.Time.Clock (getCurrentTime)
 import Network.HTTP.Types (status401, status403)
 import Test.Integration.Setup
 import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
+
+grafanaMappingSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
+grafanaMappingSpec = describe "grafana host label mapping" do
+    it "maps the instance label to host, keeping host as fallback" do
+        let webhookPayloadFor labels =
+                object
+                    [ "status" .= ("firing" :: Text)
+                    , "alerts"
+                        .= [ object
+                                [ "status" .= ("firing" :: Text)
+                                , "fingerprint" .= ("host-mapping" :: Text)
+                                , "labels" .= labels
+                                , "annotations" .= object []
+                                ]
+                           ]
+                    ]
+        Right [instanceEvent] <- pure (Grafana.normalize (webhookPayloadFor (object ["instance" .= ("itest-host" :: Text)])))
+        instanceEvent.host `shouldBe` Just ("itest-host" :: Text)
+        Right [hostEvent] <- pure (Grafana.normalize (webhookPayloadFor (object ["host" .= ("itest-host" :: Text)])))
+        hostEvent.host `shouldBe` Just ("itest-host" :: Text)
+
+        now <- getCurrentTime
+        let polled labels =
+                Grafana.GrafanaAmAlert
+                    { amFingerprint = "host-mapping"
+                    , amLabels = labels
+                    , amAnnotations = object []
+                    , amStartsAt = Nothing
+                    , amEndsAt = Nothing
+                    , amUpdatedAt = Just now
+                    , amGeneratorUrl = Nothing
+                    }
+            instancePolledEvent = Grafana.amAlertToNormalized now (polled (object ["instance" .= ("itest-host" :: Text)]))
+            hostPolledEvent = Grafana.amAlertToNormalized now (polled (object ["host" .= ("itest-host" :: Text)]))
+        instancePolledEvent.host `shouldBe` Just ("itest-host" :: Text)
+        hostPolledEvent.host `shouldBe` Just ("itest-host" :: Text)
 
 m1Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 m1Spec = describe "alert pipeline (milestone 1)" do
@@ -479,6 +515,8 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             targets <- resolveRuleTargets rule
             targets `shouldBe` [get #id otherUser]
 
+        grafanaMappingSpec
+
         it "grafana webhook and poller paths dedupe onto one alert via shared fingerprint" do
             grafanaSource <-
                 query @Source
@@ -492,12 +530,13 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                             .= [ object
                                     [ "status" .= ("firing" :: Text)
                                     , "fingerprint" .= ("poller-dedupe" :: Text)
-                                    , "labels" .= object ["severity" .= ("high" :: Text), "env" .= ("itest-env-dedupe" :: Text), "host" .= ("itest-host" :: Text)]
+                                    , "labels" .= object ["severity" .= ("high" :: Text), "env" .= ("itest-env-dedupe" :: Text), "instance" .= ("itest-host" :: Text)]
                                     , "annotations" .= object []
                                     ]
                                ]
                         ]
             Right [webhookEvent] <- pure (Grafana.normalize webhookPayload)
+            webhookEvent.host `shouldBe` Just ("itest-host" :: Text)
             Just alertId <- ingest grafanaSource webhookEvent
             now <- getCurrentTime
             let polled =
@@ -510,7 +549,8 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                         , amUpdatedAt = Just now
                         , amGeneratorUrl = Nothing
                         }
-            void (ingest grafanaSource (Grafana.amAlertToNormalized now polled))
+                polledEvent = Grafana.amAlertToNormalized now polled
+            void (ingest grafanaSource polledEvent)
             alerts <-
                 query @Alert
                     |> filterWhere (#fingerprint, "grafana:poller-dedupe" :: Text)
@@ -518,6 +558,7 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             length alerts `shouldBe` 1
             resolved <- fetch alertId
             resolved.status `shouldBe` "resolved"
+            resolved.host `shouldBe` Just ("itest-host" :: Text)
 
     describe "milestone 3: context layer" do
         it "new alert enqueues EnrichAlertJob; refire does not" do

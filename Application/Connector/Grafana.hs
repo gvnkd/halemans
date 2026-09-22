@@ -21,6 +21,11 @@ normalize (Object o) = case KeyMap.lookup "alerts" o of
     _ -> Left "grafana payload: missing alerts array"
 normalize _ = Left "grafana payload: not an object"
 
+-- Grafana's `instance` label is the monitored host identity; `host` is a
+-- fallback for manually labelled alerts.
+hostFromLabels :: (Text -> Maybe Text) -> Maybe Text
+hostFromLabels labelText = labelText "instance" <|> labelText "host"
+
 toEvent :: Value -> Either Text NormalizedEvent
 toEvent a@(Object _) = do
     let labels = fromMaybe (Object KeyMap.empty) (lookupKey "labels" a)
@@ -40,7 +45,7 @@ toEvent a@(Object _) = do
             , title
             , description = fromMaybe "" (annotationText "description")
             , env = labelText "env"
-            , host = labelText "host"
+            , host = hostFromLabels labelText
             , service = labelText "service"
             , checkName = labelText "check"
             , labels
@@ -119,7 +124,7 @@ amAlertToNormalized now amAlert =
             , title = fromMaybe "Grafana alert" (annotationText "summary" <|> labelText "check" <|> labelText "alertname")
             , description = fromMaybe "" (annotationText "description")
             , env = labelText "env"
-            , host = labelText "host"
+            , host = hostFromLabels labelText
             , service = labelText "service"
             , checkName = labelText "check"
             , labels = amAlert.amLabels
