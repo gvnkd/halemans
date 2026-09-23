@@ -1,7 +1,8 @@
 module Web.Controller.LlmAdmin where
 
 import Application.Job.LlmAnalysis (failAnalysis)
-import Application.Service.Llm (LlmProviderConfig (..), apiUrl, connectionOk)
+import Application.Service.Llm (LlmProviderConfig (..), apiUrl, connectionOk, testIntegration)
+import qualified Application.Service.Llm.AgentConfig as AgentConfig
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
@@ -60,20 +61,34 @@ instance Controller LlmAdminController where
         counterRows <-
             sqlQueryTyped
                 [typedSql|
-            SELECT provider, day, tokens_in, tokens_out, requests
+            SELECT scope, provider, day, tokens_in, tokens_out, requests
             FROM llm_budget_counters
-            ORDER BY day DESC, provider
+            ORDER BY day DESC, provider, scope
             LIMIT 14
         |]
         let counters =
                 counterRows <&> \row ->
                     CounterRow
-                        { provider = get #provider row
+                        { scope = get #scope row
+                        , provider = get #provider row
                         , day = get #day row
                         , tokensIn = get #tokens_in row
                         , tokensOut = get #tokens_out row
                         , requests = get #requests row
                         }
+        agentBudget <- AgentConfig.agentBudgetConfig
+        agentUsageRows <-
+            sqlQueryTyped
+                [typedSql|
+            SELECT COALESCE(SUM(tokens_in), 0)::bigint AS tokens_in,
+                   COALESCE(SUM(tokens_out), 0)::bigint AS tokens_out,
+                   COALESCE(SUM(requests), 0)::bigint AS requests
+            FROM llm_budget_counters
+            WHERE scope = 'agent' AND day = CURRENT_DATE
+        |]
+        let agentUsage = case agentUsageRows of
+                (row : _) -> (get #tokens_in row, get #tokens_out row, get #requests row)
+                [] -> (0, 0, 0)
         maybeConfig <- currentLlmConfig
         dailyBudget <- Budget.dailyTokenBudget
         rateLimit <- Budget.rateLimitPerMinute
@@ -287,6 +302,27 @@ instance Controller LlmAdminController where
                         let ?context = ?context.frameworkConfig
                         Log.logWarn ("llm connection test failed: " <> err)
                         setErrorMessage (trp "LLM endpoint {url} did not answer: {error}" [("url", url), ("error", err)])
+        redirectTo LlmAdminAction
+    action TestLlmIntegrationAction = do
+        requirePrivilege "manage_rules"
+        maybeConfig <- currentLlmConfig
+        case maybeConfig of
+            Nothing -> setErrorMessage (tr "LLM not configured (no enabled llm_configs row, LLM_ENDPOINT/LLM_MODEL missing)")
+            Just config -> do
+                result <- testIntegration config
+                case result of
+                    Right () -> setSuccessMessage (trp "LLM integration OK at {url} (model {model}): non-streaming and streaming chat both answer" [("url", apiUrl config "/v1/chat/completions"), ("model", config.model)])
+                    Left err -> do
+                        let ?context = ?context.frameworkConfig
+                        Log.logWarn ("llm integration test failed: " <> err)
+                        setErrorMessage (trp "LLM integration test failed: {error}" [("error", err)])
+        redirectTo LlmAdminAction
+    action UpdateAgentConfigAction = do
+        requirePrivilege "manage_rules"
+        let dailyBudget = max 0 (param @Int "dailyTokenBudget")
+            ratePerMinute = max 1 (param @Int "ratePerMinute")
+        AgentConfig.saveAgentBudgetConfig AgentConfig.AgentBudgetConfig{abcDailyTokenBudget = dailyBudget, abcRatePerMinute = ratePerMinute}
+        setSuccessMessage (trp "Agent budget saved: {tokens} tokens/day, {rate} requests/min" [("tokens", tshow dailyBudget), ("rate", tshow ratePerMinute)])
         redirectTo LlmAdminAction
     action NewLlmProviderAction = do
         requirePrivilege "manage_rules"

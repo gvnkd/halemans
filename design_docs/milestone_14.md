@@ -106,7 +106,7 @@ sync rules).
   counts"), the strict two-phase flow for mutating tools, and the match-op
   vocabulary.
 
-## 5. Schema (migration `1790154689-agent-chat.sql`)
+## 5. Schema (migrations `1790154689-agent-chat.sql`, `1790179252-agent-budget.sql`)
 
 - `agent_sessions` — id, user_id→users, title, page_context jsonb, timestamps.
 - `agent_messages` — id, session_id→agent_sessions ON DELETE CASCADE,
@@ -114,6 +114,12 @@ sync rules).
   (`[{name, arguments, result}]`), tool_call_id, page_context, prompt/completion
   token counts, created_at.
 - `internal_api_audit` — id, user_id→users, method, path, created_at.
+- `llm_agent_configs` — singleton (no row = 200k tokens/day, 12 req/min):
+  the agent chat's DEDICATED budget, editable on the admin/LLM page
+  (Agent chat card). The analysis pipeline keeps its own env-based budget
+  (`LLM_DAILY_TOKEN_BUDGET`) — the two no longer race on one shared cap.
+- `llm_budget_counters.scope` — `'analysis'` (default, backfilled) vs
+  `'agent'`; unique (scope, provider, day).
 
 ## 6. `not-in` match operator
 
@@ -126,12 +132,28 @@ Nothing else pattern-matches on `MatchOp`, so the vocabulary change is
 contained; provision files accept it transparently since they decode through
 the same `decodeDashboardConfig`.
 
-## 7. Tests
+## 7. Admin/LLM additions
+
+- The Effective configuration card gains a **Test integration** button next
+  to the existing Test connection (GET /v1/models). `Llm.testIntegration`
+  sends a minimal "ping" chat completion in non-streaming mode, then again
+  with `stream: true` and verifies the buffered SSE body carries `data:`
+  chunks and a `[DONE]` terminator (`verifyStreamBody`, unit-tested; mock-llm
+  honors `stream` since this milestone). Each phase runs under a 15s timeout
+  and failures name the failing mode (`non-streaming: …` / `streaming: …`).
+- An **Agent chat** card shows today's agent-scoped usage (tokens, requests,
+  budget) and edits the `llm_agent_configs` singleton (daily token budget,
+  requests/minute rate limit).
+
+## 8. Tests
 
 - `Test/DashboardConfigSpec.hs` — not-in matcher, JSON round-trip, empty
   `values` rejection.
 - `Test/AgentSpec.hs` (unit) — tool-definition shape: names, required
   params, `confirmed` optional.
+- `Test/LlmSpec.hs` (unit) — `verifyStreamBody` SSE shape checks.
+- `Test/Integration/LlmSpec.hs` — `testIntegration` against the mock
+  (non-streaming + streaming ping).
 - `Test/Integration/AgentSpec.hs` — executor against a scratch PG (env
   listing, validate counts, two-phase create, privilege-gated search,
   soft-fails), the MCP protocol (initialize/tools list/tools call

@@ -96,6 +96,8 @@ data LlmAdminController
     | ActivateLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
     | DeleteLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
     | TestLlmConnectionAction
+    | TestLlmIntegrationAction
+    | UpdateAgentConfigAction
     | NewLlmProviderAction
     | CreateLlmProviderAction
     | EditLlmProviderAction {providerId :: !(Id LlmConfig)}

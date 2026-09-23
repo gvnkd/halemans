@@ -41,6 +41,8 @@ POST /admin/llm/templates/{templateId}/update  UpdateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/activate  ActivateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/delete  DeleteLlmTemplateAction
 POST /admin/llm/test                           TestLlmConnectionAction
+POST /admin/llm/test-integration               TestLlmIntegrationAction
+POST /admin/llm/agent-config                   UpdateAgentConfigAction
 GET  /admin/llm/providers/new                  NewLlmProviderAction
 POST /admin/llm/providers                      CreateLlmProviderAction
 GET  /admin/llm/providers/{providerId}/edit    EditLlmProviderAction

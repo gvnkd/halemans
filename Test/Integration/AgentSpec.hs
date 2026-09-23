@@ -5,13 +5,16 @@ import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), inges
 import Application.Service.Agent.Core (maxToolRounds, runAgentTurnWith)
 import Application.Service.Agent.Mcp (McpConfig (..), defaultMcpEmail, defaultMcpRoleName, handleMessage, resolveMcpUser)
 import Application.Service.Agent.Tools (AgentContext (..), executeAgentTool)
+import Application.Service.Llm (Completion (..), Prompt (..))
 import qualified Application.Service.Llm as Llm
+import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig, defaultAgentBudgetConfig, saveAgentBudgetConfig)
 import Control.Exception (finally)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Int (Int64)
 import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
 import qualified Data.Vector as Vector
@@ -21,6 +24,7 @@ import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, orderByAsc, query)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 import Test.Integration.Setup (freshFingerprint, m6User, restoreEnv, testEventIn, testSource)
@@ -175,6 +179,48 @@ spec = describe "agent tools (internal API milestone)" do
             -- maxToolRounds executed rounds, one boundary request whose calls
             -- are dropped, plus the rescue completion
             readIORef calls `shouldReturn` (maxToolRounds + 2)
+
+    describe "agent budget (dedicated, admin-configured)" do
+        it "defaults without a row and round-trips via saveAgentBudgetConfig" do
+            initial <- agentBudgetConfig
+            initial `shouldBe` defaultAgentBudgetConfig
+            saveAgentBudgetConfig AgentBudgetConfig{abcDailyTokenBudget = 12345, abcRatePerMinute = 3}
+            saved <- agentBudgetConfig
+            saved `shouldBe` AgentBudgetConfig{abcDailyTokenBudget = 12345, abcRatePerMinute = 3}
+            rows <- sqlQueryTyped [typedSql| SELECT COUNT(*)::int AS n FROM llm_agent_configs |]
+            rows `shouldBe` [1 :: Int]
+        it "records agent usage under scope 'agent', leaving analysis counters alone" do
+            user <- m6User ["view"]
+            session <-
+                newRecord @AgentSession
+                    |> set #userId (get #id user)
+                    |> createRecord
+            _ <-
+                newRecord @AgentMessage
+                    |> set #sessionId (get #id session)
+                    |> set #role_ ("user" :: Text)
+                    |> set #content "hi"
+                    |> createRecord
+            counter <- newIORef (0 :: Int)
+            let fakeComplete _ = do
+                    step <- readIORef counter
+                    modifyIORef' counter (+ 1)
+                    pure $ Right case step of
+                        0 -> Completion "" Nothing Nothing [Llm.ToolCall "c1" "list_environments" "{}"]
+                        _ -> Completion "done." (Just 100) (Just 50) []
+            result <- runAgentTurnWith "fake-budget" fakeComplete (get #id session)
+            result `shouldBe` Right ()
+            rows <-
+                sqlQueryTyped
+                    [typedSql|
+                SELECT scope, tokens_in, tokens_out, requests
+                FROM llm_budget_counters
+                WHERE provider = 'fake-budget' AND day = CURRENT_DATE
+            |]
+            map (get #scope) rows `shouldBe` ["agent" :: Text]
+            let (row : _) = rows
+            (get #tokens_in row, get #tokens_out row, get #requests row)
+                `shouldBe` (100 :: Int64, 50 :: Int64, 2 :: Int)
 
     describe "resolveMcpUser (default service account)" do
         it "auto-creates mcp@localhost with a single dedicated role, idempotently" do

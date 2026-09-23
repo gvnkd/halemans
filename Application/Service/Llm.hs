@@ -12,6 +12,8 @@ module Application.Service.Llm (
     LlmProvider (..),
     OpenAiCompat (..),
     connectionOk,
+    testIntegration,
+    verifyStreamBody,
     apiUrl,
     chatCompletionPayload,
 ) where
@@ -133,6 +135,85 @@ connectionOk config = do
         Right response ->
             let code = statusCode (response ^. Wreq.responseStatus)
              in if code == 200 then Right () else Left ("status " <> tshow code)
+
+-- Admin "test integration": a minimal chat ping in BOTH non-streaming and
+-- streaming modes. Catches providers that answer /v1/models but fail chat
+-- completions (auth scope, model name, missing stream support). Each phase
+-- gets a short timeout so a half-open stream can't hang the admin page.
+testIntegration :: LlmProviderConfig -> IO (Either Text ())
+testIntegration config = do
+    nonStreaming <- pingNonStreaming config
+    case nonStreaming of
+        Left err -> pure (Left ("non-streaming: " <> err))
+        Right () -> do
+            streaming <- pingStreaming config
+            case streaming of
+                Left err -> pure (Left ("streaming: " <> err))
+                Right () -> pure (Right ())
+
+pingNonStreaming :: LlmProviderConfig -> IO (Either Text ())
+pingNonStreaming config = do
+    let payload =
+            object
+                [ "model" .= config.model
+                , "messages" .= [messageJson (userMessage "ping")]
+                , "max_tokens" .= (8 :: Int)
+                ]
+    result <- try (Http.postFollowing (testOpts config) (cs (apiUrl config "/v1/chat/completions")) payload)
+    pure case result of
+        Left (err :: SomeException) -> Left (tshow err)
+        Right response ->
+            let code = statusCode (response ^. Wreq.responseStatus)
+             in if code >= 200 && code < 300
+                    then case decodeCompletion response of
+                        Right completion | not (Text.null completion.content) -> Right ()
+                        Right _ -> Left "empty completion content"
+                        Left err -> Left (renderLlmError err)
+                    else Left ("http " <> tshow code)
+
+pingStreaming :: LlmProviderConfig -> IO (Either Text ())
+pingStreaming config = do
+    let payload =
+            object
+                [ "model" .= config.model
+                , "messages" .= [messageJson (userMessage "ping")]
+                , "max_tokens" .= (8 :: Int)
+                , "stream" .= True
+                ]
+    result <- try (Http.postFollowing (testOpts config) (cs (apiUrl config "/v1/chat/completions")) payload)
+    pure case result of
+        Left (err :: SomeException) -> Left (tshow err)
+        Right response ->
+            let code = statusCode (response ^. Wreq.responseStatus)
+                body = cs (response ^. Wreq.responseBody) :: Text
+             in if code >= 200 && code < 300
+                    then case verifyStreamBody body of
+                        Nothing -> Right ()
+                        Just err -> Left err
+                    else Left ("http " <> tshow code)
+
+-- SSE sanity check on a buffered stream body: needs at least one
+-- "data: {...}" chunk and the "[DONE]" terminator.
+verifyStreamBody :: Text -> Maybe Text
+verifyStreamBody body
+    | not ("data:" `Text.isInfixOf` body) = Just "no SSE data chunks in the streaming response"
+    | not ("[DONE]" `Text.isInfixOf` body) = Just "stream ended without a [DONE] terminator"
+    | otherwise = Nothing
+
+renderLlmError :: LlmError -> Text
+renderLlmError (Retriable detail) = detail
+renderLlmError (Terminal detail) = detail
+
+-- Short-timeout variant of the request options for the admin tests.
+testOpts :: LlmProviderConfig -> Wreq.Options
+testOpts config =
+    opts config
+        & Wreq.manager
+            .~ Left
+                ( HTTP.tlsManagerSettings
+                    { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro (15 * 1000000)
+                    }
+                )
 
 chatCompletionPayload :: LlmProviderConfig -> Prompt -> Value
 chatCompletionPayload config prompt =

@@ -140,6 +140,16 @@ spec = describe "Milestone 4 LLM services" do
         it "produces 64 hex chars" do
             Text.length (sha256Hex "x") `shouldBe` 64
 
+    describe "Llm.verifyStreamBody" do
+        it "accepts an SSE body with data chunks and [DONE]" do
+            verifyStreamBody "data: {\"x\":1}\n\ndata: [DONE]\n\n" `shouldBe` Nothing
+        it "rejects a body without data chunks" do
+            verifyStreamBody "[DONE]\n\n" `shouldSatisfy` isJust
+        it "rejects a truncated stream without [DONE]" do
+            verifyStreamBody "data: {\"x\":1}\n\n" `shouldSatisfy` isJust
+        it "rejects a non-SSE JSON body" do
+            verifyStreamBody "{\"choices\":[]}" `shouldSatisfy` isJust
+
     describe "Budget.budgetExceeded" do
         it "is over budget at the cap" do
             budgetExceeded 100 60 40 `shouldBe` True

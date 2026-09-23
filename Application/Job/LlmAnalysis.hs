@@ -135,7 +135,7 @@ checkBudget provider = do
         sqlQueryTyped
             [typedSql|
         SELECT tokens_in, tokens_out FROM llm_budget_counters
-        WHERE provider = ${provider} AND day = CURRENT_DATE
+        WHERE scope = 'analysis' AND provider = ${provider} AND day = CURRENT_DATE
     |]
     pure case rows of
         [] -> False
@@ -216,9 +216,9 @@ recordUsage provider completion = do
     void do
         sqlExecTyped
             [typedSql|
-            INSERT INTO llm_budget_counters (provider, day, tokens_in, tokens_out, requests)
-            VALUES (${provider}, CURRENT_DATE, ${tokensIn}, ${tokensOut}, 1)
-            ON CONFLICT (provider, day) DO UPDATE SET
+            INSERT INTO llm_budget_counters (scope, provider, day, tokens_in, tokens_out, requests)
+            VALUES ('analysis', ${provider}, CURRENT_DATE, ${tokensIn}, ${tokensOut}, 1)
+            ON CONFLICT (scope, provider, day) DO UPDATE SET
                 tokens_in = llm_budget_counters.tokens_in + EXCLUDED.tokens_in,
                 tokens_out = llm_budget_counters.tokens_out + EXCLUDED.tokens_out,
                 requests = llm_budget_counters.requests + 1

@@ -307,6 +307,7 @@ library
         Generated.ActualTypes.JiraConfig
         Generated.ActualTypes.JiraLink
         Generated.ActualTypes.JiraSyncJob
+        Generated.ActualTypes.LlmAgentConfig
         Generated.ActualTypes.LlmAgentRole
         Generated.ActualTypes.LlmAnalysis
         Generated.ActualTypes.LlmAnalysisJob
@@ -371,6 +372,7 @@ library
         Generated.JiraConfig
         Generated.JiraLink
         Generated.JiraSyncJob
+        Generated.LlmAgentConfig
         Generated.LlmAgentRole
         Generated.LlmAnalysis
         Generated.LlmAnalysisJob
@@ -426,6 +428,7 @@ library
         Generated.Statements.CreateJiraConfig
         Generated.Statements.CreateJiraLink
         Generated.Statements.CreateJiraSyncJob
+        Generated.Statements.CreateLlmAgentConfig
         Generated.Statements.CreateLlmAgentRole
         Generated.Statements.CreateLlmAnalysis
         Generated.Statements.CreateLlmAnalysisJob
@@ -466,6 +469,7 @@ library
         Generated.Statements.CreateManyJiraConfig
         Generated.Statements.CreateManyJiraLink
         Generated.Statements.CreateManyJiraSyncJob
+        Generated.Statements.CreateManyLlmAgentConfig
         Generated.Statements.CreateManyLlmAgentRole
         Generated.Statements.CreateManyLlmAnalysis
         Generated.Statements.CreateManyLlmAnalysisJob
@@ -550,6 +554,7 @@ library
         Generated.Statements.FetchJiraConfig
         Generated.Statements.FetchJiraLink
         Generated.Statements.FetchJiraSyncJob
+        Generated.Statements.FetchLlmAgentConfig
         Generated.Statements.FetchLlmAgentRole
         Generated.Statements.FetchLlmAnalysis
         Generated.Statements.FetchLlmAnalysisJob
@@ -612,6 +617,7 @@ library
         Generated.Statements.RowDecoderJiraConfig
         Generated.Statements.RowDecoderJiraLink
         Generated.Statements.RowDecoderJiraSyncJob
+        Generated.Statements.RowDecoderLlmAgentConfig
         Generated.Statements.RowDecoderLlmAgentRole
         Generated.Statements.RowDecoderLlmAnalysis
         Generated.Statements.RowDecoderLlmAnalysisJob
@@ -674,6 +680,7 @@ library
         Generated.Statements.UpdateJiraConfig
         Generated.Statements.UpdateJiraLink
         Generated.Statements.UpdateJiraSyncJob
+        Generated.Statements.UpdateLlmAgentConfig
         Generated.Statements.UpdateLlmAgentRole
         Generated.Statements.UpdateLlmAnalysis
         Generated.Statements.UpdateLlmAnalysisJob

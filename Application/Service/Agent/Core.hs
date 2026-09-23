@@ -5,8 +5,10 @@ module Application.Service.Agent.Core (
 ) where
 
 import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitions, executeAgentTool)
+import Application.Service.Api.RateLimit (checkLimit)
 import Application.Service.I18n (agentLanguageName)
 import Application.Service.Llm (Completion (..), LlmError (..), LlmMessage (..), LlmProvider (..), LlmProviderConfig (..), OpenAiCompat (..), Prompt (..), ToolCall (..), toolResultMessage, userMessage)
+import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig)
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Control.Monad (void)
@@ -41,10 +43,15 @@ runAgentTurn sessionId = do
     case config of
         Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
         Just config -> do
-            overBudget <- checkBudget config.providerName
+            agentConfig <- agentBudgetConfig
+            session <- fetch sessionId
+            overBudget <- checkAgentBudget config.providerName agentConfig
+            overRate <- checkLimit ("agent:" <> tshow session.userId) agentConfig.abcRatePerMinute
             if overBudget
-                then persistSimple sessionId Nothing "The daily LLM token budget is exhausted; try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                else runAgentTurnWith config.providerName (complete (OpenAiCompat config)) sessionId
+                then persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
+                else case overRate of
+                    Just _ -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
+                    Nothing -> runAgentTurnWith config.providerName (complete (OpenAiCompat config)) sessionId
 
 -- The turn driver with an injected completion source (tests script a fake
 -- provider; runAgentTurn passes the configured OpenAI-compatible client).
@@ -260,18 +267,17 @@ persistSimple sessionId completion text = do
             |> set #completionTokens (completion >>= (.tokensOut))
             |> createRecord
 
-checkBudget :: (?modelContext :: ModelContext) => Text -> IO Bool
-checkBudget provider = do
-    cap <- Budget.dailyTokenBudget
+checkAgentBudget :: (?modelContext :: ModelContext) => Text -> AgentBudgetConfig -> IO Bool
+checkAgentBudget provider agentConfig = do
     rows <-
         sqlQueryTyped
             [typedSql|
         SELECT tokens_in, tokens_out FROM llm_budget_counters
-        WHERE provider = ${provider} AND day = CURRENT_DATE
+        WHERE scope = 'agent' AND provider = ${provider} AND day = CURRENT_DATE
     |]
     pure case rows of
         [] -> False
-        (row : _) -> Budget.budgetExceeded cap (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
+        (row : _) -> Budget.budgetExceeded agentConfig.abcDailyTokenBudget (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
 
 recordUsage :: (?modelContext :: ModelContext) => Text -> Completion -> IO ()
 recordUsage provider completion = do
@@ -280,9 +286,9 @@ recordUsage provider completion = do
     void do
         sqlExecTyped
             [typedSql|
-            INSERT INTO llm_budget_counters (provider, day, tokens_in, tokens_out, requests)
-            VALUES (${provider}, CURRENT_DATE, ${tokensIn}, ${tokensOut}, 1)
-            ON CONFLICT (provider, day) DO UPDATE SET
+            INSERT INTO llm_budget_counters (scope, provider, day, tokens_in, tokens_out, requests)
+            VALUES ('agent', ${provider}, CURRENT_DATE, ${tokensIn}, ${tokensOut}, 1)
+            ON CONFLICT (scope, provider, day) DO UPDATE SET
                 tokens_in = llm_budget_counters.tokens_in + EXCLUDED.tokens_in,
                 tokens_out = llm_budget_counters.tokens_out + EXCLUDED.tokens_out,
                 requests = llm_budget_counters.requests + 1
