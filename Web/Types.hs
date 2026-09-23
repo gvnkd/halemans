@@ -98,6 +98,9 @@ data LlmAdminController
     | TestLlmConnectionAction
     | TestLlmIntegrationAction
     | UpdateAgentConfigAction
+    | UpdateGlobalConfigAction
+    | SeedAgentTemplateAction
+    | LlmAgentConfigAction
     | NewLlmProviderAction
     | CreateLlmProviderAction
     | EditLlmProviderAction {providerId :: !(Id LlmConfig)}

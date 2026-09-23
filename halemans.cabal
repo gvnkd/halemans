@@ -150,9 +150,11 @@ library
         Application.Service.JobMetrics
         Application.Service.Live
         Application.Service.Llm
+        Application.Service.Llm.AgentConfig
         Application.Service.Llm.AutoAnalyze
         Application.Service.Llm.Budget
         Application.Service.Llm.DbConfig
+        Application.Service.Llm.GlobalConfig
         Application.Service.Llm.Output
         Application.Service.Llm.Prompt
         Application.Service.Llm.Queue
@@ -315,6 +317,7 @@ library
         Generated.ActualTypes.LlmBudgetCounter
         Generated.ActualTypes.LlmConfig
         Generated.ActualTypes.LlmFeedback
+        Generated.ActualTypes.LlmGlobalConfig
         Generated.ActualTypes.LlmPromptTemplate
         Generated.ActualTypes.LlmToolCache
         Generated.ActualTypes.LlmToolCacheConfig
@@ -380,6 +383,7 @@ library
         Generated.LlmBudgetCounter
         Generated.LlmConfig
         Generated.LlmFeedback
+        Generated.LlmGlobalConfig
         Generated.LlmPromptTemplate
         Generated.LlmToolCache
         Generated.LlmToolCacheConfig
@@ -436,6 +440,7 @@ library
         Generated.Statements.CreateLlmBudgetCounter
         Generated.Statements.CreateLlmConfig
         Generated.Statements.CreateLlmFeedback
+        Generated.Statements.CreateLlmGlobalConfig
         Generated.Statements.CreateLlmPromptTemplate
         Generated.Statements.CreateLlmToolCache
         Generated.Statements.CreateLlmToolCacheConfig
@@ -477,6 +482,7 @@ library
         Generated.Statements.CreateManyLlmBudgetCounter
         Generated.Statements.CreateManyLlmConfig
         Generated.Statements.CreateManyLlmFeedback
+        Generated.Statements.CreateManyLlmGlobalConfig
         Generated.Statements.CreateManyLlmPromptTemplate
         Generated.Statements.CreateManyLlmToolCache
         Generated.Statements.CreateManyLlmToolCacheConfig
@@ -562,6 +568,7 @@ library
         Generated.Statements.FetchLlmBudgetCounter
         Generated.Statements.FetchLlmConfig
         Generated.Statements.FetchLlmFeedback
+        Generated.Statements.FetchLlmGlobalConfig
         Generated.Statements.FetchLlmPromptTemplate
         Generated.Statements.FetchLlmToolCache
         Generated.Statements.FetchLlmToolCacheConfig
@@ -625,6 +632,7 @@ library
         Generated.Statements.RowDecoderLlmBudgetCounter
         Generated.Statements.RowDecoderLlmConfig
         Generated.Statements.RowDecoderLlmFeedback
+        Generated.Statements.RowDecoderLlmGlobalConfig
         Generated.Statements.RowDecoderLlmPromptTemplate
         Generated.Statements.RowDecoderLlmToolCache
         Generated.Statements.RowDecoderLlmToolCacheConfig
@@ -688,6 +696,7 @@ library
         Generated.Statements.UpdateLlmBudgetCounter
         Generated.Statements.UpdateLlmConfig
         Generated.Statements.UpdateLlmFeedback
+        Generated.Statements.UpdateLlmGlobalConfig
         Generated.Statements.UpdateLlmPromptTemplate
         Generated.Statements.UpdateLlmToolCache
         Generated.Statements.UpdateLlmToolCacheConfig

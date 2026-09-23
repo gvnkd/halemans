@@ -604,6 +604,17 @@ CREATE TABLE llm_agent_configs (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
+-- Global LLM limits: one budget caps ALL LLM consumers (analysis + agent);
+-- each consumer additionally keeps its own per-agent cap. Singleton: no row
+-- = env fallbacks (LLM_DAILY_TOKEN_BUDGET, LLM_RATE_PER_MINUTE).
+CREATE TABLE llm_global_configs (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    daily_token_budget INT NOT NULL DEFAULT 1000000,
+    rate_per_minute INT NOT NULL DEFAULT 20,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
 CREATE TABLE llm_analysis_jobs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
     analysis_id UUID NOT NULL,

@@ -1,6 +1,5 @@
 module Web.View.LlmAdmin.Index where
 
-import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..))
 import Application.Service.Llm.AutoAnalyze (AutoAnalyzeRules (..), allSeverities, allStatuses)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
@@ -40,8 +39,6 @@ data IndexView = IndexView
     , autoAnalyze :: AutoAnalyzeRules
     , toolCacheTtl :: Maybe Int
     , toolCacheSize :: Int
-    , agentBudget :: AgentBudgetConfig
-    , agentUsage :: (Int64, Int64, Int64)
     }
 
 instance View IndexView where
@@ -65,30 +62,9 @@ instance View IndexView where
                     </table>
                     {inlinePostFormHtml (pathTo TestLlmConnectionAction) (tr "Test connection") "btn btn-ghost" (Just "test-llm") False}
                     {inlinePostFormHtml (pathTo TestLlmIntegrationAction) (tr "Test integration") "btn btn-ghost" (Just "test-llm-integration") False}
+                    <a href={LlmAgentConfigAction} class="btn btn-ghost" data-testid="agent-config-link">{tr "Agent configuration"}</a>
                 </div></div>
             </div>
-            <div class="col-lg-6 d-flex flex-column">
-                {sectionHeaderHtml (tr "Agent chat") mempty}
-                <div class="card flex-fill"><div class="card-body">
-                    <p class="text-muted">{trp "Used today by the embedded agent: {tokens} tokens ({requests} requests), budget {budget} tokens/day." [("tokens", tshow (agentUsageTokensIn + agentUsageTokensOut)), ("requests", tshow agentUsageRequests), ("budget", tshow agentBudget.abcDailyTokenBudget)]}</p>
-                    <form method="POST" action={UpdateAgentConfigAction} data-testid="agent-config-form">
-                        <div class="row">
-                            <div class="col-md-6 mb-2">
-                                <label class="form-label">{tr "Daily token budget"}</label>
-                                <input name="dailyTokenBudget" type="number" class="form-control" value={agentBudget.abcDailyTokenBudget} min="0" data-testid="agent-config-daily-budget"/>
-                            </div>
-                            <div class="col-md-6 mb-2">
-                                <label class="form-label">{tr "Rate limit (requests/min)"}</label>
-                                <input name="ratePerMinute" type="number" class="form-control" value={agentBudget.abcRatePerMinute} min="1" data-testid="agent-config-rate"/>
-                            </div>
-                        </div>
-                        <button type="submit" class="btn btn-ghost" data-testid="agent-config-submit">{tr "Save"}</button>
-                    </form>
-                </div></div>
-            </div>
-        </div>
-
-        <div class="row g-4 mb-2">
             <div class="col-lg-6 d-flex flex-column">
                 {sectionHeaderHtml (tr "Tool cache") mempty}
                 <div class="card flex-fill"><div class="card-body">
@@ -151,7 +127,6 @@ instance View IndexView where
     |]
       where
         newProviderButton = [hsx|<a href={NewLlmProviderAction} class="btn btn-brand" data-testid="new-llm-provider">{tr "New provider"}</a>|]
-        (agentUsageTokensIn, agentUsageTokensOut, agentUsageRequests) = agentUsage
         ttlValue :: Text
         ttlValue = maybe "300" tshow toolCacheTtl
         newRoleButton = [hsx|<a href={NewLlmRoleAction} class="btn btn-brand" data-testid="new-llm-role">{tr "New role"}</a>|]

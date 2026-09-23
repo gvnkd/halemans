@@ -2,13 +2,15 @@ module Test.Integration.AgentSpec (spec) where
 
 import Application.Helper.Controller (userPrivileges)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
-import Application.Service.Agent.Core (maxToolRounds, runAgentTurnWith)
+import Application.Service.Agent.Core (agentTurnGate, buildSystemMessage, defaultAgentTemplateBody, internalAgentTemplateName, maxToolRounds, runAgentTurnWith)
 import Application.Service.Agent.Mcp (McpConfig (..), defaultMcpEmail, defaultMcpRoleName, handleMessage, resolveMcpUser)
 import Application.Service.Agent.Tools (AgentContext (..), executeAgentTool)
 import Application.Service.Llm (Completion (..), Prompt (..))
 import qualified Application.Service.Llm as Llm
 import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig, defaultAgentBudgetConfig, saveAgentBudgetConfig)
+import Application.Service.Llm.GlobalConfig (GlobalBudgetConfig (..), globalBudgetConfig, saveGlobalBudgetConfig)
 import Control.Exception (finally)
+import Control.Monad (void)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -24,7 +26,7 @@ import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, orderByAsc, query)
-import IHP.TypedSql (sqlQueryTyped, typedSql)
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 import Test.Integration.Setup (freshFingerprint, m6User, restoreEnv, testEventIn, testSource)
@@ -221,6 +223,71 @@ spec = describe "agent tools (internal API milestone)" do
             let (row : _) = rows
             (get #tokens_in row, get #tokens_out row, get #requests row)
                 `shouldBe` (100 :: Int64, 50 :: Int64, 2 :: Int)
+
+    describe "agent system prompt (internal_agent template)" do
+        it "falls back to the built-in default when no template is seeded" do
+            user <- m6User ["view"]
+            msg <- buildSystemMessage AgentContext{acUser = user, acLanguage = "English"} Nothing
+            msg.content `shouldSatisfy` ("Halemans agent" `Text.isInfixOf`)
+            msg.content `shouldSatisfy` (user.email `Text.isInfixOf`)
+        it "renders the active template with the per-turn bindings" do
+            user <- m6User ["view"]
+            _ <-
+                newRecord @LlmPromptTemplate
+                    |> set #name internalAgentTemplateName
+                    |> set #version (1 :: Int)
+                    |> set #body ("Custom agent prompt for {{user_email}} in {{language}}. Page: {{page_context}}" :: Text)
+                    |> set #active True
+                    |> createRecord
+            msg <-
+                buildSystemMessage
+                    AgentContext{acUser = user, acLanguage = "Russian"}
+                    (Just (Aeson.object ["path" .= ("/alerts" :: Text)]))
+            msg.content
+                `shouldBe` "Custom agent prompt for "
+                    <> user.email
+                    <> " in Russian. Page: The user is currently looking at this page: "
+                    <> cs (Aeson.encode (Aeson.object ["path" .= ("/alerts" :: Text)]))
+        it "the seeded default body covers all four slots" do
+            let unresolved = [slot | slot <- ["{{user_name}}", "{{user_email}}", "{{language}}", "{{page_context}}"], slot `Text.isInfixOf` defaultAgentTemplateBody]
+            unresolved `shouldBe` ["{{user_name}}", "{{user_email}}", "{{language}}", "{{page_context}}"]
+
+    describe "agent budget gate (agent cap + global cap)" do
+        it "passes with fresh counters, blocks on the agent cap then the global cap" do
+            let agentConfig = AgentBudgetConfig{abcDailyTokenBudget = 100, abcRatePerMinute = 12}
+                globalConfig = GlobalBudgetConfig{gbcDailyTokenBudget = 500, gbcRatePerMinute = 20}
+            clear <- agentTurnGate "fake-gate" agentConfig globalConfig
+            clear `shouldBe` Nothing
+            -- spend agent tokens (scope 'agent'): 60 in + 60 out > cap 100
+            void do
+                sqlExecTyped
+                    [typedSql|
+                INSERT INTO llm_budget_counters (scope, provider, day, tokens_in, tokens_out, requests)
+                VALUES ('agent', 'fake-gate', CURRENT_DATE, 60, 60, 1)
+            |]
+            agentBlocked <- agentTurnGate "fake-gate" agentConfig globalConfig
+            agentBlocked `shouldBe` Just "agent"
+            -- a different provider's agent usage does not block this provider
+            otherProviderClear <- agentTurnGate "fake-gate-2" agentConfig globalConfig
+            otherProviderClear `shouldBe` Nothing
+            -- push the global total over 500 (add analysis scope tokens)
+            void do
+                sqlExecTyped
+                    [typedSql|
+                INSERT INTO llm_budget_counters (scope, provider, day, tokens_in, tokens_out, requests)
+                VALUES ('analysis', 'fake-gate-2', CURRENT_DATE, 400, 100, 1)
+            |]
+            globalBlocked <- agentTurnGate "fake-gate-2" agentConfig GlobalBudgetConfig{gbcDailyTokenBudget = 500, gbcRatePerMinute = 20}
+            globalBlocked `shouldBe` Just "global"
+
+    describe "global budget config" do
+        it "falls back to env defaults without a row and round-trips saves" do
+            config0 <- globalBudgetConfig
+            config0.gbcDailyTokenBudget `shouldSatisfy` (> 0)
+            config0.gbcRatePerMinute `shouldSatisfy` (> 0)
+            saveGlobalBudgetConfig GlobalBudgetConfig{gbcDailyTokenBudget = 777777, gbcRatePerMinute = 9}
+            saved <- globalBudgetConfig
+            saved `shouldBe` GlobalBudgetConfig{gbcDailyTokenBudget = 777777, gbcRatePerMinute = 9}
 
     describe "resolveMcpUser (default service account)" do
         it "auto-creates mcp@localhost with a single dedicated role, idempotently" do

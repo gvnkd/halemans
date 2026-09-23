@@ -43,6 +43,9 @@ POST /admin/llm/templates/{templateId}/delete  DeleteLlmTemplateAction
 POST /admin/llm/test                           TestLlmConnectionAction
 POST /admin/llm/test-integration               TestLlmIntegrationAction
 POST /admin/llm/agent-config                   UpdateAgentConfigAction
+POST /admin/llm/global-config                  UpdateGlobalConfigAction
+POST /admin/llm/agent/seed-template            SeedAgentTemplateAction
+GET  /admin/llm/agent                          LlmAgentConfigAction
 GET  /admin/llm/providers/new                  NewLlmProviderAction
 POST /admin/llm/providers                      CreateLlmProviderAction
 GET  /admin/llm/providers/{providerId}/edit    EditLlmProviderAction

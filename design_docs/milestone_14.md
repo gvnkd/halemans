@@ -135,15 +135,28 @@ the same `decodeDashboardConfig`.
 ## 7. Admin/LLM additions
 
 - The Effective configuration card gains a **Test integration** button next
-  to the existing Test connection (GET /v1/models). `Llm.testIntegration`
-  sends a minimal "ping" chat completion in non-streaming mode, then again
-  with `stream: true` and verifies the buffered SSE body carries `data:`
-  chunks and a `[DONE]` terminator (`verifyStreamBody`, unit-tested; mock-llm
-  honors `stream` since this milestone). Each phase runs under a 15s timeout
-  and failures name the failing mode (`non-streaming: …` / `streaming: …`).
-- An **Agent chat** card shows today's agent-scoped usage (tokens, requests,
-  budget) and edits the `llm_agent_configs` singleton (daily token budget,
-  requests/minute rate limit).
+  to the Test connection (GET /v1/models). `Llm.testIntegration` sends
+  "Reply with exactly one word: pong" in non-streaming mode (empty content
+  counts as success when the provider still generated tokens — reasoning
+  models starve a small max_tokens), then with `stream: true`, verifying the
+  buffered SSE body has `data:` chunks and a `[DONE]` terminator
+  (15s per-phase timeout; errors name the mode). mock-llm honors `stream`.
+- **Agent configuration page** (`/admin/llm/agent`, Admin → Agent):
+  - *Agent prompt*: the ACTIVE `internal_agent` row of
+    `llm_prompt_templates` — the chat agent's system prompt, versioned and
+    edited in the same template editor as `alert_enrichment`. Slots:
+    `{{user_name}}`, `{{user_email}}`, `{{language}}`, `{{page_context}}`.
+    Seeded by `seed-halemans.sh`/`smoke-check.sh`; "Create template from
+    default" seeds it from `Core.defaultAgentTemplateBody`. Without an
+    active row the agent uses the identical built-in default, so nothing
+    breaks unseeded.
+  - *Agent limits*: the per-agent daily token budget + requests/min
+    (`llm_agent_configs`).
+  - *Global limits*: `llm_global_configs` singleton caps ALL LLM consumers
+    (analysis + agent) with `LLM_DAILY_TOKEN_BUDGET`/`LLM_RATE_PER_MINUTE`
+    as env fallbacks; the analysis pipeline's budget check and rate limit
+    consume this. Enforcement: per-consumer cap first, then the global one
+    (`Core.agentTurnGate`), so a runaway consumer can't starve the others.
 
 ## 8. Tests
 
@@ -157,9 +170,12 @@ the same `decodeDashboardConfig`.
 - `Test/Integration/AgentSpec.hs` — executor against a scratch PG (env
   listing, validate counts, two-phase create, privilege-gated search,
   soft-fails), the MCP protocol (initialize/tools list/tools call
-  isError/notification silence/unknown-method error), and the default
-  service account (idempotent auto-create, single dedicated role,
-  `HALEMANS_MCP_PRIVILEGES` sync, explicit-user resolution). The internal
-  HTTP layer is a thin wrapper over the same executor; HTTP-level
+  isError/notification silence/unknown-method error), the default service
+  account (idempotent auto-create, single dedicated role,
+  `HALEMANS_MCP_PRIVILEGES` sync, explicit-user resolution), the turn loop
+  (tool rounds regression + exhaustion rescue), template-based system
+  prompt (fallback, bindings, slot coverage), the budget gate (agent cap /
+  global cap / provider isolation) and the global config round-trip. The
+  internal HTTP layer is a thin wrapper over the same executor; HTTP-level
   auth/audit checks are manual until a header-capable HTTP test harness
   exists.

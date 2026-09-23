@@ -85,6 +85,7 @@ navigation =
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>{tr "Escalation policies"}</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>{tr "Integrations"}</a></li>
                     <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>
+                    <li><a class="dropdown-item" href={LlmAgentConfigAction}>{tr "Agent"}</a></li>
                     <li><a class="dropdown-item" href={AssetsAdminAction}>{tr "Assets"}</a></li>
                     <li><a class="dropdown-item" href={LlmQueueAction}>{tr "LLM queue"}</a></li>
                     <li><a class="dropdown-item" href={AdminAction}>{tr "Jobs"}</a></li>

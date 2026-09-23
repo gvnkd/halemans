@@ -1,11 +1,13 @@
 module Web.Controller.LlmAdmin where
 
 import Application.Job.LlmAnalysis (failAnalysis)
+import Application.Service.Agent.Core (defaultAgentTemplateBody, internalAgentTemplateName)
 import Application.Service.Llm (LlmProviderConfig (..), apiUrl, connectionOk, testIntegration)
 import qualified Application.Service.Llm.AgentConfig as AgentConfig
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import qualified Application.Service.Llm.GlobalConfig as GlobalConfig
 import Application.Service.Llm.Roles (roleToolNames)
 import qualified Application.Service.Llm.ToolCache as ToolCache
 import qualified Application.Service.Log as Log
@@ -17,6 +19,7 @@ import qualified Data.Text as Text
 import Data.Time.Clock (getCurrentTime)
 import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import Web.Controller.Prelude
+import Web.View.LlmAdmin.AgentConfig
 import Web.View.LlmAdmin.Edit
 import Web.View.LlmAdmin.EditProvider
 import Web.View.LlmAdmin.EditRole
@@ -76,19 +79,6 @@ instance Controller LlmAdminController where
                         , tokensOut = get #tokens_out row
                         , requests = get #requests row
                         }
-        agentBudget <- AgentConfig.agentBudgetConfig
-        agentUsageRows <-
-            sqlQueryTyped
-                [typedSql|
-            SELECT COALESCE(SUM(tokens_in), 0)::bigint AS tokens_in,
-                   COALESCE(SUM(tokens_out), 0)::bigint AS tokens_out,
-                   COALESCE(SUM(requests), 0)::bigint AS requests
-            FROM llm_budget_counters
-            WHERE scope = 'agent' AND day = CURRENT_DATE
-        |]
-        let agentUsage = case agentUsageRows of
-                (row : _) -> (get #tokens_in row, get #tokens_out row, get #requests row)
-                [] -> (0, 0, 0)
         maybeConfig <- currentLlmConfig
         dailyBudget <- Budget.dailyTokenBudget
         rateLimit <- Budget.rateLimitPerMinute
@@ -323,7 +313,61 @@ instance Controller LlmAdminController where
             ratePerMinute = max 1 (param @Int "ratePerMinute")
         AgentConfig.saveAgentBudgetConfig AgentConfig.AgentBudgetConfig{abcDailyTokenBudget = dailyBudget, abcRatePerMinute = ratePerMinute}
         setSuccessMessage (trp "Agent budget saved: {tokens} tokens/day, {rate} requests/min" [("tokens", tshow dailyBudget), ("rate", tshow ratePerMinute)])
-        redirectTo LlmAdminAction
+        redirectTo LlmAgentConfigAction
+    action UpdateGlobalConfigAction = do
+        requirePrivilege "manage_rules"
+        let dailyBudget = max 0 (param @Int "dailyTokenBudget")
+            ratePerMinute = max 1 (param @Int "ratePerMinute")
+        GlobalConfig.saveGlobalBudgetConfig GlobalConfig.GlobalBudgetConfig{gbcDailyTokenBudget = dailyBudget, gbcRatePerMinute = ratePerMinute}
+        setSuccessMessage (trp "Global budget saved: {tokens} tokens/day, {rate} requests/min" [("tokens", tshow dailyBudget), ("rate", tshow ratePerMinute)])
+        redirectTo LlmAgentConfigAction
+    action LlmAgentConfigAction = do
+        requirePrivilege "manage_rules"
+        agentBudget <- AgentConfig.agentBudgetConfig
+        globalBudget <- GlobalConfig.globalBudgetConfig
+        globalFromEnv <- null <$> sqlQueryTyped [typedSql| SELECT id FROM llm_global_configs LIMIT 1 |]
+        template <-
+            query @LlmPromptTemplate
+                |> filterWhere (#name, internalAgentTemplateName)
+                |> filterWhere (#active, True)
+                |> orderByDesc #version
+                |> fetchOneOrNothing
+        usageRows <-
+            sqlQueryTyped
+                [typedSql|
+            SELECT scope, COALESCE(SUM(tokens_in), 0)::bigint AS tokens_in,
+                   COALESCE(SUM(tokens_out), 0)::bigint AS tokens_out,
+                   COALESCE(SUM(requests), 0)::bigint AS requests
+            FROM llm_budget_counters
+            WHERE day = CURRENT_DATE
+            GROUP BY scope
+        |]
+        let agentUsage = case [rowToTriple row | row <- usageRows, get #scope row == ("agent" :: Text)] of
+                (triple : _) -> triple
+                [] -> (0, 0, 0)
+            globalUsage = (sum [get #tokens_in row | row <- usageRows], sum [get #tokens_out row | row <- usageRows], sum [get #requests row | row <- usageRows])
+        render AgentConfigView{..}
+      where
+        rowToTriple row = (get #tokens_in row, get #tokens_out row, get #requests row)
+    action SeedAgentTemplateAction = do
+        requirePrivilege "manage_rules"
+        existing <-
+            query @LlmPromptTemplate
+                |> filterWhere (#name, internalAgentTemplateName)
+                |> fetchOneOrNothing
+        case existing of
+            Just _ -> setErrorMessage (tr "internal_agent template already exists")
+            Nothing -> do
+                _ <-
+                    newRecord @LlmPromptTemplate
+                        |> set #name internalAgentTemplateName
+                        |> set #version (1 :: Int)
+                        |> set #body defaultAgentTemplateBody
+                        |> set #active True
+                        |> set #notes (Just ("seeded from built-in default" :: Text))
+                        |> createRecord
+                setSuccessMessage (tr "internal_agent template v1 created and activated")
+        redirectTo LlmAgentConfigAction
     action NewLlmProviderAction = do
         requirePrivilege "manage_rules"
         render NewProviderView

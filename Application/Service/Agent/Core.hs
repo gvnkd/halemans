@@ -1,6 +1,10 @@
 module Application.Service.Agent.Core (
     runAgentTurn,
     runAgentTurnWith,
+    buildSystemMessage,
+    agentTurnGate,
+    internalAgentTemplateName,
+    defaultAgentTemplateBody,
     maxToolRounds,
 ) where
 
@@ -11,6 +15,8 @@ import Application.Service.Llm (Completion (..), LlmError (..), LlmMessage (..),
 import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig)
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.GlobalConfig (GlobalBudgetConfig (..), globalBudgetConfig)
+import Application.Service.Llm.Prompt (renderTemplate)
 import Control.Monad (void)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
@@ -20,7 +26,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Generated.Types
-import IHP.Fetch (fetch)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, orderByAsc, query)
@@ -44,14 +50,47 @@ runAgentTurn sessionId = do
         Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
         Just config -> do
             agentConfig <- agentBudgetConfig
+            globalConfig <- globalBudgetConfig
             session <- fetch sessionId
-            overBudget <- checkAgentBudget config.providerName agentConfig
+            gate <- agentTurnGate config.providerName agentConfig globalConfig
             overRate <- checkLimit ("agent:" <> tshow session.userId) agentConfig.abcRatePerMinute
-            if overBudget
-                then persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                else case overRate of
-                    Just _ -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
-                    Nothing -> runAgentTurnWith config.providerName (complete (OpenAiCompat config)) sessionId
+            case (gate, overRate) of
+                (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
+                (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
+                (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
+                (Nothing, Nothing) -> runAgentTurnWith config.providerName (complete (OpenAiCompat config)) sessionId
+
+-- Budget gate for one agent turn: the agent's own scope cap first, then the
+-- global cap across ALL LLM consumers. Just reason = blocked.
+agentTurnGate ::
+    (?modelContext :: ModelContext) =>
+    Text ->
+    AgentBudgetConfig ->
+    GlobalBudgetConfig ->
+    IO (Maybe Text)
+agentTurnGate provider agentConfig globalConfig = do
+    agentRows <-
+        sqlQueryTyped
+            [typedSql|
+        SELECT tokens_in, tokens_out FROM llm_budget_counters
+        WHERE scope = 'agent' AND provider = ${provider} AND day = CURRENT_DATE
+    |]
+    let agentSpent = sum [get #tokens_in row + get #tokens_out row | row <- agentRows]
+    globalRows <-
+        sqlQueryTyped
+            [typedSql|
+        SELECT tokens_in, tokens_out FROM llm_budget_counters
+        WHERE day = CURRENT_DATE
+    |]
+    let globalSpent = sum [get #tokens_in row + get #tokens_out row | row <- globalRows]
+    pure
+        ( if Budget.budgetExceeded agentConfig.abcDailyTokenBudget (fromIntegral agentSpent) 0
+            then Just "agent"
+            else
+                if Budget.budgetExceeded globalConfig.gbcDailyTokenBudget (fromIntegral globalSpent) 0
+                    then Just "global"
+                    else Nothing
+        )
 
 -- The turn driver with an injected completion source (tests script a fake
 -- provider; runAgentTurn passes the configured OpenAI-compatible client).
@@ -71,7 +110,8 @@ runAgentTurnWith providerName completionSource sessionId = do
                 , acLanguage = language
                 }
     history <- loadHistory sessionId
-    let messages = systemPrompt context session.pageContext : history
+    sysMsg <- buildSystemMessage context session.pageContext
+    let messages = sysMsg : history
     loop context sessionId messages maxToolRounds Map.empty
   where
     loop context sessionId messages roundsLeft seen = do
@@ -146,33 +186,78 @@ finalAnswerMessage =
         , msgToolCalls = []
         }
 
--- | System prompt: identity, act-as identity, language, tool policy.
-systemPrompt :: AgentContext -> Maybe Value -> LlmMessage
-systemPrompt context pageContext =
-    LlmMessage
-        { role = "system"
-        , content =
-            Text.intercalate
-                "\n"
-                [ "You are the Halemans agent, an embedded operations assistant for the Halemans alerting platform."
-                , "You act on behalf of the user " <> context.acUser.displayName <> " (" <> context.acUser.email <> "). You can only do what that user's privileges allow; when a tool reports a permission problem, explain it and stop pushing."
-                , "Respond in " <> context.acLanguage <> "."
-                , "Rules:"
-                , "- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts."
-                , "- At most " <> tshow maxToolRounds <> " tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments."
-                , "- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools."
-                , "- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation."
-                , "- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names."
-                , "- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in."
-                , pageContextLine
-                ]
-        , toolCallId = Nothing
-        , msgToolCalls = []
-        }
+-- | Template name of the internal chat agent's system prompt in
+-- llm_prompt_templates (versioned like alert_enrichment; edited in the
+-- template editor, seeded by nix/scripts/seed-halemans.sh).
+internalAgentTemplateName :: Text
+internalAgentTemplateName = "internal_agent"
+
+-- | System message for one turn: the ACTIVE internal_agent template rendered
+-- with the per-turn bindings when seeded, else the built-in default — the
+-- agent keeps working on fresh installs before the seed runs.
+buildSystemMessage :: (?modelContext :: ModelContext) => AgentContext -> Maybe Value -> IO LlmMessage
+buildSystemMessage context pageContext = do
+    template <-
+        query @LlmPromptTemplate
+            |> filterWhere (#name, internalAgentTemplateName)
+            |> filterWhere (#active, True)
+            |> fetchOneOrNothing
+    let content = case template of
+            Just template -> renderTemplate template.body bindings
+            Nothing -> defaultSystemPrompt context pageContext
+    pure
+        LlmMessage
+            { role = "system"
+            , content
+            , toolCallId = Nothing
+            , msgToolCalls = []
+            }
   where
-    pageContextLine = case pageContext of
-        Just value -> "The user is currently looking at this page: " <> cs (Aeson.encode value)
-        Nothing -> "No page context is available for this conversation."
+    bindings =
+        [ ("user_name", context.acUser.displayName)
+        , ("user_email", context.acUser.email)
+        , ("language", context.acLanguage)
+        , ("page_context", pageContextText pageContext)
+        ]
+
+pageContextText :: Maybe Value -> Text
+pageContextText pageContext = case pageContext of
+    Just value -> "The user is currently looking at this page: " <> cs (Aeson.encode value)
+    Nothing -> "No page context is available for this conversation."
+
+-- | Seed body for the internal_agent template (admin "seed from default"
+-- button and nix/scripts/seed-halemans.sh). Slots: {{user_name}},
+-- {{user_email}}, {{language}}, {{page_context}}.
+defaultAgentTemplateBody :: Text
+defaultAgentTemplateBody =
+    Text.intercalate
+        "\n"
+        [ "You are the Halemans agent, an embedded operations assistant for the Halemans alerting platform."
+        , "You act on behalf of the user {{user_name}} ({{user_email}}). You can only do what that user's privileges allow; when a tool reports a permission problem, explain it and stop pushing."
+        , "Respond in {{language}}."
+        , ""
+        , "Rules:"
+        , "- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts."
+        , "- At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments."
+        , "- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools."
+        , "- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation."
+        , "- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names."
+        , "- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in."
+        , ""
+        , "{{page_context}}"
+        ]
+
+-- | Built-in fallback system prompt (identity, act-as identity, language,
+-- tool policy) used when no active internal_agent template exists.
+defaultSystemPrompt :: AgentContext -> Maybe Value -> Text
+defaultSystemPrompt context pageContext =
+    renderTemplate
+        defaultAgentTemplateBody
+        [ ("user_name", context.acUser.displayName)
+        , ("user_email", context.acUser.email)
+        , ("language", context.acLanguage)
+        , ("page_context", pageContextText pageContext)
+        ]
 
 -- | Language code from users.settings.language (NULL when unset).
 userLanguageCode :: User -> Maybe Text
@@ -266,18 +351,6 @@ persistSimple sessionId completion text = do
             |> set #promptTokens (completion >>= (.tokensIn))
             |> set #completionTokens (completion >>= (.tokensOut))
             |> createRecord
-
-checkAgentBudget :: (?modelContext :: ModelContext) => Text -> AgentBudgetConfig -> IO Bool
-checkAgentBudget provider agentConfig = do
-    rows <-
-        sqlQueryTyped
-            [typedSql|
-        SELECT tokens_in, tokens_out FROM llm_budget_counters
-        WHERE scope = 'agent' AND provider = ${provider} AND day = CURRENT_DATE
-    |]
-    pure case rows of
-        [] -> False
-        (row : _) -> Budget.budgetExceeded agentConfig.abcDailyTokenBudget (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
 
 recordUsage :: (?modelContext :: ModelContext) => Text -> Completion -> IO ()
 recordUsage provider completion = do

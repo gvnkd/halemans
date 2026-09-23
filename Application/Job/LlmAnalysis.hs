@@ -5,6 +5,7 @@ import Application.Service.I18n (agentLanguageName)
 import Application.Service.Llm
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.GlobalConfig (GlobalBudgetConfig (..), globalBudgetConfig)
 import Application.Service.Llm.Output (ParsedOutput (..), parseCompletionOutput)
 import Application.Service.Llm.Prompt (BuiltPrompt (..), buildPromptForAlert)
 import Application.Service.Llm.Roles (resolveAgentRole, templateNameForRole, toolsForRole)
@@ -86,11 +87,12 @@ runAnalysis job analysis alert config = do
             case prior of
                 Just priorAnalysis -> copyDeduped analysis alert priorAnalysis
                 Nothing -> do
-                    overBudget <- checkBudget config.providerName
+                    globalConfig <- globalBudgetConfig
+                    overBudget <- checkBudget globalConfig
                     if overBudget
                         then failAnalysis analysis alert "budget_exceeded" "llm_skipped"
                         else do
-                            delayed <- checkRateLimit config.providerName now
+                            delayed <- checkRateLimit globalConfig config.providerName now
                             case delayed of
                                 Just delaySeconds -> requeue analysis job delaySeconds
                                 Nothing -> callProvider job analysis alert config role built
@@ -128,22 +130,21 @@ copyDeduped analysis alert prior = do
             |> updateRecord
     publishAlertUpdate alert "enriched"
 
-checkBudget :: (?modelContext :: ModelContext) => Text -> IO Bool
-checkBudget provider = do
-    cap <- Budget.dailyTokenBudget
+-- Global budget across ALL LLM consumers (analysis + agent). The
+-- per-consumer caps live beside each consumer (agent: llm_agent_configs).
+checkBudget :: (?modelContext :: ModelContext) => GlobalBudgetConfig -> IO Bool
+checkBudget globalConfig = do
     rows <-
         sqlQueryTyped
             [typedSql|
         SELECT tokens_in, tokens_out FROM llm_budget_counters
-        WHERE scope = 'analysis' AND provider = ${provider} AND day = CURRENT_DATE
+        WHERE day = CURRENT_DATE
     |]
-    pure case rows of
-        [] -> False
-        (row : _) -> Budget.budgetExceeded cap (fromIntegral (get #tokens_in row)) (fromIntegral (get #tokens_out row))
+    let spent = sum [get #tokens_in row + get #tokens_out row | row <- rows]
+    pure (Budget.budgetExceeded globalConfig.gbcDailyTokenBudget (fromIntegral spent) 0)
 
-checkRateLimit :: (?modelContext :: ModelContext) => Text -> UTCTime -> IO (Maybe Int)
-checkRateLimit provider now = do
-    perMinute <- Budget.rateLimitPerMinute
+checkRateLimit :: (?modelContext :: ModelContext) => GlobalBudgetConfig -> Text -> UTCTime -> IO (Maybe Int)
+checkRateLimit globalConfig provider now = do
     recent <-
         sqlQueryTyped
             [typedSql|
@@ -152,7 +153,7 @@ checkRateLimit provider now = do
             AND updated_at > NOW() - INTERVAL '60 seconds'
         ORDER BY updated_at DESC
     |]
-    pure (Budget.rateLimitDelaySeconds perMinute now recent)
+    pure (Budget.rateLimitDelaySeconds globalConfig.gbcRatePerMinute now recent)
 
 -- §6: over the rate limit the job re-queues itself with a delay instead of
 -- failing; the analysis row drops back to queued for the next attempt.
