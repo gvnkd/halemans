@@ -674,4 +674,8 @@ catalogRu =
         , ("No prompt templates yet.", "Шаблонов промптов пока нет.")
         , ("No LLM usage recorded yet.", "Использование LLM пока не зафиксировано.")
         , ("No recent alerts match this rule.", "Нет недавних алертов, подходящих под это правило.")
+        , ("Ask agent", "Спросить агента")
+        , ("Halemans agent", "Агент Halemans")
+        , ("Ask about this page…", "Спросить про эту страницу…")
+        , ("Send", "Отправить")
         ]

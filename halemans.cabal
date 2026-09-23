@@ -108,12 +108,17 @@ library
         Application.Pipeline.StateMachine
         Application.Script.EnqueuePollers
         Application.Script.GenPassword
+        Application.Script.HalemansMcp
         Application.Script.Prelude
+        Application.Service.Agent.Core
+        Application.Service.Agent.Mcp
+        Application.Service.Agent.Tools
         Application.Service.AlertList
         Application.Service.Api.Alerts
         Application.Service.Api.Auth
         Application.Service.Api.Cursor
         Application.Service.Api.Encode
+        Application.Service.Api.InternalAuth
         Application.Service.Api.Metrics
         Application.Service.Api.RateLimit
         Application.Service.Api.Token
@@ -173,6 +178,7 @@ library
         Application.Version
         Config
         Web.Controller.Admin
+        Web.Controller.AgentChat
         Web.Controller.Alerts
         Web.Controller.Api
         Web.Controller.AssetsAdmin
@@ -189,6 +195,7 @@ library
         Web.Controller.Groups
         Web.Controller.Hooks
         Web.Controller.Integrations
+        Web.Controller.InternalApi
         Web.Controller.Live
         Web.Controller.LlmAdmin
         Web.Controller.Metrics
@@ -270,6 +277,8 @@ library
         Web.View.Teams.New
         WorkerMain
         Generated.ActualTypes
+        Generated.ActualTypes.AgentMessage
+        Generated.ActualTypes.AgentSession
         Generated.ActualTypes.Alert
         Generated.ActualTypes.AlertEvent
         Generated.ActualTypes.AlertGroup
@@ -294,6 +303,7 @@ library
         Generated.ActualTypes.FieldMapping
         Generated.ActualTypes.GroupingRule
         Generated.ActualTypes.Host
+        Generated.ActualTypes.InternalApiAudit
         Generated.ActualTypes.JiraConfig
         Generated.ActualTypes.JiraLink
         Generated.ActualTypes.JiraSyncJob
@@ -330,6 +340,8 @@ library
         Generated.ActualTypes.WriteBackAttempt
         Generated.ActualTypes.WriteBackJob
         Generated.ActualTypes.ZabbixHostGroup
+        Generated.AgentMessage
+        Generated.AgentSession
         Generated.Alert
         Generated.AlertEvent
         Generated.AlertGroup
@@ -355,6 +367,7 @@ library
         Generated.FieldMapping
         Generated.GroupingRule
         Generated.Host
+        Generated.InternalApiAudit
         Generated.JiraConfig
         Generated.JiraLink
         Generated.JiraSyncJob
@@ -383,6 +396,8 @@ library
         Generated.Source
         Generated.SourceHealthJob
         Generated.Statements
+        Generated.Statements.CreateAgentMessage
+        Generated.Statements.CreateAgentSession
         Generated.Statements.CreateAlert
         Generated.Statements.CreateAlertEvent
         Generated.Statements.CreateAlertGroup
@@ -407,6 +422,7 @@ library
         Generated.Statements.CreateFieldMapping
         Generated.Statements.CreateGroupingRule
         Generated.Statements.CreateHost
+        Generated.Statements.CreateInternalApiAudit
         Generated.Statements.CreateJiraConfig
         Generated.Statements.CreateJiraLink
         Generated.Statements.CreateJiraSyncJob
@@ -420,6 +436,8 @@ library
         Generated.Statements.CreateLlmPromptTemplate
         Generated.Statements.CreateLlmToolCache
         Generated.Statements.CreateLlmToolCacheConfig
+        Generated.Statements.CreateManyAgentMessage
+        Generated.Statements.CreateManyAgentSession
         Generated.Statements.CreateManyAlert
         Generated.Statements.CreateManyAlertEvent
         Generated.Statements.CreateManyAlertGroup
@@ -444,6 +462,7 @@ library
         Generated.Statements.CreateManyFieldMapping
         Generated.Statements.CreateManyGroupingRule
         Generated.Statements.CreateManyHost
+        Generated.Statements.CreateManyInternalApiAudit
         Generated.Statements.CreateManyJiraConfig
         Generated.Statements.CreateManyJiraLink
         Generated.Statements.CreateManyJiraSyncJob
@@ -501,6 +520,8 @@ library
         Generated.Statements.CreateWriteBackAttempt
         Generated.Statements.CreateWriteBackJob
         Generated.Statements.CreateZabbixHostGroup
+        Generated.Statements.FetchAgentMessage
+        Generated.Statements.FetchAgentSession
         Generated.Statements.FetchAlert
         Generated.Statements.FetchAlertEvent
         Generated.Statements.FetchAlertGroup
@@ -525,6 +546,7 @@ library
         Generated.Statements.FetchFieldMapping
         Generated.Statements.FetchGroupingRule
         Generated.Statements.FetchHost
+        Generated.Statements.FetchInternalApiAudit
         Generated.Statements.FetchJiraConfig
         Generated.Statements.FetchJiraLink
         Generated.Statements.FetchJiraSyncJob
@@ -560,6 +582,8 @@ library
         Generated.Statements.FetchWriteBackAttempt
         Generated.Statements.FetchWriteBackJob
         Generated.Statements.FetchZabbixHostGroup
+        Generated.Statements.RowDecoderAgentMessage
+        Generated.Statements.RowDecoderAgentSession
         Generated.Statements.RowDecoderAlert
         Generated.Statements.RowDecoderAlertEvent
         Generated.Statements.RowDecoderAlertGroup
@@ -584,6 +608,7 @@ library
         Generated.Statements.RowDecoderFieldMapping
         Generated.Statements.RowDecoderGroupingRule
         Generated.Statements.RowDecoderHost
+        Generated.Statements.RowDecoderInternalApiAudit
         Generated.Statements.RowDecoderJiraConfig
         Generated.Statements.RowDecoderJiraLink
         Generated.Statements.RowDecoderJiraSyncJob
@@ -619,6 +644,8 @@ library
         Generated.Statements.RowDecoderWriteBackAttempt
         Generated.Statements.RowDecoderWriteBackJob
         Generated.Statements.RowDecoderZabbixHostGroup
+        Generated.Statements.UpdateAgentMessage
+        Generated.Statements.UpdateAgentSession
         Generated.Statements.UpdateAlert
         Generated.Statements.UpdateAlertEvent
         Generated.Statements.UpdateAlertGroup
@@ -643,6 +670,7 @@ library
         Generated.Statements.UpdateFieldMapping
         Generated.Statements.UpdateGroupingRule
         Generated.Statements.UpdateHost
+        Generated.Statements.UpdateInternalApiAudit
         Generated.Statements.UpdateJiraConfig
         Generated.Statements.UpdateJiraLink
         Generated.Statements.UpdateJiraSyncJob
@@ -764,6 +792,13 @@ executable EnqueuePollers
 executable GenPassword
     default-language: GHC2021
     main-is: GenPassword.hs
+    hs-source-dirs: build/exe
+    build-depends: base, halemans, ihp
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+
+executable HalemansMcp
+    default-language: GHC2021
+    main-is: HalemansMcp.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
     ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N

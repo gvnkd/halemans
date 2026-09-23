@@ -5,6 +5,7 @@ import Application.Pipeline.Grouping (AlertField (..))
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.Types (parseEither)
 import qualified Data.Text as Text
 import Generated.Types
 import IHP.ModelSupport (newRecord)
@@ -277,6 +278,35 @@ spec = describe "Application.Helper.DashboardConfig" do
             matchCardAlert (card [MatchClause (FacetAttr "Service") OpNe "MySQL" []]) alert `shouldBe` True
             matchCardAlert (card [MatchClause (FacetAttr "Absent") OpNe "MySQL" []]) alert `shouldBe` False
             matchCardAlert (card [MatchClause (FacetAttr "Absent") OpGlob "*" []]) alert `shouldBe` False
+        it "supports not-in list exclusion" do
+            let card clauses = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing False [] [] Nothing mempty
+            matchCardAlert (card [MatchClause (FacetField FieldEnv) OpNotIn "" ["prod", "staging"]]) alert `shouldBe` True
+            matchCardAlert (card [MatchClause (FacetField FieldEnv) OpNotIn "" ["dev", "prod"]]) alert `shouldBe` False
+            matchCardAlert (card [MatchClause (FacetAttr "Absent") OpNotIn "" ["prod"]]) alert `shouldBe` False
+        it "round-trips not-in clauses" do
+            let clause = MatchClause (FacetField FieldEnv) OpNotIn "" ["prod", "staging"]
+            Aeson.toJSON clause
+                `shouldBe` object
+                    [ "facet" .= ("field:env" :: Text)
+                    , "op" .= ("not-in" :: Text)
+                    , "values" .= (["prod", "staging"] :: [Text])
+                    ]
+            parseEither Aeson.parseJSON (Aeson.toJSON clause) `shouldBe` Right clause
+        it "rejects empty not-in values" do
+            decodeDashboardConfig
+                ( Aeson.toJSON
+                    [ object
+                        [ "match"
+                            .= [ object
+                                    [ "facet" .= ("field:env" :: Text)
+                                    , "op" .= ("not-in" :: Text)
+                                    , "values" .= ([] :: [Text])
+                                    ]
+                               ]
+                        ]
+                    ]
+                )
+                `shouldSatisfy` isLeft
     describe "globToLike" do
         it "translates glob specials and escapes LIKE specials" do
             globToLike "db-*" `shouldBe` "db-%"

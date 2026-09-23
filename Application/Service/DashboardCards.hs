@@ -10,6 +10,7 @@ module Application.Service.DashboardCards (
     legacyCardDomKey,
     expandedDomId,
     pinCard,
+    cardBaseQuery,
 ) where
 
 import Application.Helper.DashboardConfig
@@ -321,6 +322,7 @@ applyClause clause builder = case clause.mcFacet of
       where
         accessor = "->> " <> quoteSqlText name
   where
+    quotedList = Text.intercalate ", " (map quoteSqlText clause.mcValues)
     -- A NULL effective value (facet and raw column both absent) never
     -- matches, mirroring matchClauseAlert on Nothing.
     effectiveCondition expr =
@@ -328,7 +330,8 @@ applyClause clause builder = case clause.mcFacet of
             OpEq -> expr <> " = " <> quoteSqlText clause.mcValue
             OpNe -> expr <> " IS NOT NULL AND " <> expr <> " <> " <> quoteSqlText clause.mcValue
             OpGlob -> expr <> " LIKE " <> quoteSqlText (globToLike clause.mcValue)
-            OpIn -> expr <> " IN (" <> Text.intercalate ", " (map quoteSqlText clause.mcValues) <> ")"
+            OpIn -> expr <> " IN (" <> quotedList <> ")"
+            OpNotIn -> expr <> " NOT IN (" <> quotedList <> ")"
     -- filterWhereSql appends the fragment after the qualified proxy
     -- column; `accessor` extends the column to the value expression and
     -- `valueExpr` repeats it in full for the != null guard.
@@ -336,4 +339,5 @@ applyClause clause builder = case clause.mcFacet of
         OpEq -> accessor <> " = " <> quoteSqlText clause.mcValue
         OpNe -> accessor <> " IS NOT NULL AND " <> valueExpr <> " <> " <> quoteSqlText clause.mcValue
         OpGlob -> accessor <> " LIKE " <> quoteSqlText (globToLike clause.mcValue)
-        OpIn -> accessor <> " IN (" <> Text.intercalate ", " (map quoteSqlText clause.mcValues) <> ")"
+        OpIn -> accessor <> " IN (" <> quotedList <> ")"
+        OpNotIn -> accessor <> " NOT IN (" <> quotedList <> ")"

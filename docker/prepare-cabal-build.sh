@@ -32,7 +32,7 @@ main :: IO ()
 main = runScript Config.config (runJobWorkers (workers RootApplication))
 EOF
 
-for script in EnqueuePollers GenPassword; do
+for script in EnqueuePollers GenPassword HalemansMcp; do
     cat > "build/exe/${script}.hs" <<EOF
 module Main (main) where
 import IHP.ScriptSupport

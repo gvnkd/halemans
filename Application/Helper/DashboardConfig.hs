@@ -41,7 +41,7 @@ import qualified Data.Aeson.Encode.Pretty as Pretty
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.KeyMap (KeyMap)
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.Aeson.Types (parseEither)
+import Data.Aeson.Types (Parser, parseEither)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Generated.Types (Alert)
@@ -56,7 +56,7 @@ import IHP.Prelude
 data FacetRef = FacetField AlertField | FacetLabel Text | FacetAttr Text
     deriving (Eq, Show)
 
-data MatchOp = OpEq | OpNe | OpGlob | OpIn
+data MatchOp = OpEq | OpNe | OpGlob | OpIn | OpNotIn
     deriving (Eq, Show)
 
 data MatchClause = MatchClause
@@ -245,12 +245,16 @@ instance Aeson.FromJSON MatchClause where
             "!=" -> pure OpNe
             "~" -> pure OpGlob
             "in" -> pure OpIn
+            "not-in" -> pure OpNotIn
             other -> fail ("unknown match op: " <> cs other)
-        (mcValue, mcValues) <- case mcOp of
-            OpIn -> do
+        let listValues :: Text -> Parser (Text, [Text])
+            listValues opName = do
                 values <- o .: "values"
-                when (null values) (fail "values must be a non-empty array for op \"in\"")
+                when (null values) (fail ("values must be a non-empty array for op \"" <> cs opName <> "\""))
                 pure ("", values)
+        (mcValue, mcValues) <- case mcOp of
+            OpIn -> listValues "in"
+            OpNotIn -> listValues "not-in"
             _ -> do
                 value <- o .: "value"
                 pure (value, [])
@@ -264,6 +268,7 @@ instance Aeson.ToJSON MatchClause where
             ]
                 ++ case clause.mcOp of
                     OpIn -> ["values" .= clause.mcValues]
+                    OpNotIn -> ["values" .= clause.mcValues]
                     _ -> ["value" .= clause.mcValue]
 
 opText :: MatchOp -> Text
@@ -272,6 +277,7 @@ opText = \case
     OpNe -> "!="
     OpGlob -> "~"
     OpIn -> "in"
+    OpNotIn -> "not-in"
 
 instance Aeson.FromJSON HideWhen where
     parseJSON = Aeson.withObject "HideWhen" \o -> do
@@ -415,6 +421,8 @@ matchClauseAlert clause alert = case (clause.mcOp, clauseValue clause.mcFacet al
     (OpGlob, Nothing) -> False
     (OpIn, Just value) -> value `elem` clause.mcValues
     (OpIn, Nothing) -> False
+    (OpNotIn, Just value) -> value `notElem` clause.mcValues
+    (OpNotIn, Nothing) -> False
 
 -- | Conjunction only, consistent with grouping rules (milestone_2.md §13).
 matchCardAlert :: DashboardCard -> Alert -> Bool

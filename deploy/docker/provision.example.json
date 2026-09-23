@@ -87,6 +87,15 @@
     "severities": ["critical", "high", "warning", "info"],
     "environments": []
   },
+  "llm": {
+    "default": {
+      "endpoint": "http://host.docker.internal:11434",
+      "model": "qwen2.5",
+      "apiKeyEnv": "LLM_API_KEY",
+      "toolsEnabled": true,
+      "enabled": false
+    }
+  },
   "teams": {
     "sre": {
       "description": "Site reliability engineering",
@@ -145,6 +154,14 @@
             "title": "All environments",
             "match": [
               {"facet": "attr:Environments", "op": "~", "value": "*"}
+            ],
+            "groupBy": "attr:Environments",
+            "limit": 50
+          },
+          {
+            "title": "All environments except TEST",
+            "match": [
+              {"facet": "attr:Environments", "op": "not-in", "values": ["TEST"]}
             ],
             "groupBy": "attr:Environments",
             "limit": 50

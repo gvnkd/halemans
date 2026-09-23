@@ -84,6 +84,18 @@ autoAnalyze:
     - warning
     - info
   environments: []
+# LLM provider for analyses and the embedded agent (Admin → LLM shows the
+# same rows). "llm" is keyed by provider name; at most one row can be
+# enabled. apiKeyEnv names an env var holding the key (never stored in the
+# DB); toolsEnabled turns on the read-only LLM tools for analyses. The agent
+# (chat widget + MCP server) uses the single enabled provider.
+llm:
+  default:
+    endpoint: http://host.docker.internal:11434
+    model: qwen2.5
+    apiKeyEnv: LLM_API_KEY
+    toolsEnabled: true
+    enabled: false
 teams:
   sre:
     description: Site reliability engineering
@@ -152,6 +164,14 @@ dashboards:
             - facet: attr:Environments
               op: '~'
               value: '*'
+          groupBy: attr:Environments
+          limit: 50
+        - title: All environments except TEST
+          match:
+            - facet: attr:Environments
+              op: not-in
+              values:
+                - TEST
           groupBy: attr:Environments
           limit: 50
         - title: PostgreSQL summary

@@ -39,6 +39,7 @@ defaultLayout inner =
         <main id="content">
             {inner}
         </main>
+        {agentWidget}
     </body>
 </html>
 |]
@@ -97,6 +98,31 @@ navigation =
     </div>
 </nav>
 |]
+
+-- Floating agent chat widget on every page (internal API milestone). Logged-in
+-- only: the chat endpoints are session-authed and act as the current user.
+-- All behavior lives in app.js (CSP: no inline handlers); the data attributes
+-- carry the endpoint URLs and page context is gathered client-side on send.
+agentWidget :: Html
+agentWidget = case currentUserOrNothing of
+    Nothing -> mempty
+    Just _ ->
+        [hsx|
+        <div id="agent-widget" class="agent-widget" data-chat-url="/agent/chat" data-history-url="/agent/chat" data-testid="agent-widget">
+            <button type="button" id="agent-toggle" class="agent-fab" data-testid="agent-toggle" aria-expanded="false">{tr "Ask agent"}</button>
+            <section id="agent-panel" class="agent-panel d-none" data-testid="agent-panel" role="dialog" aria-label={tr "Halemans agent"}>
+                <header class="agent-panel-header">
+                    <span>{tr "Halemans agent"}</span>
+                    <button type="button" id="agent-close" class="agent-close" data-testid="agent-close" aria-label={tr "Close"}>×</button>
+                </header>
+                <div id="agent-messages" class="agent-messages" data-testid="agent-messages"></div>
+                <form id="agent-form" class="agent-form">
+                    <input type="text" id="agent-input" class="agent-input" data-testid="agent-input" placeholder={tr "Ask about this page…"} autocomplete="off"/>
+                    <button type="submit" class="btn-brand agent-send" data-testid="agent-send">{tr "Send"}</button>
+                </form>
+            </section>
+        </div>
+    |]
 
 userMenu :: Html
 userMenu = case currentUserOrNothing of

@@ -1,6 +1,7 @@
 module Main where
 
 import IHP.Prelude
+import qualified Test.Integration.AgentSpec
 import qualified Test.Integration.ApiSpec
 import qualified Test.Integration.DashboardsSpec
 import qualified Test.Integration.EnrichmentSpec
@@ -22,3 +23,4 @@ main =
         Test.Integration.EnrichmentSpec.spec
         Test.Integration.MetricChartSpec.spec
         Test.Integration.DashboardsSpec.spec
+        Test.Integration.AgentSpec.spec
