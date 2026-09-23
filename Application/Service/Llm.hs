@@ -153,11 +153,15 @@ testIntegration config = do
 
 pingNonStreaming :: LlmProviderConfig -> IO (Either Text ())
 pingNonStreaming config = do
+    -- "Reply with exactly one word" keeps reasoning models terse; max_tokens
+    -- must outlast a short reasoning preamble (Qwen3-class models think
+    -- first, and a token-starved ping finishes with finish_reason=length and
+    -- empty content on an otherwise healthy server).
     let payload =
             object
                 [ "model" .= config.model
-                , "messages" .= [messageJson (userMessage "ping")]
-                , "max_tokens" .= (8 :: Int)
+                , "messages" .= [messageJson (userMessage "Reply with exactly one word: pong")]
+                , "max_tokens" .= (64 :: Int)
                 ]
     result <- try (Http.postFollowing (testOpts config) (cs (apiUrl config "/v1/chat/completions")) payload)
     pure case result of
@@ -166,8 +170,11 @@ pingNonStreaming config = do
             let code = statusCode (response ^. Wreq.responseStatus)
              in if code >= 200 && code < 300
                     then case decodeCompletion response of
-                        Right completion | not (Text.null completion.content) -> Right ()
-                        Right _ -> Left "empty completion content"
+                        Right completion
+                            | not (Text.null completion.content) -> Right ()
+                            | Just tokensOut <- completion.tokensOut
+                            , tokensOut > 0 -> Right ()
+                            | otherwise -> Left "empty completion (no generated tokens)"
                         Left err -> Left (renderLlmError err)
                     else Left ("http " <> tshow code)
 
@@ -176,8 +183,8 @@ pingStreaming config = do
     let payload =
             object
                 [ "model" .= config.model
-                , "messages" .= [messageJson (userMessage "ping")]
-                , "max_tokens" .= (8 :: Int)
+                , "messages" .= [messageJson (userMessage "Reply with exactly one word: pong")]
+                , "max_tokens" .= (64 :: Int)
                 , "stream" .= True
                 ]
     result <- try (Http.postFollowing (testOpts config) (cs (apiUrl config "/v1/chat/completions")) payload)
