@@ -2,6 +2,7 @@ module Test.Integration.AgentSpec (spec) where
 
 import Application.Helper.Controller (userPrivileges)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
+import Application.Service.Agent.Core (maxToolRounds, runAgentTurnWith)
 import Application.Service.Agent.Mcp (McpConfig (..), defaultMcpEmail, defaultMcpRoleName, handleMessage, resolveMcpUser)
 import Application.Service.Agent.Tools (AgentContext (..), executeAgentTool)
 import qualified Application.Service.Llm as Llm
@@ -10,6 +11,7 @@ import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
 import qualified Data.Vector as Vector
@@ -18,7 +20,7 @@ import IHP.Fetch (fetch)
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.ModelSupport
 import IHP.Prelude
-import IHP.QueryBuilder (filterWhere, query)
+import IHP.QueryBuilder (filterWhere, orderByAsc, query)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 import Test.Integration.Setup (freshFingerprint, m6User, restoreEnv, testEventIn, testSource)
@@ -87,6 +89,92 @@ spec = describe "agent tools (internal API milestone)" do
             user <- m6User ["view"]
             runTool user "nope" "{}" `shouldReturn` "unknown tool: nope"
             runTool user "search_alerts" "{]" `shouldReturn` "invalid arguments for search_alerts"
+
+    describe "agent turn loop (regression: tool-call rounds)" do
+        it "executes tool calls and answers instead of exhausting immediately" do
+            user <- m6User ["view"]
+            session <-
+                newRecord @AgentSession
+                    |> set #userId (get #id user)
+                    |> createRecord
+            _ <-
+                newRecord @AgentMessage
+                    |> set #sessionId (get #id session)
+                    |> set #role_ ("user" :: Text)
+                    |> set #content "hi"
+                    |> createRecord
+            counter <- newIORef (0 :: Int)
+            let fakeComplete _ = do
+                    step <- readIORef counter
+                    modifyIORef' counter (+ 1)
+                    pure $ Right case step of
+                        0 ->
+                            Llm.Completion
+                                { content = ""
+                                , tokensIn = Nothing
+                                , tokensOut = Nothing
+                                , toolCalls = [Llm.ToolCall "c1" "list_environments" "{}"]
+                                }
+                        _ ->
+                            Llm.Completion
+                                { content = "Here are the environments."
+                                , tokensIn = Just 1
+                                , tokensOut = Just 1
+                                , toolCalls = []
+                                }
+            result <- runAgentTurnWith "fake" fakeComplete (get #id session)
+            result `shouldBe` Right ()
+            rows <-
+                query @AgentMessage
+                    |> filterWhere (#sessionId, get #id session)
+                    |> orderByAsc #createdAt
+                    |> fetch
+            let contents = map (.content) rows
+            contents `shouldSatisfy` any ("Here are the environments." `Text.isInfixOf`)
+            contents `shouldSatisfy` (not . any ("tool-call budget" `Text.isInfixOf`))
+            -- the executed round is persisted for the UI
+            map (.toolCalls) rows `shouldSatisfy` any isJust
+
+        it "spends the budget then forces a final tool-less answer" do
+            user <- m6User ["view"]
+            session <-
+                newRecord @AgentSession
+                    |> set #userId (get #id user)
+                    |> createRecord
+            _ <-
+                newRecord @AgentMessage
+                    |> set #sessionId (get #id session)
+                    |> set #role_ ("user" :: Text)
+                    |> set #content "hi"
+                    |> createRecord
+            calls <- newIORef (0 :: Int)
+            let fakeComplete prompt = do
+                    modifyIORef' calls (+ 1)
+                    -- the exhaustion rescue passes an empty tool list; a sane
+                    -- model answers then, an obstinate one keeps calling
+                    pure $
+                        Right
+                            Llm.Completion
+                                { content = ""
+                                , tokensIn = Nothing
+                                , tokensOut = Nothing
+                                , toolCalls =
+                                    [ Llm.ToolCall "c1" "list_environments" "{}"
+                                    | not (null prompt.tools)
+                                    ]
+                                }
+            result <- runAgentTurnWith "fake" fakeComplete (get #id session)
+            result `shouldBe` Right ()
+            rows <-
+                query @AgentMessage
+                    |> filterWhere (#sessionId, get #id session)
+                    |> orderByAsc #createdAt
+                    |> fetch
+            let contents = map (.content) rows
+            contents `shouldSatisfy` (not . any ("tool-call budget" `Text.isInfixOf`))
+            -- maxToolRounds executed rounds, one boundary request whose calls
+            -- are dropped, plus the rescue completion
+            readIORef calls `shouldReturn` (maxToolRounds + 2)
 
     describe "resolveMcpUser (default service account)" do
         it "auto-creates mcp@localhost with a single dedicated role, idempotently" do

@@ -1,5 +1,6 @@
 module Application.Service.Agent.Core (
     runAgentTurn,
+    runAgentTurnWith,
     maxToolRounds,
 ) where
 
@@ -13,6 +14,7 @@ import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Int (Int64)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Generated.Types
@@ -31,10 +33,28 @@ import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 -- the persisted tool_calls JSON.
 
 maxToolRounds :: Int
-maxToolRounds = 6
+maxToolRounds = 10
 
 runAgentTurn :: (?modelContext :: ModelContext) => Id AgentSession -> IO (Either Text ())
 runAgentTurn sessionId = do
+    config <- currentLlmConfig
+    case config of
+        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
+        Just config -> do
+            overBudget <- checkBudget config.providerName
+            if overBudget
+                then persistSimple sessionId Nothing "The daily LLM token budget is exhausted; try again tomorrow or ask an administrator to raise it." >> pure (Right ())
+                else runAgentTurnWith config.providerName (complete (OpenAiCompat config)) sessionId
+
+-- The turn driver with an injected completion source (tests script a fake
+-- provider; runAgentTurn passes the configured OpenAI-compatible client).
+runAgentTurnWith ::
+    (?modelContext :: ModelContext) =>
+    Text ->
+    (Prompt -> IO (Either LlmError Completion)) ->
+    Id AgentSession ->
+    IO (Either Text ())
+runAgentTurnWith providerName completionSource sessionId = do
     session <- fetch sessionId
     user <- fetch session.userId
     language <- agentLanguageName (userLanguageCode user)
@@ -43,20 +63,12 @@ runAgentTurn sessionId = do
                 { acUser = user
                 , acLanguage = language
                 }
-    config <- currentLlmConfig
-    case config of
-        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
-        Just config -> do
-            overBudget <- checkBudget config.providerName
-            if overBudget
-                then persistSimple sessionId Nothing "The daily LLM token budget is exhausted; try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                else do
-                    history <- loadHistory sessionId
-                    let messages = systemPrompt context session.pageContext : history
-                    loop context config sessionId messages 0
+    history <- loadHistory sessionId
+    let messages = systemPrompt context session.pageContext : history
+    loop context sessionId messages maxToolRounds Map.empty
   where
-    loop context config sessionId messages roundsLeft = do
-        result <- complete (OpenAiCompat config) (Prompt messages agentToolDefinitions)
+    loop context sessionId messages roundsLeft seen = do
+        result <- completionSource (Prompt messages agentToolDefinitions)
         case result of
             Left err -> do
                 let text = case err of
@@ -65,22 +77,67 @@ runAgentTurn sessionId = do
                 persistSimple sessionId Nothing text
                 pure (Right ())
             Right completion -> do
-                recordUsage config.providerName completion
+                recordUsage providerName completion
                 case completion.toolCalls of
                     [] -> do
                         persistSimple sessionId (Just completion) completion.content
                         pure (Right ())
                     calls
                         | roundsLeft <= 0 -> do
+                            -- Budget spent: one last completion WITHOUT tools
+                            -- so the model answers from data already
+                            -- collected. Only if it still demands tool calls
+                            -- do we apologize to the user.
                             persistToolRound sessionId completion Nothing calls []
-                            persistSimple sessionId Nothing "I ran out of tool-call rounds for this turn; please narrow the request."
+                            final <- completionSource (Prompt (messages ++ [finalAnswerMessage]) [])
+                            case final of
+                                Right finalCompletion
+                                    | null finalCompletion.toolCalls -> do
+                                        recordUsage providerName finalCompletion
+                                        persistSimple sessionId (Just finalCompletion) finalCompletion.content
+                                    | otherwise -> do
+                                        recordUsage providerName finalCompletion
+                                        persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request."
+                                Left _ -> persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request."
                             pure (Right ())
                         | otherwise -> do
-                            outputs <- forM calls \call -> executeAgentTool context call
+                            (outputs, seen') <- runCalls context seen calls
                             persistToolRound sessionId completion Nothing calls outputs
                             let results = [toolResultMessage call.callId output | (call, output) <- zip calls outputs]
                                 messages' = messages ++ [assistantRound completion calls] ++ results
-                            loop context config sessionId messages' (roundsLeft - 1)
+                            loop context sessionId messages' (roundsLeft - 1) seen'
+
+    -- Execute one iteration's tool calls with a per-turn repetition guard:
+    -- a call whose (name, arguments) already ran this turn gets its cached
+    -- result back with an explicit "do not repeat" note, instead of hitting
+    -- the service again and feeding the model the same text (the classic
+    -- thrash loop that burned all rounds without answering).
+    runCalls context seen calls = go calls seen []
+      where
+        go [] seenAcc outputs = pure (reverse outputs, seenAcc)
+        go (call : rest) seenAcc outputs = case Map.lookup (callKey call) seenAcc of
+            Just previous -> go rest seenAcc (repeatNote call previous : outputs)
+            Nothing -> do
+                output <- executeAgentTool context call
+                go rest (Map.insert (callKey call) output seenAcc) (output : outputs)
+    callKey call = call.callName <> "\0" <> call.callArguments
+    repeatNote call previous =
+        "NOTE: you already called the tool \""
+            <> call.callName
+            <> "\" with these exact arguments earlier in this turn. Its result was:\n"
+            <> previous
+            <> "\nDo not call it again; answer the user using the data you already have."
+
+-- Last-ditch instruction when the tool budget is spent: forces an answer
+-- from collected data instead of another tool request.
+finalAnswerMessage :: LlmMessage
+finalAnswerMessage =
+    LlmMessage
+        { role = "user"
+        , content = "System: the tool-call budget for this turn is exhausted. Answer the user's request NOW using only the data already collected in this conversation. Do not request any more tool calls."
+        , toolCallId = Nothing
+        , msgToolCalls = []
+        }
 
 -- | System prompt: identity, act-as identity, language, tool policy.
 systemPrompt :: AgentContext -> Maybe Value -> LlmMessage
@@ -95,6 +152,8 @@ systemPrompt context pageContext =
                 , "Respond in " <> context.acLanguage <> "."
                 , "Rules:"
                 , "- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts."
+                , "- At most " <> tshow maxToolRounds <> " tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments."
+                , "- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools."
                 , "- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation."
                 , "- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names."
                 , "- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in."
