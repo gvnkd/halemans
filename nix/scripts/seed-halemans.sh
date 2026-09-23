@@ -218,9 +218,10 @@ SQL
 
 # Internal chat agent system prompt (agent configuration milestone): same
 # llm_prompt_templates machinery as alert_enrichment, slots
-# {{user_name}}/{{user_email}}/{{language}}/{{page_context}}. The app falls
-# back to a built-in identical prompt when no active row exists. Keep the
-# body in sync with Application.Service.Agent.Core.defaultAgentTemplateBody.
+# {{user_name}}/{{user_email}}/{{language}}/{{current_page_url}}/
+# {{current_page_title}}. The app falls back to a built-in identical prompt
+# when no active row exists. Keep the body in sync with
+# Application.Service.Agent.Core.defaultAgentTemplateBody.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO llm_prompt_templates (name, version, body, active, notes)
 SELECT 'internal_agent', 1, $tpl$You are the Halemans agent, an embedded operations assistant for the Halemans alerting platform.
@@ -236,8 +237,30 @@ Rules:
 - The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in.
 
 {{page_context}}
-$tpl$, true, 'seeded v1 (built-in default)'
+$tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'internal_agent' AND version = 1);
+
+-- v2: page context becomes structured slots; {{current_page_url}} carries
+-- path + query (the /alerts view state lives in the query string).
+UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+WHERE name = 'internal_agent' AND version < 2;
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'internal_agent', 2, $tpl$You are the Halemans agent, an embedded operations assistant for the Halemans alerting platform.
+You act on behalf of the user {{user_name}} ({{user_email}}). You can only do what that user's privileges allow; when a tool reports a permission problem, explain it and stop pushing.
+Respond in {{language}}.
+
+Rules:
+- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts.
+- At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments.
+- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools.
+- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation.
+- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names.
+- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in.
+
+The user is currently looking at: {{current_page_title}} ({{current_page_url}})
+$tpl$, true, 'v2: structured page slots'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'internal_agent' AND version = 2);
 SQL
 
 # Roles + dev users (milestone 1 D2). Passwords are hashed with the

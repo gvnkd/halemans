@@ -145,11 +145,13 @@ the same `decodeDashboardConfig`.
   - *Agent prompt*: the ACTIVE `internal_agent` row of
     `llm_prompt_templates` — the chat agent's system prompt, versioned and
     edited in the same template editor as `alert_enrichment`. Slots:
-    `{{user_name}}`, `{{user_email}}`, `{{language}}`, `{{page_context}}`.
-    Seeded by `seed-halemans.sh`/`smoke-check.sh`; "Create template from
-    default" seeds it from `Core.defaultAgentTemplateBody`. Without an
-    active row the agent uses the identical built-in default, so nothing
-    breaks unseeded.
+    `{{user_name}}`, `{{user_email}}`, `{{language}}`,
+    `{{current_page_url}}`, `{{current_page_title}}` (the URL carries
+    path + query — the `/alerts` view state lives in the query string).
+    Seeded at v2 by `seed-halemans.sh`/`smoke-check.sh`; "Create template
+    from default" seeds it from `Core.defaultAgentTemplateBody`. Without an
+    active row the agent uses the identical built-in default. The legacy
+    `{{page_context}}` JSON slot keeps working for v1 rows.
   - *Agent limits*: the per-agent daily token budget + requests/min
     (`llm_agent_configs`).
   - *Global limits*: `llm_global_configs` singleton caps ALL LLM consumers

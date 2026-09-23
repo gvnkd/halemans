@@ -184,6 +184,8 @@ spec = describe "agent tools (internal API milestone)" do
 
     describe "agent budget (dedicated, admin-configured)" do
         it "defaults without a row and round-trips via saveAgentBudgetConfig" do
+            void do
+                sqlExecTyped [typedSql| DELETE FROM llm_agent_configs |]
             initial <- agentBudgetConfig
             initial `shouldBe` defaultAgentBudgetConfig
             saveAgentBudgetConfig AgentBudgetConfig{abcDailyTokenBudget = 12345, abcRatePerMinute = 3}
@@ -192,6 +194,8 @@ spec = describe "agent tools (internal API milestone)" do
             rows <- sqlQueryTyped [typedSql| SELECT COUNT(*)::int AS n FROM llm_agent_configs |]
             rows `shouldBe` [1 :: Int]
         it "records agent usage under scope 'agent', leaving analysis counters alone" do
+            void do
+                sqlExecTyped [typedSql| DELETE FROM llm_budget_counters WHERE provider = 'fake-budget' |]
             user <- m6User ["view"]
             session <-
                 newRecord @AgentSession
@@ -227,11 +231,13 @@ spec = describe "agent tools (internal API milestone)" do
     describe "agent system prompt (internal_agent template)" do
         it "falls back to the built-in default when no template is seeded" do
             user <- m6User ["view"]
+            resetAgentTemplates
             msg <- buildSystemMessage AgentContext{acUser = user, acLanguage = "English"} Nothing
             msg.content `shouldSatisfy` ("Halemans agent" `Text.isInfixOf`)
             msg.content `shouldSatisfy` (user.email `Text.isInfixOf`)
         it "renders the active template with the per-turn bindings" do
             user <- m6User ["view"]
+            resetAgentTemplates
             _ <-
                 newRecord @LlmPromptTemplate
                     |> set #name internalAgentTemplateName
@@ -248,12 +254,29 @@ spec = describe "agent tools (internal API milestone)" do
                     <> user.email
                     <> " in Russian. Page: The user is currently looking at this page: "
                     <> cs (Aeson.encode (Aeson.object ["path" .= ("/alerts" :: Text)]))
-        it "the seeded default body covers all four slots" do
-            let unresolved = [slot | slot <- ["{{user_name}}", "{{user_email}}", "{{language}}", "{{page_context}}"], slot `Text.isInfixOf` defaultAgentTemplateBody]
-            unresolved `shouldBe` ["{{user_name}}", "{{user_email}}", "{{language}}", "{{page_context}}"]
+        it "the seeded default body covers the structured page slots" do
+            let slots = ["{{user_name}}", "{{user_email}}", "{{language}}", "{{current_page_url}}", "{{current_page_title}}"]
+            [slot | slot <- slots, slot `Text.isInfixOf` defaultAgentTemplateBody] `shouldBe` slots
+        it "renders current_page_url and current_page_title from the widget payload" do
+            user <- m6User ["view"]
+            resetAgentTemplates
+            _ <-
+                newRecord @LlmPromptTemplate
+                    |> set #name internalAgentTemplateName
+                    |> set #version (2 :: Int)
+                    |> set #body ("Page: {{current_page_title}} at {{current_page_url}}" :: Text)
+                    |> set #active True
+                    |> createRecord
+            msg <-
+                buildSystemMessage
+                    AgentContext{acUser = user, acLanguage = "English"}
+                    (Just (Aeson.object ["url" .= ("/alerts?sort=title" :: Text), "title" .= ("Alerts" :: Text)]))
+            msg.content `shouldBe` "Page: Alerts at /alerts?sort=title"
 
     describe "agent budget gate (agent cap + global cap)" do
         it "passes with fresh counters, blocks on the agent cap then the global cap" do
+            void do
+                sqlExecTyped [typedSql| DELETE FROM llm_budget_counters WHERE provider LIKE 'fake-gate%' |]
             let agentConfig = AgentBudgetConfig{abcDailyTokenBudget = 100, abcRatePerMinute = 12}
                 globalConfig = GlobalBudgetConfig{gbcDailyTokenBudget = 500, gbcRatePerMinute = 20}
             clear <- agentTurnGate "fake-gate" agentConfig globalConfig
@@ -282,6 +305,8 @@ spec = describe "agent tools (internal API milestone)" do
 
     describe "global budget config" do
         it "falls back to env defaults without a row and round-trips saves" do
+            void do
+                sqlExecTyped [typedSql| DELETE FROM llm_global_configs |]
             config0 <- globalBudgetConfig
             config0.gbcDailyTokenBudget `shouldSatisfy` (> 0)
             config0.gbcRatePerMinute `shouldSatisfy` (> 0)
@@ -357,6 +382,9 @@ spec = describe "agent tools (internal API milestone)" do
     runTool user name arguments = do
         let context = AgentContext{acUser = user, acLanguage = "English"}
         executeAgentTool context (Llm.ToolCall name name arguments)
+    resetAgentTemplates = void do
+        sqlExecTyped
+            [typedSql| DELETE FROM llm_prompt_templates WHERE name = 'internal_agent' |]
     args pairs = argsV [(key, String value) | (key, value) <- pairs]
     argsV pairs = cs (Aeson.encode (Aeson.object [(Key.fromText key, value) | (key, value) <- pairs]))
     testMcpConfig user = McpConfig{mcpUser = user, mcpLanguage = "English"}

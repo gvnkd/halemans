@@ -612,7 +612,9 @@
     }
 
     function pageContext() {
-        return { path: window.location.pathname, title: document.title };
+        // pathname + search: on /alerts the whole view state (sort, columns,
+        // filters) lives in the query string, so it is the precise context.
+        return { url: window.location.pathname + window.location.search, title: document.title };
     }
 
     function loadHistory(root) {

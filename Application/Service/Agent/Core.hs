@@ -17,7 +17,7 @@ import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.GlobalConfig (GlobalBudgetConfig (..), globalBudgetConfig)
 import Application.Service.Llm.Prompt (renderTemplate)
-import Control.Monad (void)
+import Control.Monad (join, void)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -218,7 +218,19 @@ buildSystemMessage context pageContext = do
         , ("user_email", context.acUser.email)
         , ("language", context.acLanguage)
         , ("page_context", pageContextText pageContext)
+        , ("current_page_url", pageUrl pageContext)
+        , ("current_page_title", pageTitle pageContext)
         ]
+
+pageUrl :: Maybe Value -> Text
+pageUrl pageContext = fromMaybe "" do
+    value <- pageContext
+    join (parseMaybe (Aeson.withObject "page_context" (\o -> o Aeson..:? "url")) value)
+
+pageTitle :: Maybe Value -> Text
+pageTitle pageContext = fromMaybe "" do
+    value <- pageContext
+    join (parseMaybe (Aeson.withObject "page_context" (\o -> o Aeson..:? "title")) value)
 
 pageContextText :: Maybe Value -> Text
 pageContextText pageContext = case pageContext of
@@ -227,7 +239,7 @@ pageContextText pageContext = case pageContext of
 
 -- | Seed body for the internal_agent template (admin "seed from default"
 -- button and nix/scripts/seed-halemans.sh). Slots: {{user_name}},
--- {{user_email}}, {{language}}, {{page_context}}.
+-- {{user_email}}, {{language}}, {{current_page_url}}, {{current_page_title}}.
 defaultAgentTemplateBody :: Text
 defaultAgentTemplateBody =
     Text.intercalate
@@ -244,7 +256,7 @@ defaultAgentTemplateBody =
         , "- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names."
         , "- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in."
         , ""
-        , "{{page_context}}"
+        , "The user is currently looking at: {{current_page_title}} ({{current_page_url}})"
         ]
 
 -- | Built-in fallback system prompt (identity, act-as identity, language,

@@ -85,7 +85,7 @@ instance View AgentConfigView where
             Just template ->
                 [hsx|
                     <p class="text-muted">
-                        {trp "Active template {name} v{version} (updated {updated}). Slots: {{user_name}}, {{user_email}}, {{language}}, {{page_context}}." [("name", template.name), ("version", tshow template.version), ("updated", tshow template.updatedAt)]}
+                        {trp "Active template {name} v{version} (updated {updated}). Slots: {{user_name}}, {{user_email}}, {{language}}, {{current_page_url}}, {{current_page_title}}." [("name", template.name), ("version", tshow template.version), ("updated", tshow template.updatedAt)]}
                     </p>
                     <a href={EditLlmTemplateAction (get #id template)} class="btn btn-ghost" data-testid="agent-template-edit">{tr "Edit (new version)"}</a>
                 |]
