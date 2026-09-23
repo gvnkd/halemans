@@ -108,11 +108,15 @@ agentWidget = case currentUserOrNothing of
     Nothing -> mempty
     Just _ ->
         [hsx|
-        <div id="agent-widget" class="agent-widget" data-chat-url="/agent/chat" data-history-url="/agent/chat" data-testid="agent-widget">
+        <div id="agent-widget" class="agent-widget" data-chat-url="/agent/chat" data-history-url="/agent/chat" data-sessions-url="/agent/sessions" data-new-chat-label={tr "New chat"} data-testid="agent-widget">
             <button type="button" id="agent-toggle" class="agent-fab" data-testid="agent-toggle" aria-expanded="false">{tr "Ask agent"}</button>
             <section id="agent-panel" class="agent-panel d-none" data-testid="agent-panel" role="dialog" aria-label={tr "Halemans agent"}>
                 <header class="agent-panel-header">
                     <span>{tr "Halemans agent"}</span>
+                    <div class="agent-panel-controls">
+                        <select id="agent-sessions" class="agent-sessions" data-testid="agent-sessions" aria-label={tr "Chat history"}></select>
+                        <button type="button" id="agent-new-chat" class="agent-new-chat" data-testid="agent-new-chat" title={tr "New chat"} aria-label={tr "New chat"}>+</button>
+                    </div>
                     <button type="button" id="agent-close" class="agent-close" data-testid="agent-close" aria-label={tr "Close"}>×</button>
                 </header>
                 <div id="agent-messages" class="agent-messages" data-testid="agent-messages"></div>

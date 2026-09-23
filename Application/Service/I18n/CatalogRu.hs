@@ -677,5 +677,7 @@ catalogRu =
         , ("Ask agent", "Спросить агента")
         , ("Halemans agent", "Агент Halemans")
         , ("Ask about this page…", "Спросить про эту страницу…")
+        , ("New chat", "Новый чат")
+        , ("Chat history", "История чатов")
         , ("Send", "Отправить")
         ]

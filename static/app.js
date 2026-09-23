@@ -629,6 +629,39 @@
             .catch(function () {});
     }
 
+    // Past sessions for the header selector (GET /agent/sessions). The empty
+    // leading option is "New chat" — selecting it clears the conversation.
+    function loadSessions(root) {
+        var select = root.querySelector('#agent-sessions');
+        if (!select) return;
+        fetch(root.getAttribute('data-sessions-url'), { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (!data || !data.sessions) return;
+                var current = sessionId();
+                select.textContent = '';
+                var fresh = document.createElement('option');
+                fresh.value = '';
+                fresh.textContent = root.getAttribute('data-new-chat-label') || 'New chat';
+                select.appendChild(fresh);
+                data.sessions.forEach(function (session) {
+                    var option = document.createElement('option');
+                    option.value = session.id;
+                    option.textContent = session.title || session.id;
+                    if (session.id === current) option.selected = true;
+                    select.appendChild(option);
+                });
+            })
+            .catch(function () {});
+    }
+
+    function newChat(root) {
+        window.localStorage.removeItem(SESSION_KEY);
+        root.querySelector('#agent-messages').textContent = '';
+        var select = root.querySelector('#agent-sessions');
+        if (select) select.value = '';
+    }
+
     function sendMessage(root) {
         var input = root.querySelector('#agent-input');
         var messages = root.querySelector('#agent-messages');
@@ -655,6 +688,7 @@
                 (result.data.replies || []).forEach(function (reply) {
                     if (reply.content) append(messages, 'assistant', reply.content);
                 });
+                loadSessions(root);
             })
             .catch(function () { thinking.textContent = 'network error'; });
     }
@@ -673,8 +707,16 @@
             panel.classList.toggle('d-none');
             root.querySelector('#agent-toggle').setAttribute('aria-expanded', opening ? 'true' : 'false');
             var messages = root.querySelector('#agent-messages');
-            if (opening && !messages.childElementCount) loadHistory(root);
-            if (opening) root.querySelector('#agent-input').focus();
+            if (opening) {
+                loadSessions(root);
+                if (!messages.childElementCount) loadHistory(root);
+                root.querySelector('#agent-input').focus();
+            }
+            return;
+        }
+        if (target.closest && target.closest('#agent-new-chat')) {
+            newChat(root);
+            root.querySelector('#agent-input').focus();
             return;
         }
         if (target.closest && target.closest('#agent-close')) {
@@ -688,5 +730,19 @@
         event.preventDefault();
         var root = document.getElementById('agent-widget');
         if (root) sendMessage(root);
+    });
+
+    document.addEventListener('change', function (event) {
+        var select = event.target;
+        if (!select || select.id !== 'agent-sessions') return;
+        var root = document.getElementById('agent-widget');
+        if (!root) return;
+        if (select.value) {
+            setSession(select.value);
+            root.querySelector('#agent-messages').textContent = '';
+            loadHistory(root);
+        } else {
+            newChat(root);
+        }
     });
 })();

@@ -1463,10 +1463,42 @@ time.utc-time {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
     padding: 10px 14px;
     border-bottom: 1px solid var(--surface-border);
     font-weight: 600;
 }
+.agent-panel-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+}
+.agent-sessions {
+    max-width: 160px;
+    height: 28px;
+    padding: 0 6px;
+    border-radius: 6px;
+    border: 1px solid var(--surface-border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--text-sm);
+}
+.agent-new-chat {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    border-radius: 6px;
+    border: 1px solid var(--surface-border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0;
+}
+.agent-new-chat:hover { border-color: var(--brand-signal); color: var(--brand-signal); }
 .agent-close {
     border: 0;
     background: transparent;
