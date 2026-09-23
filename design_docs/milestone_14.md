@@ -84,7 +84,11 @@ sync rules).
   `static/app.js` per the CSP policy; brand-layer CSS). The client sends
   `{message, session_id, page_context}`; `page_context` (`path`, `title`)
   is gathered on send and stored on the session + first message, then
-  injected into the system prompt.
+  injected into the system prompt. The input row is deliberately NOT a
+  `<form>`: IHP's `helpers.js` XHR-submits every form on the site
+  (`initDisableButtonsOnSubmit`), so JS-driven forms are `div` + plain
+  button + Enter `keydown`, with events delegated at document level
+  (turbolinks-morphdom patches can drop per-node listeners).
 - `POST /agent/chat` creates or resumes an owned session, persists the user
   message, runs the turn, returns the persisted assistant rows.
   `GET /agent/sessions` / `GET /agent/chat/:id` back the resume dropdown and

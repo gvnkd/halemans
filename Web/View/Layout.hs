@@ -116,10 +116,10 @@ agentWidget = case currentUserOrNothing of
                     <button type="button" id="agent-close" class="agent-close" data-testid="agent-close" aria-label={tr "Close"}>×</button>
                 </header>
                 <div id="agent-messages" class="agent-messages" data-testid="agent-messages"></div>
-                <form id="agent-form" class="agent-form">
+                <div class="agent-form">
                     <input type="text" id="agent-input" class="agent-input" data-testid="agent-input" placeholder={tr "Ask about this page…"} autocomplete="off"/>
-                    <button type="submit" class="btn-brand agent-send" data-testid="agent-send">{tr "Send"}</button>
-                </form>
+                    <button type="button" id="agent-send" class="btn-brand agent-send" data-testid="agent-send">{tr "Send"}</button>
+                </div>
             </section>
         </div>
     |]

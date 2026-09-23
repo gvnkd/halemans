@@ -584,94 +584,109 @@
 // Floating agent chat widget (internal API milestone). Collapsed affordance
 // on every page; the panel POSTs {message, session_id, page_context} to
 // /agent/chat and renders the persisted assistant replies. Session id lives
-// in localStorage so the conversation survives navigation (turbolinks swaps
-// the body; the widget markup comes from the layout on every render).
+// in localStorage so the conversation survives navigation.
+//
+// Events are DELEGATED at document level (same pattern as the
+// data-metric-chart handlers above), NOT attached to the widget nodes:
+// turbolinks-morphdom patches can replace inner nodes between page renders
+// while keeping an ancestor alive, which silently drops listeners attached
+// per-node.
+//
+// The input row is NOT a <form>: IHP's helpers.js intercepts every submit
+// event document-wide and XHR-submits the form itself (missing action ->
+// "null"), so a real form here can never be fully controlled by us. Send is
+// a plain button + an Enter keydown (see sendMessage below).
 (function () {
     var SESSION_KEY = 'halemans-agent-session';
 
-    function init() {
-        var root = document.getElementById('agent-widget');
-        if (!root || root.getAttribute('data-agent-ready')) return;
-        root.setAttribute('data-agent-ready', '1');
-        var toggle = document.getElementById('agent-toggle');
-        var panel = document.getElementById('agent-panel');
-        var closeBtn = document.getElementById('agent-close');
-        var form = document.getElementById('agent-form');
-        var input = document.getElementById('agent-input');
-        var messages = document.getElementById('agent-messages');
-        if (!toggle || !panel || !form || !input || !messages) return;
+    function sessionId() { return window.localStorage.getItem(SESSION_KEY) || null; }
+    function setSession(id) { window.localStorage.setItem(SESSION_KEY, String(id)); }
 
-        function sessionId() { return window.localStorage.getItem(SESSION_KEY) || null; }
-        function setSession(id) { window.localStorage.setItem(SESSION_KEY, String(id)); }
-
-        function append(role, text) {
-            var div = document.createElement('div');
-            div.className = 'agent-msg agent-msg-' + role;
-            div.textContent = text; // textContent: no HTML injection from the model
-            messages.appendChild(div);
-            messages.scrollTop = messages.scrollHeight;
-            return div;
-        }
-
-        function pageContext() {
-            return { path: window.location.pathname, title: document.title };
-        }
-
-        function loadHistory() {
-            var id = sessionId();
-            if (!id) return;
-            fetch(root.getAttribute('data-history-url') + '/' + encodeURIComponent(id), { headers: { 'X-Requested-With': 'fetch' } })
-                .then(function (response) { return response.ok ? response.json() : null; })
-                .then(function (data) {
-                    if (!data || !data.messages) return;
-                    messages.textContent = '';
-                    data.messages.forEach(function (row) { if (row.content) append(row.role, row.content); });
-                })
-                .catch(function () {});
-        }
-
-        toggle.addEventListener('click', function () {
-            var opening = panel.classList.contains('d-none');
-            panel.classList.toggle('d-none');
-            toggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
-            if (opening && !messages.childElementCount) loadHistory();
-            if (opening) input.focus();
-        });
-        if (closeBtn) closeBtn.addEventListener('click', function () {
-            panel.classList.add('d-none');
-            toggle.setAttribute('aria-expanded', 'false');
-        });
-
-        form.addEventListener('submit', function (event) {
-            event.preventDefault();
-            var text = input.value.trim();
-            if (!text) return;
-            input.value = '';
-            append('user', text);
-            var thinking = append('assistant', '…');
-            fetch(root.getAttribute('data-chat-url'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
-                body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext() })
-            })
-                .then(function (response) {
-                    return response.json().then(function (data) { return { ok: response.ok, data: data }; });
-                })
-                .then(function (result) {
-                    if (!result.ok) {
-                        thinking.textContent = (result.data && result.data.error) || 'error';
-                        return;
-                    }
-                    setSession(result.data.session_id);
-                    thinking.parentNode.removeChild(thinking);
-                    (result.data.replies || []).forEach(function (reply) {
-                        if (reply.content) append('assistant', reply.content);
-                    });
-                })
-                .catch(function () { thinking.textContent = 'network error'; });
-        });
+    function append(messages, role, text) {
+        var div = document.createElement('div');
+        div.className = 'agent-msg agent-msg-' + role;
+        div.textContent = text; // textContent: no HTML injection from the model
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+        return div;
     }
 
-    document.addEventListener('DOMContentLoaded', init);
-    document.addEventListener('turbolinks:load', init);
+    function pageContext() {
+        return { path: window.location.pathname, title: document.title };
+    }
+
+    function loadHistory(root) {
+        var id = sessionId();
+        if (!id) return;
+        var messages = root.querySelector('#agent-messages');
+        fetch(root.getAttribute('data-history-url') + '/' + encodeURIComponent(id), { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (!data || !data.messages) return;
+                messages.textContent = '';
+                data.messages.forEach(function (row) { if (row.content) append(messages, row.role, row.content); });
+            })
+            .catch(function () {});
+    }
+
+    function sendMessage(root) {
+        var input = root.querySelector('#agent-input');
+        var messages = root.querySelector('#agent-messages');
+        var text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        append(messages, 'user', text);
+        var thinking = append(messages, 'assistant', '…');
+        fetch(root.getAttribute('data-chat-url'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
+            body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext() })
+        })
+            .then(function (response) {
+                return response.json().then(function (data) { return { ok: response.ok, data: data }; });
+            })
+            .then(function (result) {
+                if (!result.ok) {
+                    thinking.textContent = (result.data && result.data.error) || 'error';
+                    return;
+                }
+                setSession(result.data.session_id);
+                thinking.parentNode.removeChild(thinking);
+                (result.data.replies || []).forEach(function (reply) {
+                    if (reply.content) append(messages, 'assistant', reply.content);
+                });
+            })
+            .catch(function () { thinking.textContent = 'network error'; });
+    }
+
+    document.addEventListener('click', function (event) {
+        var root = document.getElementById('agent-widget');
+        if (!root) return;
+        var target = event.target;
+        if (target.closest && target.closest('#agent-send')) {
+            sendMessage(root);
+            return;
+        }
+        if (target.closest && target.closest('#agent-toggle')) {
+            var panel = root.querySelector('#agent-panel');
+            var opening = panel.classList.contains('d-none');
+            panel.classList.toggle('d-none');
+            root.querySelector('#agent-toggle').setAttribute('aria-expanded', opening ? 'true' : 'false');
+            var messages = root.querySelector('#agent-messages');
+            if (opening && !messages.childElementCount) loadHistory(root);
+            if (opening) root.querySelector('#agent-input').focus();
+            return;
+        }
+        if (target.closest && target.closest('#agent-close')) {
+            root.querySelector('#agent-panel').classList.add('d-none');
+            root.querySelector('#agent-toggle').setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' || !event.target || event.target.id !== 'agent-input') return;
+        event.preventDefault();
+        var root = document.getElementById('agent-widget');
+        if (root) sendMessage(root);
+    });
 })();
