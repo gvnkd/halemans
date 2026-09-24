@@ -208,14 +208,17 @@ executeAgentTool context call = do
     invalidArgumentsMessage properties detail =
         "invalid arguments for "
             <> call.callName
-            <> ": expected a JSON object with required: "
+            <> ": "
+            <> firstLine detail
             <> ( if null requiredProps
-                    then "(none)"
-                    else Text.intercalate ", " requiredProps
+                    then ""
+                    else " (required: " <> Text.intercalate ", " requiredProps <> ")"
                )
-            <> " — "
-            <> detail
       where
+        -- Handler errors raised via `error` embed a HasCallStack suffix —
+        -- never forward it to the model (it gets re-injected on every
+        -- repetition-guard retry, pure token noise).
+        firstLine = Text.takeWhile (/= '\n')
         requiredProps =
             [ propName
             | (propName, schema) <- properties

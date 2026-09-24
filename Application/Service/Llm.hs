@@ -31,6 +31,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
 import qualified Data.Text as Text
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
@@ -197,7 +198,7 @@ chatCompletionStreaming config prompt onStatus = do
         Left (err :: SomeException) -> pure (Left (Retriable (tshow err)))
         Right outcome -> pure outcome
   where
-    consumeStream started bodyReader = go mempty [] Nothing
+    consumeStream started bodyReader = go mempty emptyStreamCalls Nothing
       where
         readChunk = System.Timeout.timeout streamIdleTimeoutMicroseconds (HTTP.brRead bodyReader)
         go accContent accCalls mUsage = do
@@ -215,9 +216,8 @@ chatCompletionStreaming config prompt onStatus = do
                             Left done -> pure done
                             Right (accContent', accCalls', mUsage', _rest') -> go accContent' accCalls' mUsage'
         finish accContent accCalls mUsage = do
-            now <- getCurrentTime
             emitStatus started accContent
-            let toolCalls = finalizeCalls accCalls
+            let toolCalls = finalizeStreamCalls accCalls
             pure
                 ( Right
                     Completion
@@ -234,7 +234,7 @@ chatCompletionStreaming config prompt onStatus = do
                     -- stream end: the final state is already accumulated
                     now <- getCurrentTime
                     emitStatus started' accContent
-                    let toolCalls = finalizeCalls accCalls
+                    let toolCalls = finalizeStreamCalls accCalls
                     pure
                         ( Left
                             ( Right
@@ -251,7 +251,7 @@ chatCompletionStreaming config prompt onStatus = do
                     Just chunkValue -> do
                         let deltaContent = chunkContent chunkValue
                             accContent' = accContent <> deltaContent
-                            accCalls' = mergeCalls accCalls (chunkToolCallParts chunkValue)
+                            accCalls' = addCallParts accCalls (chunkToolCallParts chunkValue)
                             mUsage' = case chunkUsage chunkValue of
                                 Just usage -> Just usage
                                 Nothing -> mUsage
@@ -267,12 +267,6 @@ chatCompletionStreaming config prompt onStatus = do
                     , stWords = length (Text.words content)
                     , stElapsedMs = round (diffUTCTime now started' * 1000)
                     }
-    finalizeCalls calls =
-        [ ToolCall callId callName callArguments
-        | (callId, callName, callArguments) <- calls
-        , not (Text.null callName)
-        ]
-
 streamingPayload :: LlmProviderConfig -> Prompt -> Value
 streamingPayload config prompt =
     object $
@@ -308,8 +302,58 @@ chunkContent value = fromMaybe "" do
     orElse (Just a) _ = Just a
     orElse Nothing b = b
 
--- Accumulated tool-call parts across chunks: (id, name, arguments).
-chunkToolCallParts :: Value -> [(Text, Text, Text)]
+-- Streamed tool-call accumulation (agent observability fix). The OpenAI
+-- streaming contract keys continuations by INDEX: the first chunk of a call
+-- carries id + name + the initial (often empty) arguments; later chunks
+-- carry only {index, function: {arguments: <fragment>}}. Grouping by id
+-- therefore DROPPED every continuation fragment (empty id matched nothing
+-- and the empty-name filter discarded them) — observed live with
+-- llama.cpp/vLLM, which split real arguments (UUIDs, config JSON) across
+-- chunks while one-chunk args ("{}") survived. Accumulate keyed by index.
+data StreamCalls = StreamCalls
+    { scByIndex :: Map Int (Text, Text, Text)
+    -- ^ stream index -> (callId, name, accumulated arguments)
+    , scIdToIndex :: Map Text Int
+    -- ^ non-empty call id -> index (fallback matching for providers that
+    -- omit index on the first chunk)
+    }
+
+emptyStreamCalls :: StreamCalls
+emptyStreamCalls = StreamCalls mempty mempty
+
+addCallParts :: StreamCalls -> [(Maybe Int, Text, Text, Text)] -> StreamCalls
+addCallParts = foldl' addOne
+  where
+    addOne sc (mIndex, callId, name, args) =
+        let key = case mIndex of
+                Just index -> index
+                Nothing
+                    | not (Text.null callId) ->
+                        fromMaybe (nextKey sc) (Map.lookup callId (scIdToIndex sc))
+                    | otherwise -> max 0 (nextKey sc - 1)
+            nextKey s = maybe 0 (+ 1) (fst <$> Map.lookupMax (scByIndex s))
+            (existingId, existingName, existingArgs) = fromMaybe ("", "", "") (Map.lookup key (scByIndex sc))
+            merged =
+                ( if Text.null existingId then callId else existingId
+                , if Text.null existingName then name else existingName
+                , existingArgs <> args
+                )
+            idToIndex' =
+                if Text.null callId
+                    then scIdToIndex sc
+                    else Map.insert callId key (scIdToIndex sc)
+         in sc{scByIndex = Map.insert key merged (scByIndex sc), scIdToIndex = idToIndex'}
+
+finalizeStreamCalls :: StreamCalls -> [ToolCall]
+finalizeStreamCalls sc =
+    [ ToolCall callId callName callArguments
+    | (_key, (callId, callName, callArguments)) <- Map.toAscList (scByIndex sc)
+    , not (Text.null callName)
+    ]
+
+-- Per-chunk tool-call parts: (index-or-nothing, id, name, arguments
+-- fragment). Continuation chunks typically carry ONLY index + arguments.
+chunkToolCallParts :: Value -> [(Maybe Int, Text, Text, Text)]
 chunkToolCallParts value = fromMaybe [] do
     choices <- lookupKey "choices" value
     firstChoice <- case choices of
@@ -329,22 +373,15 @@ chunkToolCallParts value = fromMaybe [] do
         let textField key value = case lookupKey key value of
                 Just (Aeson.String text) -> Just text
                 _ -> Nothing
+            indexField = case lookupKey "index" item of
+                Just (Aeson.Number number) -> Just (floor number)
+                _ -> Nothing
         pure
-            ( fromMaybe "" (textField "id" item)
+            ( indexField
+            , fromMaybe "" (textField "id" item)
             , fromMaybe "" (textField "name" function)
             , fromMaybe "" (textField "arguments" function)
             )
-
-mergeCalls :: [(Text, Text, Text)] -> [(Text, Text, Text)] -> [(Text, Text, Text)]
-mergeCalls existing [] = existing
-mergeCalls existing ((callId, name, args) : rest) =
-    mergeCalls (insertOrAppend existing) rest
-  where
-    insertOrAppend [] = [(callId, name, args)]
-    insertOrAppend ((eid, ename, eargs) : xs)
-        | eid == callId && not (Text.null eid) = (eid, if Text.null name then ename else name, eargs <> args) : xs
-        | eid == callId && Text.null eid && ename == name = (eid, ename, eargs <> args) : xs
-        | otherwise = (eid, ename, eargs) : insertOrAppend xs
 
 chunkUsage :: Value -> Maybe (Maybe Int, Maybe Int)
 chunkUsage value = do
