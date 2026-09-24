@@ -1607,6 +1607,7 @@ time.utc-time {
 .agent-trace-error { color: var(--severity-critical, #e5484d); }
 .agent-trace-detail {
     align-self: stretch;
+    flex: none;
     margin: 0;
     padding: 8px;
     border: 1px solid var(--surface-border);
