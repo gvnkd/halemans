@@ -26,13 +26,14 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
-import IHP.QueryBuilder (filterWhere, orderByAsc, query)
+import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
 import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 
 -- Agent turn driver (internal API milestone). Rebuilds the OpenAI message
@@ -150,7 +151,21 @@ runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId 
                 , acLanguage = language
                 }
     history <- loadHistory sessionId
-    sysMsg <- buildSystemMessage context session.pageContext
+    -- Page context for the system prompt comes from the LATEST user message
+    -- (each message carries what the widget saw when sent), falling back to
+    -- the session's creation-time context — a long-lived conversation must
+    -- not be pinned to the page where it started.
+    latestUserRows <-
+        query @AgentMessage
+            |> filterWhere (#sessionId, sessionId)
+            |> filterWhere (#role_, "user" :: Text)
+            |> orderByDesc #createdAt
+            |> limit 1
+            |> fetch
+    let livePageContext = case latestUserRows of
+            (row : _) | isJust row.pageContext -> row.pageContext
+            _ -> session.pageContext
+    sysMsg <- buildSystemMessage context livePageContext
     privileges <- userPrivileges (get #id user)
     let tools = agentToolDefinitionsFor privileges
         messages = sysMsg : history
@@ -276,7 +291,14 @@ buildSystemMessage context pageContext = do
 pageUrl :: Maybe Value -> Text
 pageUrl pageContext = fromMaybe "" do
     value <- pageContext
-    join (parseMaybe (Aeson.withObject "page_context" (\o -> o Aeson..:? "url")) value)
+    join (parseMaybe parseUrl value)
+  where
+    -- New widget payloads use "url" (path + query); older sessions have
+    -- "path" only — accept both so history keeps working.
+    parseUrl = Aeson.withObject "page_context" \o -> do
+        url <- o Aeson..:? "url"
+        path <- o Aeson..:? "path"
+        pure (url <|> path)
 
 pageTitle :: Maybe Value -> Text
 pageTitle pageContext = fromMaybe "" do

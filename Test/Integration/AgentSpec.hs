@@ -272,6 +272,37 @@ spec = describe "agent tools (internal API milestone)" do
                     AgentContext{acUser = user, acLanguage = "English"}
                     (Just (Aeson.object ["url" .= ("/alerts?sort=title" :: Text), "title" .= ("Alerts" :: Text)]))
             msg.content `shouldBe` "Page: Alerts at /alerts?sort=title"
+        it "falls back to the legacy path key for pre-widget-fix payloads" do
+            user <- m6User ["view"]
+            resetAgentTemplates
+            _ <-
+                newRecord @LlmPromptTemplate
+                    |> set #name internalAgentTemplateName
+                    |> set #version (2 :: Int)
+                    |> set #body ("Page: {{current_page_title}} at {{current_page_url}}" :: Text)
+                    |> set #active True
+                    |> createRecord
+            msg <-
+                buildSystemMessage
+                    AgentContext{acUser = user, acLanguage = "English"}
+                    (Just (Aeson.object ["path" .= ("/dashboards" :: Text), "title" .= ("Dashboards" :: Text)]))
+            msg.content `shouldBe` "Page: Dashboards at /dashboards"
+        it "never leaks literal placeholders into the system message" do
+            user <- m6User ["view"]
+            resetAgentTemplates
+            _ <-
+                newRecord @LlmPromptTemplate
+                    |> set #name internalAgentTemplateName
+                    |> set #version (3 :: Int)
+                    |> set #body defaultAgentTemplateBody
+                    |> set #active True
+                    |> createRecord
+            msg <-
+                buildSystemMessage
+                    AgentContext{acUser = user, acLanguage = "English"}
+                    (Just (Aeson.object ["url" .= ("/alerts?x=1" :: Text), "title" .= ("Alerts" :: Text)]))
+            msg.content `shouldSatisfy` (not . ("{{" `Text.isInfixOf`))
+            msg.content `shouldSatisfy` ("/alerts?x=1" `Text.isInfixOf`)
 
     describe "agent budget gate (agent cap + global cap)" do
         it "passes with fresh counters, blocks on the agent cap then the global cap" do
@@ -327,11 +358,11 @@ spec = describe "agent tools (internal API milestone)" do
         it "tool definitions are filtered to the caller's privileges" do
             let names privs = [name | Just (String name) <- map (functionField "name") (agentToolDefinitionsFor privs)]
             names ["view"] `shouldSatisfy` ("search_alerts" `elem`)
-            names ["view"] `shouldSatisfy` (not . elem "create_blackout")
-            names ["view"] `shouldSatisfy` (not . elem "list_teams")
+            names ["view"] `shouldSatisfy` `notElem` "create_blackout"
+            names ["view"] `shouldSatisfy` `notElem` "list_teams"
             ["create_blackout", "list_teams", "ack_alert", "list_sources", "list_escalation_policies"]
                 `shouldSatisfy` all (`elem` names ["view", "ack", "manage_blackouts", "manage_users", "manage_rules", "manage_sources", "close"])
-            names ["admin"] `shouldSatisfy` (not . elem "create_blackout") -- raw "admin" is expanded by userPrivileges, not here
+            names ["admin"] `shouldSatisfy` `notElem` "create_blackout" -- raw "admin" is expanded by userPrivileges, not here
             requiredPrivilegeFor "create_blackout" `shouldBe` Just "manage_blackouts"
             requiredPrivilegeFor "get_profile" `shouldBe` Nothing
         it "admin role implies every tool (userPrivileges expands admin)" do
