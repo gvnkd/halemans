@@ -17,6 +17,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
+import qualified Data.List
 import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
 import qualified Data.Vector as Vector
@@ -358,11 +359,11 @@ spec = describe "agent tools (internal API milestone)" do
         it "tool definitions are filtered to the caller's privileges" do
             let names privs = [name | Just (String name) <- map (functionField "name") (agentToolDefinitionsFor privs)]
             names ["view"] `shouldSatisfy` ("search_alerts" `elem`)
-            names ["view"] `shouldSatisfy` `notElem` "create_blackout"
-            names ["view"] `shouldSatisfy` `notElem` "list_teams"
+            names ["view"] `shouldSatisfy` (\xs -> "create_blackout" `Data.List.notElem` xs)
+            names ["view"] `shouldSatisfy` (\xs -> "list_teams" `Data.List.notElem` xs)
             ["create_blackout", "list_teams", "ack_alert", "list_sources", "list_escalation_policies"]
                 `shouldSatisfy` all (`elem` names ["view", "ack", "manage_blackouts", "manage_users", "manage_rules", "manage_sources", "close"])
-            names ["admin"] `shouldSatisfy` `notElem` "create_blackout" -- raw "admin" is expanded by userPrivileges, not here
+            names ["admin"] `shouldSatisfy` (\xs -> "create_blackout" `Data.List.notElem` xs) -- raw "admin" is expanded by userPrivileges, not here
             requiredPrivilegeFor "create_blackout" `shouldBe` Just "manage_blackouts"
             requiredPrivilegeFor "get_profile" `shouldBe` Nothing
         it "admin role implies every tool (userPrivileges expands admin)" do
