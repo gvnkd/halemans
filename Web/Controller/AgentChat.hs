@@ -12,7 +12,7 @@ import Data.UUID (UUID)
 import Generated.Types
 import IHP.ModelSupport (withTransaction)
 import qualified Network.HTTP.Types as HTTP
-import Network.Wai (responseLBS, responseStream)
+import Network.Wai (queryString, responseLBS, responseStream)
 import Web.Controller.Prelude
 
 -- Agent chat (internal API milestone). Session-authed JSON endpoints backing
@@ -27,7 +27,7 @@ instance Controller AgentChatController where
         case Aeson.decode body >>= parseMaybe parseChatRequest of
             Nothing -> renderJsonWithStatusCode HTTP.status400 (object ["error" .= ("invalid request body" :: Text)])
             Just request
-                | isJust (paramOrNothing @Text "stream") -> streamChat request
+                | request.stream -> streamChat request
                 | otherwise -> jsonChat request
     action AgentSessionsAction = do
         sessions <-
@@ -89,14 +89,14 @@ streamChat request = do
             item <- readChan events
             case item of
                 Right (AgentToken status) -> do
-                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs, "dbg" .= ("token-fires" :: Text)])
+                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs])
                     loop
                 Right (AgentToolStart toolName) -> do
-                    emit "tool" (object ["name" .= toolName, "dbg" .= ("tool-fires" :: Text)])
+                    emit "tool" (object ["name" .= toolName])
                     loop
                 Left _ -> do
                     replies <- loadTurnReplies session userMessageRow
-                    emit "done" (object ["session_id" .= get #id session, "replies" .= replies, "dbg" .= ("done-fires" :: Text)])
+                    emit "done" (object ["session_id" .= get #id session, "replies" .= replies])
         emit :: Text -> Value -> IO ()
         emit event payload = do
             writeBuilder (string8 ("event: " <> cs event <> "\ndata: " <> cs (Aeson.encode payload) <> "\n\n"))
@@ -138,6 +138,7 @@ data ChatRequest = ChatRequest
     { message :: Text
     , sessionId :: Maybe UUID
     , pageContext :: Maybe Value
+    , stream :: Bool
     }
 
 parseChatRequest :: Value -> Parser ChatRequest
@@ -145,6 +146,7 @@ parseChatRequest = Aeson.withObject "chat" \o -> do
     message <- o .: "message"
     sessionId <- o .:? "session_id"
     pageContext <- o .:? "page_context"
+    stream <- o .:? "stream" .!= False
     pure ChatRequest{..}
 
 -- Owned-session resolution: resume when the id is given and belongs to the

@@ -759,10 +759,10 @@
             thinking.textContent = message;
         }
 
-        fetch(root.getAttribute('data-chat-url') + '?stream=1', {
+        fetch(root.getAttribute('data-chat-url'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
-            body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext() })
+            body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext(), stream: true })
         }).then(function (response) {
             if (!response.ok || !response.body) throw new Error('http ' + response.status);
             var reader = response.body.getReader();

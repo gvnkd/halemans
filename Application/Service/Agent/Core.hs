@@ -157,11 +157,14 @@ runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId 
     loop context sessionId messages tools maxToolRounds Map.empty
   where
     loop context sessionId messages tools roundsLeft seen = do
+        -- Streaming is used for every round when a callback is present:
+        -- completions that turn out to carry tool calls are accumulated
+        -- chunk-wise (chatCompletionStreaming reassembles them) and the
+        -- loop proceeds exactly like the buffered path; token deltas give
+        -- the UI live progress during the model's (long) thinking.
         let completeThis prompt = case mStreaming of
-                -- Stream only the final-answer path (tool-less completion):
-                -- tool rounds stay buffered, they return quickly.
-                Just streamFn | null prompt.tools -> streamFn prompt (onEvent . AgentToken)
-                _ -> completionSource prompt
+                Just streamFn -> streamFn prompt (onEvent . AgentToken)
+                Nothing -> completionSource prompt
         result <- completeThis (Prompt messages tools)
         case result of
             Left err -> do

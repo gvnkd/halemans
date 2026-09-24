@@ -33,8 +33,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Maybe (catMaybes)
 import qualified Data.Text as Text
-import qualified Data.Vector as Vector
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
+import qualified Data.Vector as Vector
 import IHP.Prelude
 import qualified Network.HTTP.Client as HTTP
 import qualified Network.HTTP.Client.TLS as HTTP
@@ -390,7 +390,8 @@ pingNonStreaming config = do
                         Right completion
                             | not (Text.null completion.content) -> Right ()
                             | Just tokensOut <- completion.tokensOut
-                            , tokensOut > 0 -> Right ()
+                            , tokensOut > 0 ->
+                                Right ()
                             | otherwise -> Left "empty completion (no generated tokens)"
                         Left err -> Left (renderLlmError err)
                     else Left ("http " <> tshow code)

@@ -254,6 +254,7 @@ library
         Web.View.Integrations.JiraEdit
         Web.View.Integrations.JiraNew
         Web.View.Layout
+        Web.View.LlmAdmin.AgentConfig
         Web.View.LlmAdmin.Edit
         Web.View.LlmAdmin.EditProvider
         Web.View.LlmAdmin.EditRole
