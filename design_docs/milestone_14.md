@@ -182,7 +182,25 @@ tools it cannot call. Provisioned-protected config rows refuse mutations, and
 mutating tools keep the two-phase `confirmed` flow. E2E-verified against a
 real Qwen3 (llama.cpp): plan → user confirms → blackout applied → DB row.
 
-## 9. Tests
+## 9. Streaming + chat UX
+
+- `POST /agent/chat` with `"stream": true` in the JSON body answers with SSE:
+  `token` events (word count + elapsed ms of the accumulating answer),
+  `tool` events (tool-round starts), then `done` with the standard replies
+  payload. `Llm.chatCompletionStreaming` consumes the provider's SSE via
+  http-client streaming and reassembles the full `Completion` (content +
+  tool_calls + usage), so the Core loop treats streamed rounds exactly like
+  buffered ones; the loop streams every round when an event callback is
+  present. (The stream flag must live in the JSON body: IHP's param lookup
+  only sees the JSON payload for JSON requests.)
+- Widget: fetch + ReadableStream reader parses the SSE frames and renders a
+  live "Thinking… N words · Xs" label, "⚙ tool…" activity lines, and an
+  explicit failure label. The input is a textarea (Enter sends, Shift+Enter
+  newline), and when the agent's reply contains numbered questions a
+  structured reply widget renders one input per question, submitting labeled
+  multiline answers (opencode-style).
+
+## 10. Tests
 
 - `Test/DashboardConfigSpec.hs` — not-in matcher, JSON round-trip, empty
   `values` rejection.
