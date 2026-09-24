@@ -95,7 +95,37 @@ spec = describe "agent tools (internal API milestone)" do
         it "soft-fails unknown tools and invalid arguments" do
             user <- m6User ["view"]
             runTool user "nope" "{}" `shouldReturn` "unknown tool: nope"
-            runTool user "search_alerts" "{]" `shouldReturn` "invalid arguments for search_alerts"
+            bad <- runTool user "search_alerts" "{]"
+            bad `shouldSatisfy` ("invalid arguments for search_alerts" `Text.isPrefixOf`)
+        it "normalizes empty arguments to an empty object (providers emit \"\")" do
+            user <- m6User ["view"]
+            out <- runTool user "list_dashboards" ""
+            out `shouldSatisfy` (not . ("invalid arguments" `Text.isInfixOf`))
+            out2 <- runTool user "get_dashboard_schema" "   "
+            out2 `shouldSatisfy` ("Dashboard config is a JSON array" `Text.isPrefixOf`)
+        it "names the required parameters in invalid-arguments errors" do
+            user <- m6User ["view"]
+            out <- runTool user "validate_dashboard" "{bad json"
+            out `shouldSatisfy` ("invalid arguments for validate_dashboard" `Text.isPrefixOf`)
+            out `shouldSatisfy` ("required: name, config" `Text.isInfixOf`)
+        it "get_dashboard resolves by name and by id" do
+            user <- m6User ["view"]
+            suffix <- tshow <$> nextRandom
+            let dashName = "probe-dash-" <> suffix
+                config = "[{\"title\":\"x\",\"match\":[]}]"
+            _ <- runTool user "create_dashboard" (argsV [("name", String dashName), ("config", String config), ("confirmed", Bool True)])
+            byName <- runTool user "get_dashboard" (args [("name", dashName)])
+            byName `shouldSatisfy` ("\"title\": \"x\"" `Text.isInfixOf`)
+            byName `shouldSatisfy` ("is_default: false" `Text.isInfixOf`)
+            dashId <- do
+                rows <- query @Dashboard |> filterWhere (#name, dashName) |> fetch
+                case rows of
+                    (row : _) -> pure (tshow (get #id row))
+                    [] -> error "probe dashboard missing"
+            byId <- runTool user "get_dashboard" (args [("id", dashId)])
+            byId `shouldSatisfy` (dashName `Text.isInfixOf`)
+            missing <- runTool user "get_dashboard" "{}"
+            missing `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
 
     describe "agent turn loop (regression: tool-call rounds)" do
         it "executes tool calls and answers instead of exhausting immediately" do
@@ -239,9 +269,17 @@ spec = describe "agent tools (internal API milestone)" do
         it "falls back to the built-in default when no template is seeded" do
             user <- m6User ["view"]
             resetAgentTemplates
-            msg <- buildSystemMessage AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing} Nothing
+            msg <-
+                buildSystemMessage
+                    AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing}
+                    (Just (Aeson.object ["url" .= ("/dashboards/abc?x=1" :: Text), "title" .= ("Dash" :: Text)]))
             msg.content `shouldSatisfy` ("Halemans agent" `Text.isInfixOf`)
             msg.content `shouldSatisfy` (user.email `Text.isInfixOf`)
+            -- regression: the fallback binds ALL slots — no literal
+            -- {{current_page_*}} placeholders may reach the model
+            msg.content `shouldSatisfy` (not . ("{{" `Text.isInfixOf`))
+            msg.content `shouldSatisfy` ("/dashboards/abc?x=1" `Text.isInfixOf`)
+            msg.content `shouldSatisfy` ("Dash" `Text.isInfixOf`)
         it "renders the active template with the per-turn bindings" do
             user <- m6User ["view"]
             resetAgentTemplates
@@ -483,7 +521,7 @@ spec = describe "agent tools (internal API milestone)" do
                     case tools of
                         Array items -> mapM (lookupKeyAsText "name") (Vector.toList items)
                         _ -> Nothing
-            fmap length toolNames `shouldBe` Just 19
+            fmap length toolNames `shouldBe` Just 20
 
         it "executes tools/call and flags errors" do
             user <- m6User ["view"]

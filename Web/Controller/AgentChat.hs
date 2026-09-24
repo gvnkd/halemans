@@ -94,6 +94,9 @@ streamChat request = do
                 Right (AgentToolStart toolName) -> do
                     emit "tool" (object ["name" .= toolName])
                     loop
+                Right (AgentRoundStart roundNumber) -> do
+                    emit "round" (object ["round" .= roundNumber])
+                    loop
                 Left _ -> do
                     replies <- loadTurnReplies session userMessageRow
                     emit "done" (object ["session_id" .= get #id session, "replies" .= replies])

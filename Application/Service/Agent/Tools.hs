@@ -73,6 +73,7 @@ toolCatalog =
     , tool "create_blackout" "Create a silence/maintenance window. Scope is optional env/host/service names (at least one). Two-phase: call with confirmed=false first to show the plan. Requires manage_blackouts." [opt "env" "environment name", opt "host" "host name", opt "service" "service name", req "starts_at" "ISO8601, e.g. 2026-09-24T18:00:00Z", req "ends_at" "ISO8601", opt "reason" "why", optC "confirmed"] (Just "manage_blackouts")
     , tool "delete_blackout" "Delete a blackout by id. Two-phase (confirmed). Requires manage_blackouts." [req "blackout_id" "blackout UUID", optC "confirmed"] (Just "manage_blackouts")
     , tool "list_dashboards" "List the current user's dashboards: name, whether it is the default, and card count." [] Nothing
+    , tool "get_dashboard" "Get one of the current user's dashboards by name or id: the full card config JSON (ready to edit and pass to update_dashboard), plus default/position metadata. Use this before modifying an existing dashboard." [opt "name" "dashboard name", opt "id" "dashboard UUID (from the page URL /dashboards/<uuid>)"] Nothing
     , tool "get_dashboard_schema" "Get the dashboard card config schema: card fields, facet references, match operators and an example card." [] Nothing
     , tool "validate_dashboard" "Validate a dashboard config without creating it: checks card JSON, then counts currently matching open alerts per card. Always call this before create_dashboard and show the plan to the user." [req "name" "dashboard name", req "config" "card config as a JSON array string"] Nothing
     , tool "create_dashboard" "Create a dashboard for the current user. Two-phase: call with confirmed=false first and present the returned plan; only after the user explicitly agrees call again with confirmed=true." [req "name" "dashboard name", req "config" "card config as a JSON array string", optC "confirmed"] Nothing
@@ -179,7 +180,7 @@ executeAgentTool context call = do
             [] -> Nothing
     case entry of
         Nothing -> pure ("unknown tool: " <> call.callName)
-        Just (_, _, _, requiredPrivilege) -> do
+        Just (_, _, properties, requiredPrivilege) -> do
             -- Hard RBAC gate: the acting user's real privileges decide,
             -- never the model. Enforced before dispatch.
             privileges <- userPrivileges (get #id context.acUser)
@@ -187,13 +188,39 @@ executeAgentTool context call = do
                 Just privilege
                     | privilege `notElem` privileges ->
                         pure ("forbidden: the acting user lacks the " <> privilege <> " privilege")
-                _ -> case Aeson.decode (cs call.callArguments) of
-                    Just (Object arguments) -> do
+                _ -> case decodeArguments call.callArguments of
+                    Just arguments -> do
                         result <- try (dispatch context call.callName arguments)
                         pure case result of
                             Right output -> output
-                            Left (err :: SomeException) -> "invalid arguments for " <> call.callName <> ": " <> tshow err
-                    _ -> pure ("invalid arguments for " <> call.callName)
+                            Left (err :: SomeException) -> invalidArgumentsMessage properties (tshow err)
+                    Nothing -> pure (invalidArgumentsMessage properties "arguments are not a JSON object")
+  where
+    -- Providers emit arguments: "" (empty string) for zero-arg tools —
+    -- normalize blank to an empty object instead of failing. When arguments
+    -- really are unusable, name the REQUIRED parameters so the model can
+    -- self-correct instead of thrashing the same call.
+    decodeArguments raw
+        | Text.null (Text.strip raw) = Just mempty
+        | otherwise = case Aeson.decode (cs raw) of
+            Just (Object arguments) -> Just arguments
+            _ -> Nothing
+    invalidArgumentsMessage properties detail =
+        "invalid arguments for "
+            <> call.callName
+            <> ": expected a JSON object with required: "
+            <> ( if null requiredProps
+                    then "(none)"
+                    else Text.intercalate ", " requiredProps
+               )
+            <> " — "
+            <> detail
+      where
+        requiredProps =
+            [ propName
+            | (propName, schema) <- properties
+            , fromMaybe False (parseMaybe (Aeson.withObject "prop" (\o -> o .:? "x-required" .!= False)) schema)
+            ]
 
 -- Handlers: alert actions
 dispatch :: (?modelContext :: ModelContext) => AgentContext -> Text -> Aeson.Object -> IO Text
@@ -303,6 +330,20 @@ dispatch context name arguments = case name of
                 deleteRecord blackout
                 pure "blackout deleted"
     "list_dashboards" -> listDashboards context
+    "get_dashboard" -> do
+        name <- argMaybe "name"
+        idArg <- argMaybe "id"
+        dashboard <- fetchOwnDashboard context name idArg
+        pure
+            ( Text.intercalate
+                "\n"
+                [ "name: " <> dashboard.name
+                , "id: " <> tshow (get #id dashboard)
+                , "is_default: " <> (if dashboard.isDefault then "true" else "false")
+                , "config:"
+                , prettyJson dashboard.config
+                ]
+            )
     "get_dashboard_schema" -> pure dashboardSchemaDoc
     "validate_dashboard" -> do
         name <- arg "name" ""
@@ -844,17 +885,39 @@ ownDashboards context =
         |> fetch
 
 fetchOwnDashboardByName :: (?modelContext :: ModelContext) => AgentContext -> Text -> IO Dashboard
-fetchOwnDashboardByName context name = do
-    dashboard <-
-        query @Dashboard
-            |> filterWhere (#userId, get #id context.acUser)
-            |> filterWhere (#name, name)
-            |> fetchOneOrNothing
-    case dashboard of
-        Just dashboard -> do
-            when (get #protected dashboard) (error "this dashboard is provisioned-protected")
-            pure dashboard
-        Nothing -> error ("no dashboard named \"" <> name <> "\" owned by the acting user")
+fetchOwnDashboardByName context name = fetchOwnDashboard context (Just name) Nothing
+
+-- | Resolve a dashboard by name or UUID (both optional, at least one
+-- required), scoped to the acting user — this is what lets the agent act
+-- on "this dashboard" from a /dashboards/<uuid> page URL.
+fetchOwnDashboard :: (?modelContext :: ModelContext) => AgentContext -> Maybe Text -> Maybe Text -> IO Dashboard
+fetchOwnDashboard context mName mIdArg = do
+    byId <- case mIdArg of
+        Just idArg -> do
+            uuid <- maybe (error "id is not a UUID") pure (readMaybe (cs idArg))
+            let dashboardId = Id uuid :: Id Dashboard
+            found <- fetchOneOrNothing dashboardId
+            case found of
+                Just dashboard | dashboard.userId == get #id context.acUser -> pure (Just dashboard)
+                _ -> error "no dashboard with that id owned by the acting user"
+        Nothing -> pure Nothing
+    case byId of
+        Just dashboard -> checkProtected dashboard
+        Nothing -> case mName of
+            Just name -> do
+                dashboard <-
+                    query @Dashboard
+                        |> filterWhere (#userId, get #id context.acUser)
+                        |> filterWhere (#name, name)
+                        |> fetchOneOrNothing
+                case dashboard of
+                    Just dashboard -> checkProtected dashboard
+                    Nothing -> error ("no dashboard named \"" <> name <> "\" owned by the acting user")
+            Nothing -> error "pass name or id"
+  where
+    checkProtected dashboard = do
+        when (get #protected dashboard) (error "this dashboard is provisioned-protected")
+        pure dashboard
 
 validateDashboard :: (?modelContext :: ModelContext) => Text -> Text -> IO Text
 validateDashboard name configText = do

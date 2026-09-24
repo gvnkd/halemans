@@ -48,10 +48,12 @@ maxToolRounds :: Int
 maxToolRounds = 10
 
 -- Live progress events for the streaming chat endpoint: token deltas of the
--- final answer (with word count + elapsed) and tool-round starts.
+-- final answer (with word count + elapsed), tool-round starts, and round
+-- starts (so the UI sees activity during long tool rounds on slow models).
 data AgentEvent
     = AgentToken StreamStatus
     | AgentToolStart Text
+    | AgentRoundStart Int
     deriving (Eq, Show)
 
 runAgentTurn :: (?modelContext :: ModelContext) => Id AgentSession -> IO (Either Text ())
@@ -182,6 +184,7 @@ runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId 
                 Just streamFn -> streamFn prompt (onEvent . AgentToken)
                 Nothing -> completionSource prompt
         roundStarted <- getCurrentTime
+        onEvent (AgentRoundStart (maxToolRounds - roundsLeft + 1))
         result <- completeThis (Prompt messages tools)
         case result of
             Left err -> do
@@ -329,14 +332,21 @@ buildSystemMessage context pageContext = do
             , msgToolCalls = []
             }
   where
-    bindings =
-        [ ("user_name", context.acUser.displayName)
-        , ("user_email", context.acUser.email)
-        , ("language", context.acLanguage)
-        , ("page_context", pageContextText pageContext)
-        , ("current_page_url", pageUrl pageContext)
-        , ("current_page_title", pageTitle pageContext)
-        ]
+    bindings = promptBindings context pageContext
+
+-- | The full slot binding set for the internal agent prompt — shared by the
+-- template path and the built-in fallback so BOTH render every slot
+-- ({{current_page_url}}/{{current_page_title}} included; an unbound slot
+-- would reach the model as a literal {{...}} placeholder).
+promptBindings :: AgentContext -> Maybe Value -> [(Text, Text)]
+promptBindings context pageContext =
+    [ ("user_name", context.acUser.displayName)
+    , ("user_email", context.acUser.email)
+    , ("language", context.acLanguage)
+    , ("page_context", pageContextText pageContext)
+    , ("current_page_url", pageUrl pageContext)
+    , ("current_page_title", pageTitle pageContext)
+    ]
 
 pageUrl :: Maybe Value -> Text
 pageUrl pageContext = fromMaybe "" do
@@ -384,15 +394,13 @@ defaultAgentTemplateBody =
 
 -- | Built-in fallback system prompt (identity, act-as identity, language,
 -- tool policy) used when no active internal_agent template exists.
+-- | Built-in fallback system prompt used when no active internal_agent
+-- template exists. Renders the SAME slot set as the template path
+-- (promptBindings) — an unbound {{current_page_*}} slot would otherwise
+-- reach the model as a literal placeholder.
 defaultSystemPrompt :: AgentContext -> Maybe Value -> Text
 defaultSystemPrompt context pageContext =
-    renderTemplate
-        defaultAgentTemplateBody
-        [ ("user_name", context.acUser.displayName)
-        , ("user_email", context.acUser.email)
-        , ("language", context.acLanguage)
-        , ("page_context", pageContextText pageContext)
-        ]
+    renderTemplate defaultAgentTemplateBody (promptBindings context pageContext)
 
 -- | Language code from users.settings.language (NULL when unset).
 userLanguageCode :: User -> Maybe Text

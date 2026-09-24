@@ -844,6 +844,10 @@
                         try { data = JSON.parse(dataLine); } catch (e) { continue; }
                         if (eventName === 'token') {
                             thinking.setAttribute('data-progress', 'Thinking… ' + data.words + ' words · ' + Math.round(data.elapsed_ms / 1000) + 's');
+                        } else if (eventName === 'round') {
+                            // round start: the model is working (possibly on a
+                            // slow tool round) — reset the stall clock.
+                            thinking.setAttribute('data-progress', 'Thinking… (round ' + data.round + ')');
                         } else if (eventName === 'tool') {
                             append(messages, 'tool', '⚙ ' + data.name + '…');
                         } else if (eventName === 'done') {
