@@ -122,7 +122,7 @@ agentWidget = case currentUserOrNothing of
                 </header>
                 <div id="agent-messages" class="agent-messages" data-testid="agent-messages"></div>
                 <div class="agent-form">
-                    <input type="text" id="agent-input" class="agent-input" data-testid="agent-input" placeholder={tr "Ask about this page…"} autocomplete="off"/>
+                    <textarea id="agent-input" class="agent-input" data-testid="agent-input" placeholder={tr "Ask about this page…"} rows="2" autocomplete="off"></textarea>
                     <button type="button" id="agent-send" class="btn-brand agent-send" data-testid="agent-send">{tr "Send"}</button>
                 </div>
             </section>

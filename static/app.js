@@ -617,6 +617,54 @@
         return { url: window.location.pathname + window.location.search, title: document.title };
     }
 
+    // Numbered questions in the last assistant message get a structured
+    // reply widget (one input per question), so the user answers each
+    // question separately and the model gets labeled answers back.
+    function maybeRenderQuestions(root, text) {
+        var messages = root.querySelector('#agent-messages');
+        if (!messages || messages.querySelector('.agent-questions')) return;
+        var questions = [];
+        String(text).split('\n').forEach(function (line) {
+            var match = line.match(/^\s*(\d+)[.)]\s+(.+\?)\s*$/);
+            if (match) questions.push({ n: match[1], q: match[2] });
+        });
+        if (!questions.length) return;
+        var block = document.createElement('div');
+        block.className = 'agent-questions';
+        var inputs = questions.map(function (question) {
+            var row = document.createElement('div');
+            row.className = 'agent-question-row';
+            var label = document.createElement('label');
+            label.className = 'agent-question-label';
+            label.textContent = question.n + '. ' + question.q;
+            var input = document.createElement('textarea');
+            input.className = 'agent-question-input';
+            input.rows = 1;
+            input.setAttribute('data-question', question.n);
+            row.appendChild(label);
+            row.appendChild(input);
+            block.appendChild(row);
+            return input;
+        });
+        var send = document.createElement('button');
+        send.type = 'button';
+        send.className = 'btn-brand agent-questions-send';
+        send.textContent = 'Reply';
+        send.addEventListener('click', function () {
+            var parts = [];
+            inputs.forEach(function (input) {
+                var value = input.value.trim();
+                if (value) parts.push(input.getAttribute('data-question') + '. ' + value);
+            });
+            block.parentNode.removeChild(block);
+            if (parts.length) sendText(root, parts.join('\n'));
+        });
+        block.appendChild(send);
+        messages.appendChild(block);
+        messages.scrollTop = messages.scrollHeight;
+        if (inputs[0]) inputs[0].focus();
+    }
+
     function loadHistory(root) {
         var id = sessionId();
         if (!id) return;
@@ -666,36 +714,90 @@
 
     function sendMessage(root) {
         var input = root.querySelector('#agent-input');
-        var messages = root.querySelector('#agent-messages');
         var text = input.value.trim();
         if (!text) return;
         input.value = '';
+        sendText(root, text);
+    }
+
+    // POST /agent/chat?stream=1 and consume the SSE response with a
+    // ReadableStream reader: token events drive the "Thinking… N words · Xs"
+    // label, tool events render as activity lines, done carries the final
+    // replies. Falls back to a plain error label on stream failure.
+    function sendText(root, text) {
+        var messages = root.querySelector('#agent-messages');
+        var input = root.querySelector('#agent-input');
         append(messages, 'user', text);
-        var thinking = append(messages, 'assistant', '…');
-        fetch(root.getAttribute('data-chat-url'), {
+        if (input) input.focus();
+        var thinking = append(messages, 'assistant', 'Thinking…');
+        var startedAt = Date.now();
+        var timer = window.setInterval(function () {
+            thinking.textContent = thinking.getAttribute('data-progress') || ('Thinking… ' + Math.round((Date.now() - startedAt) / 1000) + 's');
+        }, 500);
+
+        function finishTurn(data) {
+            window.clearInterval(timer);
+            if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+            setSession(data.session_id);
+            var lastText = '';
+            (data.replies || []).forEach(function (reply) {
+                if (reply.content) {
+                    lastText = reply.content;
+                    append(messages, 'assistant', reply.content);
+                }
+                (reply.tool_calls || []).forEach(function (call) {
+                    append(messages, 'tool', '⚙ ' + call.name);
+                });
+            });
+            loadSessions(root);
+            maybeRenderQuestions(root, lastText);
+        }
+
+        function fail(message) {
+            window.clearInterval(timer);
+            thinking.setAttribute('data-progress', '');
+            thinking.textContent = message;
+        }
+
+        fetch(root.getAttribute('data-chat-url') + '?stream=1', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
             body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext() })
-        })
-            .then(function (response) {
-                return response.json().then(function (data) { return { ok: response.ok, data: data }; });
-            })
-            .then(function (result) {
-                if (!result.ok) {
-                    thinking.textContent = (result.data && result.data.error) || 'error';
-                    return;
-                }
-                setSession(result.data.session_id);
-                thinking.parentNode.removeChild(thinking);
-                (result.data.replies || []).forEach(function (reply) {
-                    if (reply.content) append(messages, 'assistant', reply.content);
-                    (reply.tool_calls || []).forEach(function (call) {
-                        append(messages, 'tool', '⚙ ' + call.name);
-                    });
+        }).then(function (response) {
+            if (!response.ok || !response.body) throw new Error('http ' + response.status);
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+            function pump() {
+                return reader.read().then(function (chunk) {
+                    if (chunk.done) return;
+                    buffer += decoder.decode(chunk.value, { stream: true });
+                    var sep;
+                    while ((sep = buffer.indexOf('\n\n')) >= 0) {
+                        var raw = buffer.slice(0, sep);
+                        buffer = buffer.slice(sep + 2);
+                        var eventName = null;
+                        var dataLine = null;
+                        raw.split('\n').forEach(function (line) {
+                            if (line.indexOf('event: ') === 0) eventName = line.slice(7);
+                            else if (line.indexOf('data: ') === 0) dataLine = line.slice(6);
+                        });
+                        if (!eventName || !dataLine) continue;
+                        var data = {};
+                        try { data = JSON.parse(dataLine); } catch (e) { continue; }
+                        if (eventName === 'token') {
+                            thinking.setAttribute('data-progress', 'Thinking… ' + data.words + ' words · ' + Math.round(data.elapsed_ms / 1000) + 's');
+                        } else if (eventName === 'tool') {
+                            append(messages, 'tool', '⚙ ' + data.name + '…');
+                        } else if (eventName === 'done') {
+                            finishTurn(data);
+                        }
+                    }
+                    return pump();
                 });
-                loadSessions(root);
-            })
-            .catch(function () { thinking.textContent = 'network error'; });
+            }
+            return pump();
+        }).catch(function () { fail('agent request failed — retry'); });
     }
 
     document.addEventListener('click', function (event) {
@@ -731,7 +833,8 @@
     });
 
     document.addEventListener('keydown', function (event) {
-        if (event.key !== 'Enter' || !event.target || event.target.id !== 'agent-input') return;
+        // Enter sends, Shift+Enter starts a new line (textarea default).
+        if (event.key !== 'Enter' || event.shiftKey || !event.target || event.target.id !== 'agent-input') return;
         event.preventDefault();
         var root = document.getElementById('agent-widget');
         if (root) sendMessage(root);

@@ -1552,13 +1552,42 @@ time.utc-time {
 .agent-input {
     flex: 1;
     min-width: 0;
-    height: 34px;
-    padding: 0 10px;
+    min-height: 34px;
+    max-height: 120px;
+    padding: 6px 10px;
     border-radius: 8px;
     border: 1px solid var(--surface-border);
     background: var(--surface);
     color: var(--text);
     font-size: var(--text-md);
+    font-family: inherit;
+    resize: vertical;
 }
 .agent-input:focus { outline: 2px solid var(--brand-signal); outline-offset: -1px; }
 .agent-send { flex: none; }
+/* Structured reply widget for the agent's numbered questions: one input per
+   question, answers are submitted as a labeled multiline reply. */
+.agent-questions {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--brand-signal);
+    border-radius: 10px;
+    background: var(--surface);
+}
+.agent-question-row { display: flex; flex-direction: column; gap: 4px; }
+.agent-question-label { font-size: var(--text-sm); color: var(--text-muted); }
+.agent-question-input {
+    min-height: 30px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--surface-border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: var(--text-md);
+    font-family: inherit;
+    resize: vertical;
+}
+.agent-questions-send { align-self: flex-end; }

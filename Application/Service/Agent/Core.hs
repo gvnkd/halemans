@@ -1,6 +1,8 @@
 module Application.Service.Agent.Core (
     runAgentTurn,
     runAgentTurnWith,
+    runAgentTurnStreaming,
+    AgentEvent (..),
     buildSystemMessage,
     agentTurnGate,
     internalAgentTemplateName,
@@ -12,7 +14,7 @@ import Application.Helper.Controller (userPrivileges)
 import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, executeAgentTool)
 import Application.Service.Api.RateLimit (checkLimit)
 import Application.Service.I18n (agentLanguageName)
-import Application.Service.Llm (Completion (..), LlmError (..), LlmMessage (..), LlmProvider (..), LlmProviderConfig (..), OpenAiCompat (..), Prompt (..), ToolCall (..), toolResultMessage, userMessage)
+import Application.Service.Llm (Completion (..), LlmError (..), LlmMessage (..), LlmProvider (..), LlmProviderConfig (..), OpenAiCompat (..), Prompt (..), StreamStatus (..), ToolCall (..), chatCompletionStreaming, toolResultMessage, userMessage)
 import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig)
 import qualified Application.Service.Llm.Budget as Budget
 import Application.Service.Llm.DbConfig (currentLlmConfig)
@@ -44,6 +46,13 @@ import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 maxToolRounds :: Int
 maxToolRounds = 10
 
+-- Live progress events for the streaming chat endpoint: token deltas of the
+-- final answer (with word count + elapsed) and tool-round starts.
+data AgentEvent
+    = AgentToken StreamStatus
+    | AgentToolStart Text
+    deriving (Eq, Show)
+
 runAgentTurn :: (?modelContext :: ModelContext) => Id AgentSession -> IO (Either Text ())
 runAgentTurn sessionId = do
     config <- currentLlmConfig
@@ -59,7 +68,26 @@ runAgentTurn sessionId = do
                 (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
                 (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
                 (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
-                (Nothing, Nothing) -> runAgentTurnWith config.providerName (complete (OpenAiCompat config)) sessionId
+                (Nothing, Nothing) -> runAgentTurnInternal config.providerName (complete (OpenAiCompat config)) (Just (\prompt onStatus -> chatCompletionStreaming config prompt onStatus)) (const (pure ())) sessionId
+
+-- Streaming variant for the chat endpoint: same gates, but emits live
+-- events (final-answer token deltas, tool starts) via the callback.
+runAgentTurnStreaming :: (?modelContext :: ModelContext) => (AgentEvent -> IO ()) -> Id AgentSession -> IO (Either Text ())
+runAgentTurnStreaming onEvent sessionId = do
+    config <- currentLlmConfig
+    case config of
+        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
+        Just config -> do
+            agentConfig <- agentBudgetConfig
+            globalConfig <- globalBudgetConfig
+            session <- fetch sessionId
+            gate <- agentTurnGate config.providerName agentConfig globalConfig
+            overRate <- checkLimit ("agent:" <> tshow session.userId) agentConfig.abcRatePerMinute
+            case (gate, overRate) of
+                (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
+                (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
+                (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
+                (Nothing, Nothing) -> runAgentTurnInternal config.providerName (complete (OpenAiCompat config)) (Just (\prompt onStatus -> chatCompletionStreaming config prompt onStatus)) onEvent sessionId
 
 -- Budget gate for one agent turn: the agent's own scope cap first, then the
 -- global cap across ALL LLM consumers. Just reason = blocked.
@@ -101,7 +129,18 @@ runAgentTurnWith ::
     (Prompt -> IO (Either LlmError Completion)) ->
     Id AgentSession ->
     IO (Either Text ())
-runAgentTurnWith providerName completionSource sessionId = do
+runAgentTurnWith providerName completionSource sessionId =
+    runAgentTurnInternal providerName completionSource Nothing (const (pure ())) sessionId
+
+runAgentTurnInternal ::
+    (?modelContext :: ModelContext) =>
+    Text ->
+    (Prompt -> IO (Either LlmError Completion)) ->
+    Maybe (Prompt -> (StreamStatus -> IO ()) -> IO (Either LlmError Completion)) ->
+    (AgentEvent -> IO ()) ->
+    Id AgentSession ->
+    IO (Either Text ())
+runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId = do
     session <- fetch sessionId
     user <- fetch session.userId
     language <- agentLanguageName (userLanguageCode user)
@@ -118,7 +157,12 @@ runAgentTurnWith providerName completionSource sessionId = do
     loop context sessionId messages tools maxToolRounds Map.empty
   where
     loop context sessionId messages tools roundsLeft seen = do
-        result <- completionSource (Prompt messages tools)
+        let completeThis prompt = case mStreaming of
+                -- Stream only the final-answer path (tool-less completion):
+                -- tool rounds stay buffered, they return quickly.
+                Just streamFn | null prompt.tools -> streamFn prompt (onEvent . AgentToken)
+                _ -> completionSource prompt
+        result <- completeThis (Prompt messages tools)
         case result of
             Left err -> do
                 let text = case err of
@@ -151,6 +195,7 @@ runAgentTurnWith providerName completionSource sessionId = do
                                 Left _ -> persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request."
                             pure (Right ())
                         | otherwise -> do
+                            forM_ calls \call -> onEvent (AgentToolStart call.callName)
                             (outputs, seen') <- runCalls context seen calls
                             persistToolRound sessionId completion Nothing calls outputs
                             let results = [toolResultMessage call.callId output | (call, output) <- zip calls outputs]

@@ -14,6 +14,8 @@ module Application.Service.Llm (
     connectionOk,
     testIntegration,
     verifyStreamBody,
+    chatCompletionStreaming,
+    StreamStatus (..),
     apiUrl,
     chatCompletionPayload,
 ) where
@@ -21,15 +23,22 @@ module Application.Service.Llm (
 import qualified Application.Service.Http as Http
 import Control.Exception (SomeException, try)
 import Control.Lens ((&), (.~), (^.))
+import Control.Monad (foldM, when)
 import Data.Aeson (Value, object, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (Parser, parseMaybe)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import Data.Maybe (catMaybes)
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
+import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import IHP.Prelude
 import qualified Network.HTTP.Client as HTTP
 import qualified Network.HTTP.Client.TLS as HTTP
-import Network.HTTP.Types.Status (statusCode)
+import qualified Network.HTTP.Types as HttpTypes
 import qualified Network.Wreq as Wreq
 import Network.Wreq.Lens (checkResponse)
 import System.Environment (lookupEnv)
@@ -127,14 +136,222 @@ apiUrl :: LlmProviderConfig -> Text -> Text
 apiUrl config path = Text.dropWhileEnd (== '/') config.endpoint <> path
 
 -- Admin "connection test": GET /v1/models (milestone_4.md §7).
+
+-- Admin "connection test": GET /v1/models (milestone_4.md §7).
 connectionOk :: LlmProviderConfig -> IO (Either Text ())
 connectionOk config = do
     result <- try (Http.getFollowing (opts config) (cs (apiUrl config "/v1/models")))
     pure case result of
         Left (err :: SomeException) -> Left (tshow err)
         Right response ->
-            let code = statusCode (response ^. Wreq.responseStatus)
+            let code = HttpTypes.statusCode (response ^. Wreq.responseStatus)
              in if code == 200 then Right () else Left ("status " <> tshow code)
+
+-- Chat-agent streaming completion (internal API milestone). Consumes the
+-- provider's SSE stream chunk by chunk so the UI can render progress; the
+-- full Completion is still assembled at the end (content + usage), so the
+-- tool loop treats it exactly like the buffered path. Used ONLY for the
+-- final answer round — tool rounds stay buffered.
+--
+-- The callback fires with the running status after every content delta and
+-- once at stream end (with the final accumulated content).
+data StreamStatus = StreamStatus
+    { stContent :: Text
+    , stWords :: Int
+    , stElapsedMs :: Int
+    }
+    deriving (Eq, Show)
+
+chatCompletionStreaming :: LlmProviderConfig -> Prompt -> (StreamStatus -> IO ()) -> IO (Either LlmError Completion)
+chatCompletionStreaming config prompt onStatus = do
+    started <- getCurrentTime
+    manager <- HTTP.newManager HTTP.tlsManagerSettings
+    request0 <- HTTP.parseRequest (cs (apiUrl config "/v1/chat/completions"))
+    let request =
+            request0
+                { HTTP.method = "POST"
+                , HTTP.requestHeaders =
+                    [ ("Content-Type", "application/json")
+                    , ("Authorization", maybe "Bearer none" (("Bearer " <>) . cs) config.apiKey)
+                    , ("Accept", "text/event-stream")
+                    ]
+                , HTTP.requestBody = HTTP.RequestBodyLBS (Aeson.encode (streamingPayload config prompt))
+                , HTTP.responseTimeout = HTTP.responseTimeoutMicro (120 * 1000000)
+                }
+    result <- try do
+        HTTP.withResponse request manager \response -> do
+            let code = HttpTypes.statusCode (HTTP.responseStatus response)
+            if code >= 200 && code < 300
+                then consumeStream started response
+                else do
+                    body <- cs <$> HTTP.brReadSome (HTTP.responseBody response) 4096
+                    pure (Left (Terminal ("http " <> tshow code <> ": " <> Text.take 300 body)))
+    case result of
+        Left (err :: SomeException) -> pure (Left (Retriable (tshow err)))
+        Right outcome -> pure outcome
+  where
+    consumeStream started response = go mempty [] Nothing
+      where
+        bodyReader = HTTP.responseBody response
+        go accContent accCalls mUsage = do
+            chunk <- HTTP.brRead bodyReader
+            if BS.null chunk
+                then finish accContent accCalls mUsage
+                else do
+                    -- SSE frames are line-based; split on newlines and keep
+                    -- any partial line in the accumulator.
+                    let (frames, rest) = splitFrames (cs chunk :: Text)
+                    outcome <- foldM (step started) (Right (accContent, accCalls, mUsage, rest)) frames
+                    case outcome of
+                        Left done -> pure done
+                        Right (accContent', accCalls', mUsage', _rest') -> go accContent' accCalls' mUsage'
+        finish accContent accCalls mUsage = do
+            now <- getCurrentTime
+            emitStatus started accContent
+            let toolCalls = finalizeCalls accCalls
+            pure
+                ( Right
+                    Completion
+                        { content = accContent
+                        , tokensIn = mUsage >>= fst
+                        , tokensOut = mUsage >>= snd
+                        , toolCalls = toolCalls
+                        }
+                )
+        step started' (Right (accContent, accCalls, mUsage, rest)) frame
+            | Text.null frame = pure (Right (accContent, accCalls, mUsage, rest))
+            | Just payload <- Text.stripPrefix "data:" frame = case Text.strip payload of
+                "[DONE]" -> do
+                    -- stream end: the final state is already accumulated
+                    now <- getCurrentTime
+                    emitStatus started' accContent
+                    let toolCalls = finalizeCalls accCalls
+                    pure
+                        ( Left
+                            ( Right
+                                Completion
+                                    { content = accContent
+                                    , tokensIn = mUsage >>= fst
+                                    , tokensOut = mUsage >>= snd
+                                    , toolCalls = toolCalls
+                                    }
+                            )
+                        )
+                other -> case Aeson.decode (cs other) of
+                    Nothing -> pure (Right (accContent, accCalls, mUsage, rest))
+                    Just chunkValue -> do
+                        let deltaContent = chunkContent chunkValue
+                            accContent' = accContent <> deltaContent
+                            accCalls' = mergeCalls accCalls (chunkToolCallParts chunkValue)
+                            mUsage' = case chunkUsage chunkValue of
+                                Just usage -> Just usage
+                                Nothing -> mUsage
+                        when (not (Text.null deltaContent)) (emitStatus started' accContent')
+                        pure (Right (accContent', accCalls', mUsage', rest))
+            | otherwise = pure (Right (accContent, accCalls, mUsage, rest))
+        step _ (Left done) _ = pure (Left done)
+        emitStatus started' content = do
+            now <- getCurrentTime
+            onStatus
+                StreamStatus
+                    { stContent = content
+                    , stWords = length (Text.words content)
+                    , stElapsedMs = round (diffUTCTime now started' * 1000)
+                    }
+    finalizeCalls calls =
+        [ ToolCall callId callName callArguments
+        | (callId, callName, callArguments) <- calls
+        , not (Text.null callName)
+        ]
+
+streamingPayload :: LlmProviderConfig -> Prompt -> Value
+streamingPayload config prompt =
+    object $
+        catMaybes
+            [ Just ("model" .= config.model)
+            , Just ("messages" .= map messageJson prompt.messages)
+            , if null prompt.tools then Nothing else Just ("tools" .= prompt.tools)
+            , Just ("stream" .= True)
+            ]
+
+-- SSE frame splitting: input chunk text + carry-over handled by caller
+-- keeping 'rest'. Frames arrive as lines; blank lines separate events.
+splitFrames :: Text -> ([Text], Text)
+splitFrames input =
+    let (complete, rest) = case Text.breakOnEnd "\n" input of
+            (before, _) | Text.isSuffixOf "\n" input -> (Text.dropEnd 1 before, "")
+            _ -> ("", input)
+     in (Text.splitOn "\n" complete, rest)
+
+chunkContent :: Value -> Text
+chunkContent value = fromMaybe "" do
+    choices <- lookupKey "choices" value
+    firstChoice <- case choices of
+        Aeson.Array items | (item : _) <- Vector.toList items -> Just item
+        _ -> Nothing
+    message <- lookupKey "message" firstChoice `orElse` Just firstChoice
+    delta <- lookupKey "delta" message `orElse` Just message
+    content <- lookupKey "content" delta
+    case content of
+        Aeson.String text -> Just text
+        _ -> Nothing
+  where
+    orElse (Just a) _ = Just a
+    orElse Nothing b = b
+
+-- Accumulated tool-call parts across chunks: (id, name, arguments).
+chunkToolCallParts :: Value -> [(Text, Text, Text)]
+chunkToolCallParts value = fromMaybe [] do
+    choices <- lookupKey "choices" value
+    firstChoice <- case choices of
+        Aeson.Array items | (item : _) <- Vector.toList items -> Just item
+        _ -> Nothing
+    message <- lookupKey "message" firstChoice `orElse` Just firstChoice
+    delta <- lookupKey "delta" message `orElse` Just message
+    calls <- lookupKey "tool_calls" delta
+    case calls of
+        Aeson.Array items -> mapM parseCallPart (Vector.toList items)
+        _ -> Nothing
+  where
+    orElse (Just a) _ = Just a
+    orElse Nothing b = b
+    parseCallPart item = do
+        function <- lookupKey "function" item
+        let textField key value = case lookupKey key value of
+                Just (Aeson.String text) -> Just text
+                _ -> Nothing
+        pure
+            ( fromMaybe "" (textField "id" item)
+            , fromMaybe "" (textField "name" function)
+            , fromMaybe "" (textField "arguments" function)
+            )
+
+mergeCalls :: [(Text, Text, Text)] -> [(Text, Text, Text)] -> [(Text, Text, Text)]
+mergeCalls existing [] = existing
+mergeCalls existing ((callId, name, args) : rest) =
+    mergeCalls (insertOrAppend existing) rest
+  where
+    insertOrAppend [] = [(callId, name, args)]
+    insertOrAppend ((eid, ename, eargs) : xs)
+        | eid == callId && not (Text.null eid) = (eid, if Text.null name then ename else name, eargs <> args) : xs
+        | eid == callId && Text.null eid && ename == name = (eid, ename, eargs <> args) : xs
+        | otherwise = (eid, ename, eargs) : insertOrAppend xs
+
+chunkUsage :: Value -> Maybe (Maybe Int, Maybe Int)
+chunkUsage value = do
+    usage <- lookupKey "usage" value
+    let tokensIn = case lookupKey "prompt_tokens" usage of
+            Just (Aeson.Number n) -> Just (floor n)
+            _ -> Nothing
+        tokensOut = case lookupKey "completion_tokens" usage of
+            Just (Aeson.Number n) -> Just (floor n)
+            _ -> Nothing
+    pure (tokensIn, tokensOut)
+
+lookupKey :: Text -> Value -> Maybe Value
+lookupKey key value = case value of
+    Aeson.Object obj -> KeyMap.lookup (Key.fromText key) obj
+    _ -> Nothing
 
 -- Admin "test integration": a minimal chat ping in BOTH non-streaming and
 -- streaming modes. Catches providers that answer /v1/models but fail chat
@@ -167,7 +384,7 @@ pingNonStreaming config = do
     pure case result of
         Left (err :: SomeException) -> Left (tshow err)
         Right response ->
-            let code = statusCode (response ^. Wreq.responseStatus)
+            let code = HttpTypes.statusCode (response ^. Wreq.responseStatus)
              in if code >= 200 && code < 300
                     then case decodeCompletion response of
                         Right completion
@@ -191,7 +408,7 @@ pingStreaming config = do
     pure case result of
         Left (err :: SomeException) -> Left (tshow err)
         Right response ->
-            let code = statusCode (response ^. Wreq.responseStatus)
+            let code = HttpTypes.statusCode (response ^. Wreq.responseStatus)
                 body = cs (response ^. Wreq.responseBody) :: Text
              in if code >= 200 && code < 300
                     then case verifyStreamBody body of
@@ -238,7 +455,7 @@ chatCompletion config prompt = do
     pure case result of
         Left err -> Left (Retriable (tshow (err :: SomeException)))
         Right response ->
-            let code = statusCode (response ^. Wreq.responseStatus)
+            let code = HttpTypes.statusCode (response ^. Wreq.responseStatus)
                 bodyText = Text.strip (cs (response ^. Wreq.responseBody))
                 suffix = if Text.null bodyText then "" else ": " <> Text.take 800 bodyText
              in if

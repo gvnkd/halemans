@@ -1,15 +1,18 @@
 module Web.Controller.AgentChat where
 
-import Application.Service.Agent.Core (runAgentTurn)
+import Application.Service.Agent.Core (AgentEvent (..), runAgentTurn, runAgentTurnStreaming)
+import Application.Service.Llm (StreamStatus (..))
+import Control.Concurrent (Chan, forkIO, newChan, readChan, writeChan)
 import Data.Aeson (Value, object, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
+import Data.ByteString.Builder (string8)
 import qualified Data.Text as Text
 import Data.UUID (UUID)
 import Generated.Types
 import IHP.ModelSupport (withTransaction)
 import qualified Network.HTTP.Types as HTTP
-import Network.Wai (responseLBS)
+import Network.Wai (responseLBS, responseStream)
 import Web.Controller.Prelude
 
 -- Agent chat (internal API milestone). Session-authed JSON endpoints backing
@@ -23,40 +26,9 @@ instance Controller AgentChatController where
         body <- getRequestBody
         case Aeson.decode body >>= parseMaybe parseChatRequest of
             Nothing -> renderJsonWithStatusCode HTTP.status400 (object ["error" .= ("invalid request body" :: Text)])
-            Just request -> do
-                sessionResult <- resolveSession request
-                case sessionResult of
-                    Left status -> renderJsonWithStatusCode status (object ["error" .= ("session not found" :: Text)])
-                    Right session -> do
-                        let pageContext = request.pageContext
-                        userMessageRow <-
-                            withTransaction do
-                                when (isNothing session.pageContext && isJust pageContext) do
-                                    _ <- session |> set #pageContext pageContext |> updateRecord
-                                    pure ()
-                                newRecord @AgentMessage
-                                    |> set #sessionId (get #id session)
-                                    |> set #role_ ("user" :: Text)
-                                    |> set #content request.message
-                                    |> set #pageContext pageContext
-                                    |> createRecord
-                        turnResult <- runAgentTurn (get #id session)
-                        case turnResult of
-                            Left err -> renderJsonWithStatusCode status500Internal (object ["error" .= err])
-                            Right () -> do
-                                rows <-
-                                    query @AgentMessage
-                                        |> filterWhere (#sessionId, get #id session)
-                                        |> orderByAsc #createdAt
-                                        |> fetch
-                                -- only the assistant rows AFTER the user
-                                -- message we just stored (createdAt ties
-                                -- within one second make id/position-based
-                                -- dropWhile the reliable cut)
-                                let replies = case dropWhile (\row -> get #id row /= get #id userMessageRow) rows of
-                                        (_userRow : rest) -> [encodeReply row | row <- rest, row.role_ == "assistant"]
-                                        [] -> []
-                                renderJson (object ["session_id" .= get #id session, "replies" .= replies])
+            Just request
+                | isJust (paramOrNothing @Text "stream") -> streamChat request
+                | otherwise -> jsonChat request
     action AgentSessionsAction = do
         sessions <-
             query @AgentSession
@@ -72,6 +44,92 @@ instance Controller AgentChatController where
                 |> orderByAsc #createdAt
                 |> fetch
         renderJson (object ["messages" .= map encodeHistoryRow rows])
+
+jsonChat :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, CurrentUserRecord ~ User) => ChatRequest -> IO ResponseReceived
+jsonChat request = do
+    sessionResult <- resolveSession request
+    case sessionResult of
+        Left status -> renderJsonWithStatusCode status (object ["error" .= ("session not found" :: Text)])
+        Right session -> do
+            userMessageRow <- storeUserMessage request session
+            turnResult <- runAgentTurn (get #id session)
+            case turnResult of
+                Left err -> renderJsonWithStatusCode status500Internal (object ["error" .= err])
+                Right () -> do
+                    replies <- loadTurnReplies session userMessageRow
+                    renderJson (object ["session_id" .= get #id session, "replies" .= replies])
+
+-- Streaming variant (fetch + ReadableStream reader on the client): emits
+-- SSE token/tool events while the turn runs, then a done event carrying the
+-- same payload as the JSON endpoint.
+streamChat :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, CurrentUserRecord ~ User) => ChatRequest -> IO ResponseReceived
+streamChat request = do
+    sessionResult <- resolveSession request
+    case sessionResult of
+        Left status -> renderJsonWithStatusCode status (object ["error" .= ("session not found" :: Text)])
+        Right session -> do
+            userMessageRow <- storeUserMessage request session
+            let sessionId = get #id session
+            events <- newChan :: IO (Chan (Either Text AgentEvent))
+            _ <- forkIO do
+                _ <- runAgentTurnStreaming (\event -> writeChan events (Right event)) sessionId
+                writeChan events (Left "done")
+            respondAndExit $
+                responseStream
+                    HTTP.status200
+                    [ ("Content-Type", "text/event-stream; charset=utf-8")
+                    , ("Cache-Control", "no-cache")
+                    , ("X-Accel-Buffering", "no")
+                    ]
+                    \writeBuilder flush -> sendEvents writeBuilder flush events session userMessageRow
+  where
+    sendEvents writeBuilder flush events session userMessageRow = loop
+      where
+        loop = do
+            item <- readChan events
+            case item of
+                Right (AgentToken status) -> do
+                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs, "dbg" .= ("token-fires" :: Text)])
+                    loop
+                Right (AgentToolStart toolName) -> do
+                    emit "tool" (object ["name" .= toolName, "dbg" .= ("tool-fires" :: Text)])
+                    loop
+                Left _ -> do
+                    replies <- loadTurnReplies session userMessageRow
+                    emit "done" (object ["session_id" .= get #id session, "replies" .= replies, "dbg" .= ("done-fires" :: Text)])
+        emit :: Text -> Value -> IO ()
+        emit event payload = do
+            writeBuilder (string8 ("event: " <> cs event <> "\ndata: " <> cs (Aeson.encode payload) <> "\n\n"))
+            flush
+
+storeUserMessage :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, CurrentUserRecord ~ User) => ChatRequest -> AgentSession -> IO AgentMessage
+storeUserMessage request session = do
+    let pageContext = request.pageContext
+    withTransaction do
+        when (isNothing session.pageContext && isJust pageContext) do
+            _ <- session |> set #pageContext pageContext |> updateRecord
+            pure ()
+        newRecord @AgentMessage
+            |> set #sessionId (get #id session)
+            |> set #role_ ("user" :: Text)
+            |> set #content request.message
+            |> set #pageContext pageContext
+            |> createRecord
+
+loadTurnReplies :: (?modelContext :: ModelContext) => AgentSession -> AgentMessage -> IO [Value]
+loadTurnReplies session userMessageRow = do
+    rows <-
+        query @AgentMessage
+            |> filterWhere (#sessionId, get #id session)
+            |> orderByAsc #createdAt
+            |> fetch
+    -- only the assistant rows AFTER the user message we just stored
+    -- (createdAt ties within one second make position-based dropWhile
+    -- the reliable cut)
+    let replies = case dropWhile (\row -> get #id row /= get #id userMessageRow) rows of
+            (_userRow : rest) -> [encodeReply row | row <- rest, row.role_ == "assistant"]
+            [] -> []
+    pure replies
 
 status500Internal :: HTTP.Status
 status500Internal = HTTP.mkStatus 500 "Internal Server Error"
