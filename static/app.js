@@ -769,6 +769,15 @@
         var lastEventAt = Date.now();
         var reader = null;
         var aborted = false;
+        // Tool names can arrive twice: mid-stream (while the model is still
+        // writing the call's arguments, via token events) and after the round
+        // (tool events / the done payload) — render each name only once.
+        var shownTools = {};
+        function showTool(name) {
+            if (!name || shownTools[name]) return;
+            shownTools[name] = true;
+            append(messages, 'tool', '⚙ ' + name + '…');
+        }
         var timer = window.setInterval(function () {
             if (aborted) return;
             var idle = Math.round((Date.now() - lastEventAt) / 1000);
@@ -801,7 +810,7 @@
                     append(messages, 'assistant', reply.content);
                 }
                 (reply.tool_calls || []).forEach(function (call) {
-                    append(messages, 'tool', '⚙ ' + call.name);
+                    showTool(call.name);
                 });
                 appendTrace(messages, reply.trace);
             });
@@ -844,12 +853,13 @@
                         try { data = JSON.parse(dataLine); } catch (e) { continue; }
                         if (eventName === 'token') {
                             thinking.setAttribute('data-progress', 'Thinking… ' + data.words + ' words · ' + Math.round(data.elapsed_ms / 1000) + 's');
+                            if (data.tool) showTool(data.tool);
                         } else if (eventName === 'round') {
                             // round start: the model is working (possibly on a
                             // slow tool round) — reset the stall clock.
                             thinking.setAttribute('data-progress', 'Thinking… (round ' + data.round + ')');
                         } else if (eventName === 'tool') {
-                            append(messages, 'tool', '⚙ ' + data.name + '…');
+                            showTool(data.name);
                         } else if (eventName === 'done') {
                             finishTurn(data);
                         }

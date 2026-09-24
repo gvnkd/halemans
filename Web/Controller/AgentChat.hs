@@ -89,7 +89,7 @@ streamChat request = do
             item <- readChan events
             case item of
                 Right (AgentToken status) -> do
-                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs])
+                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs, "tool" .= status.stTool])
                     loop
                 Right (AgentToolStart toolName) -> do
                     emit "tool" (object ["name" .= toolName])

@@ -190,6 +190,31 @@ spec = describe "Milestone 4 LLM services" do
                 Right completion ->
                     get #toolCalls completion
                         `shouldBe` [ToolCall "chatcmpl-tool-a" "get_dashboard" "{\"id\": \"abc\"}"]
+        it "pings on reasoning and tool-argument chunks, tracking the streaming tool name" do
+            -- Regression: only content deltas used to emit status, so the
+            -- reasoning phase and a big tool-call argument payload (a full
+            -- dashboard config) were wire-silent and looked like a stall.
+            let chunks =
+                    [ deltaWithContent "I'll check. "
+                    , deltaWithReasoning "thinking…"
+                    , deltaWithCalls [callPart (Just 0) (Just "chatcmpl-tool-a") (Just "validate_dashboard") ""]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "{\"config\": \""]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "{}\"}"]
+                    ]
+            statuses <- newIORef []
+            result <- withScriptedSse chunks \baseUrl ->
+                chatCompletionStreaming (LlmProviderConfig "t" baseUrl "m" Nothing True) (Prompt [userMessage "x"] []) (\status -> modifyIORef' statuses (status :))
+            case result of
+                Left err -> expectationFailure (cs ("streaming failed: " <> tshow err))
+                Right completion -> do
+                    get #content completion `shouldBe` "I'll check. "
+                    get #toolCalls completion
+                        `shouldBe` [ToolCall "chatcmpl-tool-a" "validate_dashboard" "{\"config\": \"{}\"}"]
+                    -- one ping per active chunk plus the final one at [DONE]
+                    emitted <- reverse <$> readIORef statuses
+                    map stContent emitted `shouldBe` replicate 6 "I'll check. "
+                    map stTool emitted
+                        `shouldBe` [Nothing, Nothing, Just "validate_dashboard", Just "validate_dashboard", Just "validate_dashboard", Just "validate_dashboard"]
 
     describe "Budget.budgetExceeded" do
         it "is over budget at the cap" do
@@ -281,6 +306,23 @@ deltaWithCalls parts =
             .= [ Aeson.object
                     [ "index" .= (0 :: Int)
                     , "delta" .= Aeson.object ["tool_calls" .= parts]
+                    ]
+               ]
+        ]
+
+deltaWithContent :: Text -> Aeson.Value
+deltaWithContent text = deltaWithDeltaKey "content" text
+
+deltaWithReasoning :: Text -> Aeson.Value
+deltaWithReasoning text = deltaWithDeltaKey "reasoning_content" text
+
+deltaWithDeltaKey :: Text -> Text -> Aeson.Value
+deltaWithDeltaKey key text =
+    Aeson.object
+        [ "choices"
+            .= [ Aeson.object
+                    [ "index" .= (0 :: Int)
+                    , "delta" .= Aeson.object [Key.fromText key .= text]
                     ]
                ]
         ]

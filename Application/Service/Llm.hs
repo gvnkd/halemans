@@ -157,12 +157,19 @@ connectionOk config = do
 -- the socket open (observed with llama.cpp) would otherwise hang the turn
 -- forever — http-client applies no body-read timeout.
 --
--- The callback fires with the running status after every content delta and
--- once at stream end (with the final accumulated content).
+-- The callback fires with the running status after every provider chunk
+-- that carries activity — content deltas, reasoning deltas and tool-call
+-- argument fragments all count — and once at stream end (with the final
+-- accumulated content). Reasoning/argument chunks leave stContent unchanged
+-- but still ping: a long silent argument payload (e.g. a full dashboard
+-- config streamed into validate_dashboard) otherwise looks like a stall.
 data StreamStatus = StreamStatus
     { stContent :: Text
     , stWords :: Int
     , stElapsedMs :: Int
+    , stTool :: Maybe Text
+    -- ^ name of the tool call currently being streamed (last one seen), so
+    -- the UI can show "⚙ name…" while its arguments are still streaming
     }
     deriving (Eq, Show)
 
@@ -198,25 +205,25 @@ chatCompletionStreaming config prompt onStatus = do
         Left (err :: SomeException) -> pure (Left (Retriable (tshow err)))
         Right outcome -> pure outcome
   where
-    consumeStream started bodyReader = go mempty emptyStreamCalls Nothing
+    consumeStream started bodyReader = go mempty emptyStreamCalls Nothing Nothing
       where
         readChunk = System.Timeout.timeout streamIdleTimeoutMicroseconds (HTTP.brRead bodyReader)
-        go accContent accCalls mUsage = do
+        go accContent accCalls mUsage mTool = do
             mChunk <- readChunk
             case mChunk of
                 Nothing -> pure (Left (Retriable ("stream stalled: no data for " <> tshow (streamIdleTimeoutMicroseconds `div` 1000000) <> "s")))
                 Just chunk
-                    | BS.null chunk -> finish accContent accCalls mUsage
+                    | BS.null chunk -> finish accContent accCalls mUsage mTool
                     | otherwise -> do
                         -- SSE frames are line-based; split on newlines and keep
                         -- any partial line in the accumulator.
                         let (frames, rest) = splitFrames (cs chunk :: Text)
-                        outcome <- foldM (step started) (Right (accContent, accCalls, mUsage, rest)) frames
+                        outcome <- foldM (step started) (Right (accContent, accCalls, mUsage, mTool, rest)) frames
                         case outcome of
                             Left done -> pure done
-                            Right (accContent', accCalls', mUsage', _rest') -> go accContent' accCalls' mUsage'
-        finish accContent accCalls mUsage = do
-            emitStatus started accContent
+                            Right (accContent', accCalls', mUsage', mTool', _rest') -> go accContent' accCalls' mUsage' mTool'
+        finish accContent accCalls mUsage mTool = do
+            emitStatus started accContent mTool
             let toolCalls = finalizeStreamCalls accCalls
             pure
                 ( Right
@@ -227,13 +234,12 @@ chatCompletionStreaming config prompt onStatus = do
                         , toolCalls = toolCalls
                         }
                 )
-        step started' (Right (accContent, accCalls, mUsage, rest)) frame
-            | Text.null frame = pure (Right (accContent, accCalls, mUsage, rest))
+        step started' (Right (accContent, accCalls, mUsage, mTool, rest)) frame
+            | Text.null frame = pure (Right (accContent, accCalls, mUsage, mTool, rest))
             | Just payload <- Text.stripPrefix "data:" frame = case Text.strip payload of
                 "[DONE]" -> do
                     -- stream end: the final state is already accumulated
-                    now <- getCurrentTime
-                    emitStatus started' accContent
+                    emitStatus started' accContent mTool
                     let toolCalls = finalizeStreamCalls accCalls
                     pure
                         ( Left
@@ -247,25 +253,36 @@ chatCompletionStreaming config prompt onStatus = do
                             )
                         )
                 other -> case Aeson.decode (cs other) of
-                    Nothing -> pure (Right (accContent, accCalls, mUsage, rest))
+                    Nothing -> pure (Right (accContent, accCalls, mUsage, mTool, rest))
                     Just chunkValue -> do
                         let deltaContent = chunkContent chunkValue
+                            callParts = chunkToolCallParts chunkValue
                             accContent' = accContent <> deltaContent
-                            accCalls' = addCallParts accCalls (chunkToolCallParts chunkValue)
+                            accCalls' = addCallParts accCalls callParts
                             mUsage' = case chunkUsage chunkValue of
                                 Just usage -> Just usage
                                 Nothing -> mUsage
-                        when (not (Text.null deltaContent)) (emitStatus started' accContent')
-                        pure (Right (accContent', accCalls', mUsage', rest))
-            | otherwise = pure (Right (accContent, accCalls, mUsage, rest))
+                            mTool' =
+                                foldl'
+                                    (\acc (_, _, name, _) -> if Text.null name then acc else Just name)
+                                    mTool
+                                    callParts
+                            active =
+                                not (Text.null deltaContent)
+                                    || not (Text.null (chunkReasoning chunkValue))
+                                    || not (null callParts)
+                        when active (emitStatus started' accContent' mTool')
+                        pure (Right (accContent', accCalls', mUsage', mTool', rest))
+            | otherwise = pure (Right (accContent, accCalls, mUsage, mTool, rest))
         step _ (Left done) _ = pure (Left done)
-        emitStatus started' content = do
+        emitStatus started' content mTool = do
             now <- getCurrentTime
             onStatus
                 StreamStatus
                     { stContent = content
                     , stWords = length (Text.words content)
                     , stElapsedMs = round (diffUTCTime now started' * 1000)
+                    , stTool = mTool
                     }
 streamingPayload :: LlmProviderConfig -> Prompt -> Value
 streamingPayload config prompt =
@@ -382,6 +399,25 @@ chunkToolCallParts value = fromMaybe [] do
             , fromMaybe "" (textField "name" function)
             , fromMaybe "" (textField "arguments" function)
             )
+
+-- Reasoning models (Qwen3-class) stream their thinking as
+-- delta.reasoning_content. It is not part of the answer, but it proves the
+-- provider is alive, so the status ping fires on it too.
+chunkReasoning :: Value -> Text
+chunkReasoning value = fromMaybe "" do
+    choices <- lookupKey "choices" value
+    firstChoice <- case choices of
+        Aeson.Array items | (item : _) <- Vector.toList items -> Just item
+        _ -> Nothing
+    message <- lookupKey "message" firstChoice `orElse` Just firstChoice
+    delta <- lookupKey "delta" message `orElse` Just message
+    reasoning <- lookupKey "reasoning_content" delta `orElse` lookupKey "reasoning" delta
+    case reasoning of
+        Aeson.String text -> Just text
+        _ -> Nothing
+  where
+    orElse (Just a) _ = Just a
+    orElse Nothing b = b
 
 chunkUsage :: Value -> Maybe (Maybe Int, Maybe Int)
 chunkUsage value = do
