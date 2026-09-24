@@ -13,6 +13,7 @@ import Generated.Types
 import IHP.ModelSupport (withTransaction)
 import qualified Network.HTTP.Types as HTTP
 import Network.Wai (queryString, responseLBS, responseStream)
+import System.Timeout (timeout)
 import Web.Controller.Prelude
 
 -- Agent chat (internal API milestone). Session-authed JSON endpoints backing
@@ -83,21 +84,32 @@ streamChat request = do
                     ]
                     \writeBuilder flush -> sendEvents writeBuilder flush events session userMessageRow
   where
-    sendEvents writeBuilder flush events session userMessageRow = loop
+    sendEvents writeBuilder flush events session userMessageRow = do
+        -- session id first: the client needs it for stall-recovery even when
+        -- the done frame (the only other carrier) never arrives.
+        emit "session" (object ["session_id" .= get #id session])
+        loop
       where
+        -- Heartbeat: idle links/proxies swallow quiet SSE tails; a comment
+        -- frame every 15s keeps the pipe warm and lets the client tell
+        -- "alive, working" from "dead pipe".
         loop = do
-            item <- readChan events
+            item <- timeout (15 * 1000000) (readChan events)
             case item of
-                Right (AgentToken status) -> do
+                Nothing -> do
+                    writeBuilder (string8 ": hb\n\n")
+                    flush
+                    loop
+                Just (Right (AgentToken status)) -> do
                     emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs, "tool" .= status.stTool])
                     loop
-                Right (AgentToolStart toolName) -> do
+                Just (Right (AgentToolStart toolName)) -> do
                     emit "tool" (object ["name" .= toolName])
                     loop
-                Right (AgentRoundStart roundNumber) -> do
+                Just (Right (AgentRoundStart roundNumber)) -> do
                     emit "round" (object ["round" .= roundNumber])
                     loop
-                Left _ -> do
+                Just (Left _) -> do
                     replies <- loadTurnReplies session userMessageRow
                     emit "done" (object ["session_id" .= get #id session, "replies" .= replies])
         emit :: Text -> Value -> IO ()

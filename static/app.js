@@ -758,7 +758,9 @@
     // POST /agent/chat?stream=1 and consume the SSE response with a
     // ReadableStream reader: token events drive the "Thinking… N words · Xs"
     // label, tool events render as activity lines, done carries the final
-    // replies. Falls back to a plain error label on stream failure.
+    // replies. The server emits a heartbeat comment every 15s and the session
+    // id as the first event; if the stream's tail is lost anyway, the stall
+    // timer recovers the persisted reply from the history endpoint.
     function sendText(root, text) {
         var messages = root.querySelector('#agent-messages');
         var input = root.querySelector('#agent-input');
@@ -769,6 +771,11 @@
         var lastEventAt = Date.now();
         var reader = null;
         var aborted = false;
+        var recovered = false;
+        // Server-assigned session id (first SSE event): a fresh chat has no
+        // localStorage id yet, and stall recovery needs one for the history
+        // fetch even if the done frame never arrives.
+        var streamSessionId = null;
         // Tool names can arrive twice: mid-stream (while the model is still
         // writing the call's arguments, via token events) and after the round
         // (tool events / the done payload) — render each name only once.
@@ -783,11 +790,12 @@
             var idle = Math.round((Date.now() - lastEventAt) / 1000);
             var base = thinking.getAttribute('data-progress') || ('Thinking… ' + Math.round((Date.now() - startedAt) / 1000) + 's');
             if (idle > 20) {
-                // no SSE data for a while: say so, and give up after 2.5 min —
-                // the server-side watchdog aborts stalled streams too, but a
-                // dead connection must never leave the user staring at a
-                // frozen label.
+                // no SSE data for a while: say so. The server heartbeats every
+                // 15s, so idle past ~2 heartbeat periods means the pipe is
+                // dead (tail lost), not a slow turn — try to recover the
+                // already-persisted reply; give up entirely after 2.5 min.
                 thinking.textContent = base + ' (stalled ' + idle + 's — no data from the agent)';
+                if (idle > 45) recoverReply();
                 if (idle > 150) {
                     aborted = true;
                     if (reader) reader.cancel();
@@ -799,10 +807,45 @@
             }
         }, 1000);
 
+        // The server persists the reply BEFORE emitting done, so the answer
+        // is always in the DB even when the final SSE frame is lost. Fetch
+        // the session history and render the assistant rows after the last
+        // user row; if none exist the turn is still running server-side and
+        // we leave the stall label up for the next tick.
+        function recoverReply() {
+            if (recovered || aborted) return;
+            var id = streamSessionId || sessionId();
+            if (!id) return;
+            recovered = true;
+            fetch(root.getAttribute('data-history-url') + '/' + encodeURIComponent(id), { headers: { 'X-Requested-With': 'fetch' } })
+                .then(function (response) { return response.ok ? response.json() : null; })
+                .then(function (data) {
+                    if (!data || !data.messages) { recovered = false; return; }
+                    var cut = -1;
+                    data.messages.forEach(function (row, i) { if (row.role === 'user') cut = i; });
+                    var replies = data.messages.slice(cut + 1).filter(function (row) { return row.role === 'assistant' && row.content; });
+                    if (!replies.length) { recovered = false; return; }
+                    aborted = true;
+                    if (reader) reader.cancel();
+                    window.clearInterval(timer);
+                    if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+                    setSession(id);
+                    append(messages, 'tool', 'connection dropped — showing the reply the agent already saved');
+                    replies.forEach(function (row) {
+                        append(messages, 'assistant', row.content);
+                        appendTrace(messages, row.trace);
+                    });
+                    loadSessions(root);
+                    maybeRenderQuestions(root, replies[replies.length - 1].content);
+                })
+                .catch(function () { recovered = false; });
+        }
+
         function finishTurn(data) {
             window.clearInterval(timer);
+            aborted = true; // also blocks a late recoverReply double-render
             if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
-            setSession(data.session_id);
+            setSession(data.session_id || streamSessionId);
             var lastText = '';
             (data.replies || []).forEach(function (reply) {
                 if (reply.content) {
@@ -820,6 +863,7 @@
 
         function fail(message) {
             window.clearInterval(timer);
+            aborted = true;
             thinking.setAttribute('data-progress', '');
             thinking.textContent = message;
         }
@@ -842,6 +886,12 @@
                     while ((sep = buffer.indexOf('\n\n')) >= 0) {
                         var raw = buffer.slice(0, sep);
                         buffer = buffer.slice(sep + 2);
+                        if (raw.charAt(0) === ':') {
+                            // SSE comment — the server's 15s heartbeat: the
+                            // pipe is alive, reset the stall clock.
+                            lastEventAt = Date.now();
+                            continue;
+                        }
                         var eventName = null;
                         var dataLine = null;
                         raw.split('\n').forEach(function (line) {
@@ -851,7 +901,9 @@
                         if (!eventName || !dataLine) continue;
                         var data = {};
                         try { data = JSON.parse(dataLine); } catch (e) { continue; }
-                        if (eventName === 'token') {
+                        if (eventName === 'session') {
+                            streamSessionId = data.session_id;
+                        } else if (eventName === 'token') {
                             thinking.setAttribute('data-progress', 'Thinking… ' + data.words + ' words · ' + Math.round(data.elapsed_ms / 1000) + 's');
                             if (data.tool) showTool(data.tool);
                         } else if (eventName === 'round') {
