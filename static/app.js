@@ -731,9 +731,29 @@
         if (input) input.focus();
         var thinking = append(messages, 'assistant', 'Thinking…');
         var startedAt = Date.now();
+        var lastEventAt = Date.now();
+        var reader = null;
+        var aborted = false;
         var timer = window.setInterval(function () {
-            thinking.textContent = thinking.getAttribute('data-progress') || ('Thinking… ' + Math.round((Date.now() - startedAt) / 1000) + 's');
-        }, 500);
+            if (aborted) return;
+            var idle = Math.round((Date.now() - lastEventAt) / 1000);
+            var base = thinking.getAttribute('data-progress') || ('Thinking… ' + Math.round((Date.now() - startedAt) / 1000) + 's');
+            if (idle > 20) {
+                // no SSE data for a while: say so, and give up after 2.5 min —
+                // the server-side watchdog aborts stalled streams too, but a
+                // dead connection must never leave the user staring at a
+                // frozen label.
+                thinking.textContent = base + ' (stalled ' + idle + 's — no data from the agent)';
+                if (idle > 150) {
+                    aborted = true;
+                    if (reader) reader.cancel();
+                    window.clearInterval(timer);
+                    thinking.textContent = 'agent stalled — the request was aborted; press Send to retry';
+                }
+            } else {
+                thinking.textContent = base;
+            }
+        }, 1000);
 
         function finishTurn(data) {
             window.clearInterval(timer);
@@ -765,12 +785,13 @@
             body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext(), stream: true })
         }).then(function (response) {
             if (!response.ok || !response.body) throw new Error('http ' + response.status);
-            var reader = response.body.getReader();
+            reader = response.body.getReader();
             var decoder = new TextDecoder();
             var buffer = '';
             function pump() {
                 return reader.read().then(function (chunk) {
                     if (chunk.done) return;
+                    lastEventAt = Date.now();
                     buffer += decoder.decode(chunk.value, { stream: true });
                     var sep;
                     while ((sep = buffer.indexOf('\n\n')) >= 0) {
@@ -797,7 +818,7 @@
                 });
             }
             return pump();
-        }).catch(function () { fail('agent request failed — retry'); });
+        }).catch(function () { if (!aborted) fail('agent request failed — retry'); });
     }
 
     document.addEventListener('click', function (event) {

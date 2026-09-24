@@ -48,7 +48,7 @@ instance Controller InternalApiController where
 runTool :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> Text -> IO ResponseReceived
 runTool name arguments = withInternalToken \user -> do
     language <- agentLanguageName (userLanguageCode user)
-    let context = AgentContext{acUser = user, acLanguage = language}
+    let context = AgentContext{acUser = user, acLanguage = language, acSessionId = Nothing}
     output <- executeAgentTool context (Llm.ToolCall name name arguments)
     renderJson (object ["result" .= output])
 

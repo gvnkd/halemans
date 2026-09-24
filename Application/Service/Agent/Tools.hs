@@ -36,7 +36,7 @@ import Generated.Types hiding (createDashboard)
 import IHP.Fetch (fetch, fetchCount, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
-import IHP.QueryBuilder (filterWhere, orderByAsc, orderByDesc, query)
+import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import Text.Read (readMaybe)
 
@@ -53,6 +53,10 @@ data AgentContext = AgentContext
     -- checks run against this user's roles.
     , acLanguage :: Text
     -- ^ Display language name (users.settings.language) for hint text.
+    , acSessionId :: Maybe (Id AgentSession)
+    -- ^ Current chat session when invoked from the web agent; Nothing on
+    -- the internal HTTP API / MCP server. Tools like explain_last_turn
+    -- need it to locate the conversation.
     }
 
 -- (name, description, properties, required privilege)
@@ -107,6 +111,7 @@ toolCatalog =
     , tool "list_llm_providers" "List configured LLM providers (name, model, enabled) — never the API key. Requires manage_rules." [] (Just "manage_rules")
     , tool "get_llm_config" "Get the enabled LLM provider name, model and endpoint (never the API key). For agent bootstrap." [] Nothing
     , tool "list_alert_groups" "List recent alert groups with open-alert counts. Requires the view privilege." [opt "limit" "max results, default 20, max 100"] (Just "view")
+    , tool "explain_last_turn" "Read this conversation's OWN trace of the most recent turn: per-round durations, LLM token counts, executed tool calls with timings and result excerpts, and errors (e.g. stream stalls). Use it to answer the user asking why the agent was slow, silent, or failed." [] Nothing
     ]
   where
     tool name description props priv = (name, description, props, priv)
@@ -772,6 +777,7 @@ dispatchRest context name arguments = case name of
                         <> ")"
                     | gid <- ids
                     ]
+    "explain_last_turn" -> explainLastTurn context
     other -> pure ("unknown tool: " <> other)
   where
     arg :: Text -> Text -> IO Text
@@ -1060,3 +1066,111 @@ getLlmConfig = do
                 , "endpoint: " <> config.endpoint
                 , "tools enabled: " <> (if config.toolsEnabled then "yes" else "no")
                 ]
+
+-- The agent reading its own traces: renders the most recent turn of the
+-- current session from the persisted per-round trace JSON (with a fallback
+-- to the tool_calls replay data for rows written before traces existed).
+explainLastTurn :: (?modelContext :: ModelContext) => AgentContext -> IO Text
+explainLastTurn context = case context.acSessionId of
+    Nothing -> pure "explain_last_turn needs a chat session context (not available via the internal HTTP API or MCP server)"
+    Just sessionId -> do
+        userRows <-
+            query @AgentMessage
+                |> filterWhere (#sessionId, sessionId)
+                |> filterWhere (#role_, "user" :: Text)
+                |> orderByDesc #createdAt
+                |> limit 1
+                |> fetch
+        case userRows of
+            [] -> pure "no turns yet in this conversation"
+            (userRow : _) -> do
+                rows <-
+                    query @AgentMessage
+                        |> filterWhere (#sessionId, sessionId)
+                        |> orderByAsc #createdAt
+                        |> fetch
+                let turnRows = case dropWhile (\row -> get #id row /= get #id userRow) rows of
+                        (_ : rest) -> [row | row <- rest, row.role_ == "assistant"]
+                        [] -> []
+                if null turnRows
+                    then pure "the previous turn produced no assistant rows (check the session history)"
+                    else do
+                        let roundLines = zipWith (renderRound sessionId) [1 ..] turnRows
+                        pure ("turn trace for session " <> tshow sessionId <> ":\n" <> Text.intercalate "\n" roundLines)
+  where
+    renderRound _sessionId index row =
+        case row.trace of
+            Just traceValue -> renderTracedRound index traceValue
+            Nothing -> renderLegacyRound index row
+
+    renderTracedRound index traceValue =
+        case traceValue of
+            Object _ ->
+                let duration = traceTextField "duration_ms" traceValue
+                    tokensIn = traceTextField "tokens_in" traceValue
+                    tokensOut = traceTextField "tokens_out" traceValue
+                    err = traceMaybeField "error" traceValue
+                    calls = traceCalls traceValue
+                 in "round "
+                        <> tshow (index :: Int)
+                        <> ": "
+                        <> duration
+                        <> "ms"
+                        <> (if Text.null tokensIn then "" else ", tokens " <> tokensIn <> "/" <> tokensOut)
+                        <> ( case err of
+                                Just errText -> " — ERROR: " <> errText
+                                Nothing -> ""
+                           )
+                        <> (if null calls then "" else "\n" <> Text.intercalate "\n" calls)
+            _ -> "round " <> tshow (index :: Int) <> ": (unreadable trace)"
+
+    renderLegacyRound index row =
+        let calls = case row.toolCalls of
+                Just callsValue -> legacyCalls callsValue
+                Nothing -> []
+         in "round "
+                <> tshow (index :: Int)
+                <> ": (no trace recorded)"
+                <> (if null calls then "" else "\n" <> Text.intercalate "\n" calls)
+
+    legacyCalls callsValue = case callsValue of
+        Aeson.Array items ->
+            [ "  - "
+                <> fromMaybe "?" (textOf "name" item)
+                <> " "
+                <> fromMaybe "{}" (textOf "arguments" item)
+                <> " — ok"
+            | item <- Vector.toList items
+            ]
+        _ -> []
+
+    traceCalls traceValue = case lookupIn "tool_calls" traceValue of
+        Just (Aeson.Array items) ->
+            [ "  - "
+                <> fromMaybe "?" (textOf "name" item)
+                <> " "
+                <> fromMaybe "{}" (textOf "arguments" item)
+                <> " — "
+                <> fromMaybe "?" (textOf "duration_ms" item)
+                <> "ms — "
+                <> Text.take 200 (fromMaybe "" (textOf "result" item))
+            | item <- Vector.toList items
+            ]
+        _ -> []
+
+    traceTextField key value = fromMaybe "" (traceMaybeField key value)
+
+    traceMaybeField key value = textOf key value
+
+    textOf key value = case lookupIn key value of
+        Just (Aeson.String text) -> Just text
+        Just (Aeson.Number number) -> Just (renderNumber number)
+        _ -> Nothing
+
+    renderNumber number = case floatingOrInteger number of
+        Right int -> tshow (int :: Int64)
+        Left _ -> cs (show number)
+
+    lookupIn key value = case value of
+        Aeson.Object obj -> KeyMap.lookup (Key.fromText key) obj
+        _ -> Nothing

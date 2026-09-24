@@ -42,6 +42,7 @@ import qualified Network.HTTP.Types as HttpTypes
 import qualified Network.Wreq as Wreq
 import Network.Wreq.Lens (checkResponse)
 import System.Environment (lookupEnv)
+import qualified System.Timeout
 
 -- LLM provider subsystem (design_docs/milestone_4.md §3, 01_highlevel.md §9).
 -- v1: a single OpenAI-compatible chat-completions client that covers local
@@ -150,8 +151,10 @@ connectionOk config = do
 -- Chat-agent streaming completion (internal API milestone). Consumes the
 -- provider's SSE stream chunk by chunk so the UI can render progress; the
 -- full Completion is still assembled at the end (content + usage), so the
--- tool loop treats it exactly like the buffered path. Used ONLY for the
--- final answer round — tool rounds stay buffered.
+-- tool loop treats it exactly like the buffered path. A per-chunk watchdog
+-- bounds inactivity: providers that stop emitting mid-stream while keeping
+-- the socket open (observed with llama.cpp) would otherwise hang the turn
+-- forever — http-client applies no body-read timeout.
 --
 -- The callback fires with the running status after every content delta and
 -- once at stream end (with the final accumulated content).
@@ -161,6 +164,10 @@ data StreamStatus = StreamStatus
     , stElapsedMs :: Int
     }
     deriving (Eq, Show)
+
+-- No chunk for this long = the stream is considered stalled.
+streamIdleTimeoutMicroseconds :: Int
+streamIdleTimeoutMicroseconds = 90 * 1000000
 
 chatCompletionStreaming :: LlmProviderConfig -> Prompt -> (StreamStatus -> IO ()) -> IO (Either LlmError Completion)
 chatCompletionStreaming config prompt onStatus = do
@@ -182,7 +189,7 @@ chatCompletionStreaming config prompt onStatus = do
         HTTP.withResponse request manager \response -> do
             let code = HttpTypes.statusCode (HTTP.responseStatus response)
             if code >= 200 && code < 300
-                then consumeStream started response
+                then consumeStream started (HTTP.responseBody response)
                 else do
                     body <- cs <$> HTTP.brReadSome (HTTP.responseBody response) 4096
                     pure (Left (Terminal ("http " <> tshow code <> ": " <> Text.take 300 body)))
@@ -190,21 +197,23 @@ chatCompletionStreaming config prompt onStatus = do
         Left (err :: SomeException) -> pure (Left (Retriable (tshow err)))
         Right outcome -> pure outcome
   where
-    consumeStream started response = go mempty [] Nothing
+    consumeStream started bodyReader = go mempty [] Nothing
       where
-        bodyReader = HTTP.responseBody response
+        readChunk = System.Timeout.timeout streamIdleTimeoutMicroseconds (HTTP.brRead bodyReader)
         go accContent accCalls mUsage = do
-            chunk <- HTTP.brRead bodyReader
-            if BS.null chunk
-                then finish accContent accCalls mUsage
-                else do
-                    -- SSE frames are line-based; split on newlines and keep
-                    -- any partial line in the accumulator.
-                    let (frames, rest) = splitFrames (cs chunk :: Text)
-                    outcome <- foldM (step started) (Right (accContent, accCalls, mUsage, rest)) frames
-                    case outcome of
-                        Left done -> pure done
-                        Right (accContent', accCalls', mUsage', _rest') -> go accContent' accCalls' mUsage'
+            mChunk <- readChunk
+            case mChunk of
+                Nothing -> pure (Left (Retriable ("stream stalled: no data for " <> tshow (streamIdleTimeoutMicroseconds `div` 1000000) <> "s")))
+                Just chunk
+                    | BS.null chunk -> finish accContent accCalls mUsage
+                    | otherwise -> do
+                        -- SSE frames are line-based; split on newlines and keep
+                        -- any partial line in the accumulator.
+                        let (frames, rest) = splitFrames (cs chunk :: Text)
+                        outcome <- foldM (step started) (Right (accContent, accCalls, mUsage, rest)) frames
+                        case outcome of
+                            Left done -> pure done
+                            Right (accContent', accCalls', mUsage', _rest') -> go accContent' accCalls' mUsage'
         finish accContent accCalls mUsage = do
             now <- getCurrentTime
             emitStatus started accContent

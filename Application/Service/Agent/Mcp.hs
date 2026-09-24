@@ -197,7 +197,7 @@ handleMessage config message = case message of
     _ -> pure (Just (rpcError Null (-32600) "invalid request"))
   where
     toContext config' =
-        AgentContext{acUser = config'.mcpUser, acLanguage = config'.mcpLanguage}
+        AgentContext{acUser = config'.mcpUser, acLanguage = config'.mcpLanguage, acSessionId = Nothing}
 
 isToolError :: Text -> Bool
 isToolError output = any (`Text.isPrefixOf` output) ["unknown tool", "invalid arguments", "forbidden"]

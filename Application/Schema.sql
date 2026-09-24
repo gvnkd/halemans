@@ -918,6 +918,7 @@ CREATE TABLE agent_messages (
     page_context JSONB,
     prompt_tokens INT DEFAULT NULL,
     completion_tokens INT DEFAULT NULL,
+    trace JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 ALTER TABLE agent_messages ADD CONSTRAINT agent_messages_session_id_fkey FOREIGN KEY (session_id) REFERENCES agent_sessions (id) ON DELETE CASCADE;

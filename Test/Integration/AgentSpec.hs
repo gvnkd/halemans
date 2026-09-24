@@ -141,6 +141,12 @@ spec = describe "agent tools (internal API milestone)" do
             contents `shouldSatisfy` (not . any ("tool-call budget" `Text.isInfixOf`))
             -- the executed round is persisted for the UI
             map (.toolCalls) rows `shouldSatisfy` any isJust
+            -- and carries a per-round trace with duration + token counts
+            let traces = [trace | Just trace <- map (.trace) rows]
+            length traces `shouldSatisfy` (>= 2)
+            let firstTrace = traces !! 0
+            firstTrace `shouldSatisfy` (("duration_ms" `Text.isInfixOf`) . cs . Aeson.encode)
+            firstTrace `shouldSatisfy` (("list_environments" `Text.isInfixOf`) . cs . Aeson.encode)
 
         it "spends the budget then forces a final tool-less answer" do
             user <- m6User ["view"]
@@ -233,7 +239,7 @@ spec = describe "agent tools (internal API milestone)" do
         it "falls back to the built-in default when no template is seeded" do
             user <- m6User ["view"]
             resetAgentTemplates
-            msg <- buildSystemMessage AgentContext{acUser = user, acLanguage = "English"} Nothing
+            msg <- buildSystemMessage AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing} Nothing
             msg.content `shouldSatisfy` ("Halemans agent" `Text.isInfixOf`)
             msg.content `shouldSatisfy` (user.email `Text.isInfixOf`)
         it "renders the active template with the per-turn bindings" do
@@ -248,7 +254,7 @@ spec = describe "agent tools (internal API milestone)" do
                     |> createRecord
             msg <-
                 buildSystemMessage
-                    AgentContext{acUser = user, acLanguage = "Russian"}
+                    AgentContext{acUser = user, acLanguage = "Russian", acSessionId = Nothing}
                     (Just (Aeson.object ["path" .= ("/alerts" :: Text)]))
             msg.content
                 `shouldBe` "Custom agent prompt for "
@@ -270,7 +276,7 @@ spec = describe "agent tools (internal API milestone)" do
                     |> createRecord
             msg <-
                 buildSystemMessage
-                    AgentContext{acUser = user, acLanguage = "English"}
+                    AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing}
                     (Just (Aeson.object ["url" .= ("/alerts?sort=title" :: Text), "title" .= ("Alerts" :: Text)]))
             msg.content `shouldBe` "Page: Alerts at /alerts?sort=title"
         it "falls back to the legacy path key for pre-widget-fix payloads" do
@@ -285,7 +291,7 @@ spec = describe "agent tools (internal API milestone)" do
                     |> createRecord
             msg <-
                 buildSystemMessage
-                    AgentContext{acUser = user, acLanguage = "English"}
+                    AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing}
                     (Just (Aeson.object ["path" .= ("/dashboards" :: Text), "title" .= ("Dashboards" :: Text)]))
             msg.content `shouldBe` "Page: Dashboards at /dashboards"
         it "never leaks literal placeholders into the system message" do
@@ -300,7 +306,7 @@ spec = describe "agent tools (internal API milestone)" do
                     |> createRecord
             msg <-
                 buildSystemMessage
-                    AgentContext{acUser = user, acLanguage = "English"}
+                    AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing}
                     (Just (Aeson.object ["url" .= ("/alerts?x=1" :: Text), "title" .= ("Alerts" :: Text)]))
             msg.content `shouldSatisfy` (not . ("{{" `Text.isInfixOf`))
             msg.content `shouldSatisfy` ("/alerts?x=1" `Text.isInfixOf`)
@@ -391,6 +397,46 @@ spec = describe "agent tools (internal API milestone)" do
             listed <- runTool user "list_blackouts" "{}"
             listed `shouldSatisfy` (envName `Text.isInfixOf`)
 
+    describe "turn traces (agent observability)" do
+        it "explain_last_turn renders the current session's per-round trace" do
+            user <- m6User ["view"]
+            session <-
+                newRecord @AgentSession
+                    |> set #userId (get #id user)
+                    |> createRecord
+            _ <-
+                newRecord @AgentMessage
+                    |> set #sessionId (get #id session)
+                    |> set #role_ ("user" :: Text)
+                    |> set #content "hi"
+                    |> createRecord
+            counter <- newIORef (0 :: Int)
+            let fakeComplete _ = do
+                    step <- readIORef counter
+                    modifyIORef' counter (+ 1)
+                    pure $ Right case step of
+                        0 -> Completion "" Nothing Nothing [Llm.ToolCall "c1" "list_environments" "{}"]
+                        _ -> Completion "done." (Just 10) (Just 5) []
+            result <- runAgentTurnWith "fake-trace" fakeComplete (get #id session)
+            result `shouldBe` Right ()
+            let context =
+                    AgentContext
+                        { acUser = user
+                        , acLanguage = "English"
+                        , acSessionId = Just (get #id session)
+                        }
+            out <- executeAgentTool context (Llm.ToolCall "x" "explain_last_turn" "{}")
+            out `shouldSatisfy` ("turn trace for session" `Text.isInfixOf`)
+            out `shouldSatisfy` ("list_environments" `Text.isInfixOf`)
+            out `shouldSatisfy` ("round 1:" `Text.isInfixOf`)
+            out `shouldSatisfy` ("round 2:" `Text.isInfixOf`)
+            out `shouldSatisfy` ("tokens" `Text.isInfixOf`)
+        it "explain_last_turn without a session context says so" do
+            user <- m6User ["view"]
+            let context = AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing}
+            out <- executeAgentTool context (Llm.ToolCall "x" "explain_last_turn" "{}")
+            out `shouldSatisfy` ("needs a chat session context" `Text.isInfixOf`)
+
     describe "resolveMcpUser (default service account)" do
         it "auto-creates mcp@localhost with a single dedicated role, idempotently" do
             oldUser <- lookupEnv "HALEMANS_MCP_USER"
@@ -437,7 +483,7 @@ spec = describe "agent tools (internal API milestone)" do
                     case tools of
                         Array items -> mapM (lookupKeyAsText "name") (Vector.toList items)
                         _ -> Nothing
-            fmap length toolNames `shouldBe` Just 18
+            fmap length toolNames `shouldBe` Just 19
 
         it "executes tools/call and flags errors" do
             user <- m6User ["view"]
@@ -457,7 +503,7 @@ spec = describe "agent tools (internal API milestone)" do
             (lookupNumber "error.code" =<< unknown) `shouldBe` Just (-32601)
   where
     runTool user name arguments = do
-        let context = AgentContext{acUser = user, acLanguage = "English"}
+        let context = AgentContext{acUser = user, acLanguage = "English", acSessionId = Nothing}
         executeAgentTool context (Llm.ToolCall name name arguments)
     resetAgentTemplates = void do
         sqlExecTyped

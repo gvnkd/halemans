@@ -58,7 +58,7 @@ runAgentTurn :: (?modelContext :: ModelContext) => Id AgentSession -> IO (Either
 runAgentTurn sessionId = do
     config <- currentLlmConfig
     case config of
-        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
+        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." Nothing >> pure (Right ())
         Just config -> do
             agentConfig <- agentBudgetConfig
             globalConfig <- globalBudgetConfig
@@ -66,9 +66,9 @@ runAgentTurn sessionId = do
             gate <- agentTurnGate config.providerName agentConfig globalConfig
             overRate <- checkLimit ("agent:" <> tshow session.userId) agentConfig.abcRatePerMinute
             case (gate, overRate) of
-                (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
+                (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." Nothing >> pure (Right ())
+                (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." Nothing >> pure (Right ())
+                (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." Nothing >> pure (Right ())
                 (Nothing, Nothing) -> runAgentTurnInternal config.providerName (complete (OpenAiCompat config)) (Just (\prompt onStatus -> chatCompletionStreaming config prompt onStatus)) (const (pure ())) sessionId
 
 -- Streaming variant for the chat endpoint: same gates, but emits live
@@ -77,7 +77,7 @@ runAgentTurnStreaming :: (?modelContext :: ModelContext) => (AgentEvent -> IO ()
 runAgentTurnStreaming onEvent sessionId = do
     config <- currentLlmConfig
     case config of
-        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." >> pure (Right ())
+        Nothing -> persistSimple sessionId Nothing "The LLM provider is not configured (admin/llm). Ask an administrator to enable one." Nothing >> pure (Right ())
         Just config -> do
             agentConfig <- agentBudgetConfig
             globalConfig <- globalBudgetConfig
@@ -85,9 +85,9 @@ runAgentTurnStreaming onEvent sessionId = do
             gate <- agentTurnGate config.providerName agentConfig globalConfig
             overRate <- checkLimit ("agent:" <> tshow session.userId) agentConfig.abcRatePerMinute
             case (gate, overRate) of
-                (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." >> pure (Right ())
-                (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." >> pure (Right ())
+                (Just "agent", _) -> persistSimple sessionId Nothing "The agent's daily LLM token budget is exhausted (admin/LLM → Agent configuration); try again tomorrow or ask an administrator to raise it." Nothing >> pure (Right ())
+                (Just _, _) -> persistSimple sessionId Nothing "The global daily LLM token budget is exhausted (admin/LLM → Agent configuration → Global limits); try again tomorrow or ask an administrator to raise it." Nothing >> pure (Right ())
+                (Nothing, Just _) -> persistSimple sessionId Nothing "The agent is rate-limited right now; wait a minute and retry." Nothing >> pure (Right ())
                 (Nothing, Nothing) -> runAgentTurnInternal config.providerName (complete (OpenAiCompat config)) (Just (\prompt onStatus -> chatCompletionStreaming config prompt onStatus)) onEvent sessionId
 
 -- Budget gate for one agent turn: the agent's own scope cap first, then the
@@ -149,6 +149,7 @@ runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId 
             AgentContext
                 { acUser = user
                 , acLanguage = language
+                , acSessionId = Just sessionId
                 }
     history <- loadHistory sessionId
     -- Page context for the system prompt comes from the LATEST user message
@@ -180,19 +181,25 @@ runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId 
         let completeThis prompt = case mStreaming of
                 Just streamFn -> streamFn prompt (onEvent . AgentToken)
                 Nothing -> completionSource prompt
+        roundStarted <- getCurrentTime
         result <- completeThis (Prompt messages tools)
         case result of
             Left err -> do
                 let text = case err of
                         Retriable detail -> "The LLM provider request failed (retriable): " <> detail
                         Terminal detail -> "The LLM provider request failed: " <> detail
-                persistSimple sessionId Nothing text
+                    detailText = case err of
+                        Retriable detail -> detail
+                        Terminal detail -> detail
+                elapsed <- elapsedMs roundStarted
+                persistSimple sessionId Nothing text (Just (roundTrace elapsed Nothing Nothing (Just detailText)))
                 pure (Right ())
             Right completion -> do
                 recordUsage providerName completion
                 case completion.toolCalls of
                     [] -> do
-                        persistSimple sessionId (Just completion) completion.content
+                        elapsed <- elapsedMs roundStarted
+                        persistSimple sessionId (Just completion) completion.content (Just (roundTrace elapsed (Just completion) Nothing Nothing))
                         pure (Right ())
                     calls
                         | roundsLeft <= 0 -> do
@@ -200,39 +207,82 @@ runAgentTurnInternal providerName completionSource mStreaming onEvent sessionId 
                             -- so the model answers from data already
                             -- collected. Only if it still demands tool calls
                             -- do we apologize to the user.
-                            persistToolRound sessionId completion Nothing calls []
+                            elapsed <- elapsedMs roundStarted
+                            persistToolRound sessionId completion Nothing calls [] (Just (roundTrace elapsed (Just completion) (Just (callsTrace calls [])) Nothing))
                             final <- completionSource (Prompt (messages ++ [finalAnswerMessage]) [])
                             case final of
                                 Right finalCompletion
                                     | null finalCompletion.toolCalls -> do
                                         recordUsage providerName finalCompletion
-                                        persistSimple sessionId (Just finalCompletion) finalCompletion.content
+                                        finalElapsed <- elapsedMs roundStarted
+                                        persistSimple sessionId (Just finalCompletion) finalCompletion.content (Just (roundTrace finalElapsed (Just finalCompletion) Nothing Nothing))
                                     | otherwise -> do
                                         recordUsage providerName finalCompletion
-                                        persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request."
-                                Left _ -> persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request."
+                                        persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request." Nothing
+                                Left _ -> persistSimple sessionId Nothing "I could not complete this request within the tool-call budget; please narrow the request." Nothing
                             pure (Right ())
                         | otherwise -> do
                             forM_ calls \call -> onEvent (AgentToolStart call.callName)
                             (outputs, seen') <- runCalls context seen calls
-                            persistToolRound sessionId completion Nothing calls outputs
-                            let results = [toolResultMessage call.callId output | (call, output) <- zip calls outputs]
+                            elapsed <- elapsedMs roundStarted
+                            persistToolRound sessionId completion Nothing calls (map fst outputs) (Just (roundTrace elapsed (Just completion) (Just (callsTrace calls outputs)) Nothing))
+                            let results = [toolResultMessage call.callId output | (call, output) <- zip calls (map fst outputs)]
                                 messages' = messages ++ [assistantRound completion calls] ++ results
                             loop context sessionId messages' tools (roundsLeft - 1) seen'
+
+    elapsedMs :: UTCTime -> IO Int
+    elapsedMs started = do
+        now <- getCurrentTime
+        pure (round (diffUTCTime now started * 1000))
+
+    -- One round of the trace: duration, token counts, per-tool-call timings
+    -- and result excerpts, or the error text. Persisted on the assistant row
+    -- so a stalled/misbehaving turn can be analyzed after the fact.
+    roundTrace :: Int -> Maybe Completion -> Maybe Value -> Maybe Text -> Value
+    roundTrace elapsed completion mCallsTrace mError =
+        object $
+            [ "duration_ms" .= elapsed
+            ]
+                ++ ["error" .= err | Just err <- [mError]]
+                ++ case completion of
+                    Nothing -> []
+                    Just completion ->
+                        [ "tokens_in" .= completion.tokensIn
+                        , "tokens_out" .= completion.tokensOut
+                        , "content_words" .= length (Text.words completion.content)
+                        ]
+                ++ ["tool_calls" .= trace | Just trace <- [mCallsTrace]]
+
+    callsTrace :: [ToolCall] -> [(Text, Int)] -> Value
+    callsTrace calls outputs =
+        Aeson.toJSON
+            [ object
+                [ "name" .= call.callName
+                , "arguments" .= call.callArguments
+                , "duration_ms" .= ms
+                , "result" .= Text.take 500 output
+                ]
+            | (call, (output, ms)) <- zip calls outputs
+            ]
 
     -- Execute one iteration's tool calls with a per-turn repetition guard:
     -- a call whose (name, arguments) already ran this turn gets its cached
     -- result back with an explicit "do not repeat" note, instead of hitting
     -- the service again and feeding the model the same text (the classic
-    -- thrash loop that burned all rounds without answering).
+    -- thrash loop that burned all rounds without answering). Outputs carry
+    -- per-call durations for the trace.
     runCalls context seen calls = go calls seen []
       where
         go [] seenAcc outputs = pure (reverse outputs, seenAcc)
         go (call : rest) seenAcc outputs = case Map.lookup (callKey call) seenAcc of
-            Just previous -> go rest seenAcc (repeatNote call previous : outputs)
+            Just previous -> go rest seenAcc ((repeatNote call previous, 0) : outputs)
             Nothing -> do
+                callStarted <- getCurrentTime
                 output <- executeAgentTool context call
-                go rest (Map.insert (callKey call) output seenAcc) (output : outputs)
+                callElapsed <- do
+                    now <- getCurrentTime
+                    pure (round (diffUTCTime now callStarted * 1000))
+                go rest (Map.insert (callKey call) output seenAcc) ((output, callElapsed) : outputs)
     callKey call = call.callName <> "\0" <> call.callArguments
     repeatNote call previous =
         "NOTE: you already called the tool \""
@@ -404,8 +454,8 @@ assistantRound completion calls =
 
 -- Persist one assistant iteration. With tool calls: content may be empty, the
 -- tool_calls column carries name/arguments/result for replay and display.
-persistToolRound :: (?modelContext :: ModelContext) => Id AgentSession -> Completion -> Maybe Value -> [ToolCall] -> [Text] -> IO ()
-persistToolRound sessionId completion pageContext calls outputs = do
+persistToolRound :: (?modelContext :: ModelContext) => Id AgentSession -> Completion -> Maybe Value -> [ToolCall] -> [Text] -> Maybe Value -> IO ()
+persistToolRound sessionId completion pageContext calls outputs trace = do
     let logValue =
             Aeson.toJSON
                 [ object
@@ -424,10 +474,11 @@ persistToolRound sessionId completion pageContext calls outputs = do
             |> set #pageContext pageContext
             |> set #promptTokens completion.tokensIn
             |> set #completionTokens completion.tokensOut
+            |> set #trace trace
             |> createRecord
 
-persistSimple :: (?modelContext :: ModelContext) => Id AgentSession -> Maybe Completion -> Text -> IO ()
-persistSimple sessionId completion text = do
+persistSimple :: (?modelContext :: ModelContext) => Id AgentSession -> Maybe Completion -> Text -> Maybe Value -> IO ()
+persistSimple sessionId completion text trace = do
     void do
         newRecord @AgentMessage
             |> set #sessionId sessionId
@@ -435,6 +486,7 @@ persistSimple sessionId completion text = do
             |> set #content text
             |> set #promptTokens (completion >>= (.tokensIn))
             |> set #completionTokens (completion >>= (.tokensOut))
+            |> set #trace trace
             |> createRecord
 
 recordUsage :: (?modelContext :: ModelContext) => Text -> Completion -> IO ()
