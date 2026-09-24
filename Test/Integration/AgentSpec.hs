@@ -4,7 +4,7 @@ import Application.Helper.Controller (userPrivileges)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Service.Agent.Core (agentTurnGate, buildSystemMessage, defaultAgentTemplateBody, internalAgentTemplateName, maxToolRounds, runAgentTurnWith)
 import Application.Service.Agent.Mcp (McpConfig (..), defaultMcpEmail, defaultMcpRoleName, handleMessage, resolveMcpUser)
-import Application.Service.Agent.Tools (AgentContext (..), executeAgentTool)
+import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, executeAgentTool, requiredPrivilegeFor)
 import Application.Service.Llm (Completion (..), Prompt (..))
 import qualified Application.Service.Llm as Llm
 import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig, defaultAgentBudgetConfig, saveAgentBudgetConfig)
@@ -314,6 +314,51 @@ spec = describe "agent tools (internal API milestone)" do
             saved <- globalBudgetConfig
             saved `shouldBe` GlobalBudgetConfig{gbcDailyTokenBudget = 777777, gbcRatePerMinute = 9}
 
+    describe "tool registry RBAC (real roles, not model discretion)" do
+        it "executor hard-fails tools the acting user lacks the privilege for" do
+            viewer <- m6User ["view"]
+            out <- runTool viewer "ack_alert" (args [("alert_id", "00000000-0000-0000-0000-000000000000")])
+            out `shouldBe` "forbidden: the acting user lacks the ack privilege"
+            out2 <- runTool viewer "create_blackout" (args [("starts_at", "x"), ("ends_at", "y")])
+            out2 `shouldBe` "forbidden: the acting user lacks the manage_blackouts privilege"
+            sre <- m6User ["view", "ack", "close", "manage_blackouts"]
+            bad <- runTool sre "ack_alert" (args [("alert_id", "not-a-uuid")])
+            bad `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
+        it "tool definitions are filtered to the caller's privileges" do
+            let names privs = [name | Just (String name) <- map (functionField "name") (agentToolDefinitionsFor privs)]
+            names ["view"] `shouldSatisfy` ("search_alerts" `elem`)
+            names ["view"] `shouldSatisfy` (not . elem "create_blackout")
+            names ["view"] `shouldSatisfy` (not . elem "list_teams")
+            ["create_blackout", "list_teams", "ack_alert", "list_sources", "list_escalation_policies"]
+                `shouldSatisfy` all (`elem` names ["view", "ack", "manage_blackouts", "manage_users", "manage_rules", "manage_sources", "close"])
+            names ["admin"] `shouldSatisfy` (not . elem "create_blackout") -- raw "admin" is expanded by userPrivileges, not here
+            requiredPrivilegeFor "create_blackout" `shouldBe` Just "manage_blackouts"
+            requiredPrivilegeFor "get_profile" `shouldBe` Nothing
+        it "admin role implies every tool (userPrivileges expands admin)" do
+            adminUser <- m6User ["admin"]
+            out <- runTool adminUser "list_roles" "{}"
+            out `shouldSatisfy` ("admin" `Text.isInfixOf`)
+        it "blackout two-phase flow with manage_blackouts" do
+            source <- testSource
+            envName <- ("rbac-env-" <>) . tshow <$> nextRandom
+            fingerprint <- freshFingerprint
+            _ <- ingest source (testEventIn envName fingerprint Firing)
+            user <- m6User ["view", "manage_blackouts"]
+            let args' confirmed =
+                    argsV
+                        [ ("env", String envName)
+                        , ("starts_at", String "2026-09-24T18:00:00Z")
+                        , ("ends_at", String "2026-09-24T20:00:00Z")
+                        , ("reason", String "agent test")
+                        , ("confirmed", Bool confirmed)
+                        ]
+            plan <- runTool user "create_blackout" (args' False)
+            plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            done <- runTool user "create_blackout" (args' True)
+            done `shouldSatisfy` ("created blackout" `Text.isInfixOf`)
+            listed <- runTool user "list_blackouts" "{}"
+            listed `shouldSatisfy` (envName `Text.isInfixOf`)
+
     describe "resolveMcpUser (default service account)" do
         it "auto-creates mcp@localhost with a single dedicated role, idempotently" do
             oldUser <- lookupEnv "HALEMANS_MCP_USER"
@@ -360,7 +405,7 @@ spec = describe "agent tools (internal API milestone)" do
                     case tools of
                         Array items -> mapM (lookupKeyAsText "name") (Vector.toList items)
                         _ -> Nothing
-            fmap length toolNames `shouldBe` Just 7
+            fmap length toolNames `shouldBe` Just 18
 
         it "executes tools/call and flags errors" do
             user <- m6User ["view"]
@@ -387,7 +432,10 @@ spec = describe "agent tools (internal API milestone)" do
             [typedSql| DELETE FROM llm_prompt_templates WHERE name = 'internal_agent' |]
     args pairs = argsV [(key, String value) | (key, value) <- pairs]
     argsV pairs = cs (Aeson.encode (Aeson.object [(Key.fromText key, value) | (key, value) <- pairs]))
-    testMcpConfig user = McpConfig{mcpUser = user, mcpLanguage = "English"}
+    testMcpConfig user = McpConfig{mcpUser = user, mcpLanguage = "English", mcpPrivileges = ["view"]}
+    functionField key tool = field "function" tool >>= field key
+    field key (Object obj) = KeyMap.lookup key obj
+    field _ _ = Nothing
     rpcRequest :: Int -> Text -> Value
     rpcRequest id' method = rpcRequestWithParams id' method (object [])
     rpcRequestWithParams :: Int -> Text -> Value -> Value

@@ -8,7 +8,8 @@ module Application.Service.Agent.Core (
     maxToolRounds,
 ) where
 
-import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitions, executeAgentTool)
+import Application.Helper.Controller (userPrivileges)
+import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, executeAgentTool)
 import Application.Service.Api.RateLimit (checkLimit)
 import Application.Service.I18n (agentLanguageName)
 import Application.Service.Llm (Completion (..), LlmError (..), LlmMessage (..), LlmProvider (..), LlmProviderConfig (..), OpenAiCompat (..), Prompt (..), ToolCall (..), toolResultMessage, userMessage)
@@ -111,11 +112,13 @@ runAgentTurnWith providerName completionSource sessionId = do
                 }
     history <- loadHistory sessionId
     sysMsg <- buildSystemMessage context session.pageContext
-    let messages = sysMsg : history
-    loop context sessionId messages maxToolRounds Map.empty
+    privileges <- userPrivileges (get #id user)
+    let tools = agentToolDefinitionsFor privileges
+        messages = sysMsg : history
+    loop context sessionId messages tools maxToolRounds Map.empty
   where
-    loop context sessionId messages roundsLeft seen = do
-        result <- completionSource (Prompt messages agentToolDefinitions)
+    loop context sessionId messages tools roundsLeft seen = do
+        result <- completionSource (Prompt messages tools)
         case result of
             Left err -> do
                 let text = case err of
@@ -152,7 +155,7 @@ runAgentTurnWith providerName completionSource sessionId = do
                             persistToolRound sessionId completion Nothing calls outputs
                             let results = [toolResultMessage call.callId output | (call, output) <- zip calls outputs]
                                 messages' = messages ++ [assistantRound completion calls] ++ results
-                            loop context sessionId messages' (roundsLeft - 1) seen'
+                            loop context sessionId messages' tools (roundsLeft - 1) seen'
 
     -- Execute one iteration's tool calls with a per-turn repetition guard:
     -- a call whose (name, arguments) already ran this turn gets its cached
@@ -251,7 +254,7 @@ defaultAgentTemplateBody =
         , "Rules:"
         , "- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts."
         , "- At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments."
-        , "- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools."
+        , "- Every tool enforces the user's real privileges server-side; when a tool reports a permission problem, explain which privilege is missing and stop pushing — do not retry or work around it."
         , "- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation."
         , "- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names."
         , "- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in."

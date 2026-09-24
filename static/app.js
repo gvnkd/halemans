@@ -689,6 +689,9 @@
                 thinking.parentNode.removeChild(thinking);
                 (result.data.replies || []).forEach(function (reply) {
                     if (reply.content) append(messages, 'assistant', reply.content);
+                    (reply.tool_calls || []).forEach(function (call) {
+                        append(messages, 'tool', '⚙ ' + call.name);
+                    });
                 });
                 loadSessions(root);
             })

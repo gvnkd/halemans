@@ -49,7 +49,13 @@ instance Controller AgentChatController where
                                         |> filterWhere (#sessionId, get #id session)
                                         |> orderByAsc #createdAt
                                         |> fetch
-                                let replies = [encodeReply row | row <- rows, afterUserMessage row (get #id userMessageRow), row.role_ == "assistant"]
+                                -- only the assistant rows AFTER the user
+                                -- message we just stored (createdAt ties
+                                -- within one second make id/position-based
+                                -- dropWhile the reliable cut)
+                                let replies = case dropWhile (\row -> get #id row /= get #id userMessageRow) rows of
+                                        (_userRow : rest) -> [encodeReply row | row <- rest, row.role_ == "assistant"]
+                                        [] -> []
                                 renderJson (object ["session_id" .= get #id session, "replies" .= replies])
     action AgentSessionsAction = do
         sessions <-
@@ -108,9 +114,6 @@ fetchOr404 sessionId = do
     when (session.userId /= currentUserId) do
         respondAndExit (responseLBS HTTP.status404 [("Content-Type", "application/json")] "{}")
     pure session
-
-afterUserMessage :: AgentMessage -> Id AgentMessage -> Bool
-afterUserMessage row userMessageId = get #id row /= userMessageId
 
 encodeReply :: AgentMessage -> Value
 encodeReply row =

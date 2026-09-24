@@ -160,7 +160,29 @@ the same `decodeDashboardConfig`.
     consume this. Enforcement: per-consumer cap first, then the global one
     (`Core.agentTurnGate`), so a runaway consumer can't starve the others.
 
-## 8. Tests
+## 8. Tool registry (P1–P3, RBAC-gated)
+
+The registry covers the Halemans subsystems in three phases (43 tools):
+
+- **P1 day-2 ops**: alert actions (ack/unack/close/comment), blackouts
+  (list/create/delete), dashboards (create/validate/update/delete/set
+  default/schema).
+- **P2 configuration**: teams + members, escalation policies (steps as
+  JSON), notification rules, grouping rules, sources (list/enable/disable).
+- **P3 user + admin reads**: profile get/update, own API tokens
+  (create returns the plaintext once), users/roles, LLM templates/providers,
+  alert groups.
+
+**RBAC is enforced server-side, never by the model** (design rule): every
+catalog entry carries its required privilege; `executeAgentTool` checks the
+act-as user's real privileges (`userPrivileges`, `admin` implies all) BEFORE
+dispatch and hard-fails with "forbidden: …"; `agentToolDefinitionsFor` filters
+the tool list sent to the LLM (and MCP `tools/list`) so the model never sees
+tools it cannot call. Provisioned-protected config rows refuse mutations, and
+mutating tools keep the two-phase `confirmed` flow. E2E-verified against a
+real Qwen3 (llama.cpp): plan → user confirms → blackout applied → DB row.
+
+## 9. Tests
 
 - `Test/DashboardConfigSpec.hs` — not-in matcher, JSON round-trip, empty
   `values` rejection.

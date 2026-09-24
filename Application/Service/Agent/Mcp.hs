@@ -7,8 +7,8 @@ module Application.Service.Agent.Mcp (
     defaultMcpRoleName,
 ) where
 
-import Application.Helper.Controller (allPrivileges)
-import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitions, executeAgentTool)
+import Application.Helper.Controller (allPrivileges, userPrivileges)
+import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, executeAgentTool)
 import Application.Service.I18n (agentLanguageName)
 import qualified Application.Service.Llm as Llm
 import Data.Aeson (Value (..), object, (.:), (.=))
@@ -44,6 +44,9 @@ import System.IO (hFlush, stdout)
 data McpConfig = McpConfig
     { mcpUser :: User
     , mcpLanguage :: Text
+    , mcpPrivileges :: [Text]
+    -- ^ Real RBAC surface: tools/list only advertises tools these
+    -- privileges allow (the executor re-checks on every call).
     }
 
 defaultMcpEmail :: Text
@@ -59,7 +62,8 @@ mcpStdioServer :: (?modelContext :: ModelContext) => IO ()
 mcpStdioServer = do
     user <- resolveMcpUser
     language <- agentLanguageName (userLanguageCode user)
-    serveLoop McpConfig{mcpUser = user, mcpLanguage = language}
+    privileges <- userPrivileges (get #id user)
+    serveLoop McpConfig{mcpUser = user, mcpLanguage = language, mcpPrivileges = privileges}
 
 resolveMcpUser :: (?modelContext :: ModelContext) => IO User
 resolveMcpUser = do
@@ -169,7 +173,7 @@ handleMessage config message = case message of
                             )
                         )
                 ("ping", Just requestId) -> pure (Just (rpcResult requestId (object [])))
-                ("tools/list", Just requestId) -> pure (Just (rpcResult requestId (object ["tools" .= map toMcpTool agentToolDefinitions])))
+                ("tools/list", Just requestId) -> pure (Just (rpcResult requestId (object ["tools" .= map toMcpTool (agentToolDefinitionsFor config.mcpPrivileges)])))
                 ("tools/call", Just requestId) -> do
                     let params = lookupKey "params" message
                         name = params >>= lookupKeyAsText "name"

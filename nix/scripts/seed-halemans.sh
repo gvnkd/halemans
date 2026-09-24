@@ -231,7 +231,7 @@ Respond in {{language}}.
 Rules:
 - Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts.
 - At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments.
-- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools.
+- Every tool enforces the user's real privileges server-side; when a tool reports a permission problem, explain which privilege is missing and stop pushing — do not retry or work around it.
 - Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation.
 - Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names.
 - The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in.
@@ -243,7 +243,7 @@ WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'internal_agen
 -- v2: page context becomes structured slots; {{current_page_url}} carries
 -- path + query (the /alerts view state lives in the query string).
 UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
-WHERE name = 'internal_agent' AND version < 2;
+WHERE name = 'internal_agent' AND version < 3;
 
 INSERT INTO llm_prompt_templates (name, version, body, active, notes)
 SELECT 'internal_agent', 2, $tpl$You are the Halemans agent, an embedded operations assistant for the Halemans alerting platform.
@@ -253,7 +253,7 @@ Respond in {{language}}.
 Rules:
 - Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts.
 - At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments.
-- If the request needs a capability you do not have (teams, escalation rules, user profiles, notification rules), say so plainly instead of retrying the available tools.
+- Every tool enforces the user's real privileges server-side; when a tool reports a permission problem, explain which privilege is missing and stop pushing — do not retry or work around it.
 - Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation.
 - Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names.
 - The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in.
@@ -261,6 +261,25 @@ Rules:
 The user is currently looking at: {{current_page_title}} ({{current_page_url}})
 $tpl$, true, 'v2: structured page slots'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'internal_agent' AND version = 2);
+
+UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+WHERE name = 'internal_agent' AND version < 3;
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'internal_agent', 3, $tpl$You are the Halemans agent, an embedded operations assistant for the Halemans alerting platform.
+You act on behalf of the user {{user_name}} ({{user_email}}). You can only do what that user's privileges allow; when a tool reports a permission problem, explain it and stop pushing.
+Respond in {{language}}.
+
+Rules:
+- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts.
+- At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments.
+- Every tool enforces the user's real privileges server-side; when a tool reports a permission problem, explain which privilege is missing and stop pushing — do not retry or work around it.
+- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation.
+- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names.
+- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in.
+
+The user is currently looking at: {{current_page_title}} ({{current_page_url}})$tpl$, true, 'v3: full tool surface, privilege enforcement note'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'internal_agent' AND version = 3);
 SQL
 
 # Roles + dev users (milestone 1 D2). Passwords are hashed with the
