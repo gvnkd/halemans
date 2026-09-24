@@ -180,6 +180,7 @@ encodeReply row =
     object
         [ "content" .= row.content
         , "tool_calls" .= row.toolCalls
+        , "trace" .= row.trace
         ]
 
 encodeHistoryRow :: AgentMessage -> Value
@@ -188,5 +189,6 @@ encodeHistoryRow row =
         [ "role" .= row.role_
         , "content" .= row.content
         , "tool_calls" .= row.toolCalls
+        , "trace" .= row.trace
         , "created_at" .= row.createdAt
         ]

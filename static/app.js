@@ -617,6 +617,38 @@
         return { url: window.location.pathname + window.location.search, title: document.title };
     }
 
+    // Per-message trace footer: duration, tokens, tool timings, errors —
+    // click to expand the raw detail. Renders under assistant messages that
+    // carry a trace (every message since the agent-traces milestone).
+    function appendTrace(messages, trace) {
+        if (!trace) return;
+        var duration = trace.duration_ms != null ? trace.duration_ms + 'ms' : null;
+        var tokens = trace.tokens_in != null ? ('tokens ' + trace.tokens_in + '/' + trace.tokens_out) : null;
+        var calls = trace.tool_calls || [];
+        var summary = [];
+        if (duration) summary.push(duration);
+        if (tokens) summary.push(tokens);
+        if (calls.length) summary.push('tools: ' + calls.map(function (c) { return c.name; }).join(', '));
+        if (trace.error) summary.push('ERROR: ' + trace.error);
+        if (!summary.length) return;
+        var line = document.createElement('div');
+        line.className = 'agent-trace' + (trace.error ? ' agent-trace-error' : '');
+        line.textContent = 'ⓘ ' + summary.join(' · ');
+        var detail = null;
+        line.addEventListener('click', function () {
+            if (detail) {
+                detail.parentNode.removeChild(detail);
+                detail = null;
+                return;
+            }
+            detail = document.createElement('pre');
+            detail.className = 'agent-trace-detail';
+            detail.textContent = JSON.stringify(trace, null, 2);
+            messages.insertBefore(detail, line.nextSibling);
+        });
+        messages.appendChild(line);
+    }
+
     // Numbered questions in the last assistant message get a structured
     // reply widget (one input per question), so the user answers each
     // question separately and the model gets labeled answers back.
@@ -674,7 +706,10 @@
             .then(function (data) {
                 if (!data || !data.messages) return;
                 messages.textContent = '';
-                data.messages.forEach(function (row) { if (row.content) append(messages, row.role, row.content); });
+                data.messages.forEach(function (row) {
+                    if (row.content) append(messages, row.role, row.content);
+                    appendTrace(messages, row.trace);
+                });
             })
             .catch(function () {});
     }
@@ -768,6 +803,7 @@
                 (reply.tool_calls || []).forEach(function (call) {
                     append(messages, 'tool', '⚙ ' + call.name);
                 });
+                appendTrace(messages, reply.trace);
             });
             loadSessions(root);
             maybeRenderQuestions(root, lastText);

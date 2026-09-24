@@ -1591,3 +1591,31 @@ time.utc-time {
     resize: vertical;
 }
 .agent-questions-send { align-self: flex-end; }
+
+/* Per-message turn trace: one summary line under assistant messages,
+   click expands the raw round detail. */
+.agent-trace {
+    align-self: stretch;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+.agent-trace:hover { color: var(--text); background: var(--surface); }
+.agent-trace-error { color: var(--severity-critical, #e5484d); }
+.agent-trace-detail {
+    align-self: stretch;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--surface-border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    max-height: 220px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
