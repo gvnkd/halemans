@@ -1543,6 +1543,11 @@ time.utc-time {
     font-family: var(--font-mono);
     font-size: var(--text-sm);
 }
+/* Server-rendered markdown (analysis-card pipeline) inside chat bubbles:
+   block tags own the layout, so the bubble's pre-wrap must stand down. */
+.agent-msg.llm-markdown { white-space: normal; }
+.agent-msg.llm-markdown > :last-child { margin-bottom: 0; }
+.agent-msg.llm-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-form {
     display: flex;
     gap: 8px;

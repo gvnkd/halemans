@@ -2,6 +2,7 @@ module Web.Controller.AgentChat where
 
 import Application.Service.Agent.Core (AgentEvent (..), runAgentTurn, runAgentTurnStreaming)
 import Application.Service.Llm (StreamStatus (..))
+import qualified CMark
 import Control.Concurrent (Chan, forkIO, newChan, readChan, writeChan)
 import Data.Aeson (Value, object, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
@@ -101,7 +102,11 @@ streamChat request = do
                     flush
                     loop
                 Just (Right (AgentToken status)) -> do
-                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs, "tool" .= status.stTool])
+                    -- pre-rendered markdown of the accumulated answer: the
+                    -- widget swaps it in per event so the final reply streams
+                    -- in formatted (same renderer as the analysis card,
+                    -- markdownHtml = renderMarkdownText, optSafe-sanitized).
+                    emit "token" (object ["words" .= status.stWords, "elapsed_ms" .= status.stElapsedMs, "tool" .= status.stTool, "html" .= markdownText status.stContent])
                     loop
                 Just (Right (AgentToolStart toolName)) -> do
                     emit "tool" (object ["name" .= toolName])
@@ -194,6 +199,7 @@ encodeReply :: AgentMessage -> Value
 encodeReply row =
     object
         [ "content" .= row.content
+        , "html" .= markdownText row.content
         , "tool_calls" .= row.toolCalls
         , "trace" .= row.trace
         ]
@@ -203,7 +209,13 @@ encodeHistoryRow row =
     object
         [ "role" .= row.role_
         , "content" .= row.content
+        , "html" .= markdownText row.content
         , "tool_calls" .= row.toolCalls
         , "trace" .= row.trace
         , "created_at" .= row.createdAt
         ]
+
+-- Same markdown pipeline as the analysis card (Application.Helper.View
+-- markdownHtml); kept as Text here so JSON payloads can carry it.
+markdownText :: Text -> Text
+markdownText = CMark.commonmarkToHtml [CMark.optSafe]

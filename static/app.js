@@ -611,6 +611,18 @@
         return div;
     }
 
+    // Assistant replies are markdown rendered SERVER-side (cmark optSafe, the
+    // analysis-card pipeline) and arrive in the payload as html — swap them
+    // in with innerHTML so the chat and the card render identically.
+    function appendAssistant(messages, html) {
+        var div = document.createElement('div');
+        div.className = 'agent-msg agent-msg-assistant llm-markdown';
+        div.innerHTML = html;
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+        return div;
+    }
+
     function pageContext() {
         // pathname + search: on /alerts the whole view state (sort, columns,
         // filters) lives in the query string, so it is the precise context.
@@ -707,7 +719,8 @@
                 if (!data || !data.messages) return;
                 messages.textContent = '';
                 data.messages.forEach(function (row) {
-                    if (row.content) append(messages, row.role, row.content);
+                    if (row.role === 'assistant' && row.html) appendAssistant(messages, row.html);
+                    else if (row.content) append(messages, row.role, row.content);
                     appendTrace(messages, row.trace);
                 });
             })
@@ -776,6 +789,10 @@
         // localStorage id yet, and stall recovery needs one for the history
         // fetch even if the done frame never arrives.
         var streamSessionId = null;
+        // Live markdown div: token events carry pre-rendered html of the
+        // accumulated answer, swapped in per event; done re-renders the
+        // final payload and discards this.
+        var streamingDiv = null;
         // Tool names can arrive twice: mid-stream (while the model is still
         // writing the call's arguments, via token events) and after the round
         // (tool events / the done payload) — render each name only once.
@@ -829,10 +846,13 @@
                     if (reader) reader.cancel();
                     window.clearInterval(timer);
                     if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+                    if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
+                    streamingDiv = null;
                     setSession(id);
                     append(messages, 'tool', 'connection dropped — showing the reply the agent already saved');
                     replies.forEach(function (row) {
-                        append(messages, 'assistant', row.content);
+                        if (row.html) appendAssistant(messages, row.html);
+                        else append(messages, 'assistant', row.content);
                         appendTrace(messages, row.trace);
                     });
                     loadSessions(root);
@@ -845,12 +865,16 @@
             window.clearInterval(timer);
             aborted = true; // also blocks a late recoverReply double-render
             if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+            // the streamed draft is superseded by the persisted replies
+            if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
+            streamingDiv = null;
             setSession(data.session_id || streamSessionId);
             var lastText = '';
             (data.replies || []).forEach(function (reply) {
                 if (reply.content) {
                     lastText = reply.content;
-                    append(messages, 'assistant', reply.content);
+                    if (reply.html) appendAssistant(messages, reply.html);
+                    else append(messages, 'assistant', reply.content);
                 }
                 (reply.tool_calls || []).forEach(function (call) {
                     showTool(call.name);
@@ -906,6 +930,14 @@
                         } else if (eventName === 'token') {
                             thinking.setAttribute('data-progress', 'Thinking… ' + data.words + ' words · ' + Math.round(data.elapsed_ms / 1000) + 's');
                             if (data.tool) showTool(data.tool);
+                            if (data.html) {
+                                if (streamingDiv) {
+                                    streamingDiv.innerHTML = data.html;
+                                    messages.scrollTop = messages.scrollHeight;
+                                } else {
+                                    streamingDiv = appendAssistant(messages, data.html);
+                                }
+                            }
                         } else if (eventName === 'round') {
                             // round start: the model is working (possibly on a
                             // slow tool round) — reset the stall clock.
