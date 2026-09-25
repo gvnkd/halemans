@@ -3,6 +3,8 @@ module Application.Service.Live (
     liveBroadcastLoop,
     ensureBroadcaster,
     liveConnectionCount,
+    -- agent chat turn completion, backstop for a lost SSE done frame
+    broadcastAgentTurn,
     -- exposed for Test.LiveSpec (milestone 12 §7)
     isResetFrame,
     parseScope,
@@ -17,6 +19,7 @@ import Application.Service.DashboardCards (ExpandedCard (..), expandDashboardCar
 import Application.Service.Llm.Queue (latestJobErrors)
 import Application.Service.Timeline (headTimelineGroup, timelineHiddenKind)
 import qualified Control.Exception.Safe as Exception
+import Control.Monad (guard)
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -30,6 +33,7 @@ import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.HSX.Markup (Markup, renderMarkupText)
+import IHP.LoginSupport.Helper.Controller (currentUserOrNothing)
 import IHP.ModelSupport
 import qualified IHP.PGListener as PGListener
 import IHP.Prelude
@@ -54,6 +58,9 @@ data Scope
     | ScopeAlert UUID
     | ScopeGroup UUID
     | ScopeUserDashboard UUID
+    | -- this browser tab has the agent chat widget open; frames carry the
+      -- user id because the agent chat is per-user, not per-page
+      ScopeAgentUser UUID
     | ScopeNone
     deriving (Eq, Show)
 
@@ -70,6 +77,21 @@ broadcasterStarted = unsafePerformIO (newIORef False)
 -- Live connection gauge for the /metrics exporter (milestone_6.md §5).
 liveConnectionCount :: IO Int
 liveConnectionCount = length <$> readIORef registry
+
+-- | Push an agent-chat turn completion to every tab of this user. Backstop
+-- channel for the SSE stream: the reply is persisted BEFORE this is called,
+-- so a browser that lost the done frame renders immediately instead of
+-- waiting for the stall timer's history poll.
+broadcastAgentTurn :: UUID -> Aeson.Value -> IO ()
+broadcastAgentTurn userId payload = do
+    connections <- readIORef registry
+    forM_ connections \(_, scopeRef, send) -> do
+        scopes <- readIORef scopeRef
+        when (ScopeAgentUser userId `elem` scopes) do
+            -- one dead peer must not take down the fan-out (or, worse, the
+            -- agent turn thread that called us before emitting SSE done)
+            send (cs (Aeson.encode (object ["agent_turn" .= payload])))
+                `Exception.catch` \(_ :: Exception.SomeException) -> pure ()
 
 -- | Connection loop of the /ws WSApp (see Web.Controller.Live).
 liveBroadcastLoop ::
@@ -88,11 +110,23 @@ liveBroadcastLoop = do
                 -- reopening the socket): drop the previous page's scopes
                 -- before it sends the new ones.
                 then writeIORef scopeRef []
-                else case parseScope message of
+                else case parseAgentScope message <|> parseScope message of
                     -- A page may subscribe to several scopes (dashboard pages
                     -- cover one env:<name> scope per included card, §7).
                     Just scope -> modifyIORef' scopeRef (scope :)
                     Nothing -> pure ()
+
+-- The agent scope frame is {type:"agent"}; the user id comes from the
+-- session, not the frame (the client doesn't know its own id).
+parseAgentScope :: (?request :: Request) => LByteString -> Maybe Scope
+parseAgentScope message = do
+    guard (not (isResetFrame message))
+    value <- Aeson.decode message
+    scopeType <- parseMaybe (Aeson.withObject "frame" (\o -> o Aeson..:? "type")) value :: Maybe (Maybe Text)
+    guard (scopeType == Just "agent")
+    user <- currentUserOrNothing
+    let Id uuid = get #id user
+    pure (ScopeAgentUser uuid)
 
 isResetFrame :: LByteString -> Bool
 isResetFrame message = fromMaybe False do

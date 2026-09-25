@@ -1,19 +1,23 @@
 module Web.Controller.AgentChat where
 
 import Application.Service.Agent.Core (AgentEvent (..), runAgentTurn, runAgentTurnStreaming)
+import Application.Service.Live (broadcastAgentTurn)
 import Application.Service.Llm (StreamStatus (..))
 import qualified CMark
 import Control.Concurrent (Chan, forkIO, newChan, readChan, writeChan)
+import qualified Control.Exception.Safe as Exception
 import Data.Aeson (Value, object, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.ByteString.Builder (string8)
 import qualified Data.Text as Text
 import Data.UUID (UUID)
+import qualified Data.Vector as Vector
 import Generated.Types
 import IHP.ModelSupport (withTransaction)
 import qualified Network.HTTP.Types as HTTP
 import Network.Wai (queryString, responseLBS, responseStream)
+import System.IO (hPutStrLn, stderr)
 import System.Timeout (timeout)
 import Web.Controller.Prelude
 
@@ -59,7 +63,18 @@ jsonChat request = do
                 Left err -> renderJsonWithStatusCode status500Internal (object ["error" .= err])
                 Right () -> do
                     replies <- loadTurnReplies session userMessageRow
+                    notifyTurnDone session replies
                     renderJson (object ["session_id" .= get #id session, "replies" .= replies])
+
+-- WS backstop: the reply is persisted at this point, so a browser that lost
+-- the SSE done frame renders it immediately on this independent channel
+-- instead of waiting for the stall timer's history poll. Must never throw:
+-- this runs in the thread that emits the SSE done next.
+notifyTurnDone :: (?modelContext :: ModelContext) => AgentSession -> [Value] -> IO ()
+notifyTurnDone session replies =
+    let Id userUuid = session.userId
+     in broadcastAgentTurn userUuid (object ["session_id" .= get #id session, "replies" .= replies])
+            `Exception.catch` \(_ :: Exception.SomeException) -> pure ()
 
 -- Streaming variant (fetch + ReadableStream reader on the client): emits
 -- SSE token/tool events while the turn runs, then a done event carrying the
@@ -75,6 +90,11 @@ streamChat request = do
             events <- newChan :: IO (Chan (Either Text AgentEvent))
             _ <- forkIO do
                 _ <- runAgentTurnStreaming (\event -> writeChan events (Right event)) sessionId
+                -- the reply is persisted now: notify WS subscribers before
+                -- unblocking the SSE done frame, so a tab that lost the
+                -- stream renders from this channel without waiting.
+                replies <- loadTurnReplies session userMessageRow
+                notifyTurnDone session replies
                 writeChan events (Left "done")
             respondAndExit $
                 responseStream
@@ -85,11 +105,14 @@ streamChat request = do
                     ]
                     \writeBuilder flush -> sendEvents writeBuilder flush events session userMessageRow
   where
-    sendEvents writeBuilder flush events session userMessageRow = do
-        -- session id first: the client needs it for stall-recovery even when
-        -- the done frame (the only other carrier) never arrives.
-        emit "session" (object ["session_id" .= get #id session])
-        loop
+    sendEvents writeBuilder flush events session userMessageRow =
+        Exception.catch
+            do
+                -- session id first: the client needs it for stall-recovery even when
+                -- the done frame (the only other carrier) never arrives.
+                emit "session" (object ["session_id" .= get #id session])
+                loop
+            \err -> logSseException (err :: Exception.SomeException)
       where
         -- Heartbeat: idle links/proxies swallow quiet SSE tails; a comment
         -- frame every 15s keeps the pipe warm and lets the client tell
@@ -121,6 +144,13 @@ streamChat request = do
         emit event payload = do
             writeBuilder (string8 ("event: " <> cs event <> "\ndata: " <> cs (Aeson.encode payload) <> "\n\n"))
             flush
+
+    -- The web layer has no FastLogger (Request carries no logger); stderr
+    -- reaches the process-compose log. A silently-dying stream thread is
+    -- exactly what the "stalled widget with a finished turn in the DB"
+    -- symptom looks like, so this must be loud.
+    logSseException :: Exception.SomeException -> IO ()
+    logSseException err = hPutStrLn stderr (cs ("agent SSE stream died: " <> tshow err) :: String)
 
 storeUserMessage :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, CurrentUserRecord ~ User) => ChatRequest -> AgentSession -> IO AgentMessage
 storeUserMessage request session = do
@@ -202,6 +232,7 @@ encodeReply row =
         , "html" .= markdownText row.content
         , "tool_calls" .= row.toolCalls
         , "trace" .= row.trace
+        , "needs_confirmation" .= needsConfirmation row
         ]
 
 encodeHistoryRow :: AgentMessage -> Value
@@ -213,7 +244,20 @@ encodeHistoryRow row =
         , "tool_calls" .= row.toolCalls
         , "trace" .= row.trace
         , "created_at" .= row.createdAt
+        , "needs_confirmation" .= needsConfirmation row
         ]
+
+-- A two-phase mutating tool ran with confirmed=false: its persisted result
+-- carries the "confirmation required" convention (Tools.hs). The widget
+-- renders Apply/Discard buttons for the LAST such reply.
+needsConfirmation :: AgentMessage -> Bool
+needsConfirmation row = case row.toolCalls of
+    Just (Aeson.Array items) -> any callNeedsConfirmation (Vector.toList items)
+    _ -> False
+  where
+    callNeedsConfirmation value = case parseMaybe (Aeson.withObject "call" (\o -> o Aeson..: "result")) value of
+        Just (result :: Text) -> "confirmation required" `Text.isInfixOf` result
+        Nothing -> False
 
 -- Same markdown pipeline as the analysis card (Application.Helper.View
 -- markdownHtml); kept as Text here so JSON payloads can carry it.

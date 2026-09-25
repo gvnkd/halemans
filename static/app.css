@@ -1548,6 +1548,13 @@ time.utc-time {
 .agent-msg.llm-markdown { white-space: normal; }
 .agent-msg.llm-markdown > :last-child { margin-bottom: 0; }
 .agent-msg.llm-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Two-phase plan: Apply/Discard pair under the pending plan message. */
+.agent-confirm {
+    align-self: flex-start;
+    display: flex;
+    gap: 8px;
+    padding: 2px 0;
+}
 .agent-form {
     display: flex;
     gap: 8px;

@@ -666,7 +666,7 @@
     // question separately and the model gets labeled answers back.
     function maybeRenderQuestions(root, text) {
         var messages = root.querySelector('#agent-messages');
-        if (!messages || messages.querySelector('.agent-questions')) return;
+        if (!messages || messages.querySelector('.agent-questions') || messages.querySelector('.agent-confirm')) return;
         var questions = [];
         String(text).split('\n').forEach(function (line) {
             var match = line.match(/^\s*(\d+)[.)]\s+(.+\?)\s*$/);
@@ -709,6 +709,38 @@
         if (inputs[0]) inputs[0].focus();
     }
 
+    // Two-phase mutating tool plan (detected server-side from the persisted
+    // tool result's "confirmation required" marker): offer Apply/Discard
+    // instead of making the user type "confirm". Apply sends "confirm",
+    // which the agent's prompt instructs it to act on.
+    function maybeRenderConfirm(root, reply) {
+        if (!reply || !reply.needs_confirmation) return;
+        var messages = root.querySelector('#agent-messages');
+        if (!messages || messages.querySelector('.agent-confirm') || messages.querySelector('.agent-questions')) return;
+        var block = document.createElement('div');
+        block.className = 'agent-confirm';
+        var apply = document.createElement('button');
+        apply.type = 'button';
+        apply.className = 'btn-brand agent-confirm-apply';
+        apply.textContent = 'Apply';
+        var discard = document.createElement('button');
+        discard.type = 'button';
+        discard.className = 'btn-ghost agent-confirm-discard';
+        discard.textContent = 'Discard';
+        apply.addEventListener('click', function () {
+            block.parentNode.removeChild(block);
+            sendText(root, 'confirm');
+        });
+        discard.addEventListener('click', function () {
+            block.parentNode.removeChild(block);
+            sendText(root, 'cancel');
+        });
+        block.appendChild(apply);
+        block.appendChild(discard);
+        messages.appendChild(block);
+        messages.scrollTop = messages.scrollHeight;
+    }
+
     function loadHistory(root) {
         var id = sessionId();
         if (!id) return;
@@ -723,6 +755,14 @@
                     else if (row.content) append(messages, row.role, row.content);
                     appendTrace(messages, row.trace);
                 });
+                // a pending plan survives refresh: re-offer the buttons only
+                // when the LATEST tool activity is an unconfirmed plan (after
+                // Apply, a confirmed=true tool row exists and turns this off).
+                var lastToolRow = null;
+                data.messages.forEach(function (row) {
+                    if (row.tool_calls && row.tool_calls.length) lastToolRow = row;
+                });
+                maybeRenderConfirm(root, lastToolRow);
             })
             .catch(function () {});
     }
@@ -796,6 +836,18 @@
         // accumulated answer, swapped in per event; done re-renders the
         // final payload and discards this.
         var streamingDiv = null;
+        // WS backstop (halemans-live.js dispatches agent_turn payloads here):
+        // the server broadcasts turn completion on the /ws channel after
+        // persisting, independent of the SSE pipe — if the done frame was
+        // lost, this renders the reply immediately instead of waiting for
+        // the stall timer.
+        window.halemansAgentTurnDone = function (payload) {
+            if (aborted) return;
+            var sid = payload.session_id || null;
+            if (sid && sid !== (streamSessionId || sessionId())) return;
+            finishTurn(payload);
+        };
+
         // Tool names can arrive twice: mid-stream (while the model is still
         // writing the call's arguments, via token events) and after the round
         // (tool events / the done payload) — render each name only once.
@@ -851,6 +903,7 @@
                     aborted = true;
                     if (reader) reader.cancel();
                     window.clearInterval(timer);
+                    if (window.halemansAgentTurnDone) delete window.halemansAgentTurnDone;
                     if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
                     if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
                     streamingDiv = null;
@@ -863,6 +916,11 @@
                     });
                     loadSessions(root);
                     maybeRenderQuestions(root, replies[replies.length - 1].content);
+                    var lastToolReply = null;
+                    replies.forEach(function (row) {
+                        if (row.tool_calls && row.tool_calls.length) lastToolReply = row;
+                    });
+                    maybeRenderConfirm(root, lastToolReply);
                 })
                 .catch(function () {
                     recovered = false;
@@ -871,36 +929,44 @@
                 });
         }
 
-        function finishTurn(data) {
-            window.clearInterval(timer);
-            aborted = true; // also blocks a late recoverReply double-render
-            if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
-            // the streamed draft is superseded by the persisted replies
-            if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
-            streamingDiv = null;
-            setSession(data.session_id || streamSessionId);
-            var lastText = '';
-            (data.replies || []).forEach(function (reply) {
-                if (reply.content) {
-                    lastText = reply.content;
-                    if (reply.html) appendAssistant(messages, reply.html);
-                    else append(messages, 'assistant', reply.content);
-                }
-                (reply.tool_calls || []).forEach(function (call) {
-                    showTool(call.name);
-                });
-                appendTrace(messages, reply.trace);
+    function finishTurn(data) {
+        if (aborted) return; // WS backstop or recovery already rendered this turn
+        window.clearInterval(timer);
+        aborted = true; // also blocks a late recoverReply double-render
+        if (window.halemansAgentTurnDone) delete window.halemansAgentTurnDone;
+        if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+        // the streamed draft is superseded by the persisted replies
+        if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
+        streamingDiv = null;
+        setSession(data.session_id || streamSessionId);
+        var lastText = '';
+        var lastReply = null;
+        var lastToolReply = null;
+        (data.replies || []).forEach(function (reply) {
+            if (reply.content) {
+                lastText = reply.content;
+                lastReply = reply;
+                if (reply.html) appendAssistant(messages, reply.html);
+                else append(messages, 'assistant', reply.content);
+            }
+            if (reply.tool_calls && reply.tool_calls.length) lastToolReply = reply;
+            (reply.tool_calls || []).forEach(function (call) {
+                showTool(call.name);
             });
-            loadSessions(root);
-            maybeRenderQuestions(root, lastText);
-        }
+            appendTrace(messages, reply.trace);
+        });
+        loadSessions(root);
+        maybeRenderQuestions(root, lastText);
+        maybeRenderConfirm(root, lastToolReply);
+    }
 
-        function fail(message) {
-            window.clearInterval(timer);
-            aborted = true;
-            thinking.setAttribute('data-progress', '');
-            thinking.textContent = message;
-        }
+    function fail(message) {
+        window.clearInterval(timer);
+        aborted = true;
+        if (window.halemansAgentTurnDone) delete window.halemansAgentTurnDone;
+        thinking.setAttribute('data-progress', '');
+        thinking.textContent = message;
+    }
 
         fetch(root.getAttribute('data-chat-url'), {
             method: 'POST',

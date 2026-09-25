@@ -11,29 +11,35 @@
 
     function scopesFromPage() {
         var el = document.querySelector('[data-live-scope]');
-        if (!el) return [{ type: 'none' }];
         // The server embeds the RENDERED view's filters in data-live-filters.
         // Prefer them over location.search: after a turbolinks visit that
         // followed a prefs redirect, the address bar still shows the bare
         // path while the page renders filtered content.
         var domFilters = null;
-        var filtersAttr = el.getAttribute('data-live-filters');
+        var filtersAttr = el ? el.getAttribute('data-live-filters') : null;
         if (filtersAttr) {
             try { domFilters = JSON.parse(filtersAttr); } catch (e) { }
         }
-        return el.getAttribute('data-live-scope').split(',').map(function (scope) {
-            scope = scope.trim();
-            if (scope === 'dashboard') return { type: 'dashboard' };
-            // The alerts scope carries the current filter state so the
-            // broadcaster only sends rows that match the rendered view.
-            if (scope === 'alerts') return { type: 'alerts', filters: domFilters || alertsFiltersFromUrl() };
-            if (scope.indexOf('env:') === 0) return { type: 'env', name: scope.slice(4), filters: domFilters || alertsFiltersFromUrl() };
-            if (scope.indexOf('alert:') === 0) return { type: 'alert', id: scope.slice(6) };
-            if (scope.indexOf('group:') === 0) return { type: 'group', id: scope.slice(6) };
-            // User dashboard pages: server-side card evaluation (milestone 9).
-            if (scope.indexOf('dash:') === 0) return { type: 'dash', id: scope.slice(5) };
-            return { type: 'none' };
-        });
+        var scopes = el
+            ? el.getAttribute('data-live-scope').split(',').map(function (scope) {
+                scope = scope.trim();
+                if (scope === 'dashboard') return { type: 'dashboard' };
+                // The alerts scope carries the current filter state so the
+                // broadcaster only sends rows that match the rendered view.
+                if (scope === 'alerts') return { type: 'alerts', filters: domFilters || alertsFiltersFromUrl() };
+                if (scope.indexOf('env:') === 0) return { type: 'env', name: scope.slice(4), filters: domFilters || alertsFiltersFromUrl() };
+                if (scope.indexOf('alert:') === 0) return { type: 'alert', id: scope.slice(6) };
+                if (scope.indexOf('group:') === 0) return { type: 'group', id: scope.slice(6) };
+                // User dashboard pages: server-side card evaluation (milestone 9).
+                if (scope.indexOf('dash:') === 0) return { type: 'dash', id: scope.slice(5) };
+                return { type: 'none' };
+            })
+            : [{ type: 'none' }];
+        // The agent chat widget is page-independent: subscribe its scope on
+        // every page so turn completions reach the tab even when the SSE
+        // stream's done frame was lost (backstop channel).
+        if (document.getElementById('agent-widget')) scopes.push({ type: 'agent' });
+        return scopes;
     }
 
     function alertsFiltersFromUrl() {
@@ -129,6 +135,12 @@
             try { message = JSON.parse(event.data); } catch (e) { return; }
             (message.updates || []).forEach(applyUpdate);
             if (message.banner) showBanner(message.banner);
+            // Agent chat turn completion (SSE backstop): the widget registers
+            // a handler while a turn is in flight and renders the persisted
+            // reply if its own stream missed the done frame.
+            if (message.agent_turn && typeof window.halemansAgentTurnDone === 'function') {
+                window.halemansAgentTurnDone(message.agent_turn);
+            }
         };
 
         socket.onclose = function () {
