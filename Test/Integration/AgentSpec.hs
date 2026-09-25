@@ -22,7 +22,7 @@ import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
 import qualified Data.Vector as Vector
 import Generated.Types
-import IHP.Fetch (fetch)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.ModelSupport
 import IHP.Prelude
@@ -351,8 +351,11 @@ spec = describe "agent tools (internal API milestone)" do
 
     describe "agent budget gate (agent cap + global cap)" do
         it "passes with fresh counters, blocks on the agent cap then the global cap" do
+            -- Clear ALL counters: the global gate sums every scope/provider,
+            -- so token spend from earlier examples (agent turns against the
+            -- mock LLM) would otherwise leak into this example.
             void do
-                sqlExecTyped [typedSql| DELETE FROM llm_budget_counters WHERE provider LIKE 'fake-gate%' |]
+                sqlExecTyped [typedSql| DELETE FROM llm_budget_counters |]
             let agentConfig = AgentBudgetConfig{abcDailyTokenBudget = 100, abcRatePerMinute = 12}
                 globalConfig = GlobalBudgetConfig{gbcDailyTokenBudget = 500, gbcRatePerMinute = 20}
             clear <- agentTurnGate "fake-gate" agentConfig globalConfig
@@ -434,6 +437,36 @@ spec = describe "agent tools (internal API milestone)" do
             done `shouldSatisfy` ("created blackout" `Text.isInfixOf`)
             listed <- runTool user "list_blackouts" "{}"
             listed `shouldSatisfy` (envName `Text.isInfixOf`)
+        it "create_blackout accepts globs and still rejects unknown exact names" do
+            user <- m6User ["view", "manage_blackouts"]
+            let globArgs confirmed =
+                    argsV
+                        [ ("host", String "rbac-glob-host-*")
+                        , ("starts_at", String "2026-09-24T18:00:00Z")
+                        , ("ends_at", String "2026-09-24T20:00:00Z")
+                        , ("confirmed", Bool confirmed)
+                        ]
+            globPlan <- runTool user "create_blackout" (globArgs False)
+            globPlan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            globDone <- runTool user "create_blackout" (globArgs True)
+            globDone `shouldSatisfy` ("created blackout" `Text.isInfixOf`)
+            globRow <- query @Blackout |> filterWhere (#hostGlob, Just "rbac-glob-host-*") |> fetchOneOrNothing
+            globRow `shouldSatisfy` isJust
+            let Just created = globRow
+            created.hostId `shouldBe` Nothing
+            listed <- runTool user "list_blackouts" "{}"
+            listed `shouldSatisfy` ("rbac-glob-host-*" `Text.isInfixOf`)
+            bad <-
+                runTool
+                    user
+                    "create_blackout"
+                    ( args
+                        [ ("host", "rbac-no-such-host-exact")
+                        , ("starts_at", "2026-09-24T18:00:00Z")
+                        , ("ends_at", "2026-09-24T20:00:00Z")
+                        ]
+                    )
+            bad `shouldSatisfy` ("invalid scope" `Text.isPrefixOf`)
 
     describe "turn traces (agent observability)" do
         it "explain_last_turn renders the current session's per-round trace" do
@@ -521,7 +554,11 @@ spec = describe "agent tools (internal API milestone)" do
                     case tools of
                         Array items -> mapM (lookupKeyAsText "name") (Vector.toList items)
                         _ -> Nothing
-            fmap length toolNames `shouldBe` Just 20
+            fmap length toolNames `shouldBe` Just 21
+            -- privilege filter, not just a count: view tools present,
+            -- manage_blackouts-only tools hidden
+            fmap ("search_alerts" `elem`) toolNames `shouldBe` Just True
+            fmap ("create_blackout" `elem`) toolNames `shouldBe` Just False
 
         it "executes tools/call and flags errors" do
             user <- m6User ["view"]

@@ -230,24 +230,33 @@
 
 // Blackout form scope filtering: the scope-id select carries options for all
 // three scope kinds with "type:" prefixed values; show only the selected
-// kind and auto-select the first visible option on a type change.
+// kind and auto-select the first visible option on a type change. The
+// "pattern" type swaps the entity picker for glob inputs; whichever group is
+// hidden gets disabled so only one scope kind is submitted.
 (function () {
     document.addEventListener('DOMContentLoaded', function () {
         var typeSelect = document.querySelector('[data-testid="blackout-scope-type"]');
         var idSelect = document.querySelector('[data-testid="blackout-scope-id"]');
         if (!typeSelect || !idSelect) return;
+        var entityDiv = document.querySelector('[data-blackout-scope="entity"]');
+        var patternDiv = document.querySelector('[data-blackout-scope="pattern"]');
+        var patternInputs = patternDiv ? Array.prototype.slice.call(patternDiv.querySelectorAll('input')) : [];
         var applyFilter = function () {
+            var isPattern = typeSelect.value === 'pattern';
             var prefix = typeSelect.value + ':';
             Array.prototype.forEach.call(idSelect.options, function (option) {
-                var visible = option.value.indexOf(prefix) === 0;
+                var visible = !isPattern && option.value.indexOf(prefix) === 0;
                 option.hidden = !visible;
                 option.disabled = !visible;
             });
             var selected = idSelect.options[idSelect.selectedIndex];
-            if (!selected || selected.disabled) {
+            if (!isPattern && (!selected || selected.disabled)) {
                 var first = Array.prototype.find.call(idSelect.options, function (o) { return !o.disabled; });
                 if (first) idSelect.value = first.value;
             }
+            if (entityDiv) entityDiv.hidden = isPattern;
+            idSelect.disabled = isPattern;
+            patternInputs.forEach(function (input) { input.disabled = !isPattern; });
         };
         typeSelect.addEventListener('change', applyFilter);
         applyFilter();

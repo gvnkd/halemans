@@ -193,6 +193,26 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                 |> fetch
         length pushJobs `shouldBe` 0
 
+    it "host-glob blackout suppresses by raw name, non-matching hosts stay loud" do
+        source <- testSource
+        fp1 <- freshFingerprint
+        fp2 <- freshFingerprint
+        now <- getCurrentTime
+        _ <-
+            newRecord @Blackout
+                |> set #hostGlob (Just "itest-glob-*")
+                |> set #startsAt (addUTCTime (-60) now)
+                |> set #endsAt (addUTCTime 3600 now)
+                |> set #reason "integration test glob"
+                |> createRecord
+        Just coveredId <- ingest source ((testEvent fp1 Firing){host = Just "itest-glob-host-01"})
+        covered <- fetch coveredId
+        covered.suppressed `shouldBe` True
+        covered.suppressedBy `shouldBe` Just "blackout"
+        Just loudId <- ingest source ((testEvent fp2 Firing){host = Just "itest-other-host"})
+        loud <- fetch loudId
+        loud.suppressed `shouldBe` False
+
     it "blackout expiry restores the alert via unsuppressExpired" do
         source <- testSource
         fp <- freshFingerprint

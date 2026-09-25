@@ -9,7 +9,7 @@ module Application.Helper.Ingest (
     publishAlertUpdate,
 ) where
 
-import Application.Pipeline.Blackouts (blackoutApplies)
+import Application.Pipeline.Blackouts (BlackoutSubject (..), blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
 import qualified Application.Pipeline.StateMachine as SM
@@ -62,7 +62,16 @@ ingest source event = do
     serviceRef <- forM event.service \name -> upsertService name environmentRef
 
     blackouts <- fetchActiveBlackouts now
-    let suppressedNow = any (blackoutApplies now environmentRef hostRef serviceRef) blackouts
+    let subject =
+            BlackoutSubject
+                { subjectEnvironmentId = environmentRef
+                , subjectEnvironmentName = event.env
+                , subjectHostId = hostRef
+                , subjectHostName = event.host
+                , subjectServiceId = serviceRef
+                , subjectServiceName = event.service
+                }
+        suppressedNow = any (blackoutApplies now subject) blackouts
 
     existing <-
         query @Alert
