@@ -10,6 +10,7 @@ data EditRoleView = EditRoleView
     }
 
 instance View EditRoleView where
+    beforeRender _ = setPageTitle (tr "Edit agent role")
     html EditRoleView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit agent role") mempty}

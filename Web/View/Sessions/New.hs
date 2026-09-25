@@ -7,6 +7,7 @@ import Network.Wai (Request)
 import Web.View.Prelude
 
 instance View (NewView User) where
+    beforeRender _ = setPageTitle (tr "Login")
     html NewView{..} =
         [hsx|
         <div class="h-100" id="sessions-new">

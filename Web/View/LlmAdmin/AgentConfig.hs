@@ -16,6 +16,7 @@ data AgentConfigView = AgentConfigView
     }
 
 instance View AgentConfigView where
+    beforeRender _ = setPageTitle (tr "Agent configuration")
     html AgentConfigView{..} =
         [hsx|
     <div>

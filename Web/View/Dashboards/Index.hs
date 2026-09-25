@@ -6,6 +6,7 @@ import Web.View.Prelude
 data IndexView = IndexView {dashboards :: [Dashboard]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Dashboards")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Dashboards") newButton}

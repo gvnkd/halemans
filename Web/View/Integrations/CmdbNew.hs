@@ -7,6 +7,7 @@ import Web.View.Prelude
 data CmdbNewView = CmdbNewView
 
 instance View CmdbNewView where
+    beforeRender _ = setPageTitle (tr "Integrations")
     html CmdbNewView =
         [hsx|
         {pageHeaderHtml (tr "New CMDB (Confluence) connection") mempty}

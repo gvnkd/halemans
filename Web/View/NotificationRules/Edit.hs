@@ -13,6 +13,7 @@ data EditView = EditView
     }
 
 instance View EditView where
+    beforeRender _ = setPageTitle (tr "Notification rules")
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit notification rule") mempty}

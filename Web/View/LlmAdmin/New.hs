@@ -7,6 +7,7 @@ import Web.View.Prelude
 data NewView = NewView
 
 instance View NewView where
+    beforeRender _ = setPageTitle "LLM"
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New prompt template") mempty}

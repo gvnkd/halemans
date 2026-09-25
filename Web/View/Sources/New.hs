@@ -7,6 +7,7 @@ import Web.View.Sources.Form (defaultSourceFormValues, sourceFormFields)
 data NewView = NewView
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Sources")
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New source") mempty}

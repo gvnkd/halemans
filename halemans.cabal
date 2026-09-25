@@ -176,6 +176,7 @@ library
         Application.Service.SourceHealth
         Application.Service.Timeline
         Application.Service.TimeRange
+        Application.Service.Turbolinks
         Application.Service.WriteBack
         Application.Version
         Config

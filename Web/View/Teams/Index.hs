@@ -6,6 +6,7 @@ import Web.View.Prelude
 data IndexView = IndexView {teamsWithMembers :: [(Team, [(User, Text)])]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Teams")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Teams") newButton}

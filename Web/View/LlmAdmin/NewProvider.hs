@@ -6,6 +6,7 @@ import Web.View.Prelude
 data NewProviderView = NewProviderView
 
 instance View NewProviderView where
+    beforeRender _ = setPageTitle "LLM"
     html NewProviderView =
         [hsx|
         {pageHeaderHtml (tr "New LLM provider") mempty}

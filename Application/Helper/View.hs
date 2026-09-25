@@ -10,6 +10,12 @@ import IHP.ViewPrelude
 
 -- Here you can add functions which are available in all your views
 
+-- Document <title> ("Section · Halemans"): browser tabs and history entries
+-- were all "Halemans" because no view set a title. Views opt in via
+-- `beforeRender _ = setPageTitle (tr "...")`.
+setPageTitle :: (?request :: Request) => Text -> IO ()
+setPageTitle title = setTitle (title <> " · Halemans")
+
 -- Timestamps render as <time datetime=…> with a microsecond-free UTC
 -- fallback; static/app.js rewrites them to the browser's local timezone
 -- with an offset label (UTC+4) on load and for WS-injected fragments.

@@ -9,6 +9,7 @@ data EditView = EditView
     }
 
 instance View EditView where
+    beforeRender _ = setPageTitle "LLM"
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit prompt template") mempty}

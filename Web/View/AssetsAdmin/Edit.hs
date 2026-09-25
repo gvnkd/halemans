@@ -9,6 +9,7 @@ data EditView = EditView
     }
 
 instance View EditView where
+    beforeRender _ = setPageTitle (tr "Assets")
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit Assets info source") mempty}

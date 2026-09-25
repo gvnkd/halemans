@@ -138,6 +138,7 @@ data ShowView = ShowView
     }
 
 instance View ShowView where
+    beforeRender ShowView{..} = setPageTitle environmentName
     html ShowView{..} =
         [hsx|
         <div data-live-scope={"env:" <> environmentName} data-live-filters={liveFilters}>

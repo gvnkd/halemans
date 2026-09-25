@@ -22,6 +22,7 @@ data ShowView = ShowView
     }
 
 instance View ShowView where
+    beforeRender _ = setPageTitle (tr "Profile")
     html ShowView{..} =
         [hsx|
         {pageHeaderHtml (tr "Profile") mempty}

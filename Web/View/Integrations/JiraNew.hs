@@ -7,6 +7,7 @@ import Web.View.Prelude
 data JiraNewView = JiraNewView
 
 instance View JiraNewView where
+    beforeRender _ = setPageTitle (tr "Integrations")
     html JiraNewView =
         [hsx|
         {pageHeaderHtml (tr "New Jira connection") mempty}

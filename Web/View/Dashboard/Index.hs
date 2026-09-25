@@ -97,6 +97,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Overview")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Overview") mempty}

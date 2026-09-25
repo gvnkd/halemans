@@ -8,6 +8,7 @@ import Web.View.Prelude
 data IndexView = IndexView {rules :: [GroupingRule]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Grouping rules")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Grouping rules") newButton}

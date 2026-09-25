@@ -29,6 +29,7 @@ fetchCardData expandedCard
         Just groupBy -> GroupedCard <$> runCardQueryGroups expandedCard.ecCard groupBy
 
 instance View ShowView where
+    beforeRender ShowView{..} = setPageTitle dashboard.name
     html ShowView{..} =
         [hsx|
         <div data-live-scope={liveScope}>

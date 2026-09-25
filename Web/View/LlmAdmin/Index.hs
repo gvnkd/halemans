@@ -42,6 +42,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle "LLM"
     html IndexView{..} =
         [hsx|
     <div>

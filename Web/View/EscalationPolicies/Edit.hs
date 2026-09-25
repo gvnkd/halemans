@@ -12,6 +12,7 @@ data EditView = EditView
     }
 
 instance View EditView where
+    beforeRender _ = setPageTitle (tr "Escalation policies")
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit escalation policy") mempty}

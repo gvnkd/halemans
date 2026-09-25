@@ -15,6 +15,7 @@ data ShowView = ShowView
     }
 
 instance View ShowView where
+    beforeRender ShowView{..} = setPageTitle group.groupKey
     html ShowView{..} =
         [hsx|
         <div data-live-scope={"group:" <> tshow group.id}>

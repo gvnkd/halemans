@@ -12,6 +12,7 @@ data NewView = NewView
     }
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Notification rules")
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New notification rule") mempty}

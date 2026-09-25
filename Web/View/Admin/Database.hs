@@ -9,6 +9,7 @@ newtype DatabaseView = DatabaseView
     }
 
 instance View DatabaseView where
+    beforeRender _ = setPageTitle (tr "Database")
     html DatabaseView{..} =
         [hsx|
         <div>

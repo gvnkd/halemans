@@ -12,6 +12,7 @@ data NewView = NewView
     }
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Teams")
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New team") mempty}

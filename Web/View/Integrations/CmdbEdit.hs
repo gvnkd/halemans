@@ -7,6 +7,7 @@ import Web.View.Prelude
 data CmdbEditView = CmdbEditView {config :: CmdbConfig}
 
 instance View CmdbEditView where
+    beforeRender _ = setPageTitle (tr "Integrations")
     html CmdbEditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit CMDB (Confluence) connection") mempty}

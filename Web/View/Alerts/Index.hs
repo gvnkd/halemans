@@ -20,6 +20,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Alerts")
     html IndexView{..} =
         [hsx|
     <div>

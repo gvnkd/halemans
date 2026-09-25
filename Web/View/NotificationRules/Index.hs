@@ -6,6 +6,7 @@ import Web.View.Prelude
 data IndexView = IndexView {rulesWithTargets :: [(NotificationRule, Text)]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Notification rules")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Notification rules") newButton}
