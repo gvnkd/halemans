@@ -126,7 +126,7 @@ wait_sql "alertmanager alert resolved" 60 "SELECT 1 FROM alerts WHERE fingerprin
 scenario "grafana"
 fire-test-alert-grafana || fail "grafana: fire threshold set"
 if wait_sql "grafana alert in db" 90 "SELECT 1 FROM alerts WHERE fingerprint LIKE 'grafana:%' AND status = 'firing' LIMIT 1" \
-    && assert_alert_card "Dev CPU simulation alert" "grafana:"; then
+    && assert_alert_card "dev-cpu-sim" "grafana:"; then
     pass "grafana alert arrived and renders"
 else
     fail "grafana alert arrived and renders"

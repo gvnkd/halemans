@@ -9,13 +9,14 @@ import Network.HTTP.Types (status400, status403, status422)
 import Web.Controller.Prelude
 
 instance Controller HooksController where
-    action HookAlertmanagerAction{token} = handleHook token Alertmanager.normalize
-    action HookGenericAction{token} = handleHook token Grafana.normalize
+    action HookAlertmanagerAction{token} = handleHook token (const Alertmanager.normalize)
+    action HookGenericAction{token} = handleHook token \source ->
+        if source.type_ == "grafana" then Grafana.normalizeAlertnameFirst else Grafana.normalize
 
 handleHook ::
     (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) =>
-    Text -> (Aeson.Value -> Either Text [NormalizedEvent]) -> IO ResponseReceived
-handleHook token normalize = do
+    Text -> (Source -> Aeson.Value -> Either Text [NormalizedEvent]) -> IO ResponseReceived
+handleHook token normalizeFor = do
     webhookToken <-
         query @WebhookToken
             |> filterWhere (#token, token)
@@ -33,7 +34,7 @@ handleHook token normalize = do
                         Left err ->
                             renderJsonWithStatusCode status400 (Aeson.object ["error" .= (cs err :: Text)])
                         Right payload ->
-                            case normalize payload of
+                            case normalizeFor source payload of
                                 Left err ->
                                     renderJsonWithStatusCode status422 (Aeson.object ["error" .= err])
                                 Right events -> do

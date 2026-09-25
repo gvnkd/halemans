@@ -1,6 +1,7 @@
 module Test.PollZabbixSpec where
 
-import Application.Connector.Zabbix (ZabbixTriggerState (..))
+import Application.Connector.Zabbix (ZabbixEvent (..), ZabbixTriggerState (..), toNormalizedEvent)
+import Application.Helper.Ingest (NormalizedEvent (..))
 import Application.Job.PollZabbix (
     absentResolveMinAgeSeconds,
     eventPageLimit,
@@ -12,7 +13,8 @@ import Application.Job.PollZabbix (
     reconcileResolvedEnabled,
     resolveDecision,
  )
-import Data.Aeson (object, (.=))
+import Data.Aeson (eitherDecode, object, (.=))
+import qualified Data.Aeson
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Generated.Types
 import IHP.ModelSupport (newRecord)
@@ -21,6 +23,27 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "Application.Job.PollZabbix" do
+    describe "ZabbixEvent" do
+        let eventJson relatedObject =
+                object
+                    [ "eventid" .= ("9001" :: Text)
+                    , "objectid" .= ("42" :: Text)
+                    , "name" .= ("CPU load too high" :: Text)
+                    , "clock" .= ("1750000000" :: Text)
+                    , "value" .= ("1" :: Text)
+                    , "severity" .= ("4" :: Text)
+                    , "relatedObject" .= relatedObject
+                    ]
+        it "reads the trigger description from relatedObject" do
+            let Right event = eitherDecode (Data.Aeson.encode (eventJson (object ["description" .= ("Check cooling" :: Text)]))) :: Either String ZabbixEvent
+            event.description `shouldBe` ("Check cooling" :: Text)
+            let normalized = toNormalizedEvent "http://zbx" "prod" event
+            normalized.description `shouldBe` ("Check cooling" :: Text)
+            normalized.title `shouldBe` ("CPU load too high" :: Text)
+        it "defaults the description to empty when relatedObject is absent" do
+            let Right event = eitherDecode (Data.Aeson.encode (eventJson (object []))) :: Either String ZabbixEvent
+            event.description `shouldBe` ""
+
     describe "initialHistoryDays" do
         it "defaults to 1 when the key is absent" do
             initialHistoryDays (newRecord @Source) `shouldBe` 1

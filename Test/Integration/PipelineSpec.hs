@@ -98,6 +98,53 @@ grafanaMappingSpec = describe "grafana host label mapping" do
         instancePolledEvent.host `shouldBe` Just ("itest-host" :: Text)
         hostPolledEvent.host `shouldBe` Just ("itest-host" :: Text)
 
+    it "grafana-typed sources title from alertname; other sources keep summary-first" do
+        let payload annotations =
+                object
+                    [ "status" .= ("firing" :: Text)
+                    , "alerts"
+                        .= [ object
+                                [ "status" .= ("firing" :: Text)
+                                , "fingerprint" .= ("title-mapping" :: Text)
+                                , "labels" .= object ["alertname" .= ("[NTP] Clock skew" :: Text), "severity" .= ("high" :: Text)]
+                                , "annotations" .= annotations
+                                ]
+                           ]
+                    ]
+            both =
+                object
+                    [ "summary" .= ("Short headline" :: Text)
+                    , "description" .= ("Long body" :: Text)
+                    ]
+        -- grafana source (normalizeAlertnameFirst): rule name is the title,
+        -- summary+description become the body
+        Right [webhookEvent] <- pure (Grafana.normalizeAlertnameFirst (payload both))
+        webhookEvent.title `shouldBe` ("[NTP] Clock skew" :: Text)
+        webhookEvent.description `shouldBe` ("Short headline\n\nLong body" :: Text)
+        Right [summaryOnly] <- pure (Grafana.normalizeAlertnameFirst (payload (object ["summary" .= ("S" :: Text)])))
+        summaryOnly.description `shouldBe` ("S" :: Text)
+        Right [dupe] <- pure (Grafana.normalizeAlertnameFirst (payload (object ["summary" .= ("Same" :: Text), "description" .= ("Same" :: Text)])))
+        dupe.description `shouldBe` ("Same" :: Text)
+        -- non-grafana source (legacy normalize): summary stays the title
+        Right [legacyEvent] <- pure (Grafana.normalize (payload both))
+        legacyEvent.title `shouldBe` ("Short headline" :: Text)
+        legacyEvent.description `shouldBe` ("Short headline\n\nLong body" :: Text)
+
+        now <- getCurrentTime
+        let polled annotations =
+                Grafana.GrafanaAmAlert
+                    { amFingerprint = "title-mapping"
+                    , amLabels = object ["alertname" .= ("[NTP] Clock skew" :: Text)]
+                    , amAnnotations = annotations
+                    , amStartsAt = Nothing
+                    , amEndsAt = Nothing
+                    , amUpdatedAt = Just now
+                    , amGeneratorUrl = Nothing
+                    }
+            polledEvent = Grafana.amAlertToNormalized now (polled both)
+        polledEvent.title `shouldBe` ("[NTP] Clock skew" :: Text)
+        polledEvent.description `shouldBe` ("Short headline\n\nLong body" :: Text)
+
 m1Spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 m1Spec = describe "alert pipeline (milestone 1)" do
     it "creates an alert with inventory refs and audit events" do
@@ -126,6 +173,18 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         alert.status `shouldBe` "firing"
         events <- eventKinds alertId
         events `shouldBe` ["created", "repeated"]
+
+    it "a refire refreshes title and non-empty description from the source" do
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        void (ingest source ((testEvent fp Firing){title = "renamed rule", description = "new body"}))
+        renamed <- fetch alertId
+        renamed.title `shouldBe` ("renamed rule" :: Text)
+        renamed.description `shouldBe` ("new body" :: Text)
+        void (ingest source ((testEvent fp Firing){description = ""}))
+        kept <- fetch alertId
+        kept.description `shouldBe` ("new body" :: Text)
 
     it "resolved event resolves; refire re-fires the same alert" do
         source <- testSource
@@ -210,6 +269,26 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         covered.suppressed `shouldBe` True
         covered.suppressedBy `shouldBe` Just "blackout"
         Just loudId <- ingest source ((testEvent fp2 Firing){host = Just "itest-other-host"})
+        loud <- fetch loudId
+        loud.suppressed `shouldBe` False
+
+    it "title-glob blackout suppresses by alert title, other titles stay loud" do
+        source <- testSource
+        fp1 <- freshFingerprint
+        fp2 <- freshFingerprint
+        now <- getCurrentTime
+        _ <-
+            newRecord @Blackout
+                |> set #titleGlob (Just "itest-title-glob-*")
+                |> set #startsAt (addUTCTime (-60) now)
+                |> set #endsAt (addUTCTime 3600 now)
+                |> set #reason "integration test title glob"
+                |> createRecord
+        Just coveredId <- ingest source ((testEvent fp1 Firing){title = "itest-title-glob-leak on db-1"})
+        covered <- fetch coveredId
+        covered.suppressed `shouldBe` True
+        covered.suppressedBy `shouldBe` Just "blackout"
+        Just loudId <- ingest source ((testEvent fp2 Firing){title = "itest-other-title"})
         loud <- fetch loudId
         loud.suppressed `shouldBe` False
 

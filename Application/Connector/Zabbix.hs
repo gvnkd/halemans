@@ -35,6 +35,7 @@ data ZabbixEvent = ZabbixEvent
     { eventId :: Text
     , triggerId :: Text
     , name :: Text
+    , description :: Text
     , clock :: Integer
     , value :: Text -- "1" problem, "0" OK
     , severity :: Text -- "0".."5"
@@ -51,6 +52,10 @@ instance Aeson.FromJSON ZabbixEvent where
         clock <- maybe mempty pure (readMaybe clockText)
         value <- o .: "value"
         severity <- o .: "severity"
+        relatedObject <- o .:? "relatedObject"
+        description <- case relatedObject of
+            Just (Aeson.Object ro) -> ro .:? "description" .!= ""
+            _ -> pure ""
         hosts <- o .:? "hosts"
         let host = case hosts of
                 Just (h : _) -> parseMaybe (Aeson.withObject "host" (.: "name")) h
@@ -98,6 +103,7 @@ eventGetPage baseUrl token timeFrom groupIds pageLimit = do
                           , "sortfield" .= (["clock", "eventid"] :: [Text])
                           , "sortorder" .= ("ASC" :: Text)
                           , "selectHosts" .= (["name"] :: [Text])
+                          , "selectRelatedObject" .= (["description"] :: [Text])
                           , "limit" .= pageLimit
                           ]
                             ++ ["groupids" .= groupIds | not (null groupIds)]
@@ -161,7 +167,7 @@ toNormalizedEvent baseUrl envName event =
         , status = if event.value == "1" then Firing else Resolved
         , severity = severityFromZabbix event.severity
         , title = event.name
-        , description = ""
+        , description = event.description
         , env = Just envName
         , host = event.host
         , service = Nothing

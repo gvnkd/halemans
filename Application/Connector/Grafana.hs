@@ -1,4 +1,4 @@
-module Application.Connector.Grafana (normalize, GrafanaAmAlert (..), alertsGet, amAlertToNormalized) where
+module Application.Connector.Grafana (normalize, normalizeAlertnameFirst, GrafanaAmAlert (..), alertsGet, amAlertToNormalized) where
 
 import Application.Connector.Alertmanager (normalizeSeverity)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
@@ -8,6 +8,7 @@ import Data.Aeson
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import IHP.Prelude
 import qualified Network.Wreq as Wreq
@@ -15,19 +16,34 @@ import qualified Network.Wreq as Wreq
 -- Grafana unified alerting webhook payload:
 -- { "status": "firing", "title": "...", "alerts": [ { "status", "labels",
 --   "annotations", "startsAt", "endsAt", "fingerprint", "generatorURL" } ] }
+--
+-- Two title contracts, picked by the SOURCE TYPE at the hook (see
+-- Web.Controller.Hooks): sources of type "grafana" take the rule name
+-- (alertname label) as the title — summary/description annotations are body
+-- text; every other source keeps the legacy contract where annotations.summary
+-- is the title (arbitrary alertmanager-style senders often carry a static
+-- alertname and the human text in summary).
 normalize :: Value -> Either Text [NormalizedEvent]
-normalize (Object o) = case KeyMap.lookup "alerts" o of
-    Just (Array alerts) -> mapM toEvent (Vector.toList alerts)
+normalize = normalizeWith PreferSummary
+
+normalizeAlertnameFirst :: Value -> Either Text [NormalizedEvent]
+normalizeAlertnameFirst = normalizeWith PreferAlertname
+
+data TitleMode = PreferSummary | PreferAlertname
+
+normalizeWith :: TitleMode -> Value -> Either Text [NormalizedEvent]
+normalizeWith mode (Object o) = case KeyMap.lookup "alerts" o of
+    Just (Array alerts) -> mapM (toEvent mode) (Vector.toList alerts)
     _ -> Left "grafana payload: missing alerts array"
-normalize _ = Left "grafana payload: not an object"
+normalizeWith _ _ = Left "grafana payload: not an object"
 
 -- Grafana's `instance` label is the monitored host identity; `host` is a
 -- fallback for manually labelled alerts.
 hostFromLabels :: (Text -> Maybe Text) -> Maybe Text
 hostFromLabels labelText = labelText "instance" <|> labelText "host"
 
-toEvent :: Value -> Either Text NormalizedEvent
-toEvent a@(Object _) = do
+toEvent :: TitleMode -> Value -> Either Text NormalizedEvent
+toEvent mode a@(Object _) = do
     let labels = fromMaybe (Object KeyMap.empty) (lookupKey "labels" a)
         annotations = fromMaybe (Object KeyMap.empty) (lookupKey "annotations" a)
         labelText k = lookupText k labels
@@ -35,7 +51,12 @@ toEvent a@(Object _) = do
     fp <- maybe (Left "grafana alert: missing fingerprint") Right (lookupText "fingerprint" a)
     let statusText = fromMaybe "firing" (lookupText "status" a)
         status = if statusText == "resolved" then Resolved else Firing
-        title = fromMaybe (fromMaybe "Grafana alert" (labelText "check")) (annotationText "summary")
+        title = case mode of
+            PreferAlertname ->
+                fromMaybe (fromMaybe "Grafana alert" (labelText "check")) (labelText "alertname")
+            PreferSummary ->
+                fromMaybe (fromMaybe "Grafana alert" (labelText "check")) (annotationText "summary")
+        description = joinParts [annotationText "summary", annotationText "description"]
     Right
         NormalizedEvent
             { fingerprint = "grafana:" <> fp
@@ -43,7 +64,7 @@ toEvent a@(Object _) = do
             , status
             , severity = normalizeSeverity (labelText "severity")
             , title
-            , description = fromMaybe "" (annotationText "description")
+            , description = description
             , env = labelText "env"
             , host = hostFromLabels labelText
             , service = labelText "service"
@@ -53,7 +74,13 @@ toEvent a@(Object _) = do
             , startedAt = lookupTime "startsAt" a
             , sourceUrl = lookupText "generatorURL" a
             }
-toEvent _ = Left "grafana alert: not an object"
+toEvent _ _ = Left "grafana alert: not an object"
+
+-- | Body text: non-empty parts joined with a blank line, deduped (a summary
+-- copied verbatim into description must not render twice).
+joinParts :: [Maybe Text] -> Text
+joinParts parts =
+    Text.intercalate "\n\n" (nub [p | Just p <- parts, not (Text.null (Text.strip p))])
 
 lookupKey :: Text -> Value -> Maybe Value
 lookupKey k (Object o) = KeyMap.lookup (Key.fromText k) o
@@ -121,8 +148,8 @@ amAlertToNormalized now amAlert =
             , externalId = Just amAlert.amFingerprint
             , status = if resolved then Resolved else Firing
             , severity = normalizeSeverity (labelText "severity" <|> annotationText "severity")
-            , title = fromMaybe "Grafana alert" (annotationText "summary" <|> labelText "check" <|> labelText "alertname")
-            , description = fromMaybe "" (annotationText "description")
+            , title = fromMaybe (fromMaybe "Grafana alert" (labelText "alertname")) (labelText "check")
+            , description = joinParts [annotationText "summary", annotationText "description"]
             , env = labelText "env"
             , host = hostFromLabels labelText
             , service = labelText "service"

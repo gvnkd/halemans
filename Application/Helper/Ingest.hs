@@ -21,6 +21,7 @@ import Application.Service.Notify (dispatchNotification)
 import Control.Monad (void)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Text as Text
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
@@ -70,6 +71,7 @@ ingest source event = do
                 , subjectHostName = event.host
                 , subjectServiceId = serviceRef
                 , subjectServiceName = event.service
+                , subjectTitle = Just event.title
                 }
         suppressedNow = any (blackoutApplies now subject) blackouts
 
@@ -143,7 +145,14 @@ ingest source event = do
                             |> createRecord
             pure (Just (get #id grouped))
         (Just alert, sourceStatus) -> do
-            updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow alert
+            -- The source's current text is the truth: a refired alert follows
+            -- title changes (e.g. grafana rule rename); an empty event
+            -- description keeps whatever we have (older sources send none).
+            let refreshed =
+                    alert
+                        |> set #title event.title
+                        |> (if Text.null event.description then (\x -> x) else set #description event.description)
+            updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow refreshed
             pure (Just (get #id updated))
 
 -- | State-machine transition + side effects (escalation cancel, notification,

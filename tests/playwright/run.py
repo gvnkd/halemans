@@ -52,7 +52,9 @@ def fire_generic_alert(fingerprint, severity="warning", status="firing", title="
         "version": "4", "status": status, "receiver": "halemans",
         "alerts": [{
             "status": status,
-            "labels": {"alertname": "pw-test", "env": "dev", "host": host,
+            # the generic hook delivers to the grafana-typed source, whose
+            # contract is alertname-first: the title rides in alertname
+            "labels": {"alertname": title, "env": "dev", "host": host,
                        "severity": severity, "check": "pw-test"},
             "annotations": {"summary": title},
             "startsAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
