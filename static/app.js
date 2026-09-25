@@ -789,6 +789,9 @@
         // localStorage id yet, and stall recovery needs one for the history
         // fetch even if the done frame never arrives.
         var streamSessionId = null;
+        // Set once the pipe is deemed dead (heartbeats stopped): from then on
+        // recoverReply owns the label and the timer stays off it.
+        var pipeDead = false;
         // Live markdown div: token events carry pre-rendered html of the
         // accumulated answer, swapped in per event; done re-renders the
         // final payload and discards this.
@@ -806,20 +809,16 @@
             if (aborted) return;
             var idle = Math.round((Date.now() - lastEventAt) / 1000);
             var base = thinking.getAttribute('data-progress') || ('Thinking… ' + Math.round((Date.now() - startedAt) / 1000) + 's');
-            if (idle > 20) {
+            if (idle > 20 && !pipeDead) {
                 // no SSE data for a while: say so. The server heartbeats every
                 // 15s, so idle past ~2 heartbeat periods means the pipe is
-                // dead (tail lost), not a slow turn — try to recover the
-                // already-persisted reply; give up entirely after 2.5 min.
+                // dead (tail lost), not a slow turn — poll the history
+                // endpoint for the persisted reply instead of staring at a
+                // frozen label; recoverReply keeps polling while the turn is
+                // still running server-side and owns the label from then on.
                 thinking.textContent = base + ' (stalled ' + idle + 's — no data from the agent)';
-                if (idle > 45) recoverReply();
-                if (idle > 150) {
-                    aborted = true;
-                    if (reader) reader.cancel();
-                    window.clearInterval(timer);
-                    thinking.textContent = 'agent stalled — the request was aborted; press Send to retry';
-                }
-            } else {
+                if (idle > 35) recoverReply();
+            } else if (!pipeDead) {
                 thinking.textContent = base;
             }
         }, 1000);
@@ -827,13 +826,15 @@
         // The server persists the reply BEFORE emitting done, so the answer
         // is always in the DB even when the final SSE frame is lost. Fetch
         // the session history and render the assistant rows after the last
-        // user row; if none exist the turn is still running server-side and
-        // we leave the stall label up for the next tick.
+        // user row. No reply yet = the turn is still running server-side:
+        // switch the label to a waiting state and retry on the next tick
+        // (the pipe is dead, polling the DB is the only path left).
         function recoverReply() {
             if (recovered || aborted) return;
             var id = streamSessionId || sessionId();
             if (!id) return;
             recovered = true;
+            pipeDead = true;
             fetch(root.getAttribute('data-history-url') + '/' + encodeURIComponent(id), { headers: { 'X-Requested-With': 'fetch' } })
                 .then(function (response) { return response.ok ? response.json() : null; })
                 .then(function (data) {
@@ -841,7 +842,12 @@
                     var cut = -1;
                     data.messages.forEach(function (row, i) { if (row.role === 'user') cut = i; });
                     var replies = data.messages.slice(cut + 1).filter(function (row) { return row.role === 'assistant' && row.content; });
-                    if (!replies.length) { recovered = false; return; }
+                    if (!replies.length) {
+                        recovered = false;
+                        thinking.setAttribute('data-progress', '');
+                        thinking.textContent = 'connection dropped — the agent is still working; the saved reply will appear as soon as it is ready';
+                        return;
+                    }
                     aborted = true;
                     if (reader) reader.cancel();
                     window.clearInterval(timer);
@@ -858,7 +864,11 @@
                     loadSessions(root);
                     maybeRenderQuestions(root, replies[replies.length - 1].content);
                 })
-                .catch(function () { recovered = false; });
+                .catch(function () {
+                    recovered = false;
+                    thinking.setAttribute('data-progress', '');
+                    thinking.textContent = 'connection dropped — waiting for the agent; retrying…';
+                });
         }
 
         function finishTurn(data) {
@@ -905,6 +915,7 @@
                 return reader.read().then(function (chunk) {
                     if (chunk.done) return;
                     lastEventAt = Date.now();
+                    pipeDead = false; // data flowing again — the timer owns the label once more
                     buffer += decoder.decode(chunk.value, { stream: true });
                     var sep;
                     while ((sep = buffer.indexOf('\n\n')) >= 0) {
