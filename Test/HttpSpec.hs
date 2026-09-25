@@ -1,13 +1,15 @@
 module Test.HttpSpec where
 
-import Application.Service.Http (HttpStatusError (..), getFollowing, isDeterministicClientError, postFollowing)
+import Application.Service.Http (HttpStatusError (..), getFollowing, getFollowingStream, isDeterministicClientError, postFollowing)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Lens ((&), (.~), (^.))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Maybe (fromJust)
 import IHP.Prelude
+import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types (status200, status302, status403, statusCode)
 import qualified Network.Socket as Socket
 import qualified Network.Wai as Wai
@@ -50,6 +52,25 @@ spec = describe "Application.Service.Http" do
             let opts = Wreq.defaults & Wreq.checkResponse .~ Just (\_ _ -> pure ())
             response <- getFollowing opts (baseUrl <> "/forbidden")
             statusCodeOf response `shouldBe` 403
+
+        it "streams a redirect-following GET, re-sending Authorization" \(baseUrl, seen) -> do
+            manager <- HTTP.newManager HTTP.defaultManagerSettings
+            body <-
+                getFollowingStream
+                    manager
+                    (baseUrl <> "/start")
+                    [("Authorization", "Bearer sekret")]
+                    \response -> cs . LBS.fromChunks <$> HTTP.brConsume (HTTP.responseBody response)
+            (body :: Text) `shouldBe` "{\"ok\":true}"
+            requests <- readIORef seen
+            let real = fromJust (find (\req -> Wai.pathInfo req == ["real"]) requests)
+            lookup "Authorization" (Wai.requestHeaders real) `shouldBe` Just "Bearer sekret"
+
+        it "throws HttpStatusError on a non-2xx streaming GET" \(baseUrl, _) -> do
+            manager <- HTTP.newManager HTTP.defaultManagerSettings
+            getFollowingStream manager (baseUrl <> "/forbidden") [] (\_ -> pure ())
+                `shouldThrow` \case
+                    HttpStatusError _ code -> code == 403
 
     describe "isDeterministicClientError" do
         it "flags 4xx client errors as not worth retrying" do

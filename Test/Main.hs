@@ -17,6 +17,7 @@ import qualified Test.EscalationSpec
 import qualified Test.FacetsSpec
 import qualified Test.FilterPrefsSpec
 import qualified Test.FlappingSpec
+import qualified Test.GrafanaSpec
 import qualified Test.GroupingSpec
 import qualified Test.HostGroupsSpec
 import qualified Test.HttpSpec
@@ -48,6 +49,7 @@ main = hspec do
     Test.BlackoutsSpec.spec
     Test.PushSpec.spec
     Test.GroupingSpec.spec
+    Test.GrafanaSpec.spec
     Test.EscalationSpec.spec
     Test.AlertmanagerSpec.spec
     Test.AgentSpec.spec

@@ -10,6 +10,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
@@ -108,7 +109,24 @@ pollSource source = do
         Nothing -> logDebug ("grafana source \"" <> source.name <> "\": token env var " <> fromMaybe "<none configured>" tokenEnv <> " not set; skipping poll cycle")
         Just token -> do
             now <- getCurrentTime
-            outcome <- try (Grafana.alertsGet source.baseUrl token)
+            -- One streaming pass (alertsFold): fresh alerts are ingested as
+            -- they arrive while fingerprints accumulate for the absence
+            -- reconciliation — the listing itself is never materialized in
+            -- memory, so a big source no longer OOMs the worker.
+            let cutoff = addUTCTime (-300) (fromMaybe now source.lastSyncCursor)
+                stepAlert (count, fingerprints) amAlert = do
+                    let fingerprints' = Set.insert ("grafana:" <> amAlert.amFingerprint) fingerprints
+                    case amAlert.amUpdatedAt of
+                        -- 5-min overlap window on the cursor (§8) so a
+                        -- restarted poller re-sees the tail and dedupe
+                        -- handles the rest.
+                        Just updated | updated < cutoff -> pure (count + 1, fingerprints')
+                        _ -> do
+                            let event = Grafana.amAlertToNormalized now amAlert
+                            skip <- refireGuard now event
+                            unless skip (void (ingest source event))
+                            pure (count + 1, fingerprints')
+            outcome <- try (Grafana.alertsFold source.baseUrl token stepAlert (0, Set.empty))
             result <- pure case outcome of
                 Left err -> Left (tshow (err :: SomeException))
                 Right result -> result
@@ -116,18 +134,10 @@ pollSource source = do
                 Left err -> do
                     recordFailure source err
                     logWarn ("grafana source \"" <> source.name <> "\" poll failed: " <> err)
-                Right alerts -> do
-                    logDebug ("grafana source \"" <> source.name <> "\": alertmanager listing returned " <> tshow (length alerts) <> " alerts")
+                Right (count, listedFingerprints) -> do
+                    logDebug ("grafana source \"" <> source.name <> "\": alertmanager listing returned " <> tshow count <> " alerts")
                     recordSuccess source
-                    -- 5-min overlap window on the cursor (§8) so a restarted
-                    -- poller re-sees the tail and dedupe handles the rest.
-                    let cutoff = addUTCTime (-300) (fromMaybe now source.lastSyncCursor)
-                        fresh = filter (\amAlert -> maybe True (>= cutoff) amAlert.amUpdatedAt) alerts
-                    forM_ fresh \amAlert -> do
-                        let event = Grafana.amAlertToNormalized now amAlert
-                        skip <- refireGuard now event
-                        unless skip (void (ingest source event))
-                    reconcileAbsences source now alerts
+                    reconcileAbsences source now listedFingerprints
                     reconcileSilences source token now
                     _ <-
                         source
@@ -156,10 +166,10 @@ refireGuard now event = case event.status of
 
 -- | Firing alerts owned by this source that vanished from the listing
 -- resolved while we weren't listening. Grace window guards against listing
--- blips: only alerts not seen for a minute are resolved.
-reconcileAbsences :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> UTCTime -> [Grafana.GrafanaAmAlert] -> IO ()
-reconcileAbsences source now alerts = do
-    let listedFingerprints = map ("grafana:" <>) (map (.amFingerprint) alerts)
+-- blips: only alerts not seen for a minute are resolved. Takes the
+-- fingerprint Set accumulated during the streaming fold, not the alerts.
+reconcileAbsences :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> UTCTime -> Set.Set Text -> IO ()
+reconcileAbsences source now listedFingerprints = do
     firing <-
         query @Alert
             |> filterWhere (#sourceId, Just (get #id source))
@@ -170,7 +180,7 @@ reconcileAbsences source now alerts = do
             filter
                 ( \alert ->
                     "grafana:" `Text.isPrefixOf` alert.fingerprint
-                        && alert.fingerprint `notElem` listedFingerprints
+                        && not (Set.member alert.fingerprint listedFingerprints)
                         && alert.lastSeenAt < graceCutoff
                 )
                 firing

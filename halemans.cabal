@@ -36,6 +36,8 @@ library
         , uuid
         , aeson
         , aeson-pretty
+        , attoparsec
+        , attoparsec-aeson
         , yaml
         , lens
         , wreq

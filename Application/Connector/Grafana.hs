@@ -1,17 +1,21 @@
-module Application.Connector.Grafana (normalize, normalizeAlertnameFirst, GrafanaAmAlert (..), alertsGet, amAlertToNormalized) where
+module Application.Connector.Grafana (normalize, normalizeAlertnameFirst, GrafanaAmAlert (..), alertsFold, amAlertToNormalized) where
 
 import Application.Connector.Alertmanager (normalizeSeverity)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
 import qualified Application.Service.Http as Http
-import Control.Lens ((&), (.~), (^.))
 import Data.Aeson
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Aeson.Parser as AesonParser
+import qualified Data.Attoparsec.ByteString.Char8 as Atto
+import qualified Data.ByteString as BS
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import IHP.Prelude
-import qualified Network.Wreq as Wreq
+import qualified Network.HTTP.Client as HTTP
+import qualified Network.HTTP.Client.TLS as TLS
+import System.IO.Unsafe (unsafePerformIO)
 
 -- Grafana unified alerting webhook payload:
 -- { "status": "firing", "title": "...", "alerts": [ { "status", "labels",
@@ -125,13 +129,80 @@ instance FromJSON GrafanaAmAlert where
         amGeneratorUrl <- o .:? "generatorURL"
         pure GrafanaAmAlert{..}
 
-alertsGet :: Text -> Text -> IO (Either Text [GrafanaAmAlert])
-alertsGet baseUrl token = do
-    let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-    response <- Http.getFollowing opts (cs (baseUrl <> "/api/alertmanager/grafana/api/v2/alerts"))
-    case eitherDecode (response ^. Wreq.responseBody) of
-        Left err -> pure (Left (cs err))
-        Right alerts -> pure (Right alerts)
+-- Shared connection manager (Push.hs pattern): creating a manager per poll
+-- cycle would leak its reaper thread every few seconds.
+manager :: HTTP.Manager
+manager = unsafePerformIO (HTTP.newManager TLS.tlsManagerSettings)
+{-# NOINLINE manager #-}
+
+-- | Streaming fold over the alertmanager listing (replaces the old
+-- buffering alertsGet): the response is parsed incrementally, one alert at
+-- a time, so a source with a huge listing never materializes the whole
+-- array — the full aeson decode of a big source's listing OOMed the worker.
+-- The fold callback runs per alert as it streams in; the accumulator is
+-- typically a count plus a fingerprint set for absence reconciliation.
+alertsFold :: Text -> Text -> (acc -> GrafanaAmAlert -> IO acc) -> acc -> IO (Either Text acc)
+alertsFold baseUrl token stepAlert acc0 =
+    Http.getFollowingStream
+        manager
+        (cs (baseUrl <> "/api/alertmanager/grafana/api/v2/alerts"))
+        [("Authorization", "Bearer " <> cs token)]
+        \response -> do
+            let bodyReader = HTTP.responseBody response
+            opened <- runStep bodyReader openArray BS.empty
+            case opened of
+                Left err -> pure (Left err)
+                Right ((), leftover) -> foldAlerts bodyReader leftover acc0
+  where
+    foldAlerts bodyReader leftover acc = do
+        stepped <- runStep bodyReader elementStep leftover
+        case stepped of
+            Left err -> pure (Left err)
+            Right (Nothing, _) -> pure (Right acc)
+            Right (Just (value, more), rest) -> case fromJSON value of
+                Error err -> pure (Left (cs err))
+                Success alert -> do
+                    acc' <- stepAlert acc alert
+                    if more
+                        then foldAlerts bodyReader rest acc'
+                        else pure (Right acc')
+
+-- Incremental JSON-array stepping: openArray consumes the leading "[";
+-- each elementStep invocation parses ONE element plus its trailing comma
+-- (Bool True = more elements) or the closing "]" (Nothing / Bool False).
+-- Leftover input threads from one step into the next, so only one parser
+-- step's worth of bytes is ever retained.
+openArray :: Atto.Parser ()
+openArray = Atto.skipSpace >> Atto.char '[' >> pure ()
+
+elementStep :: Atto.Parser (Maybe (Value, Bool))
+elementStep = do
+    Atto.skipSpace
+    closer <- Atto.peekChar'
+    if closer == ']'
+        then Atto.char ']' >> pure Nothing
+        else do
+            value <- AesonParser.value
+            Atto.skipSpace
+            separator <- Atto.satisfy (\word -> word == ',' || word == ']')
+            pure (Just (value, separator == ','))
+
+-- | Runs one parser step against the streaming body, refilling from the
+-- socket while attoparsec reports Partial; returns the result with any
+-- unconsumed input.
+runStep :: HTTP.BodyReader -> Atto.Parser step -> BS.ByteString -> IO (Either Text (step, BS.ByteString))
+runStep bodyReader parser initial = advance (Atto.parse parser initial)
+  where
+    advance (Atto.Done leftover result) = pure (Right (result, leftover))
+    advance (Atto.Fail _ _ err) = pure (Left (cs err))
+    advance (Atto.Partial continue) = do
+        chunk <- HTTP.brRead bodyReader
+        if BS.null chunk
+            then finish (continue chunk)
+            else advance (continue chunk)
+    finish (Atto.Done leftover result) = pure (Right (result, leftover))
+    finish (Atto.Partial _) = pure (Left "alerts listing: unexpected end of input")
+    finish (Atto.Fail _ _ err) = pure (Left (cs err))
 
 -- | Zero/missing endsAt means firing-with-unknown-end (§8); an endsAt in the
 -- past means the alert resolved while we were not listening. Title/severity
