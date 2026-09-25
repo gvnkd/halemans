@@ -68,7 +68,7 @@ instance Controller AlertsController where
                     , alfService = nonEmptyParam "service"
                     , alfTitle = nonEmptyParam "q"
                     , alfGroup = nonEmptyParam "group"
-                    , alfMuted = [m | m <- paramList @Text "muted", m `elem` ["source", "blackout"]]
+                    , alfMuted = [m | m <- paramList @Text "muted", m `elem` AlertList.validMutedValues]
                     , alfSort = if requestedSort `elem` validSortColumns then requestedSort else "last_seen_at"
                     , alfDir = if nonEmptyParam "dir" == Just "asc" then "asc" else "desc"
                     , alfColumns = if null requestedCols then defaultAlertListColumns else requestedCols

@@ -961,6 +961,36 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             blackoutMutedIds `shouldSatisfy` (elem blackoutAlertId)
             blackoutMutedIds `shouldSatisfy` (notElem sourceAlertId)
 
+        it "muted filter hide mode excludes all suppressed alerts" do
+            source <- testSource
+            Just plainAlertId <- ingest source (testEventIn "itest-env-bo5" "itest-env-bo5-bootstrap" Firing)
+            environment <- fetchEnvironment "itest-env-bo5"
+            now <- getCurrentTime
+            _ <-
+                newRecord @Blackout
+                    |> set #environmentId (Just (get #id environment))
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "integration test"
+                    |> createRecord
+            fpBlackout <- freshFingerprint
+            Just blackoutAlertId <- ingest source (testEventIn "itest-env-bo5" fpBlackout Firing)
+            fpSource <- freshFingerprint
+            Just sourceAlertId <- ingest source (testEvent fpSource Firing)
+            sourceAlert <- fetch sourceAlertId
+            void (mirrorExternalSuppress sourceAlert "zabbix" "admin" now)
+            visibleIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["hide"]}
+            visibleIds `shouldSatisfy` (elem plainAlertId)
+            visibleIds `shouldSatisfy` (notElem sourceAlertId)
+            visibleIds `shouldSatisfy` (notElem blackoutAlertId)
+            allMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["all"]}
+            allMutedIds `shouldSatisfy` (notElem plainAlertId)
+            allMutedIds `shouldSatisfy` (elem sourceAlertId)
+            allMutedIds `shouldSatisfy` (elem blackoutAlertId)
+            allBlackoutIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["all", "blackout"]}
+            allBlackoutIds `shouldSatisfy` (elem blackoutAlertId)
+            allBlackoutIds `shouldSatisfy` (notElem sourceAlertId)
+
         it "JiraSyncJob reflects status drift from jira" do
             ensureMockJiraConfig
             source <- integrationSource "zabbix" "itest-m3-jirasync" "" (object [])
