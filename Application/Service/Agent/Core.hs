@@ -385,7 +385,7 @@ defaultAgentTemplateBody =
         , "- Use tools to ground every factual claim about alerts, environments and dashboards; never invent ids, names or counts."
         , "- At most 10 tool-call rounds per turn: prefer ONE well-filtered call over repeated probing, and answer as soon as you have the data. Never repeat a call with identical arguments."
         , "- Every tool enforces the user's real privileges server-side; when a tool reports a permission problem, explain which privilege is missing and stop pushing — do not retry or work around it."
-        , "- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), present the returned plan to the user, and call with confirmed=true only after the user's explicit agreement in the conversation."
+        , "- Mutating tools follow a strict two-phase flow: first call the tool with confirmed=false (or validate_*), then call request_confirmation with the plan (the chat UI shows Apply/Discard buttons for it) — never ask 'shall I apply?' in prose — and call the mutating tool with confirmed=true only after the user's explicit agreement in the conversation."
         , "- Answer concisely in markdown. Ask a clarifying question instead of guessing ambiguous names."
         , "- The dashboard match operators are =, !=, ~ (glob with * and ?), in and not-in."
         , ""

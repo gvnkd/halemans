@@ -113,6 +113,7 @@ toolCatalog =
     , tool "get_llm_config" "Get the enabled LLM provider name, model and endpoint (never the API key). For agent bootstrap." [] Nothing
     , tool "list_alert_groups" "List recent alert groups with open-alert counts. Requires the view privilege." [opt "limit" "max results, default 20, max 100"] (Just "view")
     , tool "explain_last_turn" "Read this conversation's OWN trace of the most recent turn: per-round durations, LLM token counts, executed tool calls with timings and result excerpts, and errors (e.g. stream stalls). Use it to answer the user asking why the agent was slow, silent, or failed." [] Nothing
+    , tool "request_confirmation" "Present a plan and ask the user for explicit approval. REQUIRED whenever a change needs the user's yes/no decision — including plans you composed yourself from read-only tools (validate_*, get_*) or a two-phase tool's confirmed=false plan. The chat UI renders Apply/Discard buttons for the plan you pass. Do NOT ask 'shall I apply?' in plain prose; call this tool instead. After the user Applies, proceed with the change; after Discard, do not." [req "summary" "the exact planned change in one or two sentences"] Nothing
     ]
   where
     tool name description props priv = (name, description, props, priv)
@@ -348,6 +349,11 @@ dispatch context name arguments = case name of
                 ]
             )
     "get_dashboard_schema" -> pure dashboardSchemaDoc
+    "request_confirmation" -> do
+        summary <- arg "summary" ""
+        if Text.null summary
+            then pure "invalid arguments for request_confirmation (required: summary)"
+            else pure ("plan: " <> summary <> "\nconfirmation required: present this plan in the chat; proceed with the change only after the user's explicit agreement (Apply), and do not apply if they Discard")
     "validate_dashboard" -> do
         name <- arg "name" ""
         configText <- arg "config" ""
