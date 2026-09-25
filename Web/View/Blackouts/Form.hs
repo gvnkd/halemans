@@ -35,7 +35,8 @@ blackoutFormFields blackout environments hosts services =
         <label class="form-label">{tr "Name patterns (shell globs: * and ?)"}</label>
         <input name="envGlob" type="text" class="form-control mb-2" value={globValue (.environmentGlob)} placeholder={tr "Environment glob (optional)"} data-testid="blackout-env-glob" disabled={not scopeIsGlobs}/>
         <input name="hostGlob" type="text" class="form-control mb-2" value={globValue (.hostGlob)} placeholder={tr "Host glob (optional)"} data-testid="blackout-host-glob" disabled={not scopeIsGlobs}/>
-        <input name="serviceGlob" type="text" class="form-control" value={globValue (.serviceGlob)} placeholder={tr "Service glob (optional)"} data-testid="blackout-service-glob" disabled={not scopeIsGlobs}/>
+        <input name="serviceGlob" type="text" class="form-control mb-2" value={globValue (.serviceGlob)} placeholder={tr "Service glob (optional)"} data-testid="blackout-service-glob" disabled={not scopeIsGlobs}/>
+        <input name="titleGlob" type="text" class="form-control" value={globValue (.titleGlob)} placeholder={tr "Title glob (optional, e.g. test memory leak*)"} data-testid="blackout-title-glob" disabled={not scopeIsGlobs}/>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Starts at (UTC, ISO 8601)"}</label>
@@ -53,7 +54,7 @@ blackoutFormFields blackout environments hosts services =
   where
     scopeIs :: (Blackout -> Maybe (Id' table)) -> Bool
     scopeIs getter = maybe False (isJust . getter) blackout
-    scopeIsGlobs = maybe False (\b -> isJust b.environmentGlob || isJust b.hostGlob || isJust b.serviceGlob) blackout
+    scopeIsGlobs = maybe False (\b -> isJust b.environmentGlob || isJust b.hostGlob || isJust b.serviceGlob || isJust b.titleGlob) blackout
     globValue getter = maybe "" (fromMaybe "" . getter) blackout
     selectedId :: (Blackout -> Maybe (Id' table)) -> Maybe (Id' table)
     selectedId getter = maybe Nothing getter blackout

@@ -90,12 +90,12 @@ parseScopeRef scopeValue =
 
 -- | Scope portion of the create/update form: either a single inventory ref
 -- (scopeId, legacy picker) or shell-style globs (scopeType=pattern). Returns
--- Nothing for an invalid/empty scope. Sets ALL six scope columns so editing
+-- Nothing for an invalid/empty scope. Sets ALL scope columns so editing
 -- between the two kinds can't leave stale legs behind.
 scopeParams :: (?request :: Request) => Maybe (Blackout -> Blackout)
 scopeParams
     | param @Text "scopeType" == "pattern" =
-        if all isNothing [envGlob, hostGlob, serviceGlob]
+        if all isNothing [envGlob, hostGlob, serviceGlob, titleGlob]
             then Nothing
             else
                 Just
@@ -107,6 +107,7 @@ scopeParams
                             |> set #environmentGlob envGlob
                             |> set #hostGlob hostGlob
                             |> set #serviceGlob serviceGlob
+                            |> set #titleGlob titleGlob
                     )
     | otherwise = do
         (environmentRef, hostRef, serviceRef) <- parseScopeRef (param @Text "scopeId")
@@ -119,11 +120,13 @@ scopeParams
                     |> set #environmentGlob Nothing
                     |> set #hostGlob Nothing
                     |> set #serviceGlob Nothing
+                    |> set #titleGlob Nothing
             )
   where
     envGlob = blankToNothing (paramOrNothing @Text "envGlob")
     hostGlob = blankToNothing (paramOrNothing @Text "hostGlob")
     serviceGlob = blankToNothing (paramOrNothing @Text "serviceGlob")
+    titleGlob = blankToNothing (paramOrNothing @Text "titleGlob")
     blankToNothing = maybe Nothing (\value -> if Text.null (Text.strip value) then Nothing else Just value)
 
 resolveScopeName :: (?modelContext :: ModelContext) => Blackout -> IO Text
@@ -137,6 +140,7 @@ resolveScopeName blackout = do
                 [ ("env glob", blackout.environmentGlob)
                 , ("host glob", blackout.hostGlob)
                 , ("service glob", blackout.serviceGlob)
+                , ("title glob", blackout.titleGlob)
                 ]
             ]
     pure case catMaybes [environmentPart, hostPart, servicePart] <> globParts of

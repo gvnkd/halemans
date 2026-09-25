@@ -35,6 +35,7 @@ spec = describe "Application.Pipeline.Blackouts" do
                 , subjectHostName = Nothing
                 , subjectServiceId = Nothing
                 , subjectServiceName = Nothing
+                , subjectTitle = Nothing
                 }
 
     describe "blackoutWindowActive" do
@@ -83,6 +84,19 @@ spec = describe "Application.Pipeline.Blackouts" do
             let scoped = window |> set #serviceGlob (Just "db-?")
             blackoutApplies now emptySubject{subjectServiceName = Just "db-1"} scoped `shouldBe` True
             blackoutApplies now emptySubject{subjectServiceName = Just "db-12"} scoped `shouldBe` False
+        it "matches a title glob against the alert title" do
+            let scoped = window |> set #titleGlob (Just "test memory leak*")
+            blackoutApplies now emptySubject{subjectTitle = Just "test memory leak on db-1"} scoped `shouldBe` True
+            blackoutApplies now emptySubject{subjectTitle = Just "disk full on db-1"} scoped `shouldBe` False
+        it "title glob without wildcards matches exactly" do
+            let scoped = window |> set #titleGlob (Just "cpu usage high")
+            blackoutApplies now emptySubject{subjectTitle = Just "cpu usage high"} scoped `shouldBe` True
+            blackoutApplies now emptySubject{subjectTitle = Just "cpu usage high on web"} scoped `shouldBe` False
+        it "title glob leg ANDs with other legs" do
+            let scoped = window |> set #hostGlob (Just "9db-*") |> set #titleGlob (Just "test memory leak*")
+            blackoutApplies now emptySubject{subjectHostName = Just "9db-web01", subjectTitle = Just "test memory leak on web"} scoped `shouldBe` True
+            blackoutApplies now emptySubject{subjectHostName = Just "9db-web01", subjectTitle = Just "disk full"} scoped `shouldBe` False
+            blackoutApplies now emptySubject{subjectHostName = Just "10db-web01", subjectTitle = Just "test memory leak on web"} scoped `shouldBe` False
         it "glob leg ANDs with an env leg" do
             let theEnvId = mkEnvId "2b1b0e4d-3a0f-4a6e-9a3c-4c7f3b8a0001"
             let otherEnvId = mkEnvId "2b1b0e4d-3a0f-4a6e-9a3c-4c7f3b8a0005"

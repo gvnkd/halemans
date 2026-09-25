@@ -70,7 +70,7 @@ toolCatalog =
     , tool "close_alert" "Close an alert by id (it is resolved/done). Requires the close privilege." [req "alert_id" "alert UUID", opt "reason" "close reason"] (Just "close")
     , tool "comment_alert" "Add a comment to an alert by id. Requires the view privilege." [req "alert_id" "alert UUID", req "body" "comment text"] (Just "view")
     , tool "list_blackouts" "List silence/maintenance windows (newest first)." [] Nothing
-    , tool "create_blackout" "Create a silence/maintenance window. Scope is optional env/host/service names (at least one); names containing * or ? are stored as shell globs against the raw alert names instead of being resolved to inventory rows. Two-phase: call with confirmed=false first to show the plan. Requires manage_blackouts." [opt "env" "environment name or glob", opt "host" "host name or glob", opt "service" "service name or glob", req "starts_at" "ISO8601, e.g. 2026-09-24T18:00:00Z", req "ends_at" "ISO8601", opt "reason" "why", optC "confirmed"] (Just "manage_blackouts")
+    , tool "create_blackout" "Create a silence/maintenance window. Scope is optional env/host/service/title values (at least one); env/host/service names containing * or ? are stored as shell globs against the raw alert names instead of being resolved to inventory rows; a title is always stored as a glob (plain text matches exactly). Two-phase: call with confirmed=false first to show the plan. Requires manage_blackouts." [opt "env" "environment name or glob", opt "host" "host name or glob", opt "service" "service name or glob", opt "title" "alert title glob (e.g. test memory leak*; plain text matches exactly)", req "starts_at" "ISO8601, e.g. 2026-09-24T18:00:00Z", req "ends_at" "ISO8601", opt "reason" "why", optC "confirmed"] (Just "manage_blackouts")
     , tool "delete_blackout" "Delete a blackout by id. Two-phase (confirmed). Requires manage_blackouts." [req "blackout_id" "blackout UUID", optC "confirmed"] (Just "manage_blackouts")
     , tool "list_dashboards" "List the current user's dashboards: name, whether it is the default, and card count." [] Nothing
     , tool "get_dashboard" "Get one of the current user's dashboards by name or id: the full card config JSON (ready to edit and pass to update_dashboard), plus default/position metadata. Use this before modifying an existing dashboard." [opt "name" "dashboard name", opt "id" "dashboard UUID (from the page URL /dashboards/<uuid>)"] Nothing
@@ -275,6 +275,7 @@ dispatch context name arguments = case name of
         envName <- argMaybe "env"
         hostName <- argMaybe "host"
         serviceName <- argMaybe "service"
+        titleName <- argMaybe "title"
         startsRaw <- arg "starts_at" ""
         endsRaw <- arg "ends_at" ""
         reason <- arg "reason" ""
@@ -285,18 +286,21 @@ dispatch context name arguments = case name of
                     let envGlob = globName =<< envName
                         hostGlob = globName =<< hostName
                         serviceGlob = globName =<< serviceName
-                        anyProvided = any isJust [envName, hostName, serviceName]
+                        -- Titles have no inventory row: any provided title is
+                        -- a glob (plain text matches exactly).
+                        titleGlob = titleName
+                        anyProvided = any isJust [envName, hostName, serviceName, titleName]
                     knownEnv <- knownInventoryName (\n -> query @Environment |> filterWhere (#name, n) |> fetchOneOrNothing) envName
                     knownHost <- knownInventoryName (\n -> query @Host |> filterWhere (#fqdn, n) |> fetchOneOrNothing) hostName
                     knownService <- knownInventoryName (\n -> query @Service |> filterWhere (#name, n) |> fetchOneOrNothing) serviceName
                     if
-                        | not anyProvided -> pure "invalid scope: at least one of env/host/service is required"
+                        | not anyProvided -> pure "invalid scope: at least one of env/host/service/title is required"
                         | not (knownEnv && knownHost && knownService) -> pure "invalid scope: unknown env/host/service name"
                         | otherwise -> do
                             envId <- if isJust envGlob then pure Nothing else resolveEnvironmentId (fromMaybe "" envName)
                             hostId <- if isJust hostGlob then pure Nothing else resolveHostId (fromMaybe "" hostName)
                             serviceId <- if isJust serviceGlob then pure Nothing else resolveServiceId (fromMaybe "" serviceName)
-                            let scope = blackoutScopeText envName hostName serviceName envGlob hostGlob serviceGlob
+                            let scope = blackoutScopeText envName hostName serviceName envGlob hostGlob serviceGlob titleGlob
                                 plan =
                                     "plan: blackout "
                                         <> scope
@@ -316,6 +320,7 @@ dispatch context name arguments = case name of
                                             |> set #environmentGlob envGlob
                                             |> set #hostGlob hostGlob
                                             |> set #serviceGlob serviceGlob
+                                            |> set #titleGlob titleGlob
                                             |> set #startsAt startsAt
                                             |> set #endsAt endsAt
                                             |> set #reason reason
@@ -493,10 +498,10 @@ blackoutScopeSummary blackout = do
     envName <- traverse (fmap (.name) . fetch) blackout.environmentId
     hostName <- traverse (fmap (.fqdn) . fetch) blackout.hostId
     serviceName <- traverse (fmap (.name) . fetch) blackout.serviceId
-    pure (blackoutScopeText envName hostName serviceName blackout.environmentGlob blackout.hostGlob blackout.serviceGlob)
+    pure (blackoutScopeText envName hostName serviceName blackout.environmentGlob blackout.hostGlob blackout.serviceGlob blackout.titleGlob)
 
-blackoutScopeText :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Text
-blackoutScopeText envName hostName serviceName envGlob hostGlob serviceGlob =
+blackoutScopeText :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Text
+blackoutScopeText envName hostName serviceName envGlob hostGlob serviceGlob titleGlob =
     case catMaybes
         [ ("env: " <>) <$> envName
         , ("host: " <>) <$> hostName
@@ -504,6 +509,7 @@ blackoutScopeText envName hostName serviceName envGlob hostGlob serviceGlob =
         , ("env glob: " <>) <$> envGlob
         , ("host glob: " <>) <$> hostGlob
         , ("service glob: " <>) <$> serviceGlob
+        , ("title glob: " <>) <$> titleGlob
         ] of
         [] -> "global"
         parts -> Text.intercalate ", " parts

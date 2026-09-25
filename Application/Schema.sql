@@ -209,6 +209,7 @@ CREATE TABLE blackouts (
     environment_glob TEXT DEFAULT NULL,
     host_glob TEXT DEFAULT NULL,
     service_glob TEXT DEFAULT NULL,
+    title_glob TEXT DEFAULT NULL,
     starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
     ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
     reason TEXT NOT NULL DEFAULT '',

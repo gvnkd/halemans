@@ -467,6 +467,24 @@ spec = describe "agent tools (internal API milestone)" do
                         ]
                     )
             bad `shouldSatisfy` ("invalid scope" `Text.isPrefixOf`)
+        it "create_blackout accepts a title glob (single plan-and-confirm)" do
+            user <- m6User ["view", "manage_blackouts"]
+            let titleArgs confirmed =
+                    argsV
+                        [ ("title", String "rbac-title-glob-*")
+                        , ("starts_at", String "2026-09-24T18:00:00Z")
+                        , ("ends_at", String "2026-09-24T20:00:00Z")
+                        , ("confirmed", Bool confirmed)
+                        ]
+            plan <- runTool user "create_blackout" (titleArgs False)
+            plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            plan `shouldSatisfy` ("title glob: rbac-title-glob-*" `Text.isInfixOf`)
+            done <- runTool user "create_blackout" (titleArgs True)
+            done `shouldSatisfy` ("created blackout" `Text.isInfixOf`)
+            titleRow <- query @Blackout |> filterWhere (#titleGlob, Just "rbac-title-glob-*") |> fetchOneOrNothing
+            titleRow `shouldSatisfy` isJust
+            noScope <- runTool user "create_blackout" (args [("starts_at", "2026-09-24T18:00:00Z"), ("ends_at", "2026-09-24T20:00:00Z")])
+            noScope `shouldSatisfy` ("invalid scope" `Text.isPrefixOf`)
 
     describe "turn traces (agent observability)" do
         it "explain_last_turn renders the current session's per-round trace" do

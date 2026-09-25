@@ -19,6 +19,7 @@ data BlackoutSubject = BlackoutSubject
     , subjectHostName :: Maybe Text
     , subjectServiceId :: Maybe (Id Service)
     , subjectServiceName :: Maybe Text
+    , subjectTitle :: Maybe Text
     }
 
 alertSubject :: Alert -> BlackoutSubject
@@ -30,6 +31,7 @@ alertSubject alert =
         , subjectHostName = alert.host
         , subjectServiceId = alert.serviceId
         , subjectServiceName = alert.service
+        , subjectTitle = Just alert.title
         }
 
 -- | One-shot windows only (design_docs/01_highlevel.md §18).
@@ -52,6 +54,7 @@ blackoutApplies now subject blackout =
             , globLeg blackout.environmentGlob subject.subjectEnvironmentName
             , globLeg blackout.hostGlob subject.subjectHostName
             , globLeg blackout.serviceGlob subject.subjectServiceName
+            , globLeg blackout.titleGlob subject.subjectTitle
             ]
     idLeg (Just wanted) actual = Just (actual == Just wanted)
     idLeg Nothing _ = Nothing
