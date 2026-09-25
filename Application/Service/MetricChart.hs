@@ -207,8 +207,7 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                                                 (\from to -> historyGet source.baseUrl token item.ztiItemId (historyTable item) (posixFloor from) (posixCeil to) historyPageLimit)
                                         pure ((\points -> metricSeriesInfo (MetricSeries (seriesLabel item) (limitPoints window points)) (itemUnits item)) <$> pointsResult)
                                     let links =
-                                            [ ("Zabbix graph: " <> seriesLabel item, source.baseUrl <> "/history.php?action=showgraph&itemid=" <> item.ztiItemId)
-                                            | item <- numericItems
+                                            [ ("Zabbix graph", source.baseUrl <> "/history.php?action=showgraph" <> Text.concat ["&itemids[]=" <> item.ztiItemId | item <- numericItems])
                                             ]
                                     pure ((\infos -> MetricChartData infos thresholds links) <$> sequenceEither perItem)
     _ -> pure (Left "Metrics are only available for Grafana- and Zabbix-sourced alerts")
