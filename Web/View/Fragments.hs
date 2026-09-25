@@ -189,7 +189,7 @@ alertListColumns envOptions alerts =
         -- `id` is ambiguous here (generated record field selectors).
         Nothing -> \cols -> cols
     mutedFilter = case envOptions of
-        Just _ -> attachColumnFilter "muted" (multiFilterFor "muted" ["source", "blackout"])
+        Just _ -> attachColumnFilter "muted" (multiFilterFor "muted" ["all", "source", "blackout", "hide"])
         Nothing -> \cols -> cols
     multiFilterFor param options = ColumnFilter{cfParam = param, cfKind = FilterMulti, cfPlaceholder = param, cfOptions = options}
     textFilterFor param placeholder suggestions = ColumnFilter{cfParam = param, cfKind = FilterText, cfPlaceholder = placeholder, cfOptions = suggestions}

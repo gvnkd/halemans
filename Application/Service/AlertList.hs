@@ -13,6 +13,7 @@ module Application.Service.AlertList (
     parseRelativeWindow,
     seenCutoff,
     validColumns,
+    validMutedValues,
 ) where
 
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize, validAlertSortColumns)
@@ -45,7 +46,8 @@ data AlertListFilters = AlertListFilters
     , alfTitle :: Maybe Text
     , alfGroup :: Maybe Text
     , alfMuted :: [Text]
-    -- ^ Muted-by-owner filter: subset of ["source", "blackout"]; [] = off.
+    -- ^ Muted filter: suppression owners ("source"/"blackout"), "all"
+    -- (any owner) and "hide" (exclude all suppressed alerts); [] = off.
     , alfSort :: Text
     , alfDir :: Text
     , alfColumns :: [Text]
@@ -102,6 +104,26 @@ seenCutoff now window = maybe (UTCTime (fromGregorian 1970 1 1) 0) (\d -> addUTC
 validSortColumns :: [Text]
 validSortColumns = validAlertSortColumns
 
+-- | Valid muted-filter values: exact suppression owners plus "all" (any
+-- owner) and "hide" (exclude all suppressed alerts).
+validMutedValues :: [Text]
+validMutedValues = ["source", "blackout", "all", "hide"]
+
+-- | The owner subset of a raw muted selection.
+mutedOwners :: [Text] -> [Text]
+mutedOwners muted = [m | m <- muted, m `elem` ["source", "blackout"]]
+
+-- | Tri-state mode derived from the raw selection: "" = off, "hide" =
+-- exclude all suppressed alerts, "all" = only suppressed (any owner,
+-- optionally narrowed by selected owners), "owners" = only suppressed by
+-- the selected owners. "hide" wins over everything else.
+mutedMode :: [Text] -> Text
+mutedMode muted
+    | "hide" `elem` muted = "hide"
+    | "all" `elem` muted = "all"
+    | not (null muted) = "owners"
+    | otherwise = ""
+
 -- Sorting is dynamic, which the query builder cannot express (ORDER BY is
 -- not parameterizable), so the id page comes from one typedSql statement
 -- with a computed text sort key; rows are then fetched as model records.
@@ -120,7 +142,8 @@ listAlerts filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
-        muted = filters.alfMuted
+        mode = mutedMode filters.alfMuted
+        owners = mutedOwners filters.alfMuted
         sort = filters.alfSort
         dir = filters.alfDir
         lim64 = fromIntegral filters.alfPageSize :: Int64
@@ -153,7 +176,12 @@ listAlerts filters = do
               AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
               AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
               AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
-              AND (cardinality(${muted}::text[]) = 0 OR (a.suppressed AND a.suppressed_by = ANY(${muted})))
+              AND (CASE ${mode}
+                      WHEN 'hide' THEN NOT a.suppressed
+                      WHEN 'all' THEN a.suppressed AND (cardinality(${owners}::text[]) = 0 OR a.suppressed_by = ANY(${owners}))
+                      WHEN 'owners' THEN a.suppressed AND a.suppressed_by = ANY(${owners})
+                      ELSE TRUE
+                   END)
               AND (${occMin} = 0 OR a.occurrences >= ${occMin})
               AND (a.last_seen_at > ${cutoff})
         ) AS sorted
@@ -178,7 +206,8 @@ countAlerts filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
-        muted = filters.alfMuted
+        mode = mutedMode filters.alfMuted
+        owners = mutedOwners filters.alfMuted
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
@@ -195,7 +224,12 @@ countAlerts filters = do
           AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
           AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
           AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
-          AND (cardinality(${muted}::text[]) = 0 OR (a.suppressed AND a.suppressed_by = ANY(${muted})))
+          AND (CASE ${mode}
+                  WHEN 'hide' THEN NOT a.suppressed
+                  WHEN 'all' THEN a.suppressed AND (cardinality(${owners}::text[]) = 0 OR a.suppressed_by = ANY(${owners}))
+                  WHEN 'owners' THEN a.suppressed AND a.suppressed_by = ANY(${owners})
+                  ELSE TRUE
+               END)
           AND (${occMin} = 0 OR a.occurrences >= ${occMin})
           AND (a.last_seen_at > ${cutoff})
     |]
@@ -214,7 +248,8 @@ countBySeverity filters = do
         service = fromMaybe "" filters.alfService
         titlePattern = fromMaybe "" filters.alfTitle
         groupPattern = fromMaybe "" filters.alfGroup
-        muted = filters.alfMuted
+        mode = mutedMode filters.alfMuted
+        owners = mutedOwners filters.alfMuted
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
@@ -231,7 +266,12 @@ countBySeverity filters = do
           AND ('' = ${service} OR coalesce(nullif(a.facets ->> 'service', ''), a.service) = ${service})
           AND ('' = ${titlePattern} OR a.title ILIKE '%' || ${titlePattern} || '%')
           AND ('' = ${groupPattern} OR g.group_key ILIKE '%' || ${groupPattern} || '%')
-          AND (cardinality(${muted}::text[]) = 0 OR (a.suppressed AND a.suppressed_by = ANY(${muted})))
+          AND (CASE ${mode}
+                  WHEN 'hide' THEN NOT a.suppressed
+                  WHEN 'all' THEN a.suppressed AND (cardinality(${owners}::text[]) = 0 OR a.suppressed_by = ANY(${owners}))
+                  WHEN 'owners' THEN a.suppressed AND a.suppressed_by = ANY(${owners})
+                  ELSE TRUE
+               END)
           AND (${occMin} = 0 OR a.occurrences >= ${occMin})
           AND (a.last_seen_at > ${cutoff})
         GROUP BY a.severity
@@ -276,7 +316,7 @@ matchesFilters filters alert = do
             , maybe True (\service -> effectiveFieldText FieldService alert == Just service) filters.alfService
             , maybe True (\pat -> Text.isInfixOf (Text.toLower pat) (Text.toLower alert.title)) filters.alfTitle
             , groupOk
-            , null filters.alfMuted || (alert.suppressed && maybe False (`elem` filters.alfMuted) alert.suppressedBy)
+            , mutedOk
             , maybe True (\n -> alert.occurrences >= n) filters.alfMinOccurrences
             , alert.lastSeenAt > seenCutoff now filters.alfSeenWithin
             ]
@@ -285,6 +325,13 @@ matchesFilters filters alert = do
     statusOk = case filters.alfStatuses of
         [] -> filters.alfIncludeClosed || alert.status /= "closed"
         selected -> alert.status `elem` selected
+    mutedOk = case mutedMode filters.alfMuted of
+        "hide" -> not alert.suppressed
+        "all" -> alert.suppressed && (null owners || maybe False (`elem` owners) alert.suppressedBy)
+        "owners" -> alert.suppressed && maybe False (`elem` owners) alert.suppressedBy
+        _ -> True
+      where
+        owners = mutedOwners filters.alfMuted
 
 -- Subscribe-frame payload for the alerts scope: the client forwards the
 -- current query string so live updates respect the rendered view. cols are
@@ -311,7 +358,7 @@ parseAlertFilters = Aeson.withObject "filters" \o -> do
             , alfService = service
             , alfTitle = title
             , alfGroup = group
-            , alfMuted = [m | m <- muted, m `elem` ["source", "blackout"]]
+            , alfMuted = [m | m <- muted, m `elem` validMutedValues]
             , alfColumns = validColumns colsRaw
             , alfMinOccurrences = occMin
             , alfSeenWithin = seen
@@ -379,7 +426,7 @@ alertFiltersFromValue = parseMaybe parser
                 , alfService = service
                 , alfTitle = title
                 , alfGroup = group
-                , alfMuted = [m | m <- muted, m `elem` ["source", "blackout"]]
+                , alfMuted = [m | m <- muted, m `elem` validMutedValues]
                 , alfSort = if sort `elem` validSortColumns then sort else "last_seen_at"
                 , alfDir = if dir == "asc" then "asc" else "desc"
                 , alfColumns = validColumns colsRaw
