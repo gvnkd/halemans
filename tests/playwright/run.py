@@ -936,6 +936,21 @@ with sync_playwright() as pw:
                 "http://127.0.0.1:18084/debug/reset", data=b"{}",
                 headers={"Content-Type": "application/json"}))
 
+    @check("agent chat: widget opens on /alerts, sends without navigation")
+    def _():
+        # Regression: the widget input row must NOT be a <form> — IHP's
+        # helpers.js XHR-submits every form on submit, and a missing action
+        # navigated the page to /alerts/null.
+        page.goto(f"{APP}/alerts")
+        page.get_by_test_id("alerts-table").wait_for()
+        page.get_by_test_id("agent-toggle").click()
+        page.get_by_test_id("agent-input").fill("List the environments")
+        page.get_by_test_id("agent-send").click()
+        page.get_by_test_id("agent-messages").get_by_text("List the environments").wait_for(timeout=30000)
+        assert "/alerts" in page.url and "null" not in page.url, page.url
+        # the assistant reply renders in the panel (mock-llm canned text)
+        page.get_by_test_id("agent-messages").get_by_text("Analysis").wait_for(timeout=90000)
+
     # ---------------------------------------------------------- milestone 5
 
     @check("source health: dashboard shows the internal alert without reload")

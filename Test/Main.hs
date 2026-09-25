@@ -5,6 +5,7 @@ import Test.Hspec
 
 -- Import your test specs here:
 
+import qualified Test.AgentSpec
 import qualified Test.AlertmanagerSpec
 import qualified Test.ApiSpec
 import qualified Test.AssetsSpec
@@ -49,6 +50,7 @@ main = hspec do
     Test.GroupingSpec.spec
     Test.EscalationSpec.spec
     Test.AlertmanagerSpec.spec
+    Test.AgentSpec.spec
     Test.CmdbSpec.spec
     Test.JiraSpec.spec
     Test.WriteBackSpec.spec

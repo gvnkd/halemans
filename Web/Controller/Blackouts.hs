@@ -1,6 +1,7 @@
 module Web.Controller.Blackouts where
 
 import qualified Data.Text as Text
+import Data.Traversable (traverse)
 import Web.Controller.Prelude
 import Web.View.Blackouts.Edit
 import Web.View.Blackouts.Index
@@ -25,13 +26,11 @@ instance Controller BlackoutsController where
         let startsAt = param @UTCTime "startsAt"
             endsAt = param @UTCTime "endsAt"
         let reason = param @Text "reason"
-        case parseScopeRef (param @Text "scopeId") of
-            Just (environmentRef, hostRef, serviceRef) -> do
+        case scopeParams of
+            Just applyScope -> do
                 _ <-
                     newRecord @Blackout
-                        |> set #environmentId environmentRef
-                        |> set #hostId hostRef
-                        |> set #serviceId serviceRef
+                        |> applyScope
                         |> set #startsAt startsAt
                         |> set #endsAt endsAt
                         |> set #reason reason
@@ -51,13 +50,11 @@ instance Controller BlackoutsController where
         let startsAt = param @UTCTime "startsAt"
             endsAt = param @UTCTime "endsAt"
         let reason = param @Text "reason"
-        case parseScopeRef (param @Text "scopeId") of
-            Just (environmentRef, hostRef, serviceRef) -> do
+        case scopeParams of
+            Just applyScope -> do
                 _ <-
                     blackout
-                        |> set #environmentId environmentRef
-                        |> set #hostId hostRef
-                        |> set #serviceId serviceRef
+                        |> applyScope
                         |> set #startsAt startsAt
                         |> set #endsAt endsAt
                         |> set #reason reason
@@ -91,15 +88,57 @@ parseScopeRef scopeValue =
             "service" -> Just (Nothing, Nothing, Just (textToId scopeId))
             _ -> Nothing
 
+-- | Scope portion of the create/update form: either a single inventory ref
+-- (scopeId, legacy picker) or shell-style globs (scopeType=pattern). Returns
+-- Nothing for an invalid/empty scope. Sets ALL six scope columns so editing
+-- between the two kinds can't leave stale legs behind.
+scopeParams :: (?request :: Request) => Maybe (Blackout -> Blackout)
+scopeParams
+    | param @Text "scopeType" == "pattern" =
+        if all isNothing [envGlob, hostGlob, serviceGlob]
+            then Nothing
+            else
+                Just
+                    ( \blackout ->
+                        blackout
+                            |> set #environmentId Nothing
+                            |> set #hostId Nothing
+                            |> set #serviceId Nothing
+                            |> set #environmentGlob envGlob
+                            |> set #hostGlob hostGlob
+                            |> set #serviceGlob serviceGlob
+                    )
+    | otherwise = do
+        (environmentRef, hostRef, serviceRef) <- parseScopeRef (param @Text "scopeId")
+        Just
+            ( \blackout ->
+                blackout
+                    |> set #environmentId environmentRef
+                    |> set #hostId hostRef
+                    |> set #serviceId serviceRef
+                    |> set #environmentGlob Nothing
+                    |> set #hostGlob Nothing
+                    |> set #serviceGlob Nothing
+            )
+  where
+    envGlob = blankToNothing (paramOrNothing @Text "envGlob")
+    hostGlob = blankToNothing (paramOrNothing @Text "hostGlob")
+    serviceGlob = blankToNothing (paramOrNothing @Text "serviceGlob")
+    blankToNothing = maybe Nothing (\value -> if Text.null (Text.strip value) then Nothing else Just value)
+
 resolveScopeName :: (?modelContext :: ModelContext) => Blackout -> IO Text
-resolveScopeName blackout = case (blackout.environmentId, blackout.hostId, blackout.serviceId) of
-    (Just environmentId, _, _) -> do
-        environment <- fetch environmentId
-        pure ("env: " <> environment.name)
-    (_, Just hostId, _) -> do
-        host <- fetch hostId
-        pure ("host: " <> host.fqdn)
-    (_, _, Just serviceId) -> do
-        service <- fetch serviceId
-        pure ("service: " <> service.name)
-    _ -> pure "-"
+resolveScopeName blackout = do
+    environmentPart <- traverse (fmap (("env: " <>) . (.name)) . fetch) blackout.environmentId
+    hostPart <- traverse (fmap (("host: " <>) . (.fqdn)) . fetch) blackout.hostId
+    servicePart <- traverse (fmap (("service: " <>) . (.name)) . fetch) blackout.serviceId
+    let globParts =
+            [ label <> ": " <> glob
+            | (label, Just glob) <-
+                [ ("env glob", blackout.environmentGlob)
+                , ("host glob", blackout.hostGlob)
+                , ("service glob", blackout.serviceGlob)
+                ]
+            ]
+    pure case catMaybes [environmentPart, hostPart, servicePart] <> globParts of
+        [] -> "-"
+        parts -> Text.intercalate " · " parts

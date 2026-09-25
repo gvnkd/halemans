@@ -41,6 +41,11 @@ POST /admin/llm/templates/{templateId}/update  UpdateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/activate  ActivateLlmTemplateAction
 POST /admin/llm/templates/{templateId}/delete  DeleteLlmTemplateAction
 POST /admin/llm/test                           TestLlmConnectionAction
+POST /admin/llm/test-integration               TestLlmIntegrationAction
+POST /admin/llm/agent-config                   UpdateAgentConfigAction
+POST /admin/llm/global-config                  UpdateGlobalConfigAction
+POST /admin/llm/agent/seed-template            SeedAgentTemplateAction
+GET  /admin/llm/agent                          LlmAgentConfigAction
 GET  /admin/llm/providers/new                  NewLlmProviderAction
 POST /admin/llm/providers                      CreateLlmProviderAction
 GET  /admin/llm/providers/{providerId}/edit    EditLlmProviderAction
@@ -96,6 +101,26 @@ POST /profile/api-tokens/{apiTokenId}/revoke      RevokeApiTokenAction
 GET /api/v1/alerts              ApiAlertsAction
 GET /api/v1/alerts/{alertId}    ApiAlertAction
 GET /api/v1/environments        ApiEnvironmentsAction
+|]
+
+-- Internal API (unstable, unversioned; local agent + tests only). Disabled
+-- unless HALEMANS_INTERNAL_TOKEN is set; requires X-Halemans-Internal: 1 and
+-- X-Act-As headers (see Application.Service.Api.InternalAuth).
+[routes|InternalApiController
+GET  /api/internal/environments         InternalEnvironmentsAction
+GET  /api/internal/dashboards           InternalDashboardsAction
+GET  /api/internal/dashboard/schema     InternalDashboardSchemaAction
+POST /api/internal/dashboards/validate  InternalValidateDashboardAction
+POST /api/internal/dashboards/create    InternalCreateDashboardAction
+GET  /api/internal/alerts/search        InternalSearchAlertsAction
+GET  /api/internal/llm/config           InternalLlmConfigAction
+|]
+
+-- Agent chat backing the floating widget (session-authed JSON).
+[routes|AgentChatController
+POST /agent/chat             ChatAction
+GET  /agent/sessions         AgentSessionsAction
+GET  /agent/chat/{sessionId} AgentHistoryAction
 |]
 
 [routes|MetricsController

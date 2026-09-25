@@ -2,6 +2,7 @@ module Test.MetricChartSpec (spec) where
 
 import Application.Connector.GrafanaMetrics (
     MetricSeries (..),
+    buildExploreUrl,
     ruleQueryFromRule,
     ruleUidFromSourceUrl,
     seriesFromResponse,
@@ -198,7 +199,7 @@ spec = do
     describe "chartDataSvg" do
         it "renders threshold lines with labels" do
             let series = [MetricChart.metricSeriesInfo (MetricSeries "cpu" [(utc "2026-09-19T10:00:00Z", 50.0), (utc "2026-09-19T10:01:00Z", 60.0)]) Nothing]
-                data_ = MetricChart.MetricChartData series [Chart.ChartThreshold 70 "trigger threshold 70"]
+                data_ = MetricChart.MetricChartData series [Chart.ChartThreshold 70 "trigger threshold 70"] []
                 svg = MetricChart.chartDataSvg Chart.ScaleAuto data_
             Text.isInfixOf "chart-threshold" svg `shouldBe` True
             Text.isInfixOf "trigger threshold 70" svg `shouldBe` True
@@ -208,33 +209,33 @@ spec = do
                     [ mkInfo "big" [(addUTCTime (fromIntegral (i * 60)) t0, 1000 + fromIntegral i) | i <- [0 .. 20 :: Int]]
                     , mkInfo "small" [(addUTCTime (fromIntegral (i * 60)) t0, 1 + fromIntegral i * 0.1) | i <- [0 .. 20 :: Int]]
                     ]
-                svg = MetricChart.chartDataSvg Chart.ScaleLog10 (MetricChart.MetricChartData series [])
+                svg = MetricChart.chartDataSvg Chart.ScaleLog10 (MetricChart.MetricChartData series [] [])
             Text.isInfixOf "NaN" svg `shouldBe` False
             Text.isInfixOf "Infinity" svg `shouldBe` False
         it "log2 scale renders power-of-two ticks" do
             let series = [MetricChart.metricSeriesInfo (MetricSeries "m" [(addUTCTime (fromIntegral (i * 60)) t0, 2 ^^ i) | i <- [0 .. 8 :: Int]]) Nothing]
-                svg = MetricChart.chartDataSvg Chart.ScaleLog2 (MetricChart.MetricChartData series [])
+                svg = MetricChart.chartDataSvg Chart.ScaleLog2 (MetricChart.MetricChartData series [] [])
             Text.isInfixOf "NaN" svg `shouldBe` False
             Text.isInfixOf "Infinity" svg `shouldBe` False
             hasScientificNotation svg `shouldBe` False
         it "axis labels never use scientific notation" do
             let series = [MetricChart.metricSeriesInfo (MetricSeries "m" [(addUTCTime (fromIntegral (i * 60)) t0, 0.05 * fromIntegral i) | i <- [0 .. 20 :: Int]]) Nothing]
-                svg = MetricChart.chartDataSvg Chart.ScaleLinear (MetricChart.MetricChartData series [])
+                svg = MetricChart.chartDataSvg Chart.ScaleLinear (MetricChart.MetricChartData series [] [])
             hasScientificNotation svg `shouldBe` False
         it "unit-aware axis labels shorten bytes and widen the left margin" do
             let series = [MetricChart.metricSeriesInfo (MetricSeries "disk" [(addUTCTime (fromIntegral (i * 3600)) t0, 5.5e9 + fromIntegral i * 1e6) | i <- [0 .. 20 :: Int]]) (Just "B")]
-                svg = MetricChart.chartDataSvg Chart.ScaleLinear (MetricChart.MetricChartData series [])
-                (_, _, _, (plotLeft, _)) = MetricChart.chartRenderMeta Chart.ScaleLinear (MetricChart.MetricChartData series [])
+                svg = MetricChart.chartDataSvg Chart.ScaleLinear (MetricChart.MetricChartData series [] [])
+                (_, _, _, (plotLeft, _)) = MetricChart.chartRenderMeta Chart.ScaleLinear (MetricChart.MetricChartData series [] [])
             Text.isInfixOf "GB" svg `shouldBe` True
             plotLeft `shouldSatisfy` (>= 60)
         it "log scale clamps non-positive samples to the baseline" do
             let series = [MetricChart.metricSeriesInfo (MetricSeries "mixed" [(addUTCTime (fromIntegral (i * 60)) t0, v) | (i, v) <- zip [0 ..] [5, 0, -3, 50, 500 :: Double]]) Nothing]
-                svg = MetricChart.chartDataSvg Chart.ScaleLog10 (MetricChart.MetricChartData series [])
+                svg = MetricChart.chartDataSvg Chart.ScaleLog10 (MetricChart.MetricChartData series [] [])
             Text.isInfixOf "NaN" svg `shouldBe` False
             Text.isInfixOf "Infinity" svg `shouldBe` False
         it "emits hover payload points and the padded time domain" do
             let series = [MetricChart.metricSeriesInfo (MetricSeries "m" [(addUTCTime (fromIntegral (i * 60)) t0, fromIntegral i) | i <- [0 .. 5 :: Int]]) Nothing]
-                data_ = MetricChart.MetricChartData series []
+                data_ = MetricChart.MetricChartData series [] []
                 json = MetricChart.chartHoverJson data_
                 (_, (tLo, tHi), (yLo, yHi), _) = MetricChart.chartRenderMeta Chart.ScaleAuto data_
             Text.isInfixOf "\"name\":\"m\"" json `shouldBe` True
@@ -279,6 +280,19 @@ spec = do
         it "skips time-looking constants after comparison operators" do
             MetricChart.thresholdsFromExpression "{h:k.last(5m)}>70"
                 `shouldBe` [70]
+
+    describe "buildExploreUrl" do
+        it "embeds the expr and datasource as a percent-encoded panes param" do
+            let url = buildExploreUrl "https://grafana.example" "ds-1" (Just "prometheus") "up == 0"
+            Text.isInfixOf "/explore?orgId=1" url `shouldBe` True
+            Text.isInfixOf "pane-1" url `shouldBe` True
+            Text.isInfixOf "up%20%3D%3D%200" url `shouldBe` True
+            Text.isInfixOf "prometheus" url `shouldBe` True
+            Text.isInfixOf "ds-1" url `shouldBe` True
+        it "omits the datasource type when unknown" do
+            let url = buildExploreUrl "https://grafana.example" "ds-1" Nothing "up"
+            Text.isInfixOf "%22uid%22%3A%22ds-1%22" url `shouldBe` True
+            Text.isInfixOf "type" url `shouldBe` False
 
     describe "parseScaleParam" do
         it "maps query params to scale modes" do

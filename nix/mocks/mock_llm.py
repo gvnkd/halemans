@@ -242,10 +242,13 @@ def validate_chat_request(body):
 class Handler(BaseHTTPRequestHandler):
     server_version = "MockLlm/1.0"
 
-    def _send(self, code, payload, headers=None):
-        data = json.dumps(payload).encode()
+    def _send(self, code, payload, headers=None, content_type="application/json"):
+        if content_type == "application/json":
+            data = json.dumps(payload).encode()
+        else:
+            data = payload.encode()
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(data)))
@@ -333,7 +336,35 @@ class Handler(BaseHTTPRequestHandler):
                 "Linked asset observed in context: " + assets_line + "\n\n```json",
                 1,
             )
+        if body.get("stream"):
+            self._respond_stream(body)
+            return
         self._respond(analysis, body)
+
+    # SSE mode (admin integration test): a couple of data chunks plus the
+    # [DONE] terminator, same payload shape as the non-streaming choice.
+    def _respond_stream(self, body):
+        self.server.completion_count += 1
+        chunk = {
+            "id": f"chatcmpl-mock-{self.server.completion_count}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": body.get("model", MODEL),
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": "mock-llm-1"},
+                "finish_reason": None,
+            }],
+        }
+        payload = "".join(
+            "data: " + json.dumps(part) + "\n\n"
+            for part in (chunk, chunk)
+        ) + "data: [DONE]\n\n"
+        self._send(
+            200,
+            payload,
+            content_type="text/event-stream; charset=utf-8",
+        )
 
     def _respond(self, analysis, body):
         self.server.completion_count += 1

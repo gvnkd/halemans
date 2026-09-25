@@ -43,7 +43,7 @@ import Application.Service.Api.Token (hashToken, newApiToken, resolveToken)
 import Application.Service.Assets.Attrs (objectAttributes)
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), expandDashboardCards, runCardQuery, runCardQueryGroups, runCardSummary)
 import Application.Service.Jira.DbConfig (syncOpenLinks)
-import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
+import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..), testIntegration)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Application.Service.Llm.ToolCache (cachedToolCall)
 import Application.Service.Llm.Tools (executeToolCall)
@@ -100,6 +100,11 @@ llmSpec = describe "llm enrichment (milestone 4)" do
             Nothing -> expectationFailure "structured result missing"
         countered <- counterRequestsAfter "default"
         countered `shouldSatisfy` (>= 1)
+
+    it "admin integration test pings non-streaming and streaming chat" do
+        config <- currentLlmConfig >>= maybe (error "no llm config") pure
+        result <- testIntegration config
+        result `shouldBe` Right ()
 
     it "identical context within the window dedupes into a copy (one provider call)" do
         _ <- ensureTemplate

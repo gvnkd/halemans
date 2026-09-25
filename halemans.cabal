@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                halemans
-version:             2.8.2
+version:             2.9.0
 synopsis:            Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks
 description:         Halemans collects alerts from Zabbix, Grafana, Alertmanager and
                      generic webhooks into a single dashboard, enriches them with CMDB
@@ -108,12 +108,17 @@ library
         Application.Pipeline.StateMachine
         Application.Script.EnqueuePollers
         Application.Script.GenPassword
+        Application.Script.HalemansMcp
         Application.Script.Prelude
+        Application.Service.Agent.Core
+        Application.Service.Agent.Mcp
+        Application.Service.Agent.Tools
         Application.Service.AlertList
         Application.Service.Api.Alerts
         Application.Service.Api.Auth
         Application.Service.Api.Cursor
         Application.Service.Api.Encode
+        Application.Service.Api.InternalAuth
         Application.Service.Api.Metrics
         Application.Service.Api.RateLimit
         Application.Service.Api.Token
@@ -145,9 +150,11 @@ library
         Application.Service.JobMetrics
         Application.Service.Live
         Application.Service.Llm
+        Application.Service.Llm.AgentConfig
         Application.Service.Llm.AutoAnalyze
         Application.Service.Llm.Budget
         Application.Service.Llm.DbConfig
+        Application.Service.Llm.GlobalConfig
         Application.Service.Llm.Output
         Application.Service.Llm.Prompt
         Application.Service.Llm.Queue
@@ -173,6 +180,7 @@ library
         Application.Version
         Config
         Web.Controller.Admin
+        Web.Controller.AgentChat
         Web.Controller.Alerts
         Web.Controller.Api
         Web.Controller.AssetsAdmin
@@ -189,6 +197,7 @@ library
         Web.Controller.Groups
         Web.Controller.Hooks
         Web.Controller.Integrations
+        Web.Controller.InternalApi
         Web.Controller.Live
         Web.Controller.LlmAdmin
         Web.Controller.Metrics
@@ -245,6 +254,7 @@ library
         Web.View.Integrations.JiraEdit
         Web.View.Integrations.JiraNew
         Web.View.Layout
+        Web.View.LlmAdmin.AgentConfig
         Web.View.LlmAdmin.Edit
         Web.View.LlmAdmin.EditProvider
         Web.View.LlmAdmin.EditRole
@@ -270,6 +280,8 @@ library
         Web.View.Teams.New
         WorkerMain
         Generated.ActualTypes
+        Generated.ActualTypes.AgentMessage
+        Generated.ActualTypes.AgentSession
         Generated.ActualTypes.Alert
         Generated.ActualTypes.AlertEvent
         Generated.ActualTypes.AlertGroup
@@ -294,9 +306,11 @@ library
         Generated.ActualTypes.FieldMapping
         Generated.ActualTypes.GroupingRule
         Generated.ActualTypes.Host
+        Generated.ActualTypes.InternalApiAudit
         Generated.ActualTypes.JiraConfig
         Generated.ActualTypes.JiraLink
         Generated.ActualTypes.JiraSyncJob
+        Generated.ActualTypes.LlmAgentConfig
         Generated.ActualTypes.LlmAgentRole
         Generated.ActualTypes.LlmAnalysis
         Generated.ActualTypes.LlmAnalysisJob
@@ -304,6 +318,7 @@ library
         Generated.ActualTypes.LlmBudgetCounter
         Generated.ActualTypes.LlmConfig
         Generated.ActualTypes.LlmFeedback
+        Generated.ActualTypes.LlmGlobalConfig
         Generated.ActualTypes.LlmPromptTemplate
         Generated.ActualTypes.LlmToolCache
         Generated.ActualTypes.LlmToolCacheConfig
@@ -330,6 +345,8 @@ library
         Generated.ActualTypes.WriteBackAttempt
         Generated.ActualTypes.WriteBackJob
         Generated.ActualTypes.ZabbixHostGroup
+        Generated.AgentMessage
+        Generated.AgentSession
         Generated.Alert
         Generated.AlertEvent
         Generated.AlertGroup
@@ -355,9 +372,11 @@ library
         Generated.FieldMapping
         Generated.GroupingRule
         Generated.Host
+        Generated.InternalApiAudit
         Generated.JiraConfig
         Generated.JiraLink
         Generated.JiraSyncJob
+        Generated.LlmAgentConfig
         Generated.LlmAgentRole
         Generated.LlmAnalysis
         Generated.LlmAnalysisJob
@@ -365,6 +384,7 @@ library
         Generated.LlmBudgetCounter
         Generated.LlmConfig
         Generated.LlmFeedback
+        Generated.LlmGlobalConfig
         Generated.LlmPromptTemplate
         Generated.LlmToolCache
         Generated.LlmToolCacheConfig
@@ -383,6 +403,8 @@ library
         Generated.Source
         Generated.SourceHealthJob
         Generated.Statements
+        Generated.Statements.CreateAgentMessage
+        Generated.Statements.CreateAgentSession
         Generated.Statements.CreateAlert
         Generated.Statements.CreateAlertEvent
         Generated.Statements.CreateAlertGroup
@@ -407,9 +429,11 @@ library
         Generated.Statements.CreateFieldMapping
         Generated.Statements.CreateGroupingRule
         Generated.Statements.CreateHost
+        Generated.Statements.CreateInternalApiAudit
         Generated.Statements.CreateJiraConfig
         Generated.Statements.CreateJiraLink
         Generated.Statements.CreateJiraSyncJob
+        Generated.Statements.CreateLlmAgentConfig
         Generated.Statements.CreateLlmAgentRole
         Generated.Statements.CreateLlmAnalysis
         Generated.Statements.CreateLlmAnalysisJob
@@ -417,9 +441,12 @@ library
         Generated.Statements.CreateLlmBudgetCounter
         Generated.Statements.CreateLlmConfig
         Generated.Statements.CreateLlmFeedback
+        Generated.Statements.CreateLlmGlobalConfig
         Generated.Statements.CreateLlmPromptTemplate
         Generated.Statements.CreateLlmToolCache
         Generated.Statements.CreateLlmToolCacheConfig
+        Generated.Statements.CreateManyAgentMessage
+        Generated.Statements.CreateManyAgentSession
         Generated.Statements.CreateManyAlert
         Generated.Statements.CreateManyAlertEvent
         Generated.Statements.CreateManyAlertGroup
@@ -444,9 +471,11 @@ library
         Generated.Statements.CreateManyFieldMapping
         Generated.Statements.CreateManyGroupingRule
         Generated.Statements.CreateManyHost
+        Generated.Statements.CreateManyInternalApiAudit
         Generated.Statements.CreateManyJiraConfig
         Generated.Statements.CreateManyJiraLink
         Generated.Statements.CreateManyJiraSyncJob
+        Generated.Statements.CreateManyLlmAgentConfig
         Generated.Statements.CreateManyLlmAgentRole
         Generated.Statements.CreateManyLlmAnalysis
         Generated.Statements.CreateManyLlmAnalysisJob
@@ -454,6 +483,7 @@ library
         Generated.Statements.CreateManyLlmBudgetCounter
         Generated.Statements.CreateManyLlmConfig
         Generated.Statements.CreateManyLlmFeedback
+        Generated.Statements.CreateManyLlmGlobalConfig
         Generated.Statements.CreateManyLlmPromptTemplate
         Generated.Statements.CreateManyLlmToolCache
         Generated.Statements.CreateManyLlmToolCacheConfig
@@ -501,6 +531,8 @@ library
         Generated.Statements.CreateWriteBackAttempt
         Generated.Statements.CreateWriteBackJob
         Generated.Statements.CreateZabbixHostGroup
+        Generated.Statements.FetchAgentMessage
+        Generated.Statements.FetchAgentSession
         Generated.Statements.FetchAlert
         Generated.Statements.FetchAlertEvent
         Generated.Statements.FetchAlertGroup
@@ -525,9 +557,11 @@ library
         Generated.Statements.FetchFieldMapping
         Generated.Statements.FetchGroupingRule
         Generated.Statements.FetchHost
+        Generated.Statements.FetchInternalApiAudit
         Generated.Statements.FetchJiraConfig
         Generated.Statements.FetchJiraLink
         Generated.Statements.FetchJiraSyncJob
+        Generated.Statements.FetchLlmAgentConfig
         Generated.Statements.FetchLlmAgentRole
         Generated.Statements.FetchLlmAnalysis
         Generated.Statements.FetchLlmAnalysisJob
@@ -535,6 +569,7 @@ library
         Generated.Statements.FetchLlmBudgetCounter
         Generated.Statements.FetchLlmConfig
         Generated.Statements.FetchLlmFeedback
+        Generated.Statements.FetchLlmGlobalConfig
         Generated.Statements.FetchLlmPromptTemplate
         Generated.Statements.FetchLlmToolCache
         Generated.Statements.FetchLlmToolCacheConfig
@@ -560,6 +595,8 @@ library
         Generated.Statements.FetchWriteBackAttempt
         Generated.Statements.FetchWriteBackJob
         Generated.Statements.FetchZabbixHostGroup
+        Generated.Statements.RowDecoderAgentMessage
+        Generated.Statements.RowDecoderAgentSession
         Generated.Statements.RowDecoderAlert
         Generated.Statements.RowDecoderAlertEvent
         Generated.Statements.RowDecoderAlertGroup
@@ -584,9 +621,11 @@ library
         Generated.Statements.RowDecoderFieldMapping
         Generated.Statements.RowDecoderGroupingRule
         Generated.Statements.RowDecoderHost
+        Generated.Statements.RowDecoderInternalApiAudit
         Generated.Statements.RowDecoderJiraConfig
         Generated.Statements.RowDecoderJiraLink
         Generated.Statements.RowDecoderJiraSyncJob
+        Generated.Statements.RowDecoderLlmAgentConfig
         Generated.Statements.RowDecoderLlmAgentRole
         Generated.Statements.RowDecoderLlmAnalysis
         Generated.Statements.RowDecoderLlmAnalysisJob
@@ -594,6 +633,7 @@ library
         Generated.Statements.RowDecoderLlmBudgetCounter
         Generated.Statements.RowDecoderLlmConfig
         Generated.Statements.RowDecoderLlmFeedback
+        Generated.Statements.RowDecoderLlmGlobalConfig
         Generated.Statements.RowDecoderLlmPromptTemplate
         Generated.Statements.RowDecoderLlmToolCache
         Generated.Statements.RowDecoderLlmToolCacheConfig
@@ -619,6 +659,8 @@ library
         Generated.Statements.RowDecoderWriteBackAttempt
         Generated.Statements.RowDecoderWriteBackJob
         Generated.Statements.RowDecoderZabbixHostGroup
+        Generated.Statements.UpdateAgentMessage
+        Generated.Statements.UpdateAgentSession
         Generated.Statements.UpdateAlert
         Generated.Statements.UpdateAlertEvent
         Generated.Statements.UpdateAlertGroup
@@ -643,9 +685,11 @@ library
         Generated.Statements.UpdateFieldMapping
         Generated.Statements.UpdateGroupingRule
         Generated.Statements.UpdateHost
+        Generated.Statements.UpdateInternalApiAudit
         Generated.Statements.UpdateJiraConfig
         Generated.Statements.UpdateJiraLink
         Generated.Statements.UpdateJiraSyncJob
+        Generated.Statements.UpdateLlmAgentConfig
         Generated.Statements.UpdateLlmAgentRole
         Generated.Statements.UpdateLlmAnalysis
         Generated.Statements.UpdateLlmAnalysisJob
@@ -653,6 +697,7 @@ library
         Generated.Statements.UpdateLlmBudgetCounter
         Generated.Statements.UpdateLlmConfig
         Generated.Statements.UpdateLlmFeedback
+        Generated.Statements.UpdateLlmGlobalConfig
         Generated.Statements.UpdateLlmPromptTemplate
         Generated.Statements.UpdateLlmToolCache
         Generated.Statements.UpdateLlmToolCacheConfig
@@ -764,6 +809,13 @@ executable EnqueuePollers
 executable GenPassword
     default-language: GHC2021
     main-is: GenPassword.hs
+    hs-source-dirs: build/exe
+    build-depends: base, halemans, ihp
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+
+executable HalemansMcp
+    default-language: GHC2021
+    main-is: HalemansMcp.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
     ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N

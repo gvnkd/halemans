@@ -2,7 +2,7 @@ module Application.Job.AutoClose where
 
 import Application.Helper.Ingest (publishAlertUpdate)
 import Application.Pipeline.Actions (autoCloseAlert, stallAlert, unackAlert)
-import Application.Pipeline.Blackouts (blackoutApplies)
+import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Control.Monad (void)
 import qualified Data.Set as Set
 import Generated.Types
@@ -145,7 +145,7 @@ unsuppressExpired = do
     -- counts as blackout-owned.
     let blackoutOwned alert = alert.suppressedBy /= Just "source"
     forM_ (filter blackoutOwned suppressed) \alert -> do
-        let covered = any (blackoutApplies now alert.environmentId alert.hostId alert.serviceId) activeBlackouts
+        let covered = any (blackoutApplies now (alertSubject alert)) activeBlackouts
         unless covered do
             updated <-
                 alert

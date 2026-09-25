@@ -2,7 +2,7 @@ module Application.Job.PollZabbix where
 
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
-import Application.Pipeline.Blackouts (blackoutApplies)
+import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
 import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalSuppress, mirrorExternalUnack, mirrorExternalUnsuppress, shouldMirror)
@@ -324,7 +324,7 @@ resolveFromProblem :: (?modelContext :: ModelContext) => Alert -> UTCTime -> IO 
 resolveFromProblem alert resolvedAt = do
     now <- getCurrentTime
     blackouts <- fetchActiveBlackouts now
-    let suppressedNow = any (blackoutApplies now alert.environmentId alert.hostId alert.serviceId) blackouts
+    let suppressedNow = any (blackoutApplies now (alertSubject alert)) blackouts
     updated <- transitionAlert now Resolved alert.env alert.environmentId alert.hostId alert.serviceId suppressedNow alert
     when (updated.status == "resolved") do
         let alertId = get #id alert

@@ -96,6 +96,11 @@ data LlmAdminController
     | ActivateLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
     | DeleteLlmTemplateAction {templateId :: !(Id LlmPromptTemplate)}
     | TestLlmConnectionAction
+    | TestLlmIntegrationAction
+    | UpdateAgentConfigAction
+    | UpdateGlobalConfigAction
+    | SeedAgentTemplateAction
+    | LlmAgentConfigAction
     | NewLlmProviderAction
     | CreateLlmProviderAction
     | EditLlmProviderAction {providerId :: !(Id LlmConfig)}
@@ -170,6 +175,22 @@ data ApiController
 
 data MetricsController
     = MetricsAction
+    deriving (Eq, Show)
+
+data InternalApiController
+    = InternalEnvironmentsAction
+    | InternalDashboardsAction
+    | InternalDashboardSchemaAction
+    | InternalValidateDashboardAction
+    | InternalCreateDashboardAction
+    | InternalSearchAlertsAction
+    | InternalLlmConfigAction
+    deriving (Eq, Show)
+
+data AgentChatController
+    = ChatAction
+    | AgentSessionsAction
+    | AgentHistoryAction {sessionId :: !(Id AgentSession)}
     deriving (Eq, Show)
 
 data GroupsController

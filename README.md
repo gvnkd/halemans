@@ -231,6 +231,11 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 - `GET /metrics` — Prometheus exporter.
 - `POST /hooks/alertmanager/:token`, `POST /hooks/generic/:token` — ingestion webhooks.
 - `GET /admin/audit/export` — audit log export (CSV/JSONL, admin only).
+- `POST /agent/chat`, `GET /agent/sessions`, `GET /agent/chat/:sessionId` — agent chat backing the floating widget (session-authed; the agent acts as the logged-in user, uses the enabled LLM provider from Admin → LLM, and persists sessions server-side).
+
+### Internal API and MCP server
+
+`/api/internal/*` is an unstable, unversioned JSON surface for the local agent and integration tests — endpoints graduate to `/api/v1` as they stabilize. It is disabled unless `HALEMANS_INTERNAL_TOKEN` is set, and every call must send `X-Halemans-Internal: 1`, `Authorization: Bearer <token>`, and `X-Act-As: <email>`; granted calls are written to the `internal_api_audit` table. The same tool implementations back the in-process agent loop and the standalone MCP server (`/bin/HalemansMcp`, newline-delimited JSON-RPC over stdio, protocol 2025-03-26). The MCP server acts as a dedicated service account — `mcp@localhost` with a dedicated `mcp` role — auto-created on first boot with the minimal `view` privilege; `HALEMANS_MCP_USER` switches to another existing user, and `HALEMANS_MCP_PRIVILEGES` (comma-separated) pins the role's privileges from env, overriding UI edits while set. Mutating tools follow a two-phase confirm flow: `confirmed=false` returns the plan, `confirmed=true` applies.
 
 ## Project layout
 

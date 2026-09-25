@@ -8,7 +8,9 @@ import Web.View.Prelude
 -- Shared new/edit fields for blackouts (milestone 12 §3). The scope-type /
 -- scope-id filtering script lives in static/app.js keyed on the
 -- blackout-scope-type / blackout-scope-id testids (auto-selects the first
--- visible option when the type changes).
+-- visible option when the type changes; the "pattern" type swaps the entity
+-- picker for the glob inputs and disables whichever group is hidden so only
+-- one kind is submitted).
 blackoutFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => Maybe Blackout -> [Environment] -> [Host] -> [Service] -> Html
 blackoutFormFields blackout environments hosts services =
     [hsx|
@@ -18,15 +20,22 @@ blackoutFormFields blackout environments hosts services =
             <option value="environment" selected={scopeIs (.environmentId)}>environment</option>
             <option value="host" selected={scopeIs (.hostId)}>host</option>
             <option value="service" selected={scopeIs (.serviceId)}>service</option>
+            <option value="pattern" selected={scopeIsGlobs}>{tr "pattern"}</option>
         </select>
     </div>
-    <div class="mb-3" data-scope="environment">
+    <div class="mb-3" data-blackout-scope="entity" hidden={scopeIsGlobs}>
         <label class="form-label">{tr "Scope"}</label>
         <select name="scopeId" class="select" data-testid="blackout-scope-id">
             {forEach environments environmentOption}
             {forEach hosts hostOption}
             {forEach services serviceOption}
         </select>
+    </div>
+    <div class="mb-3" data-blackout-scope="pattern" hidden={not scopeIsGlobs}>
+        <label class="form-label">{tr "Name patterns (shell globs: * and ?)"}</label>
+        <input name="envGlob" type="text" class="form-control mb-2" value={globValue (.environmentGlob)} placeholder={tr "Environment glob (optional)"} data-testid="blackout-env-glob" disabled={not scopeIsGlobs}/>
+        <input name="hostGlob" type="text" class="form-control mb-2" value={globValue (.hostGlob)} placeholder={tr "Host glob (optional)"} data-testid="blackout-host-glob" disabled={not scopeIsGlobs}/>
+        <input name="serviceGlob" type="text" class="form-control" value={globValue (.serviceGlob)} placeholder={tr "Service glob (optional)"} data-testid="blackout-service-glob" disabled={not scopeIsGlobs}/>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Starts at (UTC, ISO 8601)"}</label>
@@ -44,6 +53,8 @@ blackoutFormFields blackout environments hosts services =
   where
     scopeIs :: (Blackout -> Maybe (Id' table)) -> Bool
     scopeIs getter = maybe False (isJust . getter) blackout
+    scopeIsGlobs = maybe False (\b -> isJust b.environmentGlob || isJust b.hostGlob || isJust b.serviceGlob) blackout
+    globValue getter = maybe "" (fromMaybe "" . getter) blackout
     selectedId :: (Blackout -> Maybe (Id' table)) -> Maybe (Id' table)
     selectedId getter = maybe Nothing getter blackout
     startsAtValue = maybe "" (isoUtc . (.startsAt)) blackout

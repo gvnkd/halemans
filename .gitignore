@@ -17,9 +17,11 @@ build
 gen
 # Vendored Haskell sources are only for the nix-less docker build
 # (docker/Dockerfile*). The IHP flake module enumerates every *.hs in the
-# project as an app module, so vendor/ must stay out of the nix source.
+# project as an app module, so the top-level vendor/ must stay out of the
+# nix source. Anchored: a bare "vendor" pattern also strips static/vendor/
+# (fonts, bootstrap, jquery) from the nix-built image's static package.
 # Tracked files stay tracked; new vendor content needs `git add -f`.
-vendor
+/vendor
 del
 static/prod.*
 Config/client_session_key.aes

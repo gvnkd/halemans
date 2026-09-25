@@ -230,24 +230,33 @@
 
 // Blackout form scope filtering: the scope-id select carries options for all
 // three scope kinds with "type:" prefixed values; show only the selected
-// kind and auto-select the first visible option on a type change.
+// kind and auto-select the first visible option on a type change. The
+// "pattern" type swaps the entity picker for glob inputs; whichever group is
+// hidden gets disabled so only one scope kind is submitted.
 (function () {
     document.addEventListener('DOMContentLoaded', function () {
         var typeSelect = document.querySelector('[data-testid="blackout-scope-type"]');
         var idSelect = document.querySelector('[data-testid="blackout-scope-id"]');
         if (!typeSelect || !idSelect) return;
+        var entityDiv = document.querySelector('[data-blackout-scope="entity"]');
+        var patternDiv = document.querySelector('[data-blackout-scope="pattern"]');
+        var patternInputs = patternDiv ? Array.prototype.slice.call(patternDiv.querySelectorAll('input')) : [];
         var applyFilter = function () {
+            var isPattern = typeSelect.value === 'pattern';
             var prefix = typeSelect.value + ':';
             Array.prototype.forEach.call(idSelect.options, function (option) {
-                var visible = option.value.indexOf(prefix) === 0;
+                var visible = !isPattern && option.value.indexOf(prefix) === 0;
                 option.hidden = !visible;
                 option.disabled = !visible;
             });
             var selected = idSelect.options[idSelect.selectedIndex];
-            if (!selected || selected.disabled) {
+            if (!isPattern && (!selected || selected.disabled)) {
                 var first = Array.prototype.find.call(idSelect.options, function (o) { return !o.disabled; });
                 if (first) idSelect.value = first.value;
             }
+            if (entityDiv) entityDiv.hidden = isPattern;
+            idSelect.disabled = isPattern;
+            patternInputs.forEach(function (input) { input.disabled = !isPattern; });
         };
         typeSelect.addEventListener('change', applyFilter);
         applyFilter();
@@ -578,5 +587,511 @@
         if (!container || !container.querySelector('svg')) return; // not open yet
         var url = container.getAttribute('data-metric-chart-url');
         if (url) loadChart(url, container, null);
+    });
+})();
+
+// Floating agent chat widget (internal API milestone). Collapsed affordance
+// on every page; the panel POSTs {message, session_id, page_context} to
+// /agent/chat and renders the persisted assistant replies. Session id lives
+// in localStorage so the conversation survives navigation.
+//
+// Events are DELEGATED at document level (same pattern as the
+// data-metric-chart handlers above), NOT attached to the widget nodes:
+// turbolinks-morphdom patches can replace inner nodes between page renders
+// while keeping an ancestor alive, which silently drops listeners attached
+// per-node.
+//
+// The input row is NOT a <form>: IHP's helpers.js intercepts every submit
+// event document-wide and XHR-submits the form itself (missing action ->
+// "null"), so a real form here can never be fully controlled by us. Send is
+// a plain button + an Enter keydown (see sendMessage below).
+(function () {
+    var SESSION_KEY = 'halemans-agent-session';
+
+    function sessionId() { return window.localStorage.getItem(SESSION_KEY) || null; }
+    function setSession(id) { window.localStorage.setItem(SESSION_KEY, String(id)); }
+
+    function append(messages, role, text) {
+        var div = document.createElement('div');
+        div.className = 'agent-msg agent-msg-' + role;
+        div.textContent = text; // textContent: no HTML injection from the model
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+        return div;
+    }
+
+    // Assistant replies are markdown rendered SERVER-side (cmark optSafe, the
+    // analysis-card pipeline) and arrive in the payload as html — swap them
+    // in with innerHTML so the chat and the card render identically.
+    function appendAssistant(messages, html) {
+        var div = document.createElement('div');
+        div.className = 'agent-msg agent-msg-assistant llm-markdown';
+        div.innerHTML = html;
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+        return div;
+    }
+
+    function pageContext() {
+        // pathname + search: on /alerts the whole view state (sort, columns,
+        // filters) lives in the query string, so it is the precise context.
+        return { url: window.location.pathname + window.location.search, title: document.title };
+    }
+
+    // Per-message trace footer: duration, tokens, tool timings, errors —
+    // click to expand the raw detail. Renders under assistant messages that
+    // carry a trace (every message since the agent-traces milestone).
+    function appendTrace(messages, trace) {
+        if (!trace) return;
+        var duration = trace.duration_ms != null ? trace.duration_ms + 'ms' : null;
+        var tokens = trace.tokens_in != null ? ('tokens ' + trace.tokens_in + '/' + trace.tokens_out) : null;
+        var calls = trace.tool_calls || [];
+        var summary = [];
+        if (duration) summary.push(duration);
+        if (tokens) summary.push(tokens);
+        if (calls.length) summary.push('tools: ' + calls.map(function (c) { return c.name; }).join(', '));
+        if (trace.error) summary.push('ERROR: ' + trace.error);
+        if (!summary.length) return;
+        var line = document.createElement('div');
+        line.className = 'agent-trace' + (trace.error ? ' agent-trace-error' : '');
+        line.textContent = 'ⓘ ' + summary.join(' · ');
+        var detail = null;
+        line.addEventListener('click', function () {
+            if (detail) {
+                detail.parentNode.removeChild(detail);
+                detail = null;
+                return;
+            }
+            detail = document.createElement('pre');
+            detail.className = 'agent-trace-detail';
+            detail.textContent = JSON.stringify(trace, null, 2);
+            messages.insertBefore(detail, line.nextSibling);
+        });
+        messages.appendChild(line);
+    }
+
+    // Numbered questions in the last assistant message get a structured
+    // reply widget (one input per question), so the user answers each
+    // question separately and the model gets labeled answers back.
+    function maybeRenderQuestions(root, text) {
+        var messages = root.querySelector('#agent-messages');
+        if (!messages || messages.querySelector('.agent-questions') || messages.querySelector('.agent-confirm')) return;
+        var questions = [];
+        String(text).split('\n').forEach(function (line) {
+            var match = line.match(/^\s*(\d+)[.)]\s+(.+\?)\s*$/);
+            if (match) questions.push({ n: match[1], q: match[2] });
+        });
+        if (!questions.length) return;
+        var block = document.createElement('div');
+        block.className = 'agent-questions';
+        var inputs = questions.map(function (question) {
+            var row = document.createElement('div');
+            row.className = 'agent-question-row';
+            var label = document.createElement('label');
+            label.className = 'agent-question-label';
+            label.textContent = question.n + '. ' + question.q;
+            var input = document.createElement('textarea');
+            input.className = 'agent-question-input';
+            input.rows = 1;
+            input.setAttribute('data-question', question.n);
+            row.appendChild(label);
+            row.appendChild(input);
+            block.appendChild(row);
+            return input;
+        });
+        var send = document.createElement('button');
+        send.type = 'button';
+        send.className = 'btn-brand agent-questions-send';
+        send.textContent = 'Reply';
+        send.addEventListener('click', function () {
+            var parts = [];
+            inputs.forEach(function (input) {
+                var value = input.value.trim();
+                if (value) parts.push(input.getAttribute('data-question') + '. ' + value);
+            });
+            block.parentNode.removeChild(block);
+            if (parts.length) sendText(root, parts.join('\n'));
+        });
+        block.appendChild(send);
+        messages.appendChild(block);
+        messages.scrollTop = messages.scrollHeight;
+        if (inputs[0]) inputs[0].focus();
+    }
+
+    // Two-phase mutating tool plan (detected server-side from the persisted
+    // tool result's "confirmation required" marker): offer Apply/Discard
+    // instead of making the user type "confirm". Apply sends "confirm",
+    // which the agent's prompt instructs it to act on.
+    function maybeRenderConfirm(root, reply) {
+        if (!reply || !reply.needs_confirmation) return;
+        var messages = root.querySelector('#agent-messages');
+        if (!messages || messages.querySelector('.agent-confirm') || messages.querySelector('.agent-questions')) return;
+        var block = document.createElement('div');
+        block.className = 'agent-confirm';
+        var apply = document.createElement('button');
+        apply.type = 'button';
+        apply.className = 'btn-brand agent-confirm-apply';
+        apply.textContent = 'Apply';
+        var discard = document.createElement('button');
+        discard.type = 'button';
+        discard.className = 'btn-ghost agent-confirm-discard';
+        discard.textContent = 'Discard';
+        apply.addEventListener('click', function () {
+            block.parentNode.removeChild(block);
+            sendText(root, 'confirm');
+        });
+        discard.addEventListener('click', function () {
+            block.parentNode.removeChild(block);
+            sendText(root, 'cancel');
+        });
+        block.appendChild(apply);
+        block.appendChild(discard);
+        messages.appendChild(block);
+        messages.scrollTop = messages.scrollHeight;
+    }
+
+    function loadHistory(root) {
+        var id = sessionId();
+        if (!id) return;
+        var messages = root.querySelector('#agent-messages');
+        fetch(root.getAttribute('data-history-url') + '/' + encodeURIComponent(id), { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (!data || !data.messages) return;
+                messages.textContent = '';
+                data.messages.forEach(function (row) {
+                    if (row.role === 'assistant' && row.html) appendAssistant(messages, row.html);
+                    else if (row.content) append(messages, row.role, row.content);
+                    appendTrace(messages, row.trace);
+                });
+                // a pending plan survives refresh: re-offer the buttons only
+                // when the LATEST tool activity is an unconfirmed plan (after
+                // Apply, a confirmed=true tool row exists and turns this off).
+                var lastToolRow = null;
+                data.messages.forEach(function (row) {
+                    if (row.tool_calls && row.tool_calls.length) lastToolRow = row;
+                });
+                maybeRenderConfirm(root, lastToolRow);
+            })
+            .catch(function () {});
+    }
+
+    // Past sessions for the header selector (GET /agent/sessions). The empty
+    // leading option is "New chat" — selecting it clears the conversation.
+    function loadSessions(root) {
+        var select = root.querySelector('#agent-sessions');
+        if (!select) return;
+        fetch(root.getAttribute('data-sessions-url'), { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (!data || !data.sessions) return;
+                var current = sessionId();
+                select.textContent = '';
+                var fresh = document.createElement('option');
+                fresh.value = '';
+                fresh.textContent = root.getAttribute('data-new-chat-label') || 'New chat';
+                select.appendChild(fresh);
+                data.sessions.forEach(function (session) {
+                    var option = document.createElement('option');
+                    option.value = session.id;
+                    option.textContent = session.title || session.id;
+                    if (session.id === current) option.selected = true;
+                    select.appendChild(option);
+                });
+            })
+            .catch(function () {});
+    }
+
+    function newChat(root) {
+        window.localStorage.removeItem(SESSION_KEY);
+        root.querySelector('#agent-messages').textContent = '';
+        var select = root.querySelector('#agent-sessions');
+        if (select) select.value = '';
+    }
+
+    function sendMessage(root) {
+        var input = root.querySelector('#agent-input');
+        var text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        sendText(root, text);
+    }
+
+    // POST /agent/chat?stream=1 and consume the SSE response with a
+    // ReadableStream reader: token events drive the "Thinking… N words · Xs"
+    // label, tool events render as activity lines, done carries the final
+    // replies. The server emits a heartbeat comment every 15s and the session
+    // id as the first event; if the stream's tail is lost anyway, the stall
+    // timer recovers the persisted reply from the history endpoint.
+    function sendText(root, text) {
+        var messages = root.querySelector('#agent-messages');
+        var input = root.querySelector('#agent-input');
+        append(messages, 'user', text);
+        if (input) input.focus();
+        var thinking = append(messages, 'assistant', 'Thinking…');
+        var startedAt = Date.now();
+        var lastEventAt = Date.now();
+        var reader = null;
+        var aborted = false;
+        var recovered = false;
+        // Server-assigned session id (first SSE event): a fresh chat has no
+        // localStorage id yet, and stall recovery needs one for the history
+        // fetch even if the done frame never arrives.
+        var streamSessionId = null;
+        // Set once the pipe is deemed dead (heartbeats stopped): from then on
+        // recoverReply owns the label and the timer stays off it.
+        var pipeDead = false;
+        // Live markdown div: token events carry pre-rendered html of the
+        // accumulated answer, swapped in per event; done re-renders the
+        // final payload and discards this.
+        var streamingDiv = null;
+        // WS backstop (halemans-live.js dispatches agent_turn payloads here):
+        // the server broadcasts turn completion on the /ws channel after
+        // persisting, independent of the SSE pipe — if the done frame was
+        // lost, this renders the reply immediately instead of waiting for
+        // the stall timer.
+        window.halemansAgentTurnDone = function (payload) {
+            if (aborted) return;
+            var sid = payload.session_id || null;
+            if (sid && sid !== (streamSessionId || sessionId())) return;
+            finishTurn(payload);
+        };
+
+        // Tool names can arrive twice: mid-stream (while the model is still
+        // writing the call's arguments, via token events) and after the round
+        // (tool events / the done payload) — render each name only once.
+        var shownTools = {};
+        function showTool(name) {
+            if (!name || shownTools[name]) return;
+            shownTools[name] = true;
+            append(messages, 'tool', '⚙ ' + name + '…');
+        }
+        var timer = window.setInterval(function () {
+            if (aborted) return;
+            var idle = Math.round((Date.now() - lastEventAt) / 1000);
+            var base = thinking.getAttribute('data-progress') || ('Thinking… ' + Math.round((Date.now() - startedAt) / 1000) + 's');
+            if (idle > 20 && !pipeDead) {
+                // no SSE data for a while: say so. The server heartbeats every
+                // 15s, so idle past ~2 heartbeat periods means the pipe is
+                // dead (tail lost), not a slow turn — poll the history
+                // endpoint for the persisted reply instead of staring at a
+                // frozen label; recoverReply keeps polling while the turn is
+                // still running server-side and owns the label from then on.
+                thinking.textContent = base + ' (stalled ' + idle + 's — no data from the agent)';
+                if (idle > 35) recoverReply();
+            } else if (!pipeDead) {
+                thinking.textContent = base;
+            }
+        }, 1000);
+
+        // The server persists the reply BEFORE emitting done, so the answer
+        // is always in the DB even when the final SSE frame is lost. Fetch
+        // the session history and render the assistant rows after the last
+        // user row. No reply yet = the turn is still running server-side:
+        // switch the label to a waiting state and retry on the next tick
+        // (the pipe is dead, polling the DB is the only path left).
+        function recoverReply() {
+            if (recovered || aborted) return;
+            var id = streamSessionId || sessionId();
+            if (!id) return;
+            recovered = true;
+            pipeDead = true;
+            fetch(root.getAttribute('data-history-url') + '/' + encodeURIComponent(id), { headers: { 'X-Requested-With': 'fetch' } })
+                .then(function (response) { return response.ok ? response.json() : null; })
+                .then(function (data) {
+                    if (!data || !data.messages) { recovered = false; return; }
+                    var cut = -1;
+                    data.messages.forEach(function (row, i) { if (row.role === 'user') cut = i; });
+                    var replies = data.messages.slice(cut + 1).filter(function (row) { return row.role === 'assistant' && row.content; });
+                    if (!replies.length) {
+                        recovered = false;
+                        thinking.setAttribute('data-progress', '');
+                        thinking.textContent = 'connection dropped — the agent is still working; the saved reply will appear as soon as it is ready';
+                        return;
+                    }
+                    aborted = true;
+                    if (reader) reader.cancel();
+                    window.clearInterval(timer);
+                    if (window.halemansAgentTurnDone) delete window.halemansAgentTurnDone;
+                    if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+                    if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
+                    streamingDiv = null;
+                    setSession(id);
+                    append(messages, 'tool', 'connection dropped — showing the reply the agent already saved');
+                    replies.forEach(function (row) {
+                        if (row.html) appendAssistant(messages, row.html);
+                        else append(messages, 'assistant', row.content);
+                        appendTrace(messages, row.trace);
+                    });
+                    loadSessions(root);
+                    maybeRenderQuestions(root, replies[replies.length - 1].content);
+                    var lastToolReply = null;
+                    replies.forEach(function (row) {
+                        if (row.tool_calls && row.tool_calls.length) lastToolReply = row;
+                    });
+                    maybeRenderConfirm(root, lastToolReply);
+                })
+                .catch(function () {
+                    recovered = false;
+                    thinking.setAttribute('data-progress', '');
+                    thinking.textContent = 'connection dropped — waiting for the agent; retrying…';
+                });
+        }
+
+    function finishTurn(data) {
+        if (aborted) return; // WS backstop or recovery already rendered this turn
+        window.clearInterval(timer);
+        aborted = true; // also blocks a late recoverReply double-render
+        if (window.halemansAgentTurnDone) delete window.halemansAgentTurnDone;
+        if (thinking.parentNode) thinking.parentNode.removeChild(thinking);
+        // the streamed draft is superseded by the persisted replies
+        if (streamingDiv && streamingDiv.parentNode) streamingDiv.parentNode.removeChild(streamingDiv);
+        streamingDiv = null;
+        setSession(data.session_id || streamSessionId);
+        var lastText = '';
+        var lastReply = null;
+        var lastToolReply = null;
+        (data.replies || []).forEach(function (reply) {
+            if (reply.content) {
+                lastText = reply.content;
+                lastReply = reply;
+                if (reply.html) appendAssistant(messages, reply.html);
+                else append(messages, 'assistant', reply.content);
+            }
+            if (reply.tool_calls && reply.tool_calls.length) lastToolReply = reply;
+            (reply.tool_calls || []).forEach(function (call) {
+                showTool(call.name);
+            });
+            appendTrace(messages, reply.trace);
+        });
+        loadSessions(root);
+        maybeRenderQuestions(root, lastText);
+        maybeRenderConfirm(root, lastToolReply);
+    }
+
+    function fail(message) {
+        window.clearInterval(timer);
+        aborted = true;
+        if (window.halemansAgentTurnDone) delete window.halemansAgentTurnDone;
+        thinking.setAttribute('data-progress', '');
+        thinking.textContent = message;
+    }
+
+        fetch(root.getAttribute('data-chat-url'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
+            body: JSON.stringify({ message: text, session_id: sessionId(), page_context: pageContext(), stream: true })
+        }).then(function (response) {
+            if (!response.ok || !response.body) throw new Error('http ' + response.status);
+            reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+            function pump() {
+                return reader.read().then(function (chunk) {
+                    if (chunk.done) return;
+                    lastEventAt = Date.now();
+                    pipeDead = false; // data flowing again — the timer owns the label once more
+                    buffer += decoder.decode(chunk.value, { stream: true });
+                    var sep;
+                    while ((sep = buffer.indexOf('\n\n')) >= 0) {
+                        var raw = buffer.slice(0, sep);
+                        buffer = buffer.slice(sep + 2);
+                        if (raw.charAt(0) === ':') {
+                            // SSE comment — the server's 15s heartbeat: the
+                            // pipe is alive, reset the stall clock.
+                            lastEventAt = Date.now();
+                            continue;
+                        }
+                        var eventName = null;
+                        var dataLine = null;
+                        raw.split('\n').forEach(function (line) {
+                            if (line.indexOf('event: ') === 0) eventName = line.slice(7);
+                            else if (line.indexOf('data: ') === 0) dataLine = line.slice(6);
+                        });
+                        if (!eventName || !dataLine) continue;
+                        var data = {};
+                        try { data = JSON.parse(dataLine); } catch (e) { continue; }
+                        if (eventName === 'session') {
+                            streamSessionId = data.session_id;
+                        } else if (eventName === 'token') {
+                            thinking.setAttribute('data-progress', 'Thinking… ' + data.words + ' words · ' + Math.round(data.elapsed_ms / 1000) + 's');
+                            if (data.tool) showTool(data.tool);
+                            if (data.html) {
+                                if (streamingDiv) {
+                                    streamingDiv.innerHTML = data.html;
+                                    messages.scrollTop = messages.scrollHeight;
+                                } else {
+                                    streamingDiv = appendAssistant(messages, data.html);
+                                }
+                            }
+                        } else if (eventName === 'round') {
+                            // round start: the model is working (possibly on a
+                            // slow tool round) — reset the stall clock.
+                            thinking.setAttribute('data-progress', 'Thinking… (round ' + data.round + ')');
+                        } else if (eventName === 'tool') {
+                            showTool(data.name);
+                        } else if (eventName === 'done') {
+                            finishTurn(data);
+                        }
+                    }
+                    return pump();
+                });
+            }
+            return pump();
+        }).catch(function () { if (!aborted) fail('agent request failed — retry'); });
+    }
+
+    document.addEventListener('click', function (event) {
+        var root = document.getElementById('agent-widget');
+        if (!root) return;
+        var target = event.target;
+        if (target.closest && target.closest('#agent-send')) {
+            sendMessage(root);
+            return;
+        }
+        if (target.closest && target.closest('#agent-toggle')) {
+            var panel = root.querySelector('#agent-panel');
+            var opening = panel.classList.contains('d-none');
+            panel.classList.toggle('d-none');
+            root.querySelector('#agent-toggle').setAttribute('aria-expanded', opening ? 'true' : 'false');
+            var messages = root.querySelector('#agent-messages');
+            if (opening) {
+                loadSessions(root);
+                if (!messages.childElementCount) loadHistory(root);
+                root.querySelector('#agent-input').focus();
+            }
+            return;
+        }
+        if (target.closest && target.closest('#agent-new-chat')) {
+            newChat(root);
+            root.querySelector('#agent-input').focus();
+            return;
+        }
+        if (target.closest && target.closest('#agent-close')) {
+            root.querySelector('#agent-panel').classList.add('d-none');
+            root.querySelector('#agent-toggle').setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    document.addEventListener('keydown', function (event) {
+        // Enter sends, Shift+Enter starts a new line (textarea default).
+        if (event.key !== 'Enter' || event.shiftKey || !event.target || event.target.id !== 'agent-input') return;
+        event.preventDefault();
+        var root = document.getElementById('agent-widget');
+        if (root) sendMessage(root);
+    });
+
+    document.addEventListener('change', function (event) {
+        var select = event.target;
+        if (!select || select.id !== 'agent-sessions') return;
+        var root = document.getElementById('agent-widget');
+        if (!root) return;
+        if (select.value) {
+            setSession(select.value);
+            root.querySelector('#agent-messages').textContent = '';
+            loadHistory(root);
+        } else {
+            newChat(root);
+        }
     });
 })();

@@ -18,7 +18,8 @@ data TemplateRow = TemplateRow
     }
 
 data CounterRow = CounterRow
-    { provider :: Text
+    { scope :: Text
+    , provider :: Text
     , day :: Day
     , tokensIn :: Int64
     , tokensOut :: Int64
@@ -60,6 +61,8 @@ instance View IndexView where
                         </tbody>
                     </table>
                     {inlinePostFormHtml (pathTo TestLlmConnectionAction) (tr "Test connection") "btn btn-ghost" (Just "test-llm") False}
+                    {inlinePostFormHtml (pathTo TestLlmIntegrationAction) (tr "Test integration") "btn btn-ghost" (Just "test-llm-integration") False}
+                    <a href={LlmAgentConfigAction} class="btn btn-ghost" data-testid="agent-config-link">{tr "Agent configuration"}</a>
                 </div></div>
             </div>
             <div class="col-lg-6 d-flex flex-column">
@@ -183,7 +186,7 @@ instance View IndexView where
                     [hsx|
                     <table class="table" data-testid="llm-counters">
                         <thead>
-                            <tr><th>{tr "Provider"}</th><th>{tr "Day"}</th><th>{tr "Tokens in"}</th><th>{tr "Tokens out"}</th><th>{tr "Requests"}</th></tr>
+                            <tr><th>{tr "Scope"}</th><th>{tr "Provider"}</th><th>{tr "Day"}</th><th>{tr "Tokens in"}</th><th>{tr "Tokens out"}</th><th>{tr "Requests"}</th></tr>
                         </thead>
                         <tbody>
                             {forEach counters counterRowHtml}
@@ -297,6 +300,7 @@ counterRowHtml :: CounterRow -> Html
 counterRowHtml row =
     [hsx|
     <tr data-testid="llm-counter">
+        <td>{row.scope}</td>
         <td>{row.provider}</td>
         <td>{show row.day}</td>
         <td>{row.tokensIn}</td>

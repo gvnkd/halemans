@@ -6,12 +6,18 @@ import Application.Service.Llm.Budget
 import Application.Service.Llm.Output
 import Application.Service.Llm.Prompt
 import Application.Service.Llm.ToolCache (freshEnough, isFailureText)
-import Data.Aeson ((.:))
+import Control.Concurrent.Async (withAsync)
+import Data.Aeson ((.:), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
+import Data.Int (Int64)
 import qualified Data.Text as Text
 import IHP.Prelude
+import Network.HTTP.Types (status200)
+import Network.Socket (close)
+import qualified Network.Wai as Wai
+import qualified Network.Wai.Handler.Warp as Warp
 import Test.Helpers (atTime)
 import Test.Hspec
 
@@ -140,6 +146,76 @@ spec = describe "Milestone 4 LLM services" do
         it "produces 64 hex chars" do
             Text.length (sha256Hex "x") `shouldBe` 64
 
+    describe "Llm.verifyStreamBody" do
+        it "accepts an SSE body with data chunks and [DONE]" do
+            verifyStreamBody "data: {\"x\":1}\n\ndata: [DONE]\n\n" `shouldBe` Nothing
+        it "rejects a body without data chunks" do
+            verifyStreamBody "[DONE]\n\n" `shouldSatisfy` isJust
+        it "rejects a truncated stream without [DONE]" do
+            verifyStreamBody "data: {\"x\":1}\n\n" `shouldSatisfy` isJust
+        it "rejects a non-SSE JSON body" do
+            verifyStreamBody "{\"choices\":[]}" `shouldSatisfy` isJust
+
+    describe "Llm.chatCompletionStreaming (tool-call reassembly)" do
+        it "reassembles argument fragments keyed by stream index" do
+            -- The captured qwen3.8-vLLM shape: first chunk carries id+name+
+            -- empty args, continuations carry ONLY {index, arguments fragment}.
+            -- Regression: grouping by id dropped every fragment.
+            let chunks =
+                    [ deltaWithCalls [callPart (Just 0) (Just "chatcmpl-tool-a") (Just "get_dashboard") ""]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "{\"id\": \""]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "afa48"]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "846\"}"]
+                    , deltaWithCalls [callPart (Just 1) (Just "chatcmpl-tool-b") (Just "list_dashboards") "{}"]
+                    ]
+            result <- withScriptedSse chunks \baseUrl ->
+                chatCompletionStreaming (LlmProviderConfig "t" baseUrl "m" Nothing True) (Prompt [userMessage "x"] []) (\_ -> pure ())
+            case result of
+                Left err -> expectationFailure (cs ("streaming failed: " <> tshow err))
+                Right completion -> do
+                    get #content completion `shouldBe` ""
+                    get #toolCalls completion
+                        `shouldBe` [ ToolCall "chatcmpl-tool-a" "get_dashboard" "{\"id\": \"afa48846\"}"
+                                   , ToolCall "chatcmpl-tool-b" "list_dashboards" "{}"
+                                   ]
+        it "falls back to id/last-entry matching when index is absent" do
+            let chunks =
+                    [ deltaWithCalls [callPart Nothing (Just "chatcmpl-tool-a") (Just "get_dashboard") "{\"id\": \""]
+                    , deltaWithCalls [callPart Nothing Nothing Nothing "abc\"}"]
+                    ]
+            result <- withScriptedSse chunks \baseUrl ->
+                chatCompletionStreaming (LlmProviderConfig "t" baseUrl "m" Nothing True) (Prompt [userMessage "x"] []) (\_ -> pure ())
+            case result of
+                Left err -> expectationFailure (cs ("streaming failed: " <> tshow err))
+                Right completion ->
+                    get #toolCalls completion
+                        `shouldBe` [ToolCall "chatcmpl-tool-a" "get_dashboard" "{\"id\": \"abc\"}"]
+        it "pings on reasoning and tool-argument chunks, tracking the streaming tool name" do
+            -- Regression: only content deltas used to emit status, so the
+            -- reasoning phase and a big tool-call argument payload (a full
+            -- dashboard config) were wire-silent and looked like a stall.
+            let chunks =
+                    [ deltaWithContent "I'll check. "
+                    , deltaWithReasoning "thinking…"
+                    , deltaWithCalls [callPart (Just 0) (Just "chatcmpl-tool-a") (Just "validate_dashboard") ""]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "{\"config\": \""]
+                    , deltaWithCalls [callPart (Just 0) Nothing Nothing "{}\"}"]
+                    ]
+            statuses <- newIORef []
+            result <- withScriptedSse chunks \baseUrl ->
+                chatCompletionStreaming (LlmProviderConfig "t" baseUrl "m" Nothing True) (Prompt [userMessage "x"] []) (\status -> modifyIORef' statuses (status :))
+            case result of
+                Left err -> expectationFailure (cs ("streaming failed: " <> tshow err))
+                Right completion -> do
+                    get #content completion `shouldBe` "I'll check. "
+                    get #toolCalls completion
+                        `shouldBe` [ToolCall "chatcmpl-tool-a" "validate_dashboard" "{\"config\": \"{}\"}"]
+                    -- one ping per active chunk plus the final one at [DONE]
+                    emitted <- reverse <$> readIORef statuses
+                    map stContent emitted `shouldBe` replicate 6 "I'll check. "
+                    map stTool emitted
+                        `shouldBe` [Nothing, Nothing, Just "validate_dashboard", Just "validate_dashboard", Just "validate_dashboard", Just "validate_dashboard"]
+
     describe "Budget.budgetExceeded" do
         it "is over budget at the cap" do
             budgetExceeded 100 60 40 `shouldBe` True
@@ -206,3 +282,57 @@ fieldOf :: Text -> ParsedOutput -> Maybe Text
 fieldOf key parsed = do
     structured <- parsed.structured
     parseMaybe (Aeson.withObject "result" (\o -> o .: Key.fromText key)) structured
+
+-- Scripted SSE server: replays the given chunk values as data frames and
+-- terminates with [DONE]; runs the action against the ephemeral base URL.
+withScriptedSse :: [Aeson.Value] -> (Text -> IO a) -> IO a
+withScriptedSse chunks action = do
+    (port, socket) <- Warp.openFreePort
+    close socket
+    let body =
+            cs
+                ( Text.concat ["data: " <> cs (Aeson.encode chunk) <> "\n\n" | chunk <- chunks]
+                    <> "data: [DONE]\n\n"
+                ) ::
+                LByteString
+    withAsync
+        (Warp.run port (\_request respond -> respond (Wai.responseLBS status200 [("Content-Type", "text/event-stream")] body)))
+        (\_server -> action ("http://127.0.0.1:" <> tshow port))
+
+deltaWithCalls :: [Aeson.Value] -> Aeson.Value
+deltaWithCalls parts =
+    Aeson.object
+        [ "choices"
+            .= [ Aeson.object
+                    [ "index" .= (0 :: Int)
+                    , "delta" .= Aeson.object ["tool_calls" .= parts]
+                    ]
+               ]
+        ]
+
+deltaWithContent :: Text -> Aeson.Value
+deltaWithContent text = deltaWithDeltaKey "content" text
+
+deltaWithReasoning :: Text -> Aeson.Value
+deltaWithReasoning text = deltaWithDeltaKey "reasoning_content" text
+
+deltaWithDeltaKey :: Text -> Text -> Aeson.Value
+deltaWithDeltaKey key text =
+    Aeson.object
+        [ "choices"
+            .= [ Aeson.object
+                    [ "index" .= (0 :: Int)
+                    , "delta" .= Aeson.object [Key.fromText key .= text]
+                    ]
+               ]
+        ]
+
+callPart :: Maybe Int -> Maybe Text -> Maybe Text -> Text -> Aeson.Value
+callPart mIndex mId mName args =
+    Aeson.object $
+        ["index" .= index | Just index <- [mIndex]]
+            ++ ["id" .= callId | Just callId <- [mId]]
+            ++ [ "function"
+                    .= Aeson.object
+                        (["name" .= name | Just name <- [mName]] ++ ["arguments" .= args])
+               ]

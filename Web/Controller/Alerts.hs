@@ -14,7 +14,7 @@ import qualified Application.Service.Facets as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
 import qualified Application.Service.Jira.DbConfig as Jira
 import Application.Service.Llm.Queue (latestJobErrors)
-import Application.Service.MetricChart (MetricChartData, chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
+import Application.Service.MetricChart (MetricChartData (..), chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -327,24 +327,40 @@ metricChartErrorHtml message =
     </div>
 |]
 
--- Metric chart fragment: inline SVG plus the hover-tooltip payload (series
--- points + the exact rendered layout, consumed by static/app.js). Values
--- are JSON in attributes — hsx escapes the quotes for us.
-metricChartHtml :: Chart.ScaleMode -> MetricChartData -> Html
+-- Metric chart fragment: upstream deep links (zabbix item graphs, grafana
+-- explore), inline SVG, plus the hover-tooltip payload (series points + the
+-- exact rendered layout, consumed by static/app.js). Values are JSON in
+-- attributes — hsx escapes the quotes for us. Link labels pass through tr:
+-- dynamic ones (zabbix item names) are not in the catalog and render as-is.
+metricChartHtml :: (?request :: Request) => Chart.ScaleMode -> MetricChartData -> Html
 metricChartHtml scale chartData =
     [hsx|
-    <div class="metric-chart" data-testid="metric-chart-svg"
-        data-chart-series={seriesJson :: Text}
-        data-chart-scale={scaleText}
-        data-chart-tlo={tshow tLo}
-        data-chart-thi={tshow tHi}
-        data-chart-ylo={tshow yLo}
-        data-chart-yhi={tshow yHi}
-        data-chart-plotleft={tshow plotLeft}
-        data-chart-plotright={tshow plotRight}>
-        {preEscapedToHtml (chartDataSvg scale chartData)}
+    <div>
+        {linksRow}
+        <div class="metric-chart" data-testid="metric-chart-svg"
+            data-chart-series={seriesJson :: Text}
+            data-chart-scale={scaleText}
+            data-chart-tlo={tshow tLo}
+            data-chart-thi={tshow tHi}
+            data-chart-ylo={tshow yLo}
+            data-chart-yhi={tshow yHi}
+            data-chart-plotleft={tshow plotLeft}
+            data-chart-plotright={tshow plotRight}>
+            {preEscapedToHtml (chartDataSvg scale chartData)}
+        </div>
     </div>
 |]
   where
     seriesJson = chartHoverJson chartData
+    linksRow = case chartData.mcdLinks of
+        [] -> mempty
+        links ->
+            [hsx|
+            <div class="small mb-1" data-testid="metric-chart-links">
+                {forEach links linkHtml}
+            </div>
+            |]
+    linkHtml :: (Text, Text) -> Html
+    linkHtml (label, url) =
+        [hsx|<a href={url} target="_blank" rel="noopener noreferrer" class="me-3">{tr label}</a>|]
     (scaleText, (tLo, tHi), (yLo, yHi), (plotLeft, plotRight)) = chartRenderMeta scale chartData

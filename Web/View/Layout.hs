@@ -39,6 +39,7 @@ defaultLayout inner =
         <main id="content">
             {inner}
         </main>
+        {agentWidget}
     </body>
 </html>
 |]
@@ -84,6 +85,7 @@ navigation =
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>{tr "Escalation policies"}</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>{tr "Integrations"}</a></li>
                     <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>
+                    <li><a class="dropdown-item" href={LlmAgentConfigAction}>{tr "Agent"}</a></li>
                     <li><a class="dropdown-item" href={AssetsAdminAction}>{tr "Assets"}</a></li>
                     <li><a class="dropdown-item" href={LlmQueueAction}>{tr "LLM queue"}</a></li>
                     <li><a class="dropdown-item" href={AdminAction}>{tr "Jobs"}</a></li>
@@ -97,6 +99,35 @@ navigation =
     </div>
 </nav>
 |]
+
+-- Floating agent chat widget on every page (internal API milestone). Logged-in
+-- only: the chat endpoints are session-authed and act as the current user.
+-- All behavior lives in app.js (CSP: no inline handlers); the data attributes
+-- carry the endpoint URLs and page context is gathered client-side on send.
+agentWidget :: Html
+agentWidget = case currentUserOrNothing of
+    Nothing -> mempty
+    Just _ ->
+        [hsx|
+        <div id="agent-widget" class="agent-widget" data-chat-url="/agent/chat" data-history-url="/agent/chat" data-sessions-url="/agent/sessions" data-new-chat-label={tr "New chat"} data-testid="agent-widget">
+            <button type="button" id="agent-toggle" class="agent-fab" data-testid="agent-toggle" aria-expanded="false">{tr "Ask agent"}</button>
+            <section id="agent-panel" class="agent-panel d-none" data-testid="agent-panel" role="dialog" aria-label={tr "Halemans agent"}>
+                <header class="agent-panel-header">
+                    <span>{tr "Halemans agent"}</span>
+                    <div class="agent-panel-controls">
+                        <select id="agent-sessions" class="agent-sessions" data-testid="agent-sessions" aria-label={tr "Chat history"}></select>
+                        <button type="button" id="agent-new-chat" class="agent-new-chat" data-testid="agent-new-chat" title={tr "New chat"} aria-label={tr "New chat"}>+</button>
+                    </div>
+                    <button type="button" id="agent-close" class="agent-close" data-testid="agent-close" aria-label={tr "Close"}>×</button>
+                </header>
+                <div id="agent-messages" class="agent-messages" data-testid="agent-messages"></div>
+                <div class="agent-form">
+                    <textarea id="agent-input" class="agent-input" data-testid="agent-input" placeholder={tr "Ask about this page…"} rows="2" autocomplete="off"></textarea>
+                    <button type="button" id="agent-send" class="btn-brand agent-send" data-testid="agent-send">{tr "Send"}</button>
+                </div>
+            </section>
+        </div>
+    |]
 
 userMenu :: Html
 userMenu = case currentUserOrNothing of

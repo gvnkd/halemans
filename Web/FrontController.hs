@@ -7,6 +7,7 @@ import Web.View.Layout (defaultLayout)
 -- Controller Imports
 
 import Web.Controller.Admin
+import Web.Controller.AgentChat
 import Web.Controller.Alerts
 import Web.Controller.Api
 import Web.Controller.AssetsAdmin
@@ -23,6 +24,7 @@ import Web.Controller.GroupingRules
 import Web.Controller.Groups
 import Web.Controller.Hooks
 import Web.Controller.Integrations
+import Web.Controller.InternalApi
 import Web.Controller.Live
 import Web.Controller.LlmAdmin
 import Web.Controller.Metrics
@@ -65,6 +67,8 @@ instance FrontController WebApplication where
         , parseRoute @ReportsController
         , parseRoute @ApiController
         , parseRoute @MetricsController
+        , parseRoute @InternalApiController
+        , parseRoute @AgentChatController
         ]
 
 instance InitControllerContext WebApplication where
