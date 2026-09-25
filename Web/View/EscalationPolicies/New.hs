@@ -12,6 +12,7 @@ data NewView = NewView
     }
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Escalation policies")
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New escalation policy") mempty}

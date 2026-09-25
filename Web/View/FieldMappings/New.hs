@@ -8,6 +8,7 @@ import Web.View.Prelude
 data NewView = NewView
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Field mappings")
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New field mapping") mempty}

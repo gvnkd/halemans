@@ -7,6 +7,7 @@ import Web.View.Prelude
 data EditView = EditView {mapping :: FieldMapping}
 
 instance View EditView where
+    beforeRender _ = setPageTitle (tr "Field mappings")
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit field mapping") mempty}

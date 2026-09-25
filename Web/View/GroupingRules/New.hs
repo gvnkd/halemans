@@ -8,6 +8,7 @@ import Web.View.Prelude
 data NewView = NewView
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Grouping rules")
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New grouping rule") mempty}

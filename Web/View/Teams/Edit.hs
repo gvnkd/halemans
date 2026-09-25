@@ -14,6 +14,7 @@ data EditView = EditView
     }
 
 instance View EditView where
+    beforeRender _ = setPageTitle (tr "Teams")
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit team") mempty}

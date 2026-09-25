@@ -11,6 +11,7 @@ data NewView = NewView
     }
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Blackouts")
     html NewView{..} =
         [hsx|
         {pageHeaderHtml (tr "New blackout") mempty}

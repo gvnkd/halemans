@@ -13,6 +13,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Flapping")
     html IndexView{..} =
         [hsx|
         <div>

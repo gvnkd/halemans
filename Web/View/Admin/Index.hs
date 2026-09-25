@@ -12,6 +12,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Jobs")
     html IndexView{..} =
         [hsx|
     <div>

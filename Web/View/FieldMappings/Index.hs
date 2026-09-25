@@ -6,6 +6,7 @@ import Web.View.Prelude
 data IndexView = IndexView {mappings :: [FieldMapping]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Field mappings")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Field mappings") headerActions}

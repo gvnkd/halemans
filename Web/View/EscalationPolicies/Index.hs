@@ -10,6 +10,7 @@ import Web.View.Prelude
 data IndexView = IndexView {policies :: [EscalationPolicy]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Escalation policies")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Escalation policies") newButton}

@@ -7,6 +7,7 @@ import Web.View.Prelude
 data NewRoleView = NewRoleView
 
 instance View NewRoleView where
+    beforeRender _ = setPageTitle (tr "New agent role")
     html NewRoleView =
         [hsx|
         {pageHeaderHtml (tr "New agent role") mempty}

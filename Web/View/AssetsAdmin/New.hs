@@ -7,6 +7,7 @@ import Web.View.Prelude
 data NewView = NewView
 
 instance View NewView where
+    beforeRender _ = setPageTitle (tr "Assets")
     html NewView =
         [hsx|
         {pageHeaderHtml (tr "New Assets info source") mempty}

@@ -9,6 +9,7 @@ data PreviewView = PreviewView
     }
 
 instance View PreviewView where
+    beforeRender _ = setPageTitle (tr "Grouping rules")
     html PreviewView{..} =
         [hsx|
         {pageHeaderHtml (tr "Preview" <> ": " <> rule.name) mempty}

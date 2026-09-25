@@ -27,6 +27,7 @@ data JiraCacheStats = JiraCacheStats
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Integrations")
     html IndexView{..} =
         [hsx|
     <div>

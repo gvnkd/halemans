@@ -27,6 +27,7 @@ data QueueView = QueueView
     }
 
 instance View QueueView where
+    beforeRender _ = setPageTitle (tr "LLM queue")
     html QueueView{..} =
         [hsx|
         <div>

@@ -8,6 +8,7 @@ import Web.View.Prelude
 data EditView = EditView {rule :: GroupingRule}
 
 instance View EditView where
+    beforeRender _ = setPageTitle (tr "Grouping rules")
     html EditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit grouping rule") mempty}

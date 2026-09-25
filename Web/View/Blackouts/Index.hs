@@ -6,6 +6,7 @@ import Web.View.Prelude
 data IndexView = IndexView {blackouts :: [(Blackout, Text)]}
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Blackouts")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Blackouts") newButton}

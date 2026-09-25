@@ -10,6 +10,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Audit exports")
     html IndexView{..} =
         [hsx|
         <div>

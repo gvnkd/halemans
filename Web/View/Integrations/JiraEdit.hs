@@ -7,6 +7,7 @@ import Web.View.Prelude
 data JiraEditView = JiraEditView {config :: JiraConfig}
 
 instance View JiraEditView where
+    beforeRender _ = setPageTitle (tr "Integrations")
     html JiraEditView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit Jira connection") mempty}

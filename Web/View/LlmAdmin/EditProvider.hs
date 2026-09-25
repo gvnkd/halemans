@@ -8,6 +8,7 @@ data EditProviderView = EditProviderView
     }
 
 instance View EditProviderView where
+    beforeRender _ = setPageTitle (tr "Edit LLM provider")
     html EditProviderView{..} =
         [hsx|
         {pageHeaderHtml (tr "Edit LLM provider") mempty}

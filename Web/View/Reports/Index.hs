@@ -31,6 +31,7 @@ data IndexView = IndexView
     }
 
 instance View IndexView where
+    beforeRender _ = setPageTitle (tr "Reports")
     html IndexView{..} =
         [hsx|
         {pageHeaderHtml (tr "Reports") mempty}

@@ -26,6 +26,7 @@ data ShowView = ShowView
     }
 
 instance View ShowView where
+    beforeRender ShowView{..} = setPageTitle alert.title
     html ShowView{..} =
         [hsx|
         <div data-testid="alert-card" data-live-scope={"alert:" <> tshow alert.id}>
