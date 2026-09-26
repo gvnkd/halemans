@@ -18,6 +18,9 @@ import IHP.TypedSql (sqlExecTyped, typedSql)
 instance Job RetentionJob where
     perform _job = do
         pruneTerminalJobRows
+        requeued <- requeueOrphanedLlmAnalyses
+        when (requeued > 0) do
+            putStrLn ("retention: requeued " <> tshow requeued <> " orphaned llm analyses" :: Text)
         maybeConfig <-
             query @RetentionConfig
                 |> orderByDesc #updatedAt
@@ -97,6 +100,26 @@ pruneTerminalJobRows = do
         deleted <- prune cutoff
         rest <- if deleted == 0 then pure 0 else pruneTable cutoff prune
         pure (deleted + rest)
+
+-- Orphaned analyses (seen on the dev stand 2026-09-26): an llm_analyses row
+-- left in 'queued' with no live llm_analysis_jobs row is invisible to the
+-- worker (it dispatches job rows only) and sits on the admin queue page
+-- forever. Every creation path writes both rows, but a raced/crashed
+-- transaction can leave the analysis behind; requeue such rows here. An
+-- analysis with any not-started/running/retry job is skipped (that includes
+-- rate-limit backoff requeues, whose job rows carry a future run_at).
+requeueOrphanedLlmAnalyses :: (?modelContext :: ModelContext) => IO Int64
+requeueOrphanedLlmAnalyses =
+    sqlExecTyped
+        [typedSql|
+        INSERT INTO llm_analysis_jobs (analysis_id)
+        SELECT a.id FROM llm_analyses a
+        WHERE a.status = 'queued'
+        AND NOT EXISTS (
+            SELECT 1 FROM llm_analysis_jobs j
+            WHERE j.analysis_id = a.id
+            AND j.status IN ('job_status_not_started', 'job_status_running', 'job_status_retry'))
+    |]
 
 pruneEnrichAlertJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
 pruneEnrichAlertJobs cutoff =

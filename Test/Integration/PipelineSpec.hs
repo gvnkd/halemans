@@ -1154,6 +1154,25 @@ m5Spec = describe "milestone 5 hardening" do
         _ <- newRecord @RetentionConfig |> set #rawEventsDays 3650 |> set #enabled True |> createRecord
         pure ()
 
+    it "retention requeues orphaned queued llm analyses" do
+        now <- getCurrentTime
+        alert <-
+            newRecord @Alert
+                |> set #fingerprint ("orphan-analysis-" <> tshow now)
+                |> set #title "orphan analysis test"
+                |> set #startedAt (Just now)
+                |> createRecord
+        analysis <- newRecord @LlmAnalysis |> set #alertId (get #id alert) |> createRecord
+        jobsBefore <- query @LlmAnalysisJob |> filterWhere (#analysisId, get #id analysis) |> fetch
+        length jobsBefore `shouldBe` 0
+        perform =<< (newRecord @RetentionJob |> createRecord)
+        jobsAfter <- query @LlmAnalysisJob |> filterWhere (#analysisId, get #id analysis) |> fetch
+        length jobsAfter `shouldBe` 1
+        -- a second run must not duplicate the job row
+        perform =<< (newRecord @RetentionJob |> createRecord)
+        jobsAgain <- query @LlmAnalysisJob |> filterWhere (#analysisId, get #id analysis) |> fetch
+        length jobsAgain `shouldBe` 1
+
     it "source failures raise a warning internal alert, escalate at 5, recovery resolves" do
         source <- integrationSource "webhook" "itest-webhook-health" "" (object [])
         recordFailure source "connection refused"
