@@ -163,6 +163,38 @@
     });
 })();
 
+// Back/forward across native history entries (the login POST redirect, typed
+// URLs, the first full load): turbolinks 5 only handles popstate events whose
+// entry it owns (event.state.turbolinks) — for any other entry the browser
+// changes the URL and turbolinks stays silent, leaving the previous page on
+// screen. Detect exactly that case and force a visit; action 'replace'
+// re-stamps the entry with turbolinks state (so later back/forward through it
+// is handled natively) without adding history entries. The initial-load
+// popstate (state null, URL unchanged) and hash-only moves are ignored.
+(function () {
+    if (!window.Turbolinks) return;
+    var lastUrl = window.location.href;
+
+    function pageKey(url) {
+        var u = new URL(url);
+        return u.origin + u.pathname + u.search;
+    }
+
+    document.addEventListener('turbolinks:load', function () {
+        lastUrl = window.location.href;
+    });
+
+    window.addEventListener('popstate', function (event) {
+        if (event.state && event.state.turbolinks) return; // turbolinks handles it
+        if (window.location.href === lastUrl) return; // initial-load popstate
+        if (pageKey(window.location.href) === pageKey(lastUrl)) {
+            lastUrl = window.location.href; // hash-only move
+            return;
+        }
+        Turbolinks.visit(window.location.toString(), { action: 'replace' });
+    });
+})();
+
 // Filter multi-select dropdowns (data-filter-dropdown, /alerts and
 // /env/:name): the menu stays open while checkboxes are toggled
 // (data-bs-auto-close="outside"); the enclosing GET form is submitted once
