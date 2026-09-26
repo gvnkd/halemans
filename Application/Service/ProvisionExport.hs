@@ -5,10 +5,11 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as AesonPretty
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.Aeson.Types (Parser, parseMaybe)
+import Data.Aeson.Types (Pair, Parser, parseMaybe)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List as List
 import qualified Data.Text as Text
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Yaml.Internal (isSpecialString)
 import Generated.Types
 import IHP.Fetch (fetch)
@@ -62,6 +63,10 @@ buildProvisionExport = do
     notificationRules <- exportNotificationRules
     llmAgentRoles <- exportLlmAgentRoles
     autoAnalyze <- exportAutoAnalyze
+    blackouts <- exportBlackouts
+    llmAgentConfig <- exportLlmAgentConfig
+    llmGlobalConfig <- exportLlmGlobalConfig
+    toolCache <- exportToolCache
     pure $
         object $
             [ "strict" .= False
@@ -81,6 +86,10 @@ buildProvisionExport = do
             , "llmAgentRoles" .= llmAgentRoles
             ]
                 <> ["autoAnalyze" .= autoAnalyze | isJust autoAnalyze]
+                <> ["blackouts" .= object blackouts | not (null blackouts)]
+                <> ["llmAgentConfig" .= llmAgentConfig | isJust llmAgentConfig]
+                <> ["llmGlobalConfig" .= llmGlobalConfig | isJust llmGlobalConfig]
+                <> ["toolCache" .= toolCache | isJust toolCache]
   where
     exportUsers = do
         users <- query @User |> orderByAsc #email |> fetch
@@ -384,6 +393,74 @@ buildProvisionExport = do
                         , "environments" .= row.environments
                         , "enabled" .= row.enabled
                         ]
+    -- Blackouts are keyed in the file by a free label, which is not stored —
+    -- the export keys them by their time window (the row identity apply
+    -- matches on), so a re-imported export updates the same rows. Scope legs
+    -- resolve back to inventory names; globs are emitted verbatim. Expired
+    -- blackouts are exported too (the export is a snapshot).
+    exportBlackouts = do
+        rows <- query @Blackout |> orderByAsc #startsAt |> fetch
+        forM rows \blackout -> do
+            environment <- forM blackout.environmentId (fmap (.name) . fetch)
+            host <- forM blackout.hostId (fmap (.fqdn) . fetch)
+            service <- forM blackout.serviceId (fmap (.name) . fetch)
+            let windowKey = isoProvisionTime blackout.startsAt <> "/" <> isoProvisionTime blackout.endsAt
+            pure (blackoutPair windowKey blackout environment host service)
+    -- apiTokens are NOT exported: only the sha256 hash is stored, so an
+    -- export can never reconstruct the plaintext to match it against env
+    -- vars. Provision them from HALEMANS_PROVISION_CONFIG instead.
+    exportLlmAgentConfig = do
+        rows <- query @LlmAgentConfig |> fetch
+        pure case rows of
+            [] -> Nothing
+            (row : _) ->
+                Just $
+                    object
+                        [ "dailyTokenBudget" .= row.dailyTokenBudget
+                        , "ratePerMinute" .= row.ratePerMinute
+                        ]
+    exportLlmGlobalConfig = do
+        rows <- query @LlmGlobalConfig |> fetch
+        pure case rows of
+            [] -> Nothing
+            (row : _) ->
+                Just $
+                    object
+                        [ "dailyTokenBudget" .= row.dailyTokenBudget
+                        , "ratePerMinute" .= row.ratePerMinute
+                        ]
+    exportToolCache = do
+        rows <- query @LlmToolCacheConfig |> fetch
+        pure case rows of
+            [] -> Nothing
+            (row : _) ->
+                Just $
+                    object
+                        [ "enabled" .= row.enabled
+                        , "ttlSeconds" .= row.ttlSeconds
+                        ]
+
+-- One exported blackout entry: keyed by its time window (the apply identity),
+-- scope legs resolved back to inventory names, globs verbatim.
+blackoutPair :: Text -> Blackout -> Maybe Text -> Maybe Text -> Maybe Text -> Pair
+blackoutPair windowKey blackout environment host service =
+    Key.fromText windowKey
+        .= object
+            ( [ "startsAt" .= isoProvisionTime blackout.startsAt
+              , "endsAt" .= isoProvisionTime blackout.endsAt
+              , "reason" .= blackout.reason
+              ]
+                <> ["environment" .= name | Just name <- [environment]]
+                <> ["host" .= name | Just name <- [host]]
+                <> ["service" .= name | Just name <- [service]]
+                <> ["environmentGlob" .= glob | Just glob <- [blackout.environmentGlob]]
+                <> ["hostGlob" .= glob | Just glob <- [blackout.hostGlob]]
+                <> ["serviceGlob" .= glob | Just glob <- [blackout.serviceGlob]]
+                <> ["titleGlob" .= glob | Just glob <- [blackout.titleGlob]]
+            )
+
+isoProvisionTime :: UTCTime -> Text
+isoProvisionTime time = cs (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" time)
 
 -- | Indented JSON for the provision export download.
 renderProvisionJson :: Aeson.Value -> LBS.ByteString

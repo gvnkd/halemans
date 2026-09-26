@@ -182,6 +182,24 @@ POST /admin/teams/{teamId}/update     UpdateTeamAction
 POST /admin/teams/{teamId}/delete     DeleteTeamAction
 |]
 
+[routes|UsersController
+GET  /admin/users                     UsersAction
+GET  /admin/users/new                 NewUserAction
+POST /admin/users                     CreateUserAction
+GET  /admin/users/{userId}/edit       EditUserAction
+POST /admin/users/{userId}/update     UpdateUserAction
+POST /admin/users/{userId}/delete     DeleteUserAction
+|]
+
+[routes|RolesController
+GET  /admin/roles                     RolesAction
+GET  /admin/roles/new                 NewRoleAction
+POST /admin/roles                     CreateRoleAction
+GET  /admin/roles/{roleId}/edit       EditRoleAction
+POST /admin/roles/{roleId}/update     UpdateRoleAction
+POST /admin/roles/{roleId}/delete     DeleteRoleAction
+|]
+
 [routes|FieldMappingsController
 GET  /admin/field-mappings                                FieldMappingsAction
 GET  /admin/field-mappings/new                            NewFieldMappingAction

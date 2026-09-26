@@ -39,7 +39,7 @@ renderBlackout :: (Blackout, Text) -> Html
 renderBlackout (blackout, scopeName) =
     [hsx|
     <tr data-testid="blackout-row">
-        <td>{scopeName}</td>
+        <td>{scopeName} {protectedBadgeHtml (get #protected blackout)}</td>
         <td>{utcTimeHtml blackout.startsAt}</td>
         <td>{utcTimeHtml blackout.endsAt}</td>
         <td>{blackout.reason}</td>

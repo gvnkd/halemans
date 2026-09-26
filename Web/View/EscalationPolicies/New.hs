@@ -50,7 +50,7 @@ stepEditor teams users steps =
          in [hsx|
                 <div class="input-group input-group-sm mb-1" data-testid={"policy-step-" <> show index}>
                     <span class="input-group-text">{tr "after (s)"}</span>
-                    <input name="stepAfter" type="number" class="form-control" value={afterValue} data-testid="step-after"/>
+                    <input name="stepAfter" type="number" min="0" class="form-control" value={afterValue} data-testid="step-after"/>
                     <select name="stepTarget" class="select" data-testid="step-target">
                         <option value="" selected={targetValue == ""}>—</option>
                         {forEach teams (teamOption targetValue)}
@@ -58,10 +58,12 @@ stepEditor teams users steps =
                     </select>
                     <select name="stepUnless" class="select" data-testid="step-unless">
                         <option value="" selected={unlessValue == ""}>{tr "unless: —"}</option>
-                        <option value="ack" selected={unlessValue == "ack"}>{tr "unless ack"}</option>
+                        {forEach ["firing", "ack", "stalled", "resolved"] (unlessOption unlessValue)}
                     </select>
                 </div>
             |]
+    unlessOption selected status =
+        [hsx|<option value={status} selected={selected == status}>{tr "unless"}: {status}</option>|]
     teamOption selected team =
         [hsx|
             <option value={"team:" <> tshow (get #id team)} selected={selected == "team:" <> tshow (get #id team)}>{tr "team"}: {team.name}</option>

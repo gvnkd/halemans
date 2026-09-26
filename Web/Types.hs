@@ -259,3 +259,27 @@ data EscalationPoliciesController
     | UpdateEscalationPolicyAction {escalationPolicyId :: !(Id EscalationPolicy)}
     | DeleteEscalationPolicyAction {escalationPolicyId :: !(Id EscalationPolicy)}
     deriving (Eq, Show)
+
+-- Admin → Users (provision parity): user accounts keyed by email (create-only
+-- in the UI, like the provision file's natural key), role assignment and
+-- password reset. User settings (theme/timezone/language) stay on the
+-- profile page.
+data UsersController
+    = UsersAction
+    | NewUserAction
+    | CreateUserAction
+    | EditUserAction {userId :: !(Id User)}
+    | UpdateUserAction {userId :: !(Id User)}
+    | DeleteUserAction {userId :: !(Id User)}
+    deriving (Eq, Show)
+
+-- Admin → Roles: the privilege matrix (roles.name + roles.privileges), the
+-- same definition the provision file's `roles` section carries.
+data RolesController
+    = RolesAction
+    | NewRoleAction
+    | CreateRoleAction
+    | EditRoleAction {roleId :: !(Id Role)}
+    | UpdateRoleAction {roleId :: !(Id Role)}
+    | DeleteRoleAction {roleId :: !(Id Role)}
+    deriving (Eq, Show)

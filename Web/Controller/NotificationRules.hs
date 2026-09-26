@@ -1,6 +1,7 @@
 module Web.Controller.NotificationRules where
 
-import Application.Helper.RuleForm (parseMatchForm)
+import Application.Helper.RuleForm (parseMatchFormFacets)
+import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
 import Web.Controller.Prelude
 import Web.View.NotificationRules.Edit
@@ -27,11 +28,12 @@ instance Controller NotificationRulesController where
                 |> set #name (param @Text "name")
                 |> set #position (param @Int "position")
                 |> set #enabled enabledParam
-                |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
+                |> set #match matchFormValue
                 |> set #severityThreshold (param @Text "severityThreshold")
                 |> set #teamId teamRef
                 |> set #userId userRef
-                |> set #channel "browser_push"
+                |> set #channel channelParam
+                |> set #channelConfig channelConfigValue
                 |> set #throttleSeconds (param @Int "throttleSeconds")
                 |> set #escalationPolicyId policyRef
                 |> createRecord
@@ -53,10 +55,12 @@ instance Controller NotificationRulesController where
                 |> set #name (param @Text "name")
                 |> set #position (param @Int "position")
                 |> set #enabled enabledParam
-                |> set #match (parseMatchForm (param @Text "matchFields") (param @Text "matchLabels"))
+                |> set #match matchFormValue
                 |> set #severityThreshold (param @Text "severityThreshold")
                 |> set #teamId teamRef
                 |> set #userId userRef
+                |> set #channel channelParam
+                |> set #channelConfig channelConfigValue
                 |> set #throttleSeconds (param @Int "throttleSeconds")
                 |> set #escalationPolicyId policyRef
                 |> updateRecord
@@ -96,6 +100,30 @@ policyRef = case paramOrNothing @Text "escalationPolicyId" of
 
 enabledParam :: (?request :: Request, ?respond :: Respond) => Bool
 enabledParam = paramOrNothing @Text "enabled" == Just "on"
+
+-- Match jsonb from the three CSV inputs (fields / labels / facet globs).
+matchFormValue :: (?request :: Request, ?respond :: Respond) => Value
+matchFormValue =
+    parseMatchFormFacets
+        (param @Text "matchFields")
+        (param @Text "matchLabels")
+        (param @Text "matchFacets")
+
+-- Channel select: browser_push | email (the two the notification engine and
+-- the agent tool accept); unknown values fall back to browser_push.
+channelParam :: (?request :: Request, ?respond :: Respond) => Text
+channelParam = case param @Text "channel" of
+    "email" -> "email"
+    _ -> "browser_push"
+
+-- Channel config textarea: must be a JSON object; empty/invalid falls back to
+-- {} (the form text documents the format).
+channelConfigValue :: (?request :: Request, ?respond :: Respond) => Value
+channelConfigValue = case paramOrNothing @Text "channelConfig" of
+    Just raw
+        | not (Text.null (Text.strip raw)) ->
+            fromMaybe (Aeson.object []) (Aeson.decode (cs raw))
+    _ -> Aeson.object []
 
 targetLabel :: (?modelContext :: ModelContext) => NotificationRule -> IO Text
 targetLabel rule = case (rule.teamId, rule.userId) of

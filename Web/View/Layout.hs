@@ -79,6 +79,8 @@ navigation =
                 <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">{tr "Admin"}</a>
                 <ul class="dropdown-menu">
                     <li><a class="dropdown-item" href={TeamsAction}>{tr "Teams"}</a></li>
+                    <li><a class="dropdown-item" href={UsersAction}>{tr "Users"}</a></li>
+                    <li><a class="dropdown-item" href={RolesAction}>{tr "Roles"}</a></li>
                     <li><a class="dropdown-item" href={GroupingRulesAction}>{tr "Grouping rules"}</a></li>
                     <li><a class="dropdown-item" href={FieldMappingsAction}>{tr "Field mappings"}</a></li>
                     <li><a class="dropdown-item" href={NotificationRulesAction}>{tr "Notification rules"}</a></li>

@@ -61,7 +61,7 @@ import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.Time.Clock (getCurrentTime)
+import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Network.HTTP.Types (status401, status403)
 import Test.Integration.Setup
 import Web.View.Dashboard.Index (EnvCard (..), computeEnvCards)
@@ -888,6 +888,120 @@ m7Spec = describe "provisioning (milestone 7)" do
             Left err -> expectationFailure (cs (show err))
             Right parsed -> parsed `shouldBe` nasty
         Aeson.decode (renderProvisionJson nasty) `shouldBe` Just nasty
+
+    it "provisions blackouts by time window, re-applying in place" do
+        suffix <- tshow <$> nextRandom
+        environment <- newRecord @Environment |> set #name ("m7-env-" <> suffix) |> createRecord
+        let titleGlob = "m7 title " <> suffix <> "*"
+            config reason =
+                object
+                    [ "blackouts"
+                        .= object
+                            [ Key.fromText ("m7-bo-" <> suffix)
+                                .= object
+                                    [ "startsAt" .= ("2026-10-01T00:00:00Z" :: Text)
+                                    , "endsAt" .= ("2026-10-02T00:00:00Z" :: Text)
+                                    , "environment" .= ("m7-env-" <> suffix)
+                                    , "titleGlob" .= titleGlob
+                                    , "reason" .= reason
+                                    ]
+                            ]
+                    ]
+            refetch = do
+                rows <- filter (\b -> b.titleGlob == Just titleGlob) <$> (query @Blackout |> fetch)
+                case rows of
+                    [row] -> pure row
+                    _ -> error "expected exactly one provisioned blackout"
+        m7Apply (config ("first" :: Text))
+        m7Apply (config "first")
+        blackout <- refetch
+        get #protected blackout `shouldBe` True
+        blackout.reason `shouldBe` "first"
+        blackout.environmentId `shouldBe` Just (get #id environment)
+        -- The same window re-applied updates the row in place (no duplicate).
+        m7Apply (config "second")
+        updated <- refetch
+        updated.reason `shouldBe` "second"
+        updated.id `shouldBe` get #id blackout
+
+    it "strict blackouts reconciles to the file (unlisted windows deleted)" do
+        suffix <- tshow <$> nextRandom
+        now <- getCurrentTime
+        _ <-
+            newRecord @Blackout
+                |> set #titleGlob (Just ("m7-doomed-bo-" <> suffix <> "*"))
+                |> set #startsAt (addUTCTime (-3600) now)
+                |> set #endsAt (addUTCTime 3600 now)
+                |> createRecord
+        m7Apply (object ["strict" .= True, "blackouts" .= object []])
+        remaining <- filter (\b -> b.titleGlob == Just ("m7-doomed-bo-" <> suffix <> "*")) <$> (query @Blackout |> fetch)
+        remaining `shouldBe` []
+
+    it "provisions the LLM budget and tool cache singletons" do
+        m7Apply
+            ( object
+                [ "llmAgentConfig" .= object ["dailyTokenBudget" .= (123456 :: Int), "ratePerMinute" .= (7 :: Int)]
+                ]
+            )
+        agentRow <- query @LlmAgentConfig |> fetchOneOrNothing >>= maybe (error "agent config missing") pure
+        agentRow.dailyTokenBudget `shouldBe` 123456
+        agentRow.ratePerMinute `shouldBe` 7
+        m7Apply
+            ( object
+                [ "llmGlobalConfig" .= object ["dailyTokenBudget" .= (654321 :: Int), "ratePerMinute" .= (9 :: Int)]
+                , "toolCache" .= object ["enabled" .= False, "ttlSeconds" .= (42 :: Int)]
+                ]
+            )
+        globalRow <- query @LlmGlobalConfig |> fetchOneOrNothing >>= maybe (error "global config missing") pure
+        globalRow.dailyTokenBudget `shouldBe` 654321
+        globalRow.ratePerMinute `shouldBe` 9
+        cacheRow <- query @LlmToolCacheConfig |> fetchOneOrNothing >>= maybe (error "tool cache config missing") pure
+        cacheRow.enabled `shouldBe` False
+        cacheRow.ttlSeconds `shouldBe` 42
+
+    it "provisions API tokens from env vars: rotate, un-revoke, strict reconcile" do
+        suffix <- tshow <$> nextRandom
+        user <- m7User ("m7-tok-" <> suffix <> "@dev")
+        let envName = "M7_API_TOKEN_" <> cs suffix
+            tokenConfig =
+                object
+                    [ "apiTokens"
+                        .= object
+                            [ Key.fromText user.email
+                                .= object
+                                    [ Key.fromText "automation"
+                                        .= object
+                                            [ "tokenEnv" .= (cs envName :: Text)
+                                            , "scopes" .= (["alerts:read"] :: [Text])
+                                            ]
+                                    ]
+                            ]
+                    ]
+            refetch = query @ApiToken |> filterWhere (#userId, get #id user) |> filterWhere (#name, "automation" :: Text) |> fetchOneOrNothing >>= maybe (error "token missing") pure
+        setEnv envName "m7-api-token-value"
+        flip finally (unsetEnv envName) do
+            m7Apply tokenConfig
+            token <- refetch
+            token.tokenHash `shouldBe` hashToken "m7-api-token-value"
+            token.prefix `shouldBe` Text.take 8 "m7-api-token-value"
+            token.scopes `shouldBe` ["alerts:read"]
+            -- A changed env value rotates the stored hash in place.
+            setEnv envName "m7-api-token-rotated"
+            m7Apply tokenConfig
+            rotated <- refetch
+            rotated.tokenHash `shouldBe` hashToken "m7-api-token-rotated"
+            rotated.id `shouldBe` get #id token
+            -- Re-provisioning clears a revocation (the file is the source of truth).
+            let tokenId = get #id token
+            void $ sqlExecTyped [typedSql| UPDATE api_tokens SET revoked_at = NOW() WHERE id = ${tokenId} |]
+            m7Apply tokenConfig
+            unrevoked <- refetch
+            unrevoked.revokedAt `shouldBe` Nothing
+            -- Strict reconcile deletes unlisted (owner, name) pairs.
+            _ <- newApiToken (get #id user) "stray" ["metrics"] Nothing
+            m7Apply (m7MergeObjects (object ["strict" .= True]) tokenConfig)
+            stray <- query @ApiToken |> filterWhere (#userId, get #id user) |> filterWhere (#name, "stray" :: Text) |> fetch
+            stray `shouldBe` []
 
 -- Insert one entry into a section map built by the m7*KeepItems helpers.
 m7InsertEntry :: Text -> Aeson.Value -> Aeson.Value -> Aeson.Value

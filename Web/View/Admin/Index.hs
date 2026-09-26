@@ -25,7 +25,7 @@ instance View IndexView where
         {tokensTable}
         {sectionHeaderHtml (tr "Provisioning") provisionLinks}
         <div class="card"><div class="card-body">
-            <p class="text-muted mb-2">{tr "Snapshot of users, roles, sources, teams, LLM config and agent roles, field mappings, dashboards, grouping, notification and escalation rules and integrations in the provision format. Webhook tokens are exported as env references when the token value matches a process env var; tokens with no env match and hostGroupsFile are not exported."}</p>
+            <p class="text-muted mb-2">{tr "Snapshot of users, roles, sources, teams, blackouts, LLM config (providers, prompt templates, agent roles, budgets, tool cache) and agent roles, field mappings, dashboards, grouping, notification and escalation rules and integrations in the provision format. Webhook tokens are exported as env references when the token value matches a process env var; API tokens, tokens with no env match and hostGroupsFile are not exported."}</p>
         </div></div>
         {sectionHeaderHtml (tr "Danger zone") mempty}
         <div class="card"><div class="card-body">

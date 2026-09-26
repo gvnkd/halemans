@@ -42,11 +42,13 @@ instance Controller BlackoutsController where
     action EditBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
+        ensureNotProtected (blackoutLabel blackout) (get #protected blackout)
         (environments, hosts, services) <- scopeChoices
         render EditView{..}
     action UpdateBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
+        ensureNotProtected (blackoutLabel blackout) (get #protected blackout)
         let startsAt = param @UTCTime "startsAt"
             endsAt = param @UTCTime "endsAt"
         let reason = param @Text "reason"
@@ -65,6 +67,7 @@ instance Controller BlackoutsController where
     action DeleteBlackoutAction{blackoutId} = do
         requirePrivilege "manage_blackouts"
         blackout <- fetch blackoutId
+        ensureNotProtected (blackoutLabel blackout) (get #protected blackout)
         deleteRecord blackout
         setSuccessMessage (tr "Blackout deleted")
         redirectTo BlackoutsAction
@@ -128,6 +131,9 @@ scopeParams
     serviceGlob = blankToNothing (paramOrNothing @Text "serviceGlob")
     titleGlob = blankToNothing (paramOrNothing @Text "titleGlob")
     blankToNothing = maybe Nothing (\value -> if Text.null (Text.strip value) then Nothing else Just value)
+
+blackoutLabel :: Blackout -> Text
+blackoutLabel blackout = tshow blackout.startsAt <> " .. " <> tshow blackout.endsAt
 
 resolveScopeName :: (?modelContext :: ModelContext) => Blackout -> IO Text
 resolveScopeName blackout = do

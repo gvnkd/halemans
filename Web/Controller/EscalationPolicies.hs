@@ -67,8 +67,10 @@ formChoices = do
     pure (teams, users)
 
 -- | Parallel form arrays: stepAfter[], stepTarget[] ("team:<uuid>" |
--- "user:<uuid>"), stepUnless[] ("" | status). Rows without a positive
--- after_seconds are dropped (§6 step shape).
+-- "user:<uuid>"), stepUnless[] ("" | status). Rows with a negative
+-- after_seconds (or a non-numeric/empty input) are dropped; 0 is kept —
+-- it is the meaningful immediately-due tracker shape (§6 step shape,
+-- same as the provision parser accepts).
 stepsFromForm :: (?request :: Request, ?respond :: Respond) => [Value]
 stepsFromForm =
     let afters = paramList @Text "stepAfter"
@@ -76,7 +78,7 @@ stepsFromForm =
         unlesses = paramList @Text "stepUnless"
         row after target unlessStatus = do
             seconds <- readMaybe (cs after) :: Maybe Int
-            if seconds <= 0
+            if seconds < 0
                 then Nothing
                 else
                     Just $

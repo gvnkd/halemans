@@ -32,9 +32,11 @@ import Web.Controller.NotificationRules
 import Web.Controller.Profile
 import Web.Controller.PushSubscriptions
 import Web.Controller.Reports
+import Web.Controller.Roles
 import Web.Controller.Sessions
 import Web.Controller.Sources
 import Web.Controller.Teams
+import Web.Controller.Users
 
 instance FrontController WebApplication where
     controllers =
@@ -52,6 +54,8 @@ instance FrontController WebApplication where
         , parseRoute @SourcesController
         , parseRoute @GroupsController
         , parseRoute @TeamsController
+        , parseRoute @UsersController
+        , parseRoute @RolesController
         , parseRoute @GroupingRulesController
         , parseRoute @FieldMappingsController
         , parseRoute @NotificationRulesController

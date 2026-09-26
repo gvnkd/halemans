@@ -19,6 +19,11 @@ module Application.Service.Provision (
     EscalationStepItem (..),
     LlmAgentRoleItem (..),
     AutoAnalyzeItem (..),
+    BlackoutItem (..),
+    ApiTokenItem (..),
+    LlmAgentConfigItem (..),
+    LlmGlobalConfigItem (..),
+    ToolCacheItem (..),
     ProvisionError (..),
     parseProvisionConfig,
     parseProvisionConfigYaml,
@@ -31,8 +36,11 @@ import Application.Helper.DashboardConfig (decodeDashboardConfig)
 import Application.Helper.Theme (isValidTheme)
 import Application.Helper.Timezone (isValidTimezone)
 import Application.Pipeline.Grouping (parseAlertField)
+import Application.Service.Api.Token (allScopes, hashToken)
 import Application.Service.HostGroups (replaceHostGroupCache)
+import qualified Application.Service.Llm.AgentConfig as AgentConfig
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
+import qualified Application.Service.Llm.GlobalConfig as GlobalConfig
 import Application.Service.Llm.Tools (toolDefinitions)
 import Application.Service.PollerControl (ensurePollerForSourceType)
 import Control.Exception (Exception, SomeException, try)
@@ -45,6 +53,7 @@ import Data.Aeson.Types (JSONPathElement (..), Parser, parseEither, parseMaybe, 
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List as List
 import qualified Data.Text as Text
+import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import qualified Data.Yaml as Yaml
 import Generated.Types
 import IHP.Fetch (fetch, fetchCount, fetchOneOrNothing)
@@ -88,6 +97,11 @@ data ProvisionConfig = ProvisionConfig
     , escalationPolicies :: Maybe [EscalationPolicyItem]
     , llmAgentRoles :: Maybe [LlmAgentRoleItem]
     , autoAnalyze :: Maybe AutoAnalyzeItem
+    , blackouts :: Maybe [BlackoutItem]
+    , apiTokens :: Maybe [ApiTokenItem]
+    , llmAgentConfig :: Maybe LlmAgentConfigItem
+    , llmGlobalConfig :: Maybe LlmGlobalConfigItem
+    , toolCache :: Maybe ToolCacheItem
     }
     deriving (Eq, Show)
 
@@ -300,6 +314,65 @@ data AutoAnalyzeItem = AutoAnalyzeItem
     }
     deriving (Eq, Show)
 
+-- Blackouts (silence windows): the map key is a free label (kept in the file
+-- only, not stored). The identity of a provisioned blackout is its time
+-- window — apply matches on (starts_at, ends_at), so re-provisioning the same
+-- file updates the same rows. Scope legs mirror the web form: environment /
+-- host / service take exact inventory names (auto-routed to the glob column
+-- when they contain * or ?, like the agent's create_blackout) and
+-- environmentGlob / hostGlob / serviceGlob / titleGlob set glob columns
+-- directly. At least one leg is required; multiple legs AND like the pipeline.
+-- createdBy is left NULL (provisioned rows have no UI author).
+data BlackoutItem = BlackoutItem
+    { boLabel :: Text
+    , boStartsAt :: UTCTime
+    , boEndsAt :: UTCTime
+    , boEnvironment :: Maybe Text
+    , boHost :: Maybe Text
+    , boService :: Maybe Text
+    , boEnvironmentGlob :: Maybe Text
+    , boHostGlob :: Maybe Text
+    , boServiceGlob :: Maybe Text
+    , boTitleGlob :: Maybe Text
+    , boReason :: Text
+    , boProtected :: Bool
+    }
+    deriving (Eq, Show)
+
+-- API tokens (profile page / admin revoke): the plaintext lives in an env
+-- var named by tokenEnv (never in the file); the stored token_hash is its
+-- sha256. Keyed ownerEmail → tokenName like dashboards (user → name). Not
+-- exported: hashes are one-way, so an export can never reconstruct the
+-- plaintext to match it against env vars. No `protected` column on
+-- api_tokens; strict reconciles (owner, name) pairs outright.
+data ApiTokenItem = ApiTokenItem
+    { atOwnerEmail :: Text
+    , atName :: Text
+    , atTokenEnv :: Text
+    , atScopes :: [Text]
+    }
+    deriving (Eq, Show)
+
+-- LLM singletons (admin → LLM agent page / tool cache card): same fields the
+-- web forms save. Singleton sections like autoAnalyze: absent = untouched.
+data LlmAgentConfigItem = LlmAgentConfigItem
+    { lacDailyTokenBudget :: Int
+    , lacRatePerMinute :: Int
+    }
+    deriving (Eq, Show)
+
+data LlmGlobalConfigItem = LlmGlobalConfigItem
+    { lgcDailyTokenBudget :: Int
+    , lgcRatePerMinute :: Int
+    }
+    deriving (Eq, Show)
+
+data ToolCacheItem = ToolCacheItem
+    { tcEnabled :: Bool
+    , tcTtlSeconds :: Int
+    }
+    deriving (Eq, Show)
+
 -- Parsing (strict: unknown keys rejected at every level, milestone_7.md §2)
 
 rejectUnknownFields :: [Text] -> Aeson.Object -> Parser ()
@@ -509,7 +582,7 @@ parseDashboardScope userEmail o =
 
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
-        rejectUnknownFields ["strict", "users", "roles", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "assetsConfigs", "groupingRules", "notificationRules", "escalationPolicies", "llmAgentRoles", "autoAnalyze"] o
+        rejectUnknownFields ["strict", "users", "roles", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "assetsConfigs", "groupingRules", "notificationRules", "escalationPolicies", "llmAgentRoles", "autoAnalyze", "blackouts", "apiTokens", "llmAgentConfig", "llmGlobalConfig", "toolCache"] o
         strict <- o .:? "strict" .!= False
         users <- parseSection "users" parseUserItem o
         roles <- parseSection "roles" parseRoleItem o
@@ -526,6 +599,11 @@ instance FromJSON ProvisionConfig where
         escalationPolicies <- parseSection "escalationPolicies" parseEscalationPolicyItem o
         llmAgentRoles <- parseSection "llmAgentRoles" parseLlmAgentRoleItem o
         autoAnalyze <- o .:? "autoAnalyze"
+        blackouts <- parseSection "blackouts" parseBlackoutItem o
+        apiTokens <- fmap concat <$> parseSection "apiTokens" parseApiTokenScope o
+        llmAgentConfig <- o .:? "llmAgentConfig"
+        llmGlobalConfig <- o .:? "llmGlobalConfig"
+        toolCache <- o .:? "toolCache"
         pure ProvisionConfig{..}
 
 parseJiraConfigItem :: Text -> Aeson.Object -> Parser JiraConfigItem
@@ -625,6 +703,8 @@ parseNotificationRuleItem nrName o = do
     nrChannel <- o .:? "channel" .!= "browser_push"
     when (Text.null nrChannel) do
         fail "channel must not be empty"
+    unless (nrChannel `elem` ["browser_push", "email"]) do
+        fail ("unknown notification channel \"" <> cs nrChannel <> "\" (valid: browser_push email)")
     nrChannelConfig <- o .:? "channelConfig" .!= Aeson.object []
     nrThrottleSeconds <- o .:? "throttleSeconds" .!= 300
     nrEscalationPolicy <- o .:? "escalationPolicy"
@@ -673,6 +753,90 @@ instance FromJSON AutoAnalyzeItem where
                 fail ("unknown severity \"" <> cs severity <> "\" (valid: critical high warning info)")
         pure AutoAnalyzeItem{..}
 
+-- Blackouts: the map key is a free label; the row identity is the time
+-- window carried in startsAt/endsAt.
+parseBlackoutItem :: Text -> Aeson.Object -> Parser BlackoutItem
+parseBlackoutItem boLabel o = do
+    rejectUnknownFields ["startsAt", "endsAt", "environment", "host", "service", "environmentGlob", "hostGlob", "serviceGlob", "titleGlob", "reason", "protected"] o
+    startsText <- o .: "startsAt"
+    endsText <- o .: "endsAt"
+    boStartsAt <- maybe (fail ("blackouts." <> cs boLabel <> ": startsAt must be ISO8601, e.g. 2026-10-01T00:00:00Z")) pure (parseIsoTime startsText)
+    boEndsAt <- maybe (fail ("blackouts." <> cs boLabel <> ": endsAt must be ISO8601, e.g. 2026-10-01T00:00:00Z")) pure (parseIsoTime endsText)
+    boEnvironment <- optionalNonEmpty o "environment"
+    boHost <- optionalNonEmpty o "host"
+    boService <- optionalNonEmpty o "service"
+    boEnvironmentGlob <- optionalNonEmpty o "environmentGlob"
+    boHostGlob <- optionalNonEmpty o "hostGlob"
+    boServiceGlob <- optionalNonEmpty o "serviceGlob"
+    boTitleGlob <- optionalNonEmpty o "titleGlob"
+    boReason <- o .:? "reason" .!= ""
+    boProtected <- parseProtectedFlag o
+    when (all isNothing [boEnvironment, boHost, boService, boEnvironmentGlob, boHostGlob, boServiceGlob, boTitleGlob]) do
+        fail ("blackouts." <> cs boLabel <> ": at least one scope leg is required")
+    pure BlackoutItem{..}
+
+-- Optional text field where blank/whitespace-only means "not set" (the UI
+-- form submits empty inputs for untouched legs).
+optionalNonEmpty :: Aeson.Object -> Text -> Parser (Maybe Text)
+optionalNonEmpty o key = do
+    value <- o .:? Key.fromText key
+    pure case value of
+        Just text | not (Text.null (Text.strip text)) -> Just text
+        _ -> Nothing
+
+parseIsoTime :: Text -> Maybe UTCTime
+parseIsoTime value =
+    case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (cs value :: String) of
+        Just time -> Just time
+        Nothing -> parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%z" (cs value :: String)
+
+parseApiTokenItem :: Text -> Text -> Aeson.Object -> Parser ApiTokenItem
+parseApiTokenItem atOwnerEmail atName o = do
+    rejectUnknownFields ["tokenEnv", "scopes"] o
+    atTokenEnv <- o .: "tokenEnv"
+    atScopes <- o .:? "scopes" .!= allScopes
+    let unknownScopes = filter (`notElem` allScopes) atScopes
+    unless (null unknownScopes) do
+        fail ("unknown API token scope(s) " <> cs (Text.intercalate ", " unknownScopes) <> " (valid: " <> cs (Text.intercalate ", " allScopes) <> ")")
+    pure ApiTokenItem{..}
+
+parseApiTokenScope :: Text -> Aeson.Object -> Parser [ApiTokenItem]
+parseApiTokenScope atOwnerEmail o =
+    forM (KeyMap.toList o) \(key, value) ->
+        Aeson.withObject "apiTokens" (parseApiTokenItem atOwnerEmail (Key.toText key)) value <?> Key key
+
+validateBudgetValues :: Text -> Int -> Text -> Int -> Parser ()
+validateBudgetValues budgetLabel budget rateLabel rate = do
+    unless (budget >= 0) do
+        fail (cs (budgetLabel <> " must not be negative"))
+    unless (rate >= 1) do
+        fail (cs (rateLabel <> " must be at least 1"))
+
+instance FromJSON LlmAgentConfigItem where
+    parseJSON = Aeson.withObject "llmAgentConfig" \o -> do
+        rejectUnknownFields ["dailyTokenBudget", "ratePerMinute"] o
+        lacDailyTokenBudget <- o .:? "dailyTokenBudget" .!= 200000
+        lacRatePerMinute <- o .:? "ratePerMinute" .!= 12
+        validateBudgetValues "llmAgentConfig.dailyTokenBudget" lacDailyTokenBudget "llmAgentConfig.ratePerMinute" lacRatePerMinute
+        pure LlmAgentConfigItem{..}
+
+instance FromJSON LlmGlobalConfigItem where
+    parseJSON = Aeson.withObject "llmGlobalConfig" \o -> do
+        rejectUnknownFields ["dailyTokenBudget", "ratePerMinute"] o
+        lgcDailyTokenBudget <- o .:? "dailyTokenBudget" .!= 1000000
+        lgcRatePerMinute <- o .:? "ratePerMinute" .!= 20
+        validateBudgetValues "llmGlobalConfig.dailyTokenBudget" lgcDailyTokenBudget "llmGlobalConfig.ratePerMinute" lgcRatePerMinute
+        pure LlmGlobalConfigItem{..}
+
+instance FromJSON ToolCacheItem where
+    parseJSON = Aeson.withObject "toolCache" \o -> do
+        rejectUnknownFields ["enabled", "ttlSeconds"] o
+        tcEnabled <- o .:? "enabled" .!= True
+        tcTtlSeconds <- o .:? "ttlSeconds" .!= 300
+        unless (tcTtlSeconds >= 0) do
+            fail "toolCache.ttlSeconds must not be negative"
+        pure ToolCacheItem{..}
+
 configFromValue :: Value -> Either Text ProvisionConfig
 configFromValue value = case parseEither parseJSON value of
     Left err -> Left (cs err)
@@ -714,6 +878,11 @@ applyProvisionConfig path = do
     applyNotificationRules config.strict config.notificationRules
     applyLlmAgentRoles config.strict config.llmAgentRoles
     applyAutoAnalyze config.autoAnalyze
+    applyBlackouts config.strict config.blackouts
+    applyApiTokens config.strict config.apiTokens
+    applyLlmAgentConfig config.llmAgentConfig
+    applyLlmGlobalConfig config.llmGlobalConfig
+    applyToolCache config.toolCache
     putStrLn ("provision: applied " <> cs path)
 
 -- Category application: one advisory-locked transaction per category
@@ -1729,5 +1898,178 @@ applyAutoAnalyze (Just item) = withProvisionLock "autoAnalyze" do
                     |> set #severities severitiesJson
                     |> set #environments environmentsJson
                     |> set #enabled item.aaItemEnabled
+                )
+    pure ()
+
+-- Blackouts (provision parity): upsert by the (starts_at, ends_at) window —
+-- the file's map key is a label only. Exact inventory names resolve to row
+-- ids; names containing * or ? auto-route to the glob column (same rule as
+-- the agent's create_blackout); explicit *Glob fields set glob columns
+-- directly.
+applyBlackouts :: (?modelContext :: ModelContext) => Bool -> Maybe [BlackoutItem] -> IO ()
+applyBlackouts _ Nothing = pure ()
+applyBlackouts strict (Just items) = withProvisionLock "blackouts" do
+    forM_ items upsertBlackout
+    unless strict (unprotectBlackouts items)
+    when strict (strictDeleteBlackouts items)
+
+blackoutWindow :: BlackoutItem -> (UTCTime, UTCTime)
+blackoutWindow item = (item.boStartsAt, item.boEndsAt)
+
+blackoutByWindow :: (?modelContext :: ModelContext) => UTCTime -> UTCTime -> IO (Maybe Blackout)
+blackoutByWindow startsAt endsAt = do
+    rows <- query @Blackout |> fetch
+    pure (List.find (\row -> row.startsAt == startsAt && row.endsAt == endsAt) rows)
+
+isGlobName :: Text -> Bool
+isGlobName = Text.any (\c -> c == '*' || c == '?')
+
+resolveBlackoutLeg :: Text -> Text -> (Text -> IO (Maybe (Id' table))) -> Text -> IO (Maybe (Id' table), Maybe Text)
+resolveBlackoutLeg label kind resolveName value
+    | isGlobName value = pure (Nothing, Just value)
+    | otherwise = do
+        row <- resolveName value
+        case row of
+            Nothing -> throwIO $ ProvisionError ("blackouts." <> label <> ": unknown " <> kind <> " \"" <> value <> "\"")
+            Just rowId -> pure (Just rowId, Nothing)
+
+upsertBlackout :: (?modelContext :: ModelContext) => BlackoutItem -> IO ()
+upsertBlackout item = do
+    (environmentId, environmentGlob) <- case item.boEnvironment of
+        Nothing -> pure (Nothing, Nothing)
+        Just value -> resolveBlackoutLeg item.boLabel "environment" resolveEnvironment value
+    (hostId, hostGlob) <- case item.boHost of
+        Nothing -> pure (Nothing, Nothing)
+        Just value -> resolveBlackoutLeg item.boLabel "host" resolveHost value
+    (serviceId, serviceGlob) <- case item.boService of
+        Nothing -> pure (Nothing, Nothing)
+        Just value -> resolveBlackoutLeg item.boLabel "service" resolveService value
+    existing <- blackoutByWindow item.boStartsAt item.boEndsAt
+    let applyScope blackout =
+            blackout
+                |> set #environmentId environmentId
+                |> set #hostId hostId
+                |> set #serviceId serviceId
+                |> set #environmentGlob (environmentGlob <|> item.boEnvironmentGlob)
+                |> set #hostGlob (hostGlob <|> item.boHostGlob)
+                |> set #serviceGlob (serviceGlob <|> item.boServiceGlob)
+                |> set #titleGlob item.boTitleGlob
+                |> set #startsAt item.boStartsAt
+                |> set #endsAt item.boEndsAt
+                |> set #reason item.boReason
+                |> set #protected item.boProtected
+    case existing of
+        Nothing -> void (createRecord (applyScope (newRecord @Blackout)))
+        Just row -> void (updateRecord (applyScope row))
+  where
+    resolveEnvironment name = do
+        row <- query @Environment |> filterWhere (#name, name) |> fetchOneOrNothing
+        pure (get #id <$> row)
+    resolveHost name = do
+        row <- query @Host |> filterWhere (#fqdn, name) |> fetchOneOrNothing
+        pure (get #id <$> row)
+    resolveService name = do
+        row <- query @Service |> filterWhere (#name, name) |> fetchOneOrNothing
+        pure (get #id <$> row)
+
+unprotectBlackouts :: (?modelContext :: ModelContext) => [BlackoutItem] -> IO ()
+unprotectBlackouts items =
+    let keepWindows = map blackoutWindow items
+     in unprotectRows
+            (query @Blackout |> fetch)
+            (\row -> (row.startsAt, row.endsAt) `notElem` keepWindows)
+            updateRecord
+
+strictDeleteBlackouts :: (?modelContext :: ModelContext) => [BlackoutItem] -> IO ()
+strictDeleteBlackouts items = do
+    let keepWindows = map blackoutWindow items
+    rows <- query @Blackout |> fetch
+    forM_ (filter (\row -> (row.startsAt, row.endsAt) `notElem` keepWindows) rows) deleteRecord
+
+-- API tokens: tokenEnv names the env var holding the plaintext; the stored
+-- token_hash/prefix derive from its value. Re-provisioning an existing
+-- (owner, name) rotates the hash and un-revokes the row; strict reconciles
+-- (owner, name) pairs. Not exported (one-way hashes).
+applyApiTokens :: (?modelContext :: ModelContext) => Bool -> Maybe [ApiTokenItem] -> IO ()
+applyApiTokens _ Nothing = pure ()
+applyApiTokens strict (Just items) = withProvisionLock "apiTokens" do
+    forM_ items upsertApiToken
+    when strict (strictDeleteApiTokens items)
+
+upsertApiToken :: (?modelContext :: ModelContext) => ApiTokenItem -> IO ()
+upsertApiToken item = do
+    maybeUser <- query @User |> filterWhere (#email, item.atOwnerEmail) |> fetchOneOrNothing
+    user <- case maybeUser of
+        Nothing -> throwIO $ ProvisionError ("apiTokens: unknown user \"" <> item.atOwnerEmail <> "\"")
+        Just user -> pure user
+    maybeValue <- lookupEnv (cs item.atTokenEnv)
+    plaintext <- case maybeValue of
+        Nothing -> throwIO $ ProvisionError ("apiTokens." <> item.atOwnerEmail <> "/" <> item.atName <> ": token env var \"" <> item.atTokenEnv <> "\" is not set")
+        Just value -> pure (cs value :: Text)
+    let tokenHash = hashToken plaintext
+        prefix = Text.take 8 plaintext
+        userId = get #id user
+    existing <- query @ApiToken |> filterWhere (#userId, userId) |> filterWhere (#name, item.atName) |> fetchOneOrNothing
+    case existing of
+        Nothing -> void do
+            newRecord @ApiToken
+                |> set #userId userId
+                |> set #name item.atName
+                |> set #tokenHash tokenHash
+                |> set #prefix prefix
+                |> set #scopes item.atScopes
+                |> createRecord
+        Just row -> void do
+            row
+                |> set #tokenHash tokenHash
+                |> set #prefix prefix
+                |> set #scopes item.atScopes
+                |> set #revokedAt Nothing
+                |> updateRecord
+
+strictDeleteApiTokens :: (?modelContext :: ModelContext) => [ApiTokenItem] -> IO ()
+strictDeleteApiTokens items = do
+    let keepPairs = map (\item -> (item.atOwnerEmail, item.atName)) items
+    tokens <- query @ApiToken |> fetch
+    forM_ tokens \token -> do
+        owner <- fetch token.userId
+        when ((owner.email, token.name) `notElem` keepPairs) (deleteRecord token)
+
+-- LLM singletons: delegate to the same save functions the admin forms use.
+applyLlmAgentConfig :: (?modelContext :: ModelContext) => Maybe LlmAgentConfigItem -> IO ()
+applyLlmAgentConfig Nothing = pure ()
+applyLlmAgentConfig (Just item) = withProvisionLock "llmAgentConfig" do
+    AgentConfig.saveAgentBudgetConfig
+        AgentConfig.AgentBudgetConfig
+            { abcDailyTokenBudget = item.lacDailyTokenBudget
+            , abcRatePerMinute = item.lacRatePerMinute
+            }
+
+applyLlmGlobalConfig :: (?modelContext :: ModelContext) => Maybe LlmGlobalConfigItem -> IO ()
+applyLlmGlobalConfig Nothing = pure ()
+applyLlmGlobalConfig (Just item) = withProvisionLock "llmGlobalConfig" do
+    GlobalConfig.saveGlobalBudgetConfig
+        GlobalConfig.GlobalBudgetConfig
+            { gbcDailyTokenBudget = item.lgcDailyTokenBudget
+            , gbcRatePerMinute = item.lgcRatePerMinute
+            }
+
+applyToolCache :: (?modelContext :: ModelContext) => Maybe ToolCacheItem -> IO ()
+applyToolCache Nothing = pure ()
+applyToolCache (Just item) = withProvisionLock "toolCache" do
+    existing <- query @LlmToolCacheConfig |> fetch
+    now <- getCurrentTime
+    _ <- case existing of
+        (row : _) ->
+            row
+                |> set #enabled item.tcEnabled
+                |> set #ttlSeconds item.tcTtlSeconds
+                |> set #updatedAt now
+                |> updateRecord
+        [] ->
+            createRecord
+                ( newRecord @LlmToolCacheConfig
+                    |> set #enabled item.tcEnabled
+                    |> set #ttlSeconds item.tcTtlSeconds
                 )
     pure ()

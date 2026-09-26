@@ -5,6 +5,7 @@ import Application.Service.Provision
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.List as List
 import IHP.Prelude
 import Test.Hspec
 
@@ -16,7 +17,7 @@ spec :: Spec
 spec = describe "Application.Service.Provision" do
     describe "parseProvisionConfig" do
         it "parses the empty config" do
-            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig False Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig False Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
             let json =
@@ -437,6 +438,97 @@ spec = describe "Application.Service.Provision" do
         it "rejects unknown statuses in autoAnalyze" do
             case parseProvisionConfig "{\"autoAnalyze\": {\"statuses\": [\"firing\", \"bogus\"]}}" of
                 Left err -> err `shouldSatisfy` ("unknown alert status" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "parses the blackouts section with entity and glob legs" do
+            let json =
+                    "{\"blackouts\": {"
+                        <> "\"window1\": {\"startsAt\": \"2026-10-01T00:00:00Z\", \"endsAt\": \"2026-10-02T00:00:00Z\", \"environment\": \"internal\", \"reason\": \"maintenance\"},"
+                        <> "\"window2\": {\"startsAt\": \"2026-10-03T00:00:00Z\", \"endsAt\": \"2026-10-04T00:00:00Z\", \"hostGlob\": \"web-*\", \"titleGlob\": \"cpu*\", \"protected\": false}"
+                        <> "}}"
+            case parseProvisionConfig json of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [first, second] = List.sortOn (.boLabel) (fromMaybe [] config.blackouts)
+                    first.boLabel `shouldBe` "window1"
+                    first.boEnvironment `shouldBe` Just "internal"
+                    first.boReason `shouldBe` "maintenance"
+                    first.boProtected `shouldBe` True
+                    second.boHostGlob `shouldBe` Just "web-*"
+                    second.boTitleGlob `shouldBe` Just "cpu*"
+                    second.boProtected `shouldBe` False
+
+        it "rejects blackouts without any scope leg" do
+            let json = "{\"blackouts\": {\"w\": {\"startsAt\": \"2026-10-01T00:00:00Z\", \"endsAt\": \"2026-10-02T00:00:00Z\"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("at least one scope leg" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects blackouts with non-ISO times" do
+            let json = "{\"blackouts\": {\"w\": {\"startsAt\": \"tomorrow\", \"endsAt\": \"2026-10-02T00:00:00Z\", \"titleGlob\": \"x\"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("ISO8601" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects blank scope legs (whitespace-only means unset)" do
+            let json = "{\"blackouts\": {\"w\": {\"startsAt\": \"2026-10-01T00:00:00Z\", \"endsAt\": \"2026-10-02T00:00:00Z\", \"titleGlob\": \"  \"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("at least one scope leg" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "parses apiTokens with default and explicit scopes" do
+            let json =
+                    "{\"apiTokens\": {"
+                        <> "\"a@b.c\": {"
+                        <> "\"automation\": {\"tokenEnv\": \"AUTOMATION_TOKEN\"},"
+                        <> "\"reader\": {\"tokenEnv\": \"READER_TOKEN\", \"scopes\": [\"alerts:read\"]}"
+                        <> "}}}"
+            case parseProvisionConfig json of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [automation, reader] = List.sortOn (.atName) (fromMaybe [] config.apiTokens)
+                    automation.atOwnerEmail `shouldBe` "a@b.c"
+                    automation.atName `shouldBe` "automation"
+                    automation.atTokenEnv `shouldBe` "AUTOMATION_TOKEN"
+                    automation.atScopes `shouldBe` ["alerts:read", "metrics"]
+                    reader.atScopes `shouldBe` ["alerts:read"]
+
+        it "rejects apiTokens with unknown scopes" do
+            let json = "{\"apiTokens\": {\"a@b.c\": {\"t\": {\"tokenEnv\": \"T\", \"scopes\": [\"admin\"]}}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown API token scope" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "parses the LLM singletons with defaults" do
+            let json = "{\"llmAgentConfig\": {}, \"llmGlobalConfig\": {\"dailyTokenBudget\": 500000}, \"toolCache\": {\"enabled\": false}}"
+            case parseProvisionConfig json of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let Just agentConfig = config.llmAgentConfig
+                    agentConfig.lacDailyTokenBudget `shouldBe` 200000
+                    agentConfig.lacRatePerMinute `shouldBe` 12
+                    let Just globalConfig = config.llmGlobalConfig
+                    globalConfig.lgcDailyTokenBudget `shouldBe` 500000
+                    globalConfig.lgcRatePerMinute `shouldBe` 20
+                    let Just cache = config.toolCache
+                    cache.tcEnabled `shouldBe` False
+                    cache.tcTtlSeconds `shouldBe` 300
+
+        it "rejects negative LLM budgets and tool cache TTLs" do
+            case parseProvisionConfig "{\"llmAgentConfig\": {\"dailyTokenBudget\": -1}}" of
+                Left err -> err `shouldSatisfy` ("must not be negative" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+            case parseProvisionConfig "{\"llmGlobalConfig\": {\"ratePerMinute\": 0}}" of
+                Left err -> err `shouldSatisfy` ("at least 1" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+            case parseProvisionConfig "{\"toolCache\": {\"ttlSeconds\": -5}}" of
+                Left err -> err `shouldSatisfy` ("must not be negative" `isInfixOf`)
+                Right _ -> expectationFailure "expected parse failure"
+
+        it "rejects unknown notification channels" do
+            let json = "{\"notificationRules\": {\"n\": {\"channel\": \"sms\"}}}"
+            case parseProvisionConfig json of
+                Left err -> err `shouldSatisfy` ("unknown notification channel" `isInfixOf`)
                 Right _ -> expectationFailure "expected parse failure"
 
     describe "parseHostGroupsFile" do

@@ -3,6 +3,7 @@ module Web.Controller.Teams where
 import Application.Service.HostGroups (hostGroupsToJson, teamHostGroups)
 import qualified Data.Aeson as Aeson
 import Data.List (nub, sort)
+import qualified Data.Text as Text
 import IHP.TypedSql (sqlExecTyped, typedSql)
 import Web.Controller.Prelude
 import Web.View.Teams.Edit
@@ -54,26 +55,30 @@ instance Controller TeamsController where
         requirePrivilege "manage_users"
         team <- fetch teamId
         ensureNotProtected team.name (get #protected team)
-        let dashboardConfig = paramOrNothing @Text "defaultDashboardConfig"
-        case dashboardConfig of
-            Just raw | raw /= "" -> case Aeson.decode (cs raw) of
-                Nothing -> do
-                    setErrorMessage (tr "Default dashboard config is not valid JSON")
-                    redirectTo EditTeamAction{teamId}
-                Just config -> do
-                    updateTeam team (Just config)
-                    redirectTo TeamsAction
+        let dashboardConfig = optionalJsonParam "defaultDashboardConfig"
+            defaults = optionalJsonParam "defaults"
+        case (dashboardConfig, defaults) of
+            (Just (Left _), _) -> do
+                setErrorMessage (tr "Default dashboard config is not valid JSON")
+                redirectTo EditTeamAction{teamId}
+            (_, Just (Left _)) -> do
+                setErrorMessage (tr "Team defaults are not valid JSON")
+                redirectTo EditTeamAction{teamId}
             _ -> do
-                updateTeam team Nothing
+                updateTeam team (rightOrNothing dashboardConfig) (rightOrNothing defaults)
                 redirectTo TeamsAction
       where
-        updateTeam team config = do
+        rightOrNothing = \case
+            Just (Right value) -> Just value
+            _ -> Nothing
+        updateTeam team config defaults = do
             updated <-
                 team
                     |> set #name (param @Text "name")
                     |> set #description (param @Text "description")
                     |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
                     |> set #defaultDashboardConfig config
+                    |> set #defaults (fromMaybe (Aeson.object []) defaults)
                     |> updateRecord
             _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
             saveMembers updated
@@ -87,6 +92,15 @@ instance Controller TeamsController where
         deleteRecord team
         setSuccessMessage (tr "Team deleted")
         redirectTo TeamsAction
+
+-- Optional JSON textarea param: Nothing = field absent/blank (clear),
+-- Just (Right value) = parsed object/array, Just (Left ()) = invalid JSON.
+optionalJsonParam :: (?request :: Request) => ByteString -> Maybe (Either () Aeson.Value)
+optionalJsonParam name = case paramOrNothing @Text name of
+    Just raw
+        | not (Text.null (Text.strip raw)) ->
+            Just (maybe (Left ()) Right (Aeson.decode (cs raw)))
+    _ -> Nothing
 
 -- | Distinct host group names across all zabbix source caches
 -- (zabbix_host_groups), offered in the team form picker.

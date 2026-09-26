@@ -18,14 +18,14 @@ instance View NewView where
         {pageHeaderHtml (tr "New notification rule") mempty}
         <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form">
-            {notificationRuleFormFields teams users policies "" 0 True "" "" "high" "" 300 Nothing}
+            {notificationRuleFormFields teams users policies "" 0 True "" "" "" "browser_push" "" "high" "" 300 Nothing}
             <button type="submit" class="btn btn-brand" data-testid="notification-rule-submit">{tr "Create"}</button>
         </form>
         </div></div>|]
 
 -- Shared with Edit. `target` is "team:<uuid>" | "user:<uuid>" | "".
-notificationRuleFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => [Team] -> [User] -> [EscalationPolicy] -> Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Int -> Maybe (Id EscalationPolicy) -> Html
-notificationRuleFormFields teams users policies name position enabled matchFields matchLabels severityThreshold target throttleSeconds policyRef =
+notificationRuleFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => [Team] -> [User] -> [EscalationPolicy] -> Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Text -> Text -> Text -> Int -> Maybe (Id EscalationPolicy) -> Html
+notificationRuleFormFields teams users policies name position enabled matchFields matchLabels matchFacets channel channelConfig severityThreshold target throttleSeconds policyRef =
     [hsx|
     <div class="mb-3">
         <label class="form-label">{tr "Name"}</label>
@@ -46,6 +46,21 @@ notificationRuleFormFields teams users policies name position enabled matchField
     <div class="mb-3">
         <label class="form-label">{tr "Label globs"}</label>
         <input name="matchLabels" type="text" class="form-control" value={matchLabels} placeholder="component=db-*" data-testid="rule-match-labels"/>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">{tr "Facet globs"}</label>
+        <input name="matchFacets" type="text" class="form-control" value={matchFacets} placeholder="DB Cluster=ib-*" data-testid="rule-match-facets"/>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">{tr "Channel"}</label>
+        <select name="channel" class="select" data-testid="rule-channel">
+            {forEach ["browser_push", "email"] (channelOption channel)}
+        </select>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">{tr "Channel config (JSON)"}</label>
+        <textarea name="channelConfig" class="form-control font-monospace" rows="2" data-testid="rule-channel-config">{channelConfig}</textarea>
+        <div class="form-text">{tr "Channel-specific options as a JSON object; empty = defaults."}</div>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Severity threshold (fires when alert severity ≥ this)"}</label>
@@ -75,6 +90,7 @@ notificationRuleFormFields teams users policies name position enabled matchField
 |]
   where
     severityOption value = [hsx|<option value={value} selected={severityThreshold == value}>{value}</option>|]
+    channelOption selected value = [hsx|<option value={value} selected={selected == value}>{value}</option>|]
     teamOption team =
         [hsx|
             <option value={"team:" <> tshow (get #id team)} selected={target == "team:" <> tshow (get #id team)}>{tr "team"}: {team.name}</option>

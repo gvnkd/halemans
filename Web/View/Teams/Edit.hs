@@ -35,6 +35,11 @@ instance View EditView where
                 <textarea name="defaultDashboardConfig" class="form-control font-monospace" rows="4" data-testid="team-default-dashboard-config">{defaultConfig}</textarea>
                 <div class="form-text">{trp "Template offered to team members with no own dashboard (e.g. {example}). Empty clears it." [("example", exampleConfig)]}</div>
             </div>
+            <div class="mb-3">
+                <label class="form-label">{tr "Team defaults (JSON)"}</label>
+                <textarea name="defaults" class="form-control font-monospace" rows="3" data-testid="team-defaults">{defaultsValue}</textarea>
+                <div class="form-text">{tr "Free-form JSON attached to the team (provisionable as teams.<name>.defaults). Empty clears it."}</div>
+            </div>
             <button type="submit" class="btn btn-brand" data-testid="team-submit">{tr "Save"}</button>
         </form>
         </div></div>
@@ -42,5 +47,7 @@ instance View EditView where
       where
         defaultConfig :: Text
         defaultConfig = maybe "" (cs . Aeson.encode) team.defaultDashboardConfig
+        defaultsValue :: Text
+        defaultsValue = cs (Aeson.encode team.defaults)
         exampleConfig :: Text
         exampleConfig = "[{\"env\": \"dev\"}]"

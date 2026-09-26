@@ -214,7 +214,8 @@ CREATE TABLE blackouts (
     ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
     reason TEXT NOT NULL DEFAULT '',
     created_by UUID DEFAULT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false
 );
 ALTER TABLE blackouts ADD CONSTRAINT blackouts_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES environments (id);
 ALTER TABLE blackouts ADD CONSTRAINT blackouts_host_id_fkey FOREIGN KEY (host_id) REFERENCES hosts (id);
