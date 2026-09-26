@@ -150,7 +150,12 @@ m6User privileges = do
     pure user
 
 mockFail :: Text -> Int -> IO ()
-mockFail kind times = void (Wreq.post ("http://127.0.0.1:18084/debug/fail/" <> cs kind) (object ["times" .= times]))
+mockFail kind times = do
+    -- Same target as the LLM client (LLM_ENDPOINT), so a local run can point
+    -- both at a fresh working-tree mock; the check's mock lives on 18084.
+    endpoint <- lookupEnv "LLM_ENDPOINT"
+    let base = fromMaybe "http://127.0.0.1:18084" endpoint
+    void (Wreq.post (cs base <> "/debug/fail/" <> cs kind) (object ["times" .= times]))
 
 schemaPresent :: String -> IO Bool
 schemaPresent databaseUrl = do

@@ -16,6 +16,7 @@ import qualified Application.Pipeline.StateMachine as SM
 import Application.Service.Escalation (cancelTrackersFor)
 import qualified Application.Service.Facets as Facets
 import Application.Service.Groups (assignGroup, recomputeGroupRollup)
+import Application.Service.I18n (defaultLanguage, languageCode)
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import Application.Service.Notify (dispatchNotification)
 import Control.Monad (void)
@@ -134,10 +135,12 @@ ingest source event = do
             -- row gets its prompt hash when the job builds the prompt.
             autoAnalyze <- AutoAnalyze.autoAnalyzeAllowed grouped
             when autoAnalyze do
+                systemLanguage <- defaultLanguage
                 void do
                     analysis <-
                         newRecord @LlmAnalysis
                             |> set #alertId (get #id grouped)
+                            |> set #language (Just (languageCode systemLanguage))
                             |> createRecord
                     void do
                         newRecord @LlmAnalysisJob

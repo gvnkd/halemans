@@ -57,6 +57,8 @@ import Application.Helper.DashboardConfig (CardSize (..), alertSortNaturalDir, d
 import Application.Pipeline.Grouping (AlertField (..), alertFieldText, effectiveFieldText)
 import Application.Service.Assets.Attrs (configuredAttrNames, objectAttributes)
 import Application.Service.DynTable (ColumnFilter (..), FilterKind (..), TableColumn (..))
+import Application.Service.I18n (languageCode, languages)
+import Application.Service.Llm.Queue (pickPreferredAnalysis)
 import Application.Service.Timeline (TimelineGroup (..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -598,6 +600,7 @@ llmPanelHtml :: Alert -> [LlmAnalysis] -> [LlmFeedback] -> [(Id LlmAnalysis, Tex
 llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Just llmPanelDomId) (tr "LLM analysis") reanalyzeButton bodyWithHistory
   where
     bodyWithHistory = [hsx|{body}{historyBlock}|]
+    viewerLang = languageCode currentLanguage
     reanalyzeButton =
         [hsx|
             <form method="POST" action={ReanalyzeAlertAction (get #id alert)} class="d-inline">
@@ -623,22 +626,26 @@ llmPanelHtml alert analyses feedback jobErrors roles = panelHtml "llm-panel" (Ju
     roleOption role = [hsx|<option value={tshow (get #id role)}>{role.name}</option>|]
     body = case analyses of
         [] -> [hsx|<p class="text-muted" data-testid="llm-empty">{tr "No analysis yet."}</p>|]
-        _ -> [hsx|{pendingNote}{llmAnalysisHtml alert shownAnalysis feedback (lookup (get #id shownAnalysis) jobErrors)}|]
+        _ -> [hsx|{fallbackNote}{pendingNote}{llmAnalysisHtml alert shownAnalysis feedback (lookup (get #id shownAnalysis) jobErrors)}|]
     -- A queued/running re-analysis (milestone_5.md §7 retrigger,
     -- milestone_8.md §7 role re-run) must not hide the last terminal
     -- analysis: show the newest done/failed row and mark the pending
     -- one. Exception: a pending row whose JOB failed (internal error)
-    -- surfaces its error instead of the stale result.
-    shownAnalysis = case analyses of
-        -- Unreachable: llmPanelHtml is only rendered when at least one
-        -- analysis row exists (the call site guards on non-empty).
-        [] -> error "llmPanelHtml: no analyses"
-        allRows@(newest : _)
-            | newest.status `elem` ["done", "failed"] -> newest
-            | isJust (lookup (get #id newest) jobErrors) -> newest
-            | otherwise -> case [a | a <- allRows, a.status `elem` ["done", "failed"]] of
-                (terminal : _) -> terminal
-                [] -> newest
+    -- surfaces its error instead of the stale result. Preference order is
+    -- the viewer's language variant first (Application.Service.Llm.Queue).
+    shownAnalysis = pickPreferredAnalysis viewerLang jobErrors analyses
+    langMatches a = a.language == Just viewerLang
+    -- The shown row is in another (or no) language: say whether a variant
+    -- in the viewer's language is on the way or Re-analyze is the way to
+    -- get one.
+    fallbackNote
+        | langMatches shownAnalysis = mempty
+        | any (\a -> langMatches a && a.status `elem` ["queued", "running"]) analyses =
+            [hsx|<p class="text-muted" data-testid="llm-language-note">{generatingText}</p>|]
+        | otherwise = [hsx|<p class="text-muted" data-testid="llm-language-note">{missingText}</p>|]
+    shownLangLabel = fromMaybe (tr "unknown") (lookup (fromMaybe "" shownAnalysis.language) languages)
+    generatingText = trp "Analysis in your language is being generated — showing the {language} version." [("language", shownLangLabel)]
+    missingText = trp "No analysis in your language yet — showing the {language} version." [("language", shownLangLabel)]
     pendingNote = case analyses of
         (newest : _)
             | get #id newest /= get #id shownAnalysis ->
@@ -665,7 +672,7 @@ llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
             <div class="llm-markdown" data-testid="llm-markdown">{markdownHtml (fromMaybe "" analysis.resultMd)}</div>
             {structuredBlock}
             <p class="text-muted llm-footer" data-testid="llm-footer">
-                {providerLine} · {utcTimeHtml analysis.updatedAt}
+                {providerLine} · {utcTimeHtml analysis.updatedAt} {languageBadge}
             </p>
             {llmFeedbackHtml alert analysis feedback}
         </div>
@@ -675,6 +682,9 @@ llmAnalysisHtml alert analysis feedback jobError = case analysis.status of
         versionText = maybe "-" tshow analysis.promptVersion
         providerLine :: Text
         providerLine = trp "provider {provider} · model {model} · template v{version}" [("provider", analysis.provider), ("model", analysis.model), ("version", versionText)]
+        languageBadge = case analysis.language of
+            Just code | Just label <- lookup code languages -> [hsx|<span class="badge status-ack" data-testid="llm-language">{label}</span>|]
+            _ -> mempty
         dedupedBadge =
             if isJust analysis.dedupedFrom
                 then [hsx|<span class="badge status-ack" data-testid="llm-deduped">{tr "deduped copy"}</span>|]

@@ -6,6 +6,7 @@ import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import qualified Application.Service.Facets as Facets
 import qualified Application.Service.Groups as Groups
 import qualified Application.Service.Http as Http
+import Application.Service.I18n (defaultLanguage, languageCode)
 import qualified Application.Service.Jira.DbConfig as Jira
 import qualified Application.Service.Jira.Related as Related
 import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
@@ -121,6 +122,7 @@ maybeRetriggerAnalysis alert startedAt = do
             |> filterWhere (#alertId, get #id alert)
             |> filterWhere (#status, "done" :: Text)
             |> filterWhereSql (#createdAt, "< " <> sqlQuote startedAt)
+            |> orderByDesc #createdAt
             |> limit 1
             |> fetchOneOrNothing
     alreadyRetriggered <-
@@ -135,10 +137,16 @@ maybeRetriggerAnalysis alert startedAt = do
         -- follows the same status/severity rules as the initial enqueue.
         autoAnalyze <- AutoAnalyze.autoAnalyzeAllowed alert
         when autoAnalyze do
+            -- Continue the most recent done analysis' language variant; only
+            -- fall back to the system default for legacy NULL-language rows.
+            retriggerLanguage <- case doneBefore of
+                Just prior | Just code <- prior.language -> pure code
+                _ -> languageCode <$> defaultLanguage
             void do
                 analysis <-
                     newRecord @LlmAnalysis
                         |> set #alertId (get #id alert)
+                        |> set #language (Just retriggerLanguage)
                         |> set #errorMessage (Just retriggerMarker)
                         |> createRecord
                 void do

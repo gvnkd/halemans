@@ -13,7 +13,7 @@ import Application.Service.DynTable (pageCountFor)
 import qualified Application.Service.Facets as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
 import qualified Application.Service.Jira.DbConfig as Jira
-import Application.Service.Llm.Queue (latestJobErrors)
+import Application.Service.Llm.Queue (ensureLanguageVariant, latestJobErrors)
 import Application.Service.MetricChart (MetricChartData (..), chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
@@ -143,6 +143,10 @@ instance Controller AlertsController where
                 |> orderByDesc #createdAt
                 |> limit 5
                 |> fetch
+        -- Per-language variants: a viewer whose language has no analysis row
+        -- yet gets one queued on demand (when the alert is LLM-covered), then
+        -- sees the best available row until it lands.
+        ensureLanguageVariant alert (languageCode (languageFromSettings currentUser.settings))
         analyses <-
             query @LlmAnalysis
                 |> filterWhere (#alertId, alertId)

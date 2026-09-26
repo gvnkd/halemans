@@ -25,7 +25,7 @@ import qualified Application.Connector.Grafana as Grafana
 import Application.Helper.DashboardConfig (DashboardCard (..), FacetRef (..), MatchClause (..), MatchOp (..), decodeDashboardConfig)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Job.AutoClose (autoCloseResolved, closeStalledAlerts, stallStaleAlerts, unackExpiredAcks, unsuppressExpired)
-import Application.Job.EnrichAlert ()
+import Application.Job.EnrichAlert (maybeRetriggerAnalysis)
 import Application.Job.Escalation (runDueTrackers)
 import Application.Job.FacetBackfill ()
 import Application.Job.LlmAnalysis ()
@@ -45,6 +45,7 @@ import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), Exp
 import Application.Service.Jira.DbConfig (syncOpenLinks)
 import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..), testIntegration)
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Llm.Queue (ensureLanguageVariant, pickPreferredAnalysis)
 import Application.Service.Llm.ToolCache (cachedToolCall)
 import Application.Service.Llm.Tools (executeToolCall)
 import Application.Service.Notify (currentOnCall, resolveRuleTargets)
@@ -257,6 +258,77 @@ llmSpec = describe "llm enrichment (milestone 4)" do
                 |> filterWhere (#analysisId, get #id analysis)
                 |> fetch
         map (get #score) votes `shouldBe` [-1]
+
+    it "ingest stamps the auto analysis with the system default language" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        analysis.language `shouldBe` Just "en"
+
+    it "a missing viewer language queues a variant once; a failed variant blocks lazy retries" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        auto <- latestAnalysis alertId
+        performLatestJob (get #id auto)
+        alert <- fetch alertId
+        ensureLanguageVariant alert "ru"
+        variant <- latestAnalysis alertId
+        variant.language `shouldBe` Just "ru"
+        variant.status `shouldBe` "queued"
+        ensureLanguageVariant alert "ru"
+        rows <- query @LlmAnalysis |> filterWhere (#alertId, alertId) |> fetch
+        length rows `shouldBe` 2
+        void (variant |> set #status "failed" |> updateRecord)
+        ensureLanguageVariant alert "ru"
+        rowsAfter <- query @LlmAnalysis |> filterWhere (#alertId, alertId) |> fetch
+        length rowsAfter `shouldBe` 2
+
+    it "an alert with no analysis in any language never gets a lazily queued variant" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        analysis <- latestAnalysis alertId
+        jobs <- query @LlmAnalysisJob |> filterWhere (#analysisId, get #id analysis) |> fetch
+        forM_ jobs deleteRecord
+        deleteRecord analysis
+        alert <- fetch alertId
+        ensureLanguageVariant alert "ru"
+        rows <- query @LlmAnalysis |> filterWhere (#alertId, alertId) |> fetch
+        length rows `shouldBe` 0
+
+    it "the enrichment retrigger continues the prior analysis' language variant" do
+        _ <- ensureTemplate
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source (testEvent fp Firing)
+        auto <- latestAnalysis alertId
+        performLatestJob (get #id auto)
+        alert <- fetch alertId
+        -- pretend the auto analysis was queued in Russian (system default ru)
+        void (auto |> set #language (Just "ru") |> updateRecord)
+        startedAt <- getCurrentTime
+        maybeRetriggerAnalysis alert startedAt
+        retriggered <- latestAnalysis alertId
+        retriggered.language `shouldBe` Just "ru"
+        retriggered.errorMessage `shouldBe` Just "enrichment_retrigger"
+        retriggered.status `shouldBe` "queued"
+
+    it "pickPreferredAnalysis prefers the viewer's language variant" do
+        let mk :: Maybe Text -> Text -> LlmAnalysis
+            mk lang status = newRecord @LlmAnalysis |> set #status status |> set #language lang
+            ruNewest = mk (Just "ru") "done"
+            enOlder = mk (Just "en") "done"
+            legacy = mk Nothing "done"
+            enPending = mk (Just "en") "queued"
+        pickPreferredAnalysis "en" [] [ruNewest, enOlder] `shouldBe` enOlder
+        pickPreferredAnalysis "ru" [] [ruNewest, enOlder] `shouldBe` ruNewest
+        pickPreferredAnalysis "en" [] [enPending, ruNewest] `shouldBe` ruNewest
+        pickPreferredAnalysis "en" [] [legacy, ruNewest] `shouldBe` legacy
 
 toolCacheSpec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec
 toolCacheSpec = describe "LLM tool cache (milestone 10 §6)" do
