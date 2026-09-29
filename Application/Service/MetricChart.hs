@@ -114,11 +114,15 @@ metricSeriesInfo = MetricSeriesInfo
 
 -- | Series plus reference lines for the alert's chart. mcdLinks are
 -- (label, url) pairs rendered above the chart — the upstream graph/explore
--- deep links (zabbix item graphs, grafana explore).
+-- deep links (zabbix item graphs, grafana explore). mcdShowLegend is False
+-- for grafana: its series names are full PromQL label sets, useless as an
+-- in-SVG legend — identification happens via the hover tooltip and the
+-- Explore link instead.
 data MetricChartData = MetricChartData
     { mcdSeries :: [MetricSeriesInfo]
     , mcdThresholds :: [Chart.ChartThreshold]
     , mcdLinks :: [(Text, Text)]
+    , mcdShowLegend :: Bool
     }
     deriving (Eq, Show)
 
@@ -178,7 +182,7 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                             Right series -> do
                                 dsType <- datasourceTypeGet source.baseUrl token datasourceUid
                                 let exploreUrl = buildExploreUrl source.baseUrl datasourceUid dsType expr
-                                pure (Right (MetricChartData [metricSeriesInfo s Nothing | s <- series] [] [("Explore in Grafana", exploreUrl)]))
+                                pure (Right (MetricChartData [metricSeriesInfo s Nothing | s <- series] [] [("Explore in Grafana", exploreUrl)] False))
     "zabbix" -> do
         token <- tokenFromEnv
         case token of
@@ -209,7 +213,7 @@ fetchAlertMetricSeriesUnchecked source alert window = case source.type_ of
                                     let links =
                                             [ ("Zabbix graph", source.baseUrl <> "/history.php?action=showgraph" <> Text.concat ["&itemids[]=" <> item.ztiItemId | item <- numericItems])
                                             ]
-                                    pure ((\infos -> MetricChartData infos thresholds links) <$> sequenceEither perItem)
+                                    pure ((\infos -> MetricChartData infos thresholds links True) <$> sequenceEither perItem)
     _ -> pure (Left "Metrics are only available for Grafana- and Zabbix-sourced alerts")
   where
     tokenFromEnv :: IO (Maybe Text)
@@ -418,7 +422,7 @@ chartRenderMeta scale data_ =
     scaleText Chart.ScaleAuto = "linear"
 
 chartOptions :: Chart.ScaleMode -> MetricChartData -> Chart.LineChartOptions
-chartOptions scale data_ = Chart.LineChartOptions scale data_.mcdThresholds
+chartOptions scale data_ = Chart.LineChartOptions scale data_.mcdThresholds data_.mcdShowLegend
 
 toLineSeries :: MetricChartData -> [Chart.LineSeries]
 toLineSeries data_ = [Chart.LineSeries s.msiSeries.seriesName s.msiSeries.seriesPoints s.msiUnits | s <- data_.mcdSeries]

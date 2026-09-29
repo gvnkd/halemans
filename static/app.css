@@ -515,7 +515,9 @@ a:hover { color: var(--accent-hover); }
     padding: 4px 8px;
     font-size: 12px;
     line-height: 1.4;
-    white-space: pre;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-width: 340px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .metric-chart .chart-text { fill: var(--text); }

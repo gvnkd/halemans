@@ -128,11 +128,12 @@ data ChartThreshold = ChartThreshold
 data LineChartOptions = LineChartOptions
     { lcScale :: ScaleMode
     , lcThresholds :: [ChartThreshold]
+    , lcShowLegend :: Bool
     }
     deriving (Eq, Show)
 
 defaultLineChartOptions :: LineChartOptions
-defaultLineChartOptions = LineChartOptions ScaleAuto []
+defaultLineChartOptions = LineChartOptions ScaleAuto [] True
 
 -- | The padded [tLo, tHi] epoch-second domain the line chart renders its
 -- x axis over (5% margins, degenerate-span guard). The hover-tooltip JSON
@@ -307,6 +308,10 @@ lineChartSvgWith opts series =
                   in (D.p2 (tickX, 16), textD (formatTick t) tickAlign 0.5)
                | (i, t) <- zip [0 :: Int ..] tickTimes
                ]
+    -- Legend entries are capped to the frame width: positioned children
+    -- inflate the composite envelope, and the pinned 900x250 output spec
+    -- then uniformly shrinks the WHOLE chart to fit (grafana label-set
+    -- names overflowed at ~2x the frame, rendering the plot at ~46%).
     legendE :: [(D.P2 Double, D.Diagram DS.SVG)]
     legendE =
         [ ( D.p2 (legendX i + 6, frameH - 13)
@@ -319,7 +324,9 @@ lineChartSvgWith opts series =
                     ]
                 )
           )
-        | (i, s) <- zip [0 ..] nonEmpty
+        | lcShowLegend opts
+        , (i, s) <- zip [0 ..] nonEmpty
+        , legendX i + legendWidth i <= frameW - 8
         ]
     legendX i = plotLeft + sum [legendWidth j + 24 | j <- [0 .. i - 1]]
     -- ~8px per glyph at the pinned 14px chart font
