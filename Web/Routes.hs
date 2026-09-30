@@ -166,6 +166,7 @@ DELETE /api/push/subscribe    UnsubscribePushAction
 [routes|HooksController
 POST /hooks/alertmanager/{token}    HookAlertmanagerAction
 POST /hooks/generic/{token}         HookGenericAction
+POST /hooks/mattermost/actions/{token} HookMattermostAction
 |]
 
 [routes|GroupsController
@@ -229,6 +230,17 @@ POST /admin/notification-rules/{notificationRuleId}/update    UpdateNotification
 POST /admin/notification-rules/{notificationRuleId}/delete    DeleteNotificationRuleAction
 |]
 
+[routes|NotificationChannelsController
+GET  /admin/notification-channels                                        NotificationChannelsAction
+GET  /admin/notification-channels/new                                    NewNotificationChannelAction
+POST /admin/notification-channels                                        CreateNotificationChannelAction
+GET  /admin/notification-channels/{notificationChannelId}/edit           EditNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/update         UpdateNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/toggle         ToggleNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/delete         DeleteNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/test           TestNotificationChannelAction
+|]
+
 [routes|EscalationPoliciesController
 GET  /admin/escalation-policies                            EscalationPoliciesAction
 GET  /admin/escalation-policies/new                        NewEscalationPolicyAction
@@ -246,6 +258,7 @@ GET  /sources/{sourceId}/edit       EditSourceAction
 POST /sources/{sourceId}/update     UpdateSourceAction
 POST /sources/{sourceId}/toggle     ToggleSourceAction
 POST /sources/{sourceId}/sync-host-groups  SyncHostGroupsAction
+POST /sources/{sourceId}/fire-test  FireTestAlertAction
 |]
 
 [routes|AdminController

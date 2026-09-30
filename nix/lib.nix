@@ -18,6 +18,7 @@ let
 
             # Mock Assets bearer token (milestone 8 D9).
             [ -f "$state/assets-token" ]       || gen > "$state/assets-token"
+            [ -f "$state/mattermost-token" ]   || gen > "$state/mattermost-token"
 
             # Dev user passwords (milestone 1 D2): fixed-per-environment,
             # gitignored like the other tokens.
@@ -51,12 +52,16 @@ let
                 printf 'export CONFLUENCE_TOKEN="%s"\n'            "$(cat "$state/confluence-token")"
                 printf 'export JIRA_TOKEN="%s"\n'                  "$(cat "$state/jira-token")"
                 printf 'export ASSETS_TOKEN="%s"\n'                "$(cat "$state/assets-token")"
+                printf 'export MATTERMOST_TOKEN="%s"\n'            "$(cat "$state/mattermost-token")"
                 # Mock addresses for scripts/health checks only — since 2.0 the
                 # app reads Jira/Confluence URLs from jira_configs/cmdb_configs
                 # rows (seeded), never from these vars.
                 printf 'export HALEMANS_CONFLUENCE_URL="%s"\n'     "http://127.0.0.1:18082"
                 printf 'export HALEMANS_JIRA_URL="%s"\n'           "http://127.0.0.1:18083"
                 printf 'export HALEMANS_ASSETS_URL="%s"\n'         "http://127.0.0.1:18085/rest/assets/latest"
+                printf 'export HALEMANS_MATTERMOST_URL="%s"\n'     "http://127.0.0.1:18088"
+                printf 'export MATTERMOST_URL="%s"\n'              "http://127.0.0.1:18088"
+                printf 'export HALEMANS_BASE_URL="%s"\n'           "http://127.0.0.1:28080"
                 # Mock LLM (milestone 4 D9): local endpoint, no token needed.
                 printf 'export LLM_ENDPOINT="%s"\n'                 "http://127.0.0.1:18084"
                 printf 'export LLM_MODEL="%s"\n'                    "mock-llm-1"

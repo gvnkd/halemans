@@ -3,6 +3,7 @@ module Web.Controller.Sources where
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Service.HostGroups (replaceHostGroupCache)
 import Application.Service.PollerControl (ensurePollerForSourceType)
+import Application.Service.TestAlert (fireTestAlert)
 import Control.Exception (SomeException, try)
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
@@ -86,6 +87,16 @@ instance Controller SourcesController where
                 |> updateRecord
         unless source.enabled (ensurePollerForSourceType (get #type_ source))
         setSuccessMessage (if source.enabled then tr "Source disabled" else tr "Source enabled")
+        redirectTo SourcesAction
+
+    -- \| Fire a synthetic test alert through the normal ingest pipeline so
+    -- operators can exercise notification channels and escalation policies
+    -- without touching the real source (Admin → Sources → Fire test).
+    action FireTestAlertAction{sourceId} = do
+        requirePrivilege "manage_sources"
+        source <- fetch sourceId
+        alertId <- fireTestAlert source
+        setSuccessMessage (trp "Test alert fired: {url}" [("url", "/alerts/" <> tshow alertId)])
         redirectTo SourcesAction
 
     -- \| Manual sync of the zabbix host group cache (zabbix_host_groups).

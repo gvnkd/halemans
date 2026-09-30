@@ -28,6 +28,7 @@ import Web.Controller.InternalApi
 import Web.Controller.Live
 import Web.Controller.LlmAdmin
 import Web.Controller.Metrics
+import Web.Controller.NotificationChannels
 import Web.Controller.NotificationRules
 import Web.Controller.Profile
 import Web.Controller.PushSubscriptions
@@ -59,6 +60,7 @@ instance FrontController WebApplication where
         , parseRoute @GroupingRulesController
         , parseRoute @FieldMappingsController
         , parseRoute @NotificationRulesController
+        , parseRoute @NotificationChannelsController
         , parseRoute @EscalationPoliciesController
         , parseRoute @DashboardsController
         , parseRoute @IntegrationsController

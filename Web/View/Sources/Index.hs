@@ -87,11 +87,12 @@ renderSourceRow canManage source =
             then mempty
             else
                 [hsx|
-                <td>
-                    <a href={EditSourceAction source.id} class="btn btn-sm btn-ghost" data-testid="edit-source">{tr "Edit"}</a>
-                    {inlinePostFormHtml (pathTo (ToggleSourceAction source.id)) toggleLabel "btn btn-sm btn-ghost" (Just "toggle-source") False}
-                    {syncButton}
-                </td>
+        <td>
+            <a href={EditSourceAction source.id} class="btn btn-sm btn-ghost" data-testid="edit-source">{tr "Edit"}</a>
+            {inlinePostFormHtml (pathTo (ToggleSourceAction source.id)) toggleLabel "btn btn-sm btn-ghost" (Just "toggle-source") False}
+            {inlinePostFormHtml (pathTo (FireTestAlertAction source.id)) (tr "Fire test") "btn btn-sm btn-ghost" (Just "fire-test-alert") False}
+            {syncButton}
+        </td>
             |]
     syncButton =
         if sourceType == "zabbix"

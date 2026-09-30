@@ -102,6 +102,8 @@ spec = around withTestApp do
                 _ -> expectationFailure "expected one analysis" >> error "unreachable"
             void $ sqlExecTyped [typedSql| INSERT INTO llm_feedback (analysis_id, user_id, score) VALUES (${analysisId}, ${userId}, 1) |]
             void $ sqlExecTyped [typedSql| INSERT INTO write_back_jobs (attempt_id) VALUES ((SELECT id FROM write_back_attempts WHERE alert_id = ${alertId})) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO mattermost_posts (alert_id, root_post_id, channel_id) VALUES (${alertId}, 'purge-post-1', 'purge-chan') |]
+            void $ sqlExecTyped [typedSql| INSERT INTO mattermost_jobs (alert_id) VALUES (${alertId}) |]
             withUser user do
                 void (callAction AdminPurgeAlertsAction)
             remaining <-
@@ -114,6 +116,7 @@ spec = around withTestApp do
                      + (SELECT count(*) FROM write_back_jobs) + (SELECT count(*) FROM write_back_attempts)
                      + (SELECT count(*) FROM enrich_alert_jobs) + (SELECT count(*) FROM llm_analyses)
                      + (SELECT count(*) FROM llm_feedback)
+                     + (SELECT count(*) FROM mattermost_posts) + (SELECT count(*) FROM mattermost_jobs)
             |]
             -- Expression columns decode Maybe-wrapped (typedSql note #15).
             remaining `shouldBe` [Just (0 :: Int64)]

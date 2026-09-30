@@ -12,6 +12,7 @@ data EditView = EditView
     , teams :: [Team]
     , users :: [User]
     , policies :: [EscalationPolicy]
+    , channels :: [NotificationChannel]
     }
 
 instance View EditView where
@@ -21,7 +22,7 @@ instance View EditView where
         {pageHeaderHtml (tr "Edit notification rule") mempty}
         <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={UpdateNotificationRuleAction rule.id} data-testid="notification-rule-edit-form">
-            {notificationRuleFormFields teams users policies rule.name rule.position rule.enabled (matchFieldsText rule.match) (matchLabelsText rule.match) (matchFacetsText rule.match) rule.channel (channelConfigText rule.channelConfig) rule.severityThreshold target rule.throttleSeconds rule.escalationPolicyId}
+            {notificationRuleFormFields teams users policies channels rule.name rule.position rule.enabled (matchFieldsText rule.match) (matchLabelsText rule.match) (matchFacetsText rule.match) rule.channel (channelConfigText rule.channelConfig) rule.severityThreshold target rule.throttleSeconds rule.escalationPolicyId}
             <button type="submit" class="btn btn-brand" data-testid="notification-rule-submit">{tr "Save"}</button>
         </form>
         </div></div>|]

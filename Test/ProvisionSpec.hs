@@ -17,7 +17,7 @@ spec :: Spec
 spec = describe "Application.Service.Provision" do
     describe "parseProvisionConfig" do
         it "parses the empty config" do
-            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig False Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+            parseProvisionConfig "{}" `shouldBe` Right (ProvisionConfig False Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
 
         it "parses a full config" do
             let json =
@@ -525,10 +525,18 @@ spec = describe "Application.Service.Provision" do
                 Left err -> err `shouldSatisfy` ("must not be negative" `isInfixOf`)
                 Right _ -> expectationFailure "expected parse failure"
 
-        it "rejects unknown notification channels" do
-            let json = "{\"notificationRules\": {\"n\": {\"channel\": \"sms\"}}}"
-            case parseProvisionConfig json of
-                Left err -> err `shouldSatisfy` ("unknown notification channel" `isInfixOf`)
+        it "parses the notificationChannels section and rejects unknown channel types" do
+            case parseProvisionConfig "{\"notificationChannels\": {\"mm-main\": {\"type\": \"mattermost\", \"baseUrl\": \"https://mm.example\", \"tokenEnv\": \"MM_TOKEN\"}}}" of
+                Left err -> expectationFailure (cs err)
+                Right config -> do
+                    let [channel] = fromMaybe [] config.notificationChannels
+                    channel.ncItemName `shouldBe` "mm-main"
+                    channel.ncItemType `shouldBe` "mattermost"
+                    channel.ncItemBaseUrl `shouldBe` "https://mm.example"
+                    channel.ncItemTokenEnv `shouldBe` "MM_TOKEN"
+                    channel.ncItemProtected `shouldBe` True
+            case parseProvisionConfig "{\"notificationChannels\": {\"bad\": {\"type\": \"sms\"}}}" of
+                Left err -> err `shouldSatisfy` ("unknown notification channel type" `isInfixOf`)
                 Right _ -> expectationFailure "expected parse failure"
 
     describe "parseHostGroupsFile" do

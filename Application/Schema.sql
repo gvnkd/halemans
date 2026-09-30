@@ -941,3 +941,58 @@ CREATE TABLE internal_api_audit (
 );
 ALTER TABLE internal_api_audit ADD CONSTRAINT internal_api_audit_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id);
 CREATE INDEX internal_api_audit_user_id_idx ON internal_api_audit(user_id, created_at);
+
+-- Mattermost notification channel (phase 1, migration 1790757260): maps an
+-- alert to its Mattermost root post so status transitions edit the root
+-- message in place. One row per (alert, notification rule).
+CREATE TABLE mattermost_posts (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    alert_id UUID NOT NULL,
+    notification_rule_id UUID DEFAULT NULL,
+    root_post_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    rendered_status TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+ALTER TABLE mattermost_posts ADD CONSTRAINT mattermost_posts_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES alerts (id);
+ALTER TABLE mattermost_posts ADD CONSTRAINT mattermost_posts_notification_rule_id_fkey FOREIGN KEY (notification_rule_id) REFERENCES notification_rules (id);
+CREATE INDEX mattermost_posts_alert_id_idx ON mattermost_posts(alert_id);
+
+-- Outbound Mattermost delivery queue: kind 'notify' creates the root post
+-- plus details reply; kind 'sync' patches existing root posts.
+CREATE TABLE mattermost_jobs (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    alert_id UUID NOT NULL,
+    rule_id UUID DEFAULT NULL,
+    kind TEXT NOT NULL DEFAULT 'sync',
+    event_kind TEXT DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    status JOB_STATUS DEFAULT 'job_status_not_started' NOT NULL,
+    last_error TEXT DEFAULT NULL,
+    attempts_count INT DEFAULT 0 NOT NULL,
+    locked_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    locked_by UUID DEFAULT NULL,
+    run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+ALTER TABLE mattermost_jobs ADD CONSTRAINT mattermost_jobs_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES alerts (id);
+ALTER TABLE mattermost_jobs ADD CONSTRAINT mattermost_jobs_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES notification_rules (id);
+
+-- Notification channels as first-class config rows (migration
+-- 1790765462): notification_rules.channel references the channel NAME.
+-- config JSONB carries the secret reference: {"tokenEnv":"<VAR>"} names the
+-- env var holding the token, like zabbix/grafana source configs.
+CREATE TABLE notification_channels (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    protected BOOLEAN NOT NULL DEFAULT false,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    base_url TEXT NOT NULL DEFAULT '',
+    config JSONB NOT NULL DEFAULT '{}',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE UNIQUE INDEX notification_channels_name_idx ON notification_channels(name);
+

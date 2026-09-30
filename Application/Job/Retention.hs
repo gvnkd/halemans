@@ -90,6 +90,7 @@ pruneTerminalJobRows = do
             [ pruneEnrichAlertJobs
             , pruneWriteBackJobs
             , prunePushNotificationJobs
+            , pruneMattermostJobs
             , pruneLlmAnalysisJobs
             ]
     let total = sum counts
@@ -149,6 +150,17 @@ prunePushNotificationJobs cutoff =
         [typedSql|
     DELETE FROM push_notification_jobs
     WHERE id IN (SELECT id FROM push_notification_jobs
+        WHERE updated_at < ${cutoff}
+        AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
+        LIMIT 1000)
+|]
+
+pruneMattermostJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
+pruneMattermostJobs cutoff =
+    sqlExecTyped
+        [typedSql|
+    DELETE FROM mattermost_jobs
+    WHERE id IN (SELECT id FROM mattermost_jobs
         WHERE updated_at < ${cutoff}
         AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
         LIMIT 1000)

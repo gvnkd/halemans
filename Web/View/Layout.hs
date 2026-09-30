@@ -84,6 +84,7 @@ navigation =
                     <li><a class="dropdown-item" href={GroupingRulesAction}>{tr "Grouping rules"}</a></li>
                     <li><a class="dropdown-item" href={FieldMappingsAction}>{tr "Field mappings"}</a></li>
                     <li><a class="dropdown-item" href={NotificationRulesAction}>{tr "Notification rules"}</a></li>
+                    <li><a class="dropdown-item" href={NotificationChannelsAction}>{tr "Notification channels"}</a></li>
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>{tr "Escalation policies"}</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>{tr "Integrations"}</a></li>
                     <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>

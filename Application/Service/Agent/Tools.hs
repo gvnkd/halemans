@@ -92,7 +92,7 @@ toolCatalog =
     , tool "update_escalation_policy" "Replace an escalation policy's steps (matched by name). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "policy name", req "steps" "steps as a JSON array string", optC "confirmed"] (Just "manage_rules")
     , tool "delete_escalation_policy" "Delete an escalation policy by name. Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "policy name", optC "confirmed"] (Just "manage_rules")
     , tool "list_notification_rules" "List notification rules. Requires manage_rules." [] (Just "manage_rules")
-    , tool "create_notification_rule" "Create a notification rule. match is a JSON object ({fields:{env|host|...:value}, labels:{name:glob}}). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "rule name", req "match" "match as a JSON object string", opt "severity_threshold" "critical|high|warning|info (default info)", opt "team" "team name", opt "channel" "browser_push|email (default browser_push)", optC "confirmed"] (Just "manage_rules")
+    , tool "create_notification_rule" "Create a notification rule. match is a JSON object ({fields:{env|host|...:value}, labels:{name:glob}}). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "rule name", req "match" "match as a JSON object string", opt "severity_threshold" "critical|high|warning|info (default info)", opt "team" "team name", opt "channel" "notification channel name configured on Admin → Notification channels (default browser_push)", opt "channel_config" "channel config as a JSON object string (mattermost: {\"team\",\"channel\"})", optC "confirmed"] (Just "manage_rules")
     , tool "delete_notification_rule" "Delete a notification rule by name. Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "rule name", optC "confirmed"] (Just "manage_rules")
     , tool "list_grouping_rules" "List alert grouping rules. Requires manage_rules." [] (Just "manage_rules")
     , tool "create_grouping_rule" "Create an alert grouping rule. match is a JSON object, group_key_template a Go-template-like string. Requires manage_rules." [req "name" "rule name", req "match" "match as a JSON object string", req "group_key_template" "group key template", opt "position" "sort position (default end)"] (Just "manage_rules")
@@ -673,11 +673,20 @@ dispatchRest context name arguments = case name of
         severityThreshold <- arg "severity_threshold" "info"
         teamName <- argMaybe "team"
         channel <- arg "channel" "browser_push"
+        channelConfigText <- arg "channel_config" ""
         confirmed <- argBool "confirmed" False
         matchValue <- parseJsonObject matchText
-        case matchValue of
-            Left err -> pure err
-            Right matchValue -> do
+        channelConfig <-
+            if Text.null (Text.strip channelConfigText)
+                then pure (Right (Aeson.object []))
+                else parseJsonObject channelConfigText
+        channelRow <- query @NotificationChannel |> filterWhere (#name, channel) |> fetchOneOrNothing
+        case (matchValue, channelConfig, isJust channelRow) of
+            (Left err, _, _) -> pure err
+            (_, Left err, _) -> pure err
+            (_, _, False) ->
+                pure ("invalid: unknown notification channel \"" <> channel <> "\" (configure it on Admin → Notification channels)")
+            (Right matchValue, Right channelConfig, True) -> do
                 teamId <- traverse (fmap (get #id) . fetchTeamByName) teamName
                 existing <- query @NotificationRule |> filterWhere (#name, name) |> fetchOneOrNothing
                 case existing of
@@ -693,6 +702,7 @@ dispatchRest context name arguments = case name of
                                         |> set #severityThreshold severityThreshold
                                         |> set #teamId teamId
                                         |> set #channel channel
+                                        |> set #channelConfig channelConfig
                                         |> createRecord
                                 pure ("created notification rule \"" <> name <> "\"")
     "delete_notification_rule" -> do

@@ -60,6 +60,7 @@ buildProvisionExport = do
     assetsConfigs <- exportAssetsConfigs
     groupingRules <- exportGroupingRules
     escalationPolicies <- exportEscalationPolicies
+    notificationChannels <- exportNotificationChannels
     notificationRules <- exportNotificationRules
     llmAgentRoles <- exportLlmAgentRoles
     autoAnalyze <- exportAutoAnalyze
@@ -82,6 +83,7 @@ buildProvisionExport = do
             , "assetsConfigs" .= assetsConfigs
             , "groupingRules" .= groupingRules
             , "escalationPolicies" .= escalationPolicies
+            , "notificationChannels" .= notificationChannels
             , "notificationRules" .= notificationRules
             , "llmAgentRoles" .= llmAgentRoles
             ]
@@ -338,6 +340,22 @@ buildProvisionExport = do
                         <> ["targetUser" .= user | Just user <- [targetUser]]
                         <> ["unlessStatus" .= status | Just status <- [step.stUnlessStatus]]
                     )
+    exportNotificationChannels = do
+        channels <- query @NotificationChannel |> orderByAsc #name |> fetch
+        pure $
+            object
+                [ Key.fromText channel.name
+                    .= object
+                        ( [ "type" .= channel.type_
+                          , "enabled" .= channel.enabled
+                          ]
+                            <> ["baseUrl" .= channel.baseUrl | channel.baseUrl /= ""]
+                            <> ["tokenEnv" .= tokenEnv | tokenEnv /= ""]
+                        )
+                | channel <- channels
+                , let tokenEnv :: Text
+                      tokenEnv = fromMaybe "" (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? "tokenEnv" Aeson..!= "")) channel.config)
+                ]
     exportNotificationRules = do
         rules <- query @NotificationRule |> orderByAsc #name |> fetch
         entries <- forM rules \rule -> do

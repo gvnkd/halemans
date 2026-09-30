@@ -201,6 +201,7 @@ data GroupsController
 data HooksController
     = HookAlertmanagerAction {token :: !Text}
     | HookGenericAction {token :: !Text}
+    | HookMattermostAction {token :: !Text}
     deriving (Eq, Show)
 
 data SourcesController
@@ -211,6 +212,7 @@ data SourcesController
     | UpdateSourceAction {sourceId :: !(Id Source)}
     | ToggleSourceAction {sourceId :: !(Id Source)}
     | SyncHostGroupsAction {sourceId :: !(Id Source)}
+    | FireTestAlertAction {sourceId :: !(Id Source)}
     deriving (Eq, Show)
 
 data TeamsController
@@ -249,6 +251,17 @@ data NotificationRulesController
     | EditNotificationRuleAction {notificationRuleId :: !(Id NotificationRule)}
     | UpdateNotificationRuleAction {notificationRuleId :: !(Id NotificationRule)}
     | DeleteNotificationRuleAction {notificationRuleId :: !(Id NotificationRule)}
+    deriving (Eq, Show)
+
+data NotificationChannelsController
+    = NotificationChannelsAction
+    | NewNotificationChannelAction
+    | CreateNotificationChannelAction
+    | EditNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | UpdateNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | ToggleNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | DeleteNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | TestNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     deriving (Eq, Show)
 
 data EscalationPoliciesController

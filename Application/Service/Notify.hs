@@ -7,6 +7,7 @@ module Application.Service.Notify (
     throttleKeyFor,
 ) where
 
+import Application.Job.Mattermost (enqueueNotify)
 import Application.Pipeline.Grouping (matchAlert, matchExprFromJSON, severityAtLeast)
 import Application.Service.Escalation (createTracker)
 import Control.Monad (filterM, void)
@@ -93,7 +94,16 @@ fireRule alert rule = do
     targets <- resolveRuleTargets rule
     key <- throttleKeyFor alert
     recordNotifiedEvent alert rule key targets
-    enqueuePush alert rule targets
+    channelOrNothing <-
+        query @NotificationChannel
+            |> filterWhere (#name, rule.channel)
+            |> fetchOneOrNothing
+    forM_ channelOrNothing \channel ->
+        when (channel.enabled) do
+            case channel.type_ of
+                "mattermost" -> enqueueNotify alert rule
+                "browser_push" -> enqueuePush alert rule targets
+                _ -> pure () -- email delivery lands in a later phase
     when (alert.status == "firing") do
         forM_ rule.escalationPolicyId \policyId ->
             void (createTracker alert rule policyId)

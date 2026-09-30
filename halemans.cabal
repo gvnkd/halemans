@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                halemans
-version:             2.9.5
+version:             2.10.0
 synopsis:            Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks
 description:         Halemans collects alerts from Zabbix, Grafana, Alertmanager and
                      generic webhooks into a single dashboard, enriches them with CMDB
@@ -97,6 +97,7 @@ library
         Application.Job.FacetBackfill
         Application.Job.JiraSync
         Application.Job.LlmAnalysis
+        Application.Job.Mattermost
         Application.Job.PollGrafana
         Application.Job.PollZabbix
         Application.Job.PushNotification
@@ -164,6 +165,10 @@ library
         Application.Service.Llm.ToolCache
         Application.Service.Llm.Tools
         Application.Service.Log
+        Application.Service.Mattermost
+        Application.Service.Mattermost.Actions
+        Application.Service.Mattermost.Api
+        Application.Service.Mattermost.Render
         Application.Service.MetricCache
         Application.Service.MetricChart
         Application.Service.Notify
@@ -176,6 +181,7 @@ library
         Application.Service.Reports
         Application.Service.SecurityHeaders
         Application.Service.SourceHealth
+        Application.Service.TestAlert
         Application.Service.Timeline
         Application.Service.TimeRange
         Application.Service.Turbolinks
@@ -204,6 +210,7 @@ library
         Web.Controller.Live
         Web.Controller.LlmAdmin
         Web.Controller.Metrics
+        Web.Controller.NotificationChannels
         Web.Controller.NotificationRules
         Web.Controller.Prelude
         Web.Controller.Profile
@@ -269,6 +276,10 @@ library
         Web.View.LlmAdmin.NewRole
         Web.View.LlmAdmin.Queue
         Web.View.LlmAdmin.RoleForm
+        Web.View.NotificationChannels.Edit
+        Web.View.NotificationChannels.Form
+        Web.View.NotificationChannels.Index
+        Web.View.NotificationChannels.New
         Web.View.NotificationRules.Edit
         Web.View.NotificationRules.Index
         Web.View.NotificationRules.New
@@ -333,7 +344,10 @@ library
         Generated.ActualTypes.LlmPromptTemplate
         Generated.ActualTypes.LlmToolCache
         Generated.ActualTypes.LlmToolCacheConfig
+        Generated.ActualTypes.MattermostJob
+        Generated.ActualTypes.MattermostPost
         Generated.ActualTypes.MetricCache
+        Generated.ActualTypes.NotificationChannel
         Generated.ActualTypes.NotificationRule
         Generated.ActualTypes.OnCallSchedule
         Generated.ActualTypes.PollGrafanaJob
@@ -399,7 +413,10 @@ library
         Generated.LlmPromptTemplate
         Generated.LlmToolCache
         Generated.LlmToolCacheConfig
+        Generated.MattermostJob
+        Generated.MattermostPost
         Generated.MetricCache
+        Generated.NotificationChannel
         Generated.NotificationRule
         Generated.OnCallSchedule
         Generated.PollGrafanaJob
@@ -498,7 +515,10 @@ library
         Generated.Statements.CreateManyLlmPromptTemplate
         Generated.Statements.CreateManyLlmToolCache
         Generated.Statements.CreateManyLlmToolCacheConfig
+        Generated.Statements.CreateManyMattermostJob
+        Generated.Statements.CreateManyMattermostPost
         Generated.Statements.CreateManyMetricCache
+        Generated.Statements.CreateManyNotificationChannel
         Generated.Statements.CreateManyNotificationRule
         Generated.Statements.CreateManyOnCallSchedule
         Generated.Statements.CreateManyPollGrafanaJob
@@ -520,7 +540,10 @@ library
         Generated.Statements.CreateManyWriteBackAttempt
         Generated.Statements.CreateManyWriteBackJob
         Generated.Statements.CreateManyZabbixHostGroup
+        Generated.Statements.CreateMattermostJob
+        Generated.Statements.CreateMattermostPost
         Generated.Statements.CreateMetricCache
+        Generated.Statements.CreateNotificationChannel
         Generated.Statements.CreateNotificationRule
         Generated.Statements.CreateOnCallSchedule
         Generated.Statements.CreatePollGrafanaJob
@@ -584,7 +607,10 @@ library
         Generated.Statements.FetchLlmPromptTemplate
         Generated.Statements.FetchLlmToolCache
         Generated.Statements.FetchLlmToolCacheConfig
+        Generated.Statements.FetchMattermostJob
+        Generated.Statements.FetchMattermostPost
         Generated.Statements.FetchMetricCache
+        Generated.Statements.FetchNotificationChannel
         Generated.Statements.FetchNotificationRule
         Generated.Statements.FetchOnCallSchedule
         Generated.Statements.FetchPollGrafanaJob
@@ -648,7 +674,10 @@ library
         Generated.Statements.RowDecoderLlmPromptTemplate
         Generated.Statements.RowDecoderLlmToolCache
         Generated.Statements.RowDecoderLlmToolCacheConfig
+        Generated.Statements.RowDecoderMattermostJob
+        Generated.Statements.RowDecoderMattermostPost
         Generated.Statements.RowDecoderMetricCache
+        Generated.Statements.RowDecoderNotificationChannel
         Generated.Statements.RowDecoderNotificationRule
         Generated.Statements.RowDecoderOnCallSchedule
         Generated.Statements.RowDecoderPollGrafanaJob
@@ -712,7 +741,10 @@ library
         Generated.Statements.UpdateLlmPromptTemplate
         Generated.Statements.UpdateLlmToolCache
         Generated.Statements.UpdateLlmToolCacheConfig
+        Generated.Statements.UpdateMattermostJob
+        Generated.Statements.UpdateMattermostPost
         Generated.Statements.UpdateMetricCache
+        Generated.Statements.UpdateNotificationChannel
         Generated.Statements.UpdateNotificationRule
         Generated.Statements.UpdateOnCallSchedule
         Generated.Statements.UpdatePollGrafanaJob

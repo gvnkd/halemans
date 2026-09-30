@@ -12,3 +12,12 @@ INSERT INTO sources (id, type, name, base_url, env, poll_interval_seconds, enabl
     ('a0000000-0000-0000-0000-000000000002', 'grafana',      'grafana-dev',      'http://127.0.0.1:3001',  'dev', 30, true, '{"tokenEnv":"GRAFANA_TOKEN","writeBack":true,"jiraWritable":true,"jiraProjects":["DEV"],"cmdbSpaces":["DEV"]}'),
     ('a0000000-0000-0000-0000-000000000003', 'alertmanager', 'alertmanager-dev', 'http://127.0.0.1:9093',  'dev', 30, true, '{"writeBack":true,"jiraWritable":true,"jiraProjects":["DEV"],"cmdbSpaces":["DEV"]}')
 ON CONFLICT (id) DO NOTHING;
+
+-- Default notification channels (one per delivery type): notification rules
+-- reference a channel by NAME. Mattermost rows are created on the admin
+-- Notification channels page (or provisioned) with the server base URL and
+-- a config tokenEnv naming the env var that holds the bot token.
+INSERT INTO notification_channels (name, type) VALUES
+    ('browser_push', 'browser_push'),
+    ('email', 'email')
+ON CONFLICT (name) DO NOTHING;

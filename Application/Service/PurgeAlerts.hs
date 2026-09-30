@@ -18,6 +18,8 @@ purgeAllAlerts = withTransaction do
     void $ sqlExecTyped [typedSql| DELETE FROM alert_events |]
     void $ sqlExecTyped [typedSql| DELETE FROM comments |]
     void $ sqlExecTyped [typedSql| DELETE FROM push_notification_jobs |]
+    void $ sqlExecTyped [typedSql| DELETE FROM mattermost_jobs |]
+    void $ sqlExecTyped [typedSql| DELETE FROM mattermost_posts |]
     void $ sqlExecTyped [typedSql| DELETE FROM escalation_trackers |]
     void $ sqlExecTyped [typedSql| DELETE FROM jira_links |]
     void $ sqlExecTyped [typedSql| DELETE FROM write_back_jobs |]

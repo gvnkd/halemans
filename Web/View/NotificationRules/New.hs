@@ -9,6 +9,7 @@ data NewView = NewView
     { teams :: [Team]
     , users :: [User]
     , policies :: [EscalationPolicy]
+    , channels :: [NotificationChannel]
     }
 
 instance View NewView where
@@ -18,14 +19,17 @@ instance View NewView where
         {pageHeaderHtml (tr "New notification rule") mempty}
         <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={CreateNotificationRuleAction} data-testid="notification-rule-form">
-            {notificationRuleFormFields teams users policies "" 0 True "" "" "" "browser_push" "" "high" "" 300 Nothing}
+            {notificationRuleFormFields teams users policies channels "" 0 True "" "" "" "browser_push" "" "high" "" 300 Nothing}
             <button type="submit" class="btn btn-brand" data-testid="notification-rule-submit">{tr "Create"}</button>
         </form>
         </div></div>|]
 
--- Shared with Edit. `target` is "team:<uuid>" | "user:<uuid>" | "".
-notificationRuleFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => [Team] -> [User] -> [EscalationPolicy] -> Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Text -> Text -> Text -> Int -> Maybe (Id EscalationPolicy) -> Html
-notificationRuleFormFields teams users policies name position enabled matchFields matchLabels matchFacets channel channelConfig severityThreshold target throttleSeconds policyRef =
+-- Shared with Edit. `target` is "team:<uuid>" | "user:<uuid>" | "". The
+-- channel select lists notification_channels by name; the per-rule
+-- channelConfig textarea carries channel-specific options (mattermost:
+-- {"team","channel"}).
+notificationRuleFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => [Team] -> [User] -> [EscalationPolicy] -> [NotificationChannel] -> Text -> Int -> Bool -> Text -> Text -> Text -> Text -> Text -> Text -> Text -> Int -> Maybe (Id EscalationPolicy) -> Html
+notificationRuleFormFields teams users policies channels name position enabled matchFields matchLabels matchFacets channel channelConfig severityThreshold target throttleSeconds policyRef =
     [hsx|
     <div class="mb-3">
         <label class="form-label">{tr "Name"}</label>
@@ -54,13 +58,14 @@ notificationRuleFormFields teams users policies name position enabled matchField
     <div class="mb-3">
         <label class="form-label">{tr "Channel"}</label>
         <select name="channel" class="select" data-testid="rule-channel">
-            {forEach ["browser_push", "email"] (channelOption channel)}
+            {forEach channels (channelOption channel)}
         </select>
+        <div class="form-text">{tr "Admin → Notification channels configures the delivery (server URL, credentials)."}</div>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Channel config (JSON)"}</label>
         <textarea name="channelConfig" class="form-control font-monospace" rows="2" data-testid="rule-channel-config">{channelConfig}</textarea>
-        <div class="form-text">{tr "Channel-specific options as a JSON object; empty = defaults."}</div>
+        <div class="form-text">{tr "Channel-specific options as a JSON object; mattermost: {\"team\",\"channel\"}."}</div>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Severity threshold (fires when alert severity ≥ this)"}</label>
@@ -90,7 +95,7 @@ notificationRuleFormFields teams users policies name position enabled matchField
 |]
   where
     severityOption value = [hsx|<option value={value} selected={severityThreshold == value}>{value}</option>|]
-    channelOption selected value = [hsx|<option value={value} selected={selected == value}>{value}</option>|]
+    channelOption selected chan = [hsx|<option value={chan.name} selected={selected == chan.name}>{chan.name} ({chan.type_})</option>|]
     teamOption team =
         [hsx|
             <option value={"team:" <> tshow (get #id team)} selected={target == "team:" <> tshow (get #id team)}>{tr "team"}: {team.name}</option>

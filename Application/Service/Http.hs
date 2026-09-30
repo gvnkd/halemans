@@ -4,6 +4,7 @@ module Application.Service.Http (
     getFollowing,
     getFollowingStream,
     postFollowing,
+    putFollowing,
     deleteFollowing,
 ) where
 
@@ -39,6 +40,9 @@ getFollowing = follow Wreq.getWith
 
 postFollowing :: Wreq.Options -> String -> Aeson.Value -> IO (Wreq.Response L.ByteString)
 postFollowing opts url body = follow (\o u -> Wreq.postWith o u body) opts url
+
+putFollowing :: Wreq.Options -> String -> Aeson.Value -> IO (Wreq.Response L.ByteString)
+putFollowing opts url body = follow (\o u -> Wreq.putWith o u body) opts url
 
 deleteFollowing :: Wreq.Options -> String -> IO (Wreq.Response L.ByteString)
 deleteFollowing = follow Wreq.deleteWith

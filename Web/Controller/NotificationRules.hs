@@ -19,53 +19,67 @@ instance Controller NotificationRulesController where
     action NewNotificationRuleAction = do
         requirePrivilege "manage_rules"
         (teams, users, policies) <- formChoices
-        render NewView{teams, users, policies}
+        channels <- channelChoices
+        render NewView{teams, users, policies, channels}
     action CreateNotificationRuleAction = do
         requirePrivilege "manage_rules"
         let (teamRef, userRef) = targetRef
-        _ <-
-            newRecord @NotificationRule
-                |> set #name (param @Text "name")
-                |> set #position (param @Int "position")
-                |> set #enabled enabledParam
-                |> set #match matchFormValue
-                |> set #severityThreshold (param @Text "severityThreshold")
-                |> set #teamId teamRef
-                |> set #userId userRef
-                |> set #channel channelParam
-                |> set #channelConfig channelConfigValue
-                |> set #throttleSeconds (param @Int "throttleSeconds")
-                |> set #escalationPolicyId policyRef
-                |> createRecord
-        setSuccessMessage (tr "Notification rule created")
-        redirectTo NotificationRulesAction
+        channelName <- resolveChannelName channelParam
+        if Text.null channelName
+            then do
+                setErrorMessage (tr "Create a notification channel first (Admin → Notification channels)")
+                redirectTo NewNotificationRuleAction
+            else do
+                _ <-
+                    newRecord @NotificationRule
+                        |> set #name (param @Text "name")
+                        |> set #position (param @Int "position")
+                        |> set #enabled enabledParam
+                        |> set #match matchFormValue
+                        |> set #severityThreshold (param @Text "severityThreshold")
+                        |> set #teamId teamRef
+                        |> set #userId userRef
+                        |> set #channel channelName
+                        |> set #channelConfig channelConfigValue
+                        |> set #throttleSeconds (param @Int "throttleSeconds")
+                        |> set #escalationPolicyId policyRef
+                        |> createRecord
+                setSuccessMessage (tr "Notification rule created")
+                redirectTo NotificationRulesAction
     action EditNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
         ensureNotProtected rule.name (get #protected rule)
         (teams, users, policies) <- formChoices
-        render EditView{rule, teams, users, policies}
+        channels <- channelChoices
+        render EditView{rule, teams, users, policies, channels}
     action UpdateNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
         ensureNotProtected rule.name (get #protected rule)
         let (teamRef, userRef) = targetRef
-        _ <-
-            rule
-                |> set #name (param @Text "name")
-                |> set #position (param @Int "position")
-                |> set #enabled enabledParam
-                |> set #match matchFormValue
-                |> set #severityThreshold (param @Text "severityThreshold")
-                |> set #teamId teamRef
-                |> set #userId userRef
-                |> set #channel channelParam
-                |> set #channelConfig channelConfigValue
-                |> set #throttleSeconds (param @Int "throttleSeconds")
-                |> set #escalationPolicyId policyRef
-                |> updateRecord
-        setSuccessMessage (tr "Notification rule updated")
-        redirectTo NotificationRulesAction
+        channelName <- resolveChannelName channelParam
+        if Text.null channelName
+            then do
+                setErrorMessage (tr "Create a notification channel first (Admin → Notification channels)")
+                redirectTo EditNotificationRuleAction{notificationRuleId}
+            else do
+                _ <-
+                    rule
+                        |> set #name (param @Text "name")
+                        |> set #position (param @Int "position")
+                        |> set #enabled enabledParam
+                        |> set #match matchFormValue
+                        |> set #severityThreshold (param @Text "severityThreshold")
+                        |> set #teamId teamRef
+                        |> set #userId userRef
+                        |> set #channel channelName
+                        |> set #channelConfig channelConfigValue
+                        |> set #throttleSeconds (param @Int "throttleSeconds")
+                        |> set #escalationPolicyId policyRef
+                        |> updateRecord
+                setSuccessMessage (tr "Notification rule updated")
+                redirectTo NotificationRulesAction
     action DeleteNotificationRuleAction{notificationRuleId} = do
         requirePrivilege "manage_rules"
         rule <- fetch notificationRuleId
@@ -80,6 +94,27 @@ formChoices = do
     users <- query @User |> orderByAsc #email |> fetch
     policies <- query @EscalationPolicy |> orderByAsc #name |> fetch
     pure (teams, users, policies)
+
+channelChoices :: (?modelContext :: ModelContext) => IO [NotificationChannel]
+channelChoices = query @NotificationChannel |> orderByAsc #name |> fetch
+
+-- | The submitted channel value must name an existing notification_channels
+-- row; unknown values fall back to "browser_push" when present, else the
+-- first channel. "" means no channel exists at all.
+resolveChannelName :: (?modelContext :: ModelContext) => Text -> IO Text
+resolveChannelName requested = do
+    channels <- channelChoices
+    found <- query @NotificationChannel |> filterWhere (#name, requested) |> fetchOneOrNothing
+    pure case found of
+        Just _ -> requested
+        Nothing
+            | any (\c -> c.name == "browser_push") channels -> "browser_push"
+            | otherwise -> maybe "" (.name) (head channels)
+
+-- Channel select: the submitted value is a notification_channels row NAME
+-- (the delivery type lives on the row).
+channelParam :: (?request :: Request, ?respond :: Respond) => Text
+channelParam = param @Text "channel"
 
 -- | Target select value: "team:<uuid>" | "user:<uuid>" | "" (§2: team_id XOR
 -- user_id).
@@ -108,13 +143,6 @@ matchFormValue =
         (param @Text "matchFields")
         (param @Text "matchLabels")
         (param @Text "matchFacets")
-
--- Channel select: browser_push | email (the two the notification engine and
--- the agent tool accept); unknown values fall back to browser_push.
-channelParam :: (?request :: Request, ?respond :: Respond) => Text
-channelParam = case param @Text "channel" of
-    "email" -> "email"
-    _ -> "browser_push"
 
 -- Channel config textarea: must be a JSON object; empty/invalid falls back to
 -- {} (the form text documents the format).

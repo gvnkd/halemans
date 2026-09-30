@@ -71,9 +71,23 @@ let
             exec python3 ${./mocks/mock_zabbix.py}
         '';
     };
+
+    # Mock Mattermost v4 subset (notification channel): posts create/edit,
+    # channel resolve, interactive-button click simulation. Token from
+    # MATTERMOST_TOKEN (same env var as the real channel will use).
+    mockMattermost = pkgs.writeShellApplication {
+        name = "mock-mattermost";
+        runtimeInputs = [ pkgs.python3 halemansLib.ensureTokens ];
+        text = ''
+            halemans-ensure-tokens
+            # shellcheck disable=SC1091
+            source "''${DEVENV_STATE:?}/halemans/env.sh"
+            exec python3 ${./mocks/mock_mattermost.py}
+        '';
+    };
 in
 {
-    packages = [ mockConfluence mockJira mockLlm mockAssets mockGrafana mockZabbix ];
+    packages = [ mockConfluence mockJira mockLlm mockAssets mockGrafana mockZabbix mockMattermost ];
 
     processes.mock-confluence = {
         exec = "${mockConfluence}/bin/mock-confluence";
@@ -136,6 +150,17 @@ in
             readiness_probe.http_get = {
                 host = "127.0.0.1";
                 port = 18087;
+                path = "/health";
+            };
+        };
+    };
+
+    processes.mock-mattermost = {
+        exec = "${mockMattermost}/bin/mock-mattermost";
+        process-compose = {
+            readiness_probe.http_get = {
+                host = "127.0.0.1";
+                port = 18088;
                 path = "/health";
             };
         };

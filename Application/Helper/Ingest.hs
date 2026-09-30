@@ -9,6 +9,7 @@ module Application.Helper.Ingest (
     publishAlertUpdate,
 ) where
 
+import Application.Job.Mattermost (enqueueSyncIfPosted)
 import Application.Pipeline.Blackouts (BlackoutSubject (..), blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
@@ -355,4 +356,7 @@ publishAlertUpdate alert kind = do
     -- pg_notify returns void, which typedSql cannot decode; the IS NULL
     -- predicate on void is always true, so this yields a plain int row.
     _ <- sqlQueryTyped [typedSql| SELECT 1 WHERE pg_notify('halemans_events', ${payload}) IS NULL |] :: IO [Int]
+    -- Mattermost root-post sync rides the same fan-out: state-changing kinds
+    -- patch the alert's root posts (the service no-ops when unconfigured).
+    enqueueSyncIfPosted alert kind
     pure ()

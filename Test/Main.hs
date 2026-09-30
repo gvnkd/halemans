@@ -27,6 +27,7 @@ import qualified Test.LiveSpec
 import qualified Test.LlmSpec
 import qualified Test.LogSpec
 import qualified Test.MarkdownSpec
+import qualified Test.MattermostSpec
 import qualified Test.MetricChartSpec
 import qualified Test.PollZabbixSpec
 import qualified Test.PrivilegeSpec
@@ -74,6 +75,7 @@ main = hspec do
     Test.FacetsSpec.spec
     Test.FilterPrefsSpec.spec
     Test.MarkdownSpec.spec
+    Test.MattermostSpec.spec
     Test.MetricChartSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec

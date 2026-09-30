@@ -15,6 +15,7 @@ module Application.Service.Provision (
     AssetsConfigItem (..),
     GroupingRuleItem (..),
     NotificationRuleItem (..),
+    NotificationChannelItem (..),
     EscalationPolicyItem (..),
     EscalationStepItem (..),
     LlmAgentRoleItem (..),
@@ -93,6 +94,7 @@ data ProvisionConfig = ProvisionConfig
     , cmdbConfigs :: Maybe [CmdbConfigItem]
     , assetsConfigs :: Maybe [AssetsConfigItem]
     , groupingRules :: Maybe [GroupingRuleItem]
+    , notificationChannels :: Maybe [NotificationChannelItem]
     , notificationRules :: Maybe [NotificationRuleItem]
     , escalationPolicies :: Maybe [EscalationPolicyItem]
     , llmAgentRoles :: Maybe [LlmAgentRoleItem]
@@ -287,6 +289,20 @@ data NotificationRuleItem = NotificationRuleItem
     , nrThrottleSeconds :: Int
     , nrEscalationPolicy :: Maybe Text
     , nrProtected :: Bool
+    }
+    deriving (Eq, Show)
+
+-- Notification channels (admin → Notification channels): keyed by name;
+-- rules reference the channel by its name. tokenEnv names the env var
+-- holding the credential (mattermost bot token) — validated to resolve when
+-- non-empty. Applied BEFORE notificationRules so rule references resolve.
+data NotificationChannelItem = NotificationChannelItem
+    { ncItemName :: Text
+    , ncItemType :: Text
+    , ncItemBaseUrl :: Text
+    , ncItemTokenEnv :: Text
+    , ncItemEnabled :: Bool
+    , ncItemProtected :: Bool
     }
     deriving (Eq, Show)
 
@@ -582,7 +598,7 @@ parseDashboardScope userEmail o =
 
 instance FromJSON ProvisionConfig where
     parseJSON = Aeson.withObject "provision config" \o -> do
-        rejectUnknownFields ["strict", "users", "roles", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "assetsConfigs", "groupingRules", "notificationRules", "escalationPolicies", "llmAgentRoles", "autoAnalyze", "blackouts", "apiTokens", "llmAgentConfig", "llmGlobalConfig", "toolCache"] o
+        rejectUnknownFields ["strict", "users", "roles", "sources", "teams", "llm", "fieldMappings", "dashboards", "jiraConfigs", "cmdbConfigs", "assetsConfigs", "groupingRules", "notificationChannels", "notificationRules", "escalationPolicies", "llmAgentRoles", "autoAnalyze", "blackouts", "apiTokens", "llmAgentConfig", "llmGlobalConfig", "toolCache"] o
         strict <- o .:? "strict" .!= False
         users <- parseSection "users" parseUserItem o
         roles <- parseSection "roles" parseRoleItem o
@@ -595,6 +611,7 @@ instance FromJSON ProvisionConfig where
         cmdbConfigs <- parseSection "cmdbConfigs" parseCmdbConfigItem o
         assetsConfigs <- parseSection "assetsConfigs" parseAssetsConfigItem o
         groupingRules <- parseSection "groupingRules" parseGroupingRuleItem o
+        notificationChannels <- parseSection "notificationChannels" parseNotificationChannelItem o
         notificationRules <- parseSection "notificationRules" parseNotificationRuleItem o
         escalationPolicies <- parseSection "escalationPolicies" parseEscalationPolicyItem o
         llmAgentRoles <- parseSection "llmAgentRoles" parseLlmAgentRoleItem o
@@ -686,6 +703,18 @@ parseEscalationPolicyItem epName o = do
     epProtected <- parseProtectedFlag o
     pure EscalationPolicyItem{..}
 
+parseNotificationChannelItem :: Text -> Aeson.Object -> Parser NotificationChannelItem
+parseNotificationChannelItem ncName o = do
+    rejectUnknownFields ["type", "baseUrl", "tokenEnv", "enabled", "protected"] o
+    ncItemType <- o .: "type"
+    unless (ncItemType `elem` ["browser_push", "email", "mattermost"]) do
+        fail ("unknown notification channel type \"" <> cs ncItemType <> "\" (valid: browser_push email mattermost)")
+    ncItemBaseUrl <- o .:? "baseUrl" .!= ""
+    ncItemTokenEnv <- o .:? "tokenEnv" .!= ""
+    ncItemEnabled <- o .:? "enabled" .!= True
+    ncItemProtected <- parseProtectedFlag o
+    pure NotificationChannelItem{ncItemName = ncName, ..}
+
 parseNotificationRuleItem :: Text -> Aeson.Object -> Parser NotificationRuleItem
 parseNotificationRuleItem nrName o = do
     rejectUnknownFields ["position", "enabled", "match", "severityThreshold", "team", "user", "channel", "channelConfig", "throttleSeconds", "escalationPolicy", "protected"] o
@@ -703,8 +732,8 @@ parseNotificationRuleItem nrName o = do
     nrChannel <- o .:? "channel" .!= "browser_push"
     when (Text.null nrChannel) do
         fail "channel must not be empty"
-    unless (nrChannel `elem` ["browser_push", "email"]) do
-        fail ("unknown notification channel \"" <> cs nrChannel <> "\" (valid: browser_push email)")
+    -- The channel is a notification_channels row NAME; existence is
+    -- validated at apply time (upsertNotificationRule) so parse stays pure.
     nrChannelConfig <- o .:? "channelConfig" .!= Aeson.object []
     nrThrottleSeconds <- o .:? "throttleSeconds" .!= 300
     nrEscalationPolicy <- o .:? "escalationPolicy"
@@ -874,6 +903,7 @@ applyProvisionConfig path = do
     applyCmdbConfigs config.strict config.cmdbConfigs
     applyAssetsConfigs config.strict config.assetsConfigs
     applyGroupingRules config.strict config.groupingRules
+    applyNotificationChannels config.strict config.notificationChannels
     applyEscalationPolicies config.strict config.escalationPolicies
     applyNotificationRules config.strict config.notificationRules
     applyLlmAgentRoles config.strict config.llmAgentRoles
@@ -1725,6 +1755,53 @@ resolveSteps policyName steps = do
 -- (XOR); escalationPolicy by name. Applied after teams/escalationPolicies so
 -- the references resolve.
 
+-- Notification channels (admin → Notification channels): upsert by name;
+-- tokenEnv must resolve to a set env var when non-empty (secrets stay env
+-- references). Applied before notificationRules. Strict delete skips
+-- channels still referenced by rules — unlike escalation policies there is
+-- no NULL to fall back to (rules would dangle).
+applyNotificationChannels :: (?modelContext :: ModelContext) => Bool -> Maybe [NotificationChannelItem] -> IO ()
+applyNotificationChannels _ Nothing = pure ()
+applyNotificationChannels strict (Just items) = withProvisionLock "notificationChannels" do
+    forM_ items upsertNotificationChannel
+    unless strict do
+        let keepNames = map (.ncItemName) items
+        unprotectRows (query @NotificationChannel |> fetch) (\row -> row.name `notElem` keepNames) updateRecord
+    when strict do
+        let keepNames = map (.ncItemName) items
+        allChannels <- query @NotificationChannel |> fetch
+        rules <- query @NotificationRule |> fetch
+        let referenced = nub [rule.channel | rule <- rules, rule.channel /= ""]
+        forM_ (filter (\row -> row.name `notElem` keepNames && row.name `notElem` referenced) allChannels) deleteRecord
+
+upsertNotificationChannel :: (?modelContext :: ModelContext) => NotificationChannelItem -> IO ()
+upsertNotificationChannel item = do
+    unless (Text.null item.ncItemTokenEnv) do
+        validateEnvRef "notificationChannels" item.ncItemName item.ncItemTokenEnv
+    maybeRow <- query @NotificationChannel |> filterWhere (#name, item.ncItemName) |> fetchOneOrNothing
+    now <- getCurrentTime
+    let configJson = Aeson.object (["tokenEnv" .= item.ncItemTokenEnv | item.ncItemTokenEnv /= ""])
+    _ <- case maybeRow of
+        Nothing ->
+            newRecord @NotificationChannel
+                |> set #name item.ncItemName
+                |> set #type_ item.ncItemType
+                |> set #baseUrl item.ncItemBaseUrl
+                |> set #config configJson
+                |> set #enabled item.ncItemEnabled
+                |> set #protected item.ncItemProtected
+                |> createRecord
+        Just row ->
+            row
+                |> set #type_ item.ncItemType
+                |> set #baseUrl item.ncItemBaseUrl
+                |> set #config configJson
+                |> set #enabled item.ncItemEnabled
+                |> set #protected item.ncItemProtected
+                |> set #updatedAt now
+                |> updateRecord
+    pure ()
+
 applyNotificationRules :: (?modelContext :: ModelContext) => Bool -> Maybe [NotificationRuleItem] -> IO ()
 applyNotificationRules _ Nothing = pure ()
 applyNotificationRules strict (Just items) = withProvisionLock "notificationRules" do
@@ -1761,6 +1838,9 @@ upsertNotificationRule item = do
         case maybePolicy of
             Just policy -> pure (get #id policy)
             Nothing -> throwIO $ ProvisionError ("notificationRules." <> item.nrName <> ": escalationPolicy \"" <> policyName <> "\" does not resolve to any policy")
+    channelRow <- query @NotificationChannel |> filterWhere (#name, item.nrChannel) |> fetchOneOrNothing
+    when (isNothing channelRow) do
+        throwIO $ ProvisionError ("notificationRules." <> item.nrName <> ": channel \"" <> item.nrChannel <> "\" does not resolve to any notification channel (provision a notificationChannels entry first)")
     maybeRow <- query @NotificationRule |> filterWhere (#name, item.nrName) |> fetchOneOrNothing
     case maybeRow of
         Nothing -> do
