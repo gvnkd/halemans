@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                halemans
-version:             2.11.0
+version:             2.12.0
 synopsis:            Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks
 description:         Halemans collects alerts from Zabbix, Grafana, Alertmanager and
                      generic webhooks into a single dashboard, enriches them with CMDB
@@ -117,6 +117,7 @@ library
         Application.Service.Agent.Mcp
         Application.Service.Agent.Tools
         Application.Service.AlertList
+        Application.Service.AlertScope
         Application.Service.Api.Alerts
         Application.Service.Api.Auth
         Application.Service.Api.Cursor
