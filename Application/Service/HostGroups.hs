@@ -8,7 +8,6 @@ module Application.Service.HostGroups (
     replaceHostGroupCache,
 ) where
 
-import Application.Connector.Zabbix (ZabbixGroup (..))
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
@@ -57,17 +56,20 @@ hostGroupsToJson :: [Text] -> Aeson.Value
 hostGroupsToJson = Aeson.toJSON
 
 -- | Replace one source's zabbix_host_groups cache rows with the given
--- listing. Shared by the manual sync action (fresh hostgroup.get result) and
--- provisioning (hostGroupsFile import). Returns the row count.
-replaceHostGroupCache :: (?modelContext :: ModelContext) => Id' "sources" -> [ZabbixGroup] -> IO Int
+-- listing of (name, groupId) pairs. Shared by the manual sync action (fresh
+-- hostgroup.get result) and provisioning (hostGroupsFile import). Takes
+-- tuples rather than the connector's ZabbixGroup so this module stays a
+-- leaf (Notify -> AlertScope -> HostGroups must not loop back through the
+-- zabbix connector into Ingest/Notify). Returns the row count.
+replaceHostGroupCache :: (?modelContext :: ModelContext) => Id' "sources" -> [(Text, Text)] -> IO Int
 replaceHostGroupCache sourceId groups = do
     void $ sqlExecTyped [typedSql| DELETE FROM zabbix_host_groups WHERE source_id = ${sourceId} |]
-    forM_ groups \group -> do
+    forM_ groups \(name, groupId) -> do
         _ <-
             newRecord @ZabbixHostGroup
                 |> set #sourceId sourceId
-                |> set #name group.groupName
-                |> set #groupId group.groupId
+                |> set #name name
+                |> set #groupId groupId
                 |> createRecord
         pure ()
     pure (length groups)

@@ -10,13 +10,13 @@ module Application.Service.Mattermost (
 ) where
 
 import Application.Service.Mattermost.Api (MattermostConfig)
-import qualified Application.Service.Mattermost.Api as Api
+import Application.Service.Mattermost.Api qualified as Api
 import Application.Service.Mattermost.Render (MattermostRenderContext (..), renderDetailsMessage, renderRootMessage, renderRootProps)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
-import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Text (Text)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Traversable (traverse)
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
@@ -53,8 +53,17 @@ actionSecret = do
     token <- lookupEnv "MATTERMOST_TOKEN"
     pure (cs (fromMaybe "" (explicit <|> token)))
 
+-- | Public URL of the Halemans instance for deep links and the Ack action
+-- endpoint. The worker renders outside a request, so this reads env rather
+-- than request-derived URLs: HALEMANS_BASE_URL wins, then the standard IHP
+-- vars (IHP_BASEURL / APPROOT) so an instance already configured for the web
+-- side needs no extra variable.
 publicBaseUrl :: IO Text
-publicBaseUrl = cs . fromMaybe "" <$> lookupEnv "HALEMANS_BASE_URL"
+publicBaseUrl = do
+    explicit <- lookupEnv "HALEMANS_BASE_URL"
+    ihp <- lookupEnv "IHP_BASEURL"
+    approot <- lookupEnv "APPROOT"
+    pure (cs (fromMaybe "" (explicit <|> ihp <|> approot)))
 
 -- | Render context for one (rule, alert): resolves the ack/close actor
 -- names, the alert deep-link, and — when a public base URL is configured —

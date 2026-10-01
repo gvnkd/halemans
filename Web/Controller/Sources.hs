@@ -193,5 +193,5 @@ syncHostGroups source = do
                 Left err -> pure (Left (tshow (err :: SomeException)))
                 Right (Left err) -> pure (Left err)
                 Right (Right groups) -> do
-                    count <- replaceHostGroupCache (get #id source) groups
+                    count <- replaceHostGroupCache (get #id source) (map (\g -> (g.groupName, g.groupId)) groups)
                     pure (Right count)

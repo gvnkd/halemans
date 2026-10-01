@@ -52,7 +52,10 @@ let
                 printf 'export CONFLUENCE_TOKEN="%s"\n'            "$(cat "$state/confluence-token")"
                 printf 'export JIRA_TOKEN="%s"\n'                  "$(cat "$state/jira-token")"
                 printf 'export ASSETS_TOKEN="%s"\n'                "$(cat "$state/assets-token")"
-                printf 'export MATTERMOST_TOKEN="%s"\n'            "$(cat "$state/mattermost-token")"
+                # Mattermost is optional: a missing token file must NOT abort
+                # the rest of this script (env.sh was truncated at this line,
+                # silently losing HALEMANS_BASE_URL/VAPID/passwords).
+                printf 'export MATTERMOST_TOKEN="%s"\n'            "$(cat "$state/mattermost-token" 2>/dev/null || true)"
                 # Mock addresses for scripts/health checks only — since 2.0 the
                 # app reads Jira/Confluence URLs from jira_configs/cmdb_configs
                 # rows (seeded), never from these vars.

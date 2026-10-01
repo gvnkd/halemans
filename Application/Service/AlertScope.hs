@@ -4,9 +4,14 @@ module Application.Service.AlertScope (
     scopeForUser,
     alertVisibleWith,
     groupsIntersect,
+    hostGroupNamesOf,
 ) where
 
-import Application.Helper.Ingest (hostGroupNamesOf)
+-- This module is deliberately a LEAF (only Generated.Types + aeson):
+-- Notify/Live/Ingest all import it, and anything it imported from the
+-- ingest/connector stack would close an import cycle (Notify -> AlertScope
+-- -> Ingest -> Notify).
+
 import Application.Service.HostGroups (teamHostGroups)
 import Data.Aeson ((.:))
 import Data.Aeson qualified as Aeson
@@ -58,3 +63,9 @@ alertVisibleWith names isZabbix alert
 
 groupsIntersect :: [Text] -> [Text] -> Bool
 groupsIntersect names groups = not (null (names `intersect` groups))
+
+-- | Zabbix host group names stored on an alert row ([] for legacy rows and
+-- non-zabbix alerts). Owned here (not in Helper.Ingest) to keep this module
+-- a leaf.
+hostGroupNamesOf :: Alert -> [Text]
+hostGroupNamesOf alert = fromMaybe [] (parseMaybe Aeson.parseJSON alert.hostGroups)

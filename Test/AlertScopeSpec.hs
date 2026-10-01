@@ -34,13 +34,13 @@ spec = describe "Application.Service.AlertScope" do
         it "shows non-zabbix alerts regardless of groups" do
             alertVisibleWith ["G1" :: Text] False (zabbixAlert []) `shouldBe` True
         it "always shows halemans internal alerts" do
-            let internal = newRecord @Alert |> set # fingerprint ("halemans:ungrouped-host:h" :: Text) |> set # hostGroups (toJSON ([] :: [Text]))
+            let internal = newRecord @Alert |> set #fingerprint ("halemans:ungrouped-host:h" :: Text) |> set #hostGroups (toJSON ([] :: [Text]))
             alertVisibleWith ["G1" :: Text] True internal `shouldBe` True
 
 zabbixAlert :: [Text] -> Alert
 zabbixAlert groups =
     newRecord @Alert
         |> set
-        # fingerprint ("zabbix:trigger:42" :: Text)
+        #fingerprint ("zabbix:trigger:42" :: Text)
         |> set
-        # hostGroups (toJSON groups)
+        #hostGroups (toJSON groups)

@@ -5,12 +5,12 @@ module Application.Helper.Ingest (
     ingestEvents,
     ingest,
     transitionAlert,
-    hostGroupNamesOf,
     fetchActiveBlackouts,
     publishAlertUpdate,
 ) where
 
 import Application.Job.Mattermost (enqueueSyncIfPosted)
+import Application.Service.AlertScope (hostGroupNamesOf)
 import Application.Pipeline.Blackouts (BlackoutSubject (..), blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
@@ -165,11 +165,6 @@ ingest source event = do
                         |> set #hostGroups (Aeson.toJSON (nub (event.hostGroups ++ hostGroupNamesOf alert)))
             updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow refreshed
             pure (Just (get #id updated))
-
--- | Zabbix host group names stored on an alert row ([] for legacy rows and
--- non-zabbix alerts).
-hostGroupNamesOf :: Alert -> [Text]
-hostGroupNamesOf alert = fromMaybe [] (parseMaybe Aeson.parseJSON alert.hostGroups)
 
 -- | State-machine transition + side effects (escalation cancel, notification,
 -- WS fan-out) for a source status applied to a KNOWN alert row. Split from

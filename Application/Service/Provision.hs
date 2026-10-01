@@ -32,7 +32,7 @@ module Application.Service.Provision (
     applyProvisionConfig,
 ) where
 
-import Application.Connector.Zabbix (ZabbixGroup)
+import Application.Connector.Zabbix (ZabbixGroup (..))
 import Application.Helper.DashboardConfig (decodeDashboardConfig)
 import Application.Helper.Theme (isValidTheme)
 import Application.Helper.Timezone (isValidTimezone)
@@ -1127,7 +1127,7 @@ applyHostGroupsFile sourceName path = do
     sourceId <- case maybeSource of
         Just source -> pure (get #id source)
         Nothing -> throwIO $ ProvisionError ("sources." <> sourceName <> ": source row missing after upsert")
-    count <- replaceHostGroupCache sourceId groups
+    count <- replaceHostGroupCache sourceId (map (\g -> (g.groupName, g.groupId)) groups)
     putStrLn ("provision: imported " <> tshow count <> " host groups for \"" <> sourceName <> "\" from " <> path)
 
 parseHostGroupsFile :: LByteString -> Either Text [ZabbixGroup]
