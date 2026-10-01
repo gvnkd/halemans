@@ -104,6 +104,7 @@ spec = around withTestApp do
             void $ sqlExecTyped [typedSql| INSERT INTO write_back_jobs (attempt_id) VALUES ((SELECT id FROM write_back_attempts WHERE alert_id = ${alertId})) |]
             void $ sqlExecTyped [typedSql| INSERT INTO mattermost_posts (alert_id, root_post_id, channel_id) VALUES (${alertId}, 'purge-post-1', 'purge-chan') |]
             void $ sqlExecTyped [typedSql| INSERT INTO mattermost_jobs (alert_id) VALUES (${alertId}) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO action_tokens (alert_id, action, token_hash, expires_at) VALUES (${alertId}, 'ack', 'purge-hash', now() + interval '1 day') |]
             withUser user do
                 void (callAction AdminPurgeAlertsAction)
             remaining <-
@@ -117,6 +118,7 @@ spec = around withTestApp do
                      + (SELECT count(*) FROM enrich_alert_jobs) + (SELECT count(*) FROM llm_analyses)
                      + (SELECT count(*) FROM llm_feedback)
                      + (SELECT count(*) FROM mattermost_posts) + (SELECT count(*) FROM mattermost_jobs)
+                     + (SELECT count(*) FROM action_tokens)
             |]
             -- Expression columns decode Maybe-wrapped (typedSql note #15).
             remaining `shouldBe` [Just (0 :: Int64)]

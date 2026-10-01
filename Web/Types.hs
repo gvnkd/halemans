@@ -25,6 +25,7 @@ data AlertsController
     | ShowAlertAction {alertId :: !(Id Alert)}
     | RenderMetricChartAction {alertId :: !(Id Alert)}
     | AckAlertAction {alertId :: !(Id Alert)}
+    | AckFromLinkAction {alertId :: !(Id Alert)}
     | UnackAlertAction {alertId :: !(Id Alert)}
     | CloseAlertAction {alertId :: !(Id Alert)}
     | CreateCommentAction {alertId :: !(Id Alert)}

@@ -10,6 +10,7 @@ module Application.Service.Mattermost (
     mattermostTargetForRule,
 ) where
 
+import Application.Service.ActionTokens (ensureActionToken)
 import Application.Service.Mattermost.Api (MattermostConfig)
 import Application.Service.Mattermost.Api qualified as Api
 import Application.Service.Mattermost.Render (MattermostRenderContext (..), renderDetailsMessage, renderRootMessage, renderRootProps)
@@ -88,6 +89,14 @@ renderContextFor rule alert = do
             if Text.null base
                 then Nothing
                 else Just (base <> "/hooks/mattermost/actions/" <> secret)
+    -- One-time markdown Ack link for firing alerts. The token is ROTATED on
+    -- every render (re-rendered root posts invalidate earlier unused links);
+    -- nothing is minted for terminal states or without a public base URL.
+    ackUrl <- case (statusText' alert, Text.null base) of
+        ("firing", False) -> do
+            token <- ensureActionToken (get #id alert) "ack"
+            pure (Just (alertUrl <> "/ack-link?token=" <> token))
+        _ -> pure Nothing
     pure
         MattermostRenderContext
             { mrcRuleName = maybe "-" (.name) rule
@@ -95,9 +104,12 @@ renderContextFor rule alert = do
             , mrcAckedAt = alert.acknowledgedAt
             , mrcClosedBy = closedBy
             , mrcActionUrl = actionUrl
+            , mrcAckUrl = ackUrl
             , mrcAlertUrl = alertUrl
             , mrcAlertId = tshow (get #id alert)
             }
+  where
+    statusText' a = a.status
 
 -- | Where a rule posts, pure part: the rule's channelConfig wins; otherwise
 -- the rule's team defaults (Admin → Teams stores {"mattermost":{"team",

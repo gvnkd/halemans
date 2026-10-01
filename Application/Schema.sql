@@ -980,6 +980,21 @@ CREATE TABLE mattermost_jobs (
 ALTER TABLE mattermost_jobs ADD CONSTRAINT mattermost_jobs_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES alerts (id);
 ALTER TABLE mattermost_jobs ADD CONSTRAINT mattermost_jobs_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES notification_rules (id);
 
+-- One-time capability tokens for external interactions (migration
+-- 1790873418, e.g. the markdown Ack link in Mattermost posts). Only the
+-- SHA-256 hash is stored; consumption is atomic and single-use.
+CREATE TABLE action_tokens (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    alert_id UUID NOT NULL,
+    action TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    used_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+ALTER TABLE action_tokens ADD CONSTRAINT action_tokens_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES alerts (id);
+CREATE INDEX action_tokens_alert_id_idx ON action_tokens(alert_id);
+
 -- Notification channels as first-class config rows (migration
 -- 1790765462): notification_rules.channel references the channel NAME.
 -- config JSONB carries the secret reference: {"tokenEnv":"<VAR>"} names the

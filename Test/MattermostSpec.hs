@@ -30,6 +30,7 @@ renderContext =
         , mrcAckedAt = Nothing
         , mrcClosedBy = Nothing
         , mrcActionUrl = Just "http://halemans.example/hooks/mattermost/actions/secret"
+        , mrcAckUrl = Just "http://halemans.example/alerts/abc/ack-link?token=tok"
         , mrcAlertUrl = "http://halemans.example/alerts/abc"
         , mrcAlertId = "abc"
         }
@@ -87,6 +88,13 @@ spec = describe "Application.Service.Mattermost.Render" do
         actionNames (renderRootProps renderContext (mkAlert "firing" "high")) `shouldBe` ["Ack"]
         actionNames (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` []
         actionNames (renderRootProps renderContext{mrcActionUrl = Nothing} (mkAlert "firing" "high")) `shouldBe` []
+
+    it "renders the one-time markdown Ack link on firing alerts only" do
+        attachmentText (renderRootProps renderContext (mkAlert "firing" "high"))
+            `shouldBe` "Firing · 3 occurrence(s) · [Ack](http://halemans.example/alerts/abc/ack-link?token=tok)"
+        attachmentText (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
+        attachmentText (renderRootProps renderContext{mrcAckUrl = Nothing} (mkAlert "firing" "high"))
+            `shouldBe` "Firing · 3 occurrence(s)"
 
     it "carries the alert id in the Ack action context" do
         let props = renderRootProps renderContext (mkAlert "firing" "high")

@@ -1,4 +1,4 @@
-module Application.Service.Mattermost.Actions (ackFromMattermost, resolveActor) where
+module Application.Service.Mattermost.Actions (ackFromMattermost, resolveActor, ensureServiceUser) where
 
 import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost (mattermostUsernameFromSettings, syncAlertPosts)

@@ -116,6 +116,7 @@ library
         Application.Service.Agent.Core
         Application.Service.Agent.Mcp
         Application.Service.Agent.Tools
+        Application.Service.ActionTokens
         Application.Service.AlertList
         Application.Service.AlertScope
         Application.Service.Api.Alerts

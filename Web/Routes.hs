@@ -17,6 +17,7 @@ GET /env/{environmentName}    ShowEnvironmentAction
 [routes|AlertsController
 GET  /alerts                            AlertsAction
 GET  /alerts/{alertId}                  ShowAlertAction
+GET  /alerts/{alertId}/ack-link         AckFromLinkAction
 GET  /alerts/{alertId}/metrics-chart    RenderMetricChartAction
 POST /alerts/{alertId}/ack              AckAlertAction
 POST /alerts/{alertId}/unack            UnackAlertAction

@@ -4,6 +4,7 @@ import Application.Connector.GrafanaMetrics (ruleUidFromSourceUrl)
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize)
 import Application.Helper.FilterPrefs qualified as FilterPrefs
 import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
+import Application.Service.ActionTokens (consumeActionToken)
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, validSortColumns)
 import Application.Service.AlertList qualified as AlertList
 import Application.Service.AlertScope qualified as AlertScope
@@ -15,7 +16,9 @@ import Application.Service.Facets qualified as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
 import Application.Service.Jira.DbConfig qualified as Jira
 import Application.Service.Llm.Queue (ensureLanguageVariant, latestJobErrors)
+import Application.Service.Mattermost.Actions (ensureServiceUser)
 import Application.Service.MetricChart (MetricChartData (..), chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
+import Control.Exception (SomeException, try)
 import Control.Monad (void)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
@@ -25,7 +28,9 @@ import Data.Text qualified as Text
 import IHP.HSX.Markup (renderMarkupText)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.ViewPrelude (Html, preEscapedToHtml)
-import Network.HTTP.Types (status200, status404)
+import IHP.ControllerSupport (respondAndExit)
+import IHP.LoginSupport.Helper.Controller (currentUserOrNothing)
+import Network.HTTP.Types (Status, status200, status403, status404)
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (responseLBS)
 import Web.Controller.Prelude
@@ -39,6 +44,26 @@ alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "gr
 sourceConfigBool :: Text -> Source -> Bool
 sourceConfigBool key source =
     fromMaybe False (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? Key.fromText key Aeson..!= False)) source.config)
+
+-- Minimal result page for the one-time ack link: the clicker lands here
+-- from Mattermost (or anywhere else the link travels), usually without a
+-- Halemans session, so no layout/auth — just the outcome.
+renderAckLinkPage :: (?request :: Request, ?respond :: Respond) => Status -> Text -> IO ResponseReceived
+renderAckLinkPage status message = respondAndExit do
+    responseLBS
+        status
+        [("Content-Type", "text/html; charset=utf-8")]
+        (cs (ackLinkPageHtml message))
+
+ackLinkPageHtml :: Text -> Text
+ackLinkPageHtml message =
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Halemans</title>"
+        <> "<style>body{font-family:system-ui,sans-serif;background:#0f1418;color:#dfe5ea;display:flex;"
+        <> "min-height:100vh;align-items:center;justify-content:center;margin:0}"
+        <> "div{background:#1a2129;border:1px solid #2a3441;border-radius:8px;padding:2rem 2.5rem}</style>"
+        <> "</head><body><div><strong>Halemans</strong><p>"
+        <> message
+        <> "</p></div></body></html>"
 
 -- Per-user host group visibility (AlertScope) applied to direct id access:
 -- a restricted user poking an out-of-scope alert id gets a bare 404.
@@ -57,7 +82,11 @@ assertAlertVisible alert = do
                     respondAndExit (responseLBS status404 [("Content-Type", "text/plain")] "not found")
 
 instance Controller AlertsController where
-    beforeAction = ensureIsUser
+    beforeAction = case ?theAction of
+        -- The one-time action token IS the authorization (capability link);
+        -- clickers are frequently not logged into Halemans.
+        AckFromLinkAction{} -> pure ()
+        _ -> ensureIsUser
 
     action AlertsAction
         | isJust (paramOrNothing @Text "reset") = do
@@ -228,6 +257,28 @@ instance Controller AlertsController where
             timeoutMinutes = paramOrNothing @Int "timeoutMinutes"
         _ <- ackAlert currentUser alert comment timeoutMinutes
         redirectTo ShowAlertAction{alertId}
+    -- One-time markdown Ack link (Mattermost root posts and any other
+    -- external surface). Capability-token based: no session or privilege
+    -- required, but the token is single-use (atomic claim), bound to this
+    -- alert + action, expires, and rotates on every re-render — a leaked or
+    -- replayed link is dead. The clicker is attributed to their Halemans
+    -- session user when logged in, else the mattermost service account.
+    action AckFromLinkAction{alertId} = do
+        let token = paramOrNothing @Text "token" |> fromMaybe ""
+        claimed <- consumeActionToken "ack" alertId token
+        if not claimed
+            then renderAckLinkPage status403 "This ack link is invalid, already used, or expired."
+            else do
+                outcome <- try (fetch alertId)
+                case outcome of
+                    Left (_ :: SomeException) -> renderAckLinkPage status404 "Alert not found."
+                    Right alert -> do
+                        let loggedIn = currentUserOrNothing
+                        actor <- case loggedIn of
+                            Just user -> pure user
+                            Nothing -> ensureServiceUser
+                        _ <- ackAlert actor alert (Just "acked via link") Nothing
+                        renderAckLinkPage status200 "Alert acknowledged."
     action UnackAlertAction{alertId} = do
         requirePrivilege "ack"
         alert <- fetch alertId

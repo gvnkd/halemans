@@ -27,6 +27,9 @@ data MattermostRenderContext = MattermostRenderContext
     , mrcClosedBy :: Maybe Text
     , mrcActionUrl :: Maybe Text
     -- ^ Nothing = Ack button omitted (no public base URL configured).
+    , mrcAckUrl :: Maybe Text
+    -- ^ One-time markdown Ack link; independent of the interactive button
+    -- (works even when the MM server strips action integration URLs).
     , mrcAlertUrl :: Text
     , mrcAlertId :: Text
     }
@@ -116,7 +119,11 @@ statusLine context alert = case statusText alert of
     "closed" -> "Closed" <> maybe "" (" by " <>) context.mrcClosedBy
     "resolved" -> "Resolved by the source"
     "stalled" -> "Stalled: no source updates"
-    _ -> "Firing · " <> tshow alert.occurrences <> " occurrence(s)"
+    _ ->
+        "Firing · "
+            <> tshow alert.occurrences
+            <> " occurrence(s)"
+            <> maybe "" (\url -> " · [Ack](" <> url <> ")") context.mrcAckUrl
 
 rootFields :: MattermostRenderContext -> Alert -> [(Text, Text)]
 rootFields context alert =
