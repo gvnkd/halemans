@@ -4,7 +4,7 @@ import Application.Helper.Controller (userPrivileges)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Service.Agent.Core (agentTurnGate, buildSystemMessage, defaultAgentTemplateBody, internalAgentTemplateName, maxToolRounds, runAgentTurnWith)
 import Application.Service.Agent.Mcp (McpConfig (..), defaultMcpEmail, defaultMcpRoleName, handleMessage, resolveMcpUser)
-import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, executeAgentTool, requiredPrivilegeFor)
+import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, channelTokenEnv, executeAgentTool, requiredPrivilegeFor)
 import Application.Service.Llm (Completion (..), Prompt (..))
 import qualified Application.Service.Llm as Llm
 import Application.Service.Llm.AgentConfig (AgentBudgetConfig (..), agentBudgetConfig, defaultAgentBudgetConfig, saveAgentBudgetConfig)
@@ -22,7 +22,7 @@ import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
 import qualified Data.Vector as Vector
 import Generated.Types
-import IHP.Fetch (fetch, fetchOneOrNothing)
+import IHP.Fetch (fetch, fetchOne, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig)
 import IHP.ModelSupport
 import IHP.Prelude
@@ -31,6 +31,7 @@ import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 import Test.Integration.Setup (freshFingerprint, m6User, restoreEnv, testEventIn, testSource)
+import Web.View.Teams.New (mattermostFieldValues)
 
 -- Agent tool registry + MCP protocol (internal API milestone). The internal
 -- HTTP layer is a thin wrapper over the same executor; auth/audit HTTP
@@ -408,6 +409,12 @@ spec = describe "agent tools (internal API milestone)" do
             names ["view"] `shouldSatisfy` ("search_alerts" `elem`)
             names ["view"] `shouldSatisfy` (\xs -> "create_blackout" `Data.List.notElem` xs)
             names ["view"] `shouldSatisfy` (\xs -> "list_teams" `Data.List.notElem` xs)
+            names ["view"] `shouldSatisfy` (\xs -> "list_notification_channels" `Data.List.notElem` xs)
+            names ["manage_rules"] `shouldSatisfy` (\xs -> "list_notification_channels" `elem` xs)
+            ["list_notification_channels", "create_notification_channel", "update_notification_channel", "delete_notification_channel"]
+                `shouldSatisfy` all (`elem` names ["manage_rules"])
+            requiredPrivilegeFor "create_notification_channel" `shouldBe` Just "manage_rules"
+            requiredPrivilegeFor "update_team" `shouldBe` Just "manage_users"
             ["create_blackout", "list_teams", "ack_alert", "list_sources", "list_escalation_policies"]
                 `shouldSatisfy` all (`elem` names ["view", "ack", "manage_blackouts", "manage_users", "manage_rules", "manage_sources", "close"])
             names ["admin"] `shouldSatisfy` (\xs -> "create_blackout" `Data.List.notElem` xs) -- raw "admin" is expanded by userPrivileges, not here
@@ -485,6 +492,83 @@ spec = describe "agent tools (internal API milestone)" do
             titleRow `shouldSatisfy` isJust
             noScope <- runTool user "create_blackout" (args [("starts_at", "2026-09-24T18:00:00Z"), ("ends_at", "2026-09-24T20:00:00Z")])
             noScope `shouldSatisfy` ("invalid scope" `Text.isPrefixOf`)
+
+    describe "notification channel and team mattermost tools" do
+        it "notification channels: create, list, update token_env, delete blocked by rule reference" do
+            suffix <- tshow <$> nextRandom
+            user <- m6User ["view", "manage_rules"]
+            let name = "agent-chan-" <> suffix
+                tokenEnv = "AGENT_MM_TOKEN_" <> Text.map (\c -> if c == '-' then '_' else c) suffix
+                createArgs confirmed =
+                    argsV
+                        [ ("name", String name)
+                        , ("type", String "mattermost")
+                        , ("base_url", String "http://mm-agent.example")
+                        , ("token_env", String tokenEnv)
+                        , ("confirmed", Bool confirmed)
+                        ]
+            badType <- runTool user "create_notification_channel" (args [("name", name), ("type", "pagerduty")])
+            badType `shouldSatisfy` ("invalid: type" `Text.isPrefixOf`)
+            plan <- runTool user "create_notification_channel" (createArgs False)
+            plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            created <- runTool user "create_notification_channel" (createArgs True)
+            created `shouldSatisfy` ("created notification channel" `Text.isPrefixOf`)
+            listed <- runTool user "list_notification_channels" "{}"
+            listed `shouldSatisfy` (name `Text.isInfixOf`)
+            listed `shouldSatisfy` (tokenEnv `Text.isInfixOf`)
+            -- update: rewrite the token env, then remove it with ""
+            updateResult <- runTool user "update_notification_channel" (argsV [("name", String name), ("token_env", String (tokenEnv <> "_ROTATED")), ("confirmed", Bool True)])
+            updateResult `shouldSatisfy` ("updated notification channel" `Text.isPrefixOf`)
+            rotated <- query @NotificationChannel |> filterWhere (#name, name) |> fetchOne
+            channelTokenEnv rotated `shouldBe` tokenEnv <> "_ROTATED"
+            _ <- runTool user "update_notification_channel" (argsV [("name", String name), ("token_env", String ""), ("confirmed", Bool True)])
+            cleared <- query @NotificationChannel |> filterWhere (#name, name) |> fetchOne
+            channelTokenEnv cleared `shouldBe` ""
+            -- delete is blocked while a rule references the channel
+            _ <-
+                runTool
+                    user
+                    "create_notification_rule"
+                    ( argsV
+                        [ ("name", String ("agent-chan-rule-" <> suffix))
+                        , ("match", String ("{\"fields\":{\"env\":\"agent-chan-env-" <> suffix <> "\"}}"))
+                        , ("channel", String name)
+                        , ("confirmed", Bool True)
+                        ]
+                    )
+            blocked <- runTool user "delete_notification_channel" (argsV [("name", String name), ("confirmed", Bool True)])
+            blocked `shouldSatisfy` ("still reference" `Text.isInfixOf`)
+            rule <- query @NotificationRule |> filterWhere (#name, "agent-chan-rule-" <> suffix) |> fetchOne
+            deleteRecord rule
+            deletePlan <- runTool user "delete_notification_channel" (argsV [("name", String name), ("confirmed", Bool False)])
+            deletePlan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            deleted <- runTool user "delete_notification_channel" (argsV [("name", String name), ("confirmed", Bool True)])
+            deleted `shouldBe` "deleted notification channel \"" <> name <> "\""
+        it "create_team and update_team manage the mattermost destination in team defaults" do
+            suffix <- tshow <$> nextRandom
+            user <- m6User ["view", "manage_users"]
+            let name = "agent-team-" <> suffix
+                createArgs confirmed =
+                    argsV
+                        [ ("name", String name)
+                        , ("description", String "agent test team")
+                        , ("mattermost_team", String "sre")
+                        , ("mattermost_channel", String "oncall")
+                        , ("confirmed", Bool confirmed)
+                        ]
+            plan <- runTool user "create_team" (createArgs False)
+            plan `shouldSatisfy` ("mattermost=sre/oncall" `Text.isInfixOf`)
+            _ <- runTool user "create_team" (createArgs True)
+            team <- query @Team |> filterWhere (#name, name) |> fetchOne
+            mattermostFieldValues (get #defaults team) `shouldBe` ("sre", "oncall")
+            -- update: change the channel, then remove the whole destination
+            _ <- runTool user "update_team" (argsV [("name", String name), ("mattermost_channel", String "alerts"), ("confirmed", Bool True)])
+            updated <- query @Team |> filterWhere (#name, name) |> fetchOne
+            mattermostFieldValues (get #defaults updated) `shouldBe` ("sre", "alerts")
+            _ <- runTool user "update_team" (argsV [("name", String name), ("mattermost_team", String ""), ("mattermost_channel", String ""), ("confirmed", Bool True)])
+            cleared <- query @Team |> filterWhere (#name, name) |> fetchOne
+            mattermostFieldValues (get #defaults cleared) `shouldBe` ("", "")
+            get #defaults cleared `shouldBe` Aeson.object []
 
     describe "turn traces (agent observability)" do
         it "explain_last_turn renders the current session's per-round trace" do

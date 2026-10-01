@@ -4,6 +4,7 @@ module Application.Service.Agent.Tools (
     agentToolDefinitionsFor,
     executeAgentTool,
     requiredPrivilegeFor,
+    channelTokenEnv,
 ) where
 
 import Application.Helper.Controller (userPrivileges)
@@ -12,6 +13,7 @@ import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAler
 import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage)
 import Application.Service.Api.Token (newApiToken)
 import Application.Service.DashboardCards (cardBaseQuery)
+import Application.Service.HostGroups (hostGroupsToJson)
 import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Control.Exception (SomeException, try)
@@ -82,7 +84,8 @@ toolCatalog =
     , tool "set_default_dashboard" "Mark a dashboard as the current user's default." [req "name" "dashboard name"] Nothing
     , -- P2: configuration management
       tool "list_teams" "List teams with their members. Requires manage_users." [] (Just "manage_users")
-    , tool "create_team" "Create a team. Two-phase (confirmed). Requires manage_users." [req "name" "team name", opt "description" "team description", optC "confirmed"] (Just "manage_users")
+    , tool "create_team" "Create a team. mattermost_team/mattermost_channel set the team's default Mattermost destination (stored in the team defaults; a rule's channel config overrides it). host_groups is a comma-separated list of zabbix host group names. Two-phase (confirmed). Requires manage_users." [req "name" "team name", opt "description" "team description", opt "host_groups" "comma-separated zabbix host group names", opt "mattermost_team" "mattermost team name (default: halemans)", opt "mattermost_channel" "mattermost channel for this team's notifications", optC "confirmed"] (Just "manage_users")
+    , tool "update_team" "Update a team by name; omit fields you do not change. mattermost_team/mattermost_channel write the team's default Mattermost destination (an empty string removes it). host_groups replaces the list (comma-separated). Two-phase (confirmed). Provisioned items are read-only. Requires manage_users." [req "name" "team name", opt "description" "team description", opt "host_groups" "comma-separated zabbix host group names", opt "mattermost_team" "mattermost team name (empty removes)", opt "mattermost_channel" "mattermost channel (empty removes)", optC "confirmed"] (Just "manage_users")
     , tool "delete_team" "Delete a team (and its memberships) by name. Two-phase (confirmed). Requires manage_users." [req "name" "team name", optC "confirmed"] (Just "manage_users")
     , tool "add_team_member" "Add a user (by email) to a team, optionally as lead. Requires manage_users." [req "team" "team name", req "email" "user email", opt "role" "member (default) or lead"] (Just "manage_users")
     , tool "remove_team_member" "Remove a user (by email) from a team. Requires manage_users." [req "team" "team name", req "email" "user email"] (Just "manage_users")
@@ -92,7 +95,11 @@ toolCatalog =
     , tool "update_escalation_policy" "Replace an escalation policy's steps (matched by name). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "policy name", req "steps" "steps as a JSON array string", optC "confirmed"] (Just "manage_rules")
     , tool "delete_escalation_policy" "Delete an escalation policy by name. Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "policy name", optC "confirmed"] (Just "manage_rules")
     , tool "list_notification_rules" "List notification rules. Requires manage_rules." [] (Just "manage_rules")
-    , tool "create_notification_rule" "Create a notification rule. match is a JSON object ({fields:{env|host|...:value}, labels:{name:glob}}). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "rule name", req "match" "match as a JSON object string", opt "severity_threshold" "critical|high|warning|info (default info)", opt "team" "team name", opt "channel" "notification channel name configured on Admin → Notification channels (default browser_push)", opt "channel_config" "channel config as a JSON object string (mattermost: {\"team\",\"channel\"})", optC "confirmed"] (Just "manage_rules")
+    , tool "create_notification_rule" "Create a notification rule. match is a JSON object ({fields:{env|host|...:value}, labels:{name:glob}}). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "rule name", req "match" "match as a JSON object string", opt "severity_threshold" "critical|high|warning|info (default info)", opt "team" "team name", opt "channel" "notification channel name (see list_notification_channels; default browser_push)", opt "channel_config" "channel config as a JSON object string (mattermost per-rule override: {\"team\",\"channel\"}; the rule team's mattermost default applies when empty)", optC "confirmed"] (Just "manage_rules")
+    , tool "list_notification_channels" "List notification channels (name, type, enabled, base URL, token env var). Requires manage_rules." [] (Just "manage_rules")
+    , tool "create_notification_channel" "Create a notification channel row (type: browser_push|email|mattermost). base_url is the server address (mattermost); token_env NAMES the environment variable holding the credential — never the secret itself. Two-phase (confirmed). Requires manage_rules." [req "name" "channel name", req "type" "browser_push|email|mattermost", opt "base_url" "server base URL (mattermost)", opt "token_env" "env var name holding the token", opt "enabled" "true (default) or false", optC "confirmed"] (Just "manage_rules")
+    , tool "update_notification_channel" "Update a notification channel by name; omit fields you do not change. token_env rewrites the config key (empty string removes it). Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "channel name", opt "type" "browser_push|email|mattermost", opt "base_url" "server base URL (mattermost)", opt "token_env" "env var name holding the token (empty removes)", opt "enabled" "true or false", optC "confirmed"] (Just "manage_rules")
+    , tool "delete_notification_channel" "Delete a notification channel by name. Blocked while notification rules reference it. Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "channel name", optC "confirmed"] (Just "manage_rules")
     , tool "delete_notification_rule" "Delete a notification rule by name. Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "rule name", optC "confirmed"] (Just "manage_rules")
     , tool "list_grouping_rules" "List alert grouping rules. Requires manage_rules." [] (Just "manage_rules")
     , tool "create_grouping_rule" "Create an alert grouping rule. match is a JSON object, group_key_template a Go-template-like string. Requires manage_rules." [req "name" "rule name", req "match" "match as a JSON object string", req "group_key_template" "group key template", opt "position" "sort position (default end)"] (Just "manage_rules")
@@ -551,16 +558,44 @@ dispatchRest context name arguments = case name of
     "create_team" -> do
         name <- arg "name" ""
         description <- arg "description" ""
+        hostGroupsText <- arg "host_groups" ""
+        mmTeam <- argMaybe "mattermost_team"
+        mmChannel <- argMaybe "mattermost_channel"
         confirmed <- argBool "confirmed" False
         existing <- query @Team |> filterWhere (#name, name) |> fetchOneOrNothing
         case existing of
             Just _ -> pure ("invalid: a team named \"" <> name <> "\" already exists")
             Nothing ->
                 if not confirmed
-                    then pure ("plan: create team \"" <> name <> "\"" <> (if Text.null description then "" else " (" <> description <> ")") <> "\nconfirmation required: call create_team again with confirmed=true only after explicit agreement")
+                    then pure ("plan: create team \"" <> name <> "\"" <> (if Text.null description then "" else " (" <> description <> ")") <> teamPlanExtras hostGroupsText mmTeam mmChannel <> "\nconfirmation required: call create_team again with confirmed=true only after explicit agreement")
                     else do
-                        _ <- newRecord @Team |> set #name name |> set #description description |> createRecord
+                        _ <-
+                            newRecord @Team
+                                |> set #name name
+                                |> set #description description
+                                |> set #hostGroups (hostGroupsToJson (splitCsv hostGroupsText))
+                                |> set #defaults (applyMattermostArgs mmTeam mmChannel (Aeson.object []))
+                                |> createRecord
                         pure ("created team \"" <> name <> "\"")
+    "update_team" -> do
+        name <- arg "name" ""
+        confirmed <- argBool "confirmed" False
+        team <- fetchTeamByName name
+        if get #protected team
+            then pure "forbidden: this team is provisioned-protected"
+            else do
+                description <- argMaybe "description"
+                hostGroupsText <- argMaybe "host_groups"
+                mmTeam <- argMaybe "mattermost_team"
+                mmChannel <- argMaybe "mattermost_channel"
+                let withDescription = maybe team (\value -> team |> set #description value) description
+                    withHostGroups = maybe withDescription (\value -> withDescription |> set #hostGroups (hostGroupsToJson (splitCsv value))) hostGroupsText
+                    withDefaults = withHostGroups |> set #defaults (applyMattermostArgs mmTeam mmChannel (get #defaults withHostGroups))
+                if not confirmed
+                    then pure ("plan: update team \"" <> name <> "\"" <> teamPlanExtras (fromMaybe "" hostGroupsText) mmTeam mmChannel <> "\nconfirmation required: call update_team again with confirmed=true only after the user's explicit agreement")
+                    else do
+                        _ <- updateRecord withDefaults
+                        pure ("updated team \"" <> name <> "\"")
     "delete_team" -> do
         name <- arg "name" ""
         confirmed <- argBool "confirmed" False
@@ -685,7 +720,7 @@ dispatchRest context name arguments = case name of
             (Left err, _, _) -> pure err
             (_, Left err, _) -> pure err
             (_, _, False) ->
-                pure ("invalid: unknown notification channel \"" <> channel <> "\" (configure it on Admin → Notification channels)")
+                pure ("invalid: unknown notification channel \"" <> channel <> "\" (see list_notification_channels or create it first)")
             (Right matchValue, Right channelConfig, True) -> do
                 teamId <- traverse (fmap (get #id) . fetchTeamByName) teamName
                 existing <- query @NotificationRule |> filterWhere (#name, name) |> fetchOneOrNothing
@@ -717,6 +752,76 @@ dispatchRest context name arguments = case name of
                     else do
                         deleteRecord rule
                         pure ("deleted notification rule \"" <> name <> "\"")
+    "list_notification_channels" -> do
+        channels <- query @NotificationChannel |> orderByAsc #name |> fetch
+        pure case channels of
+            [] -> "no notification channels"
+            _ -> Text.intercalate "\n" (map channelLine channels)
+    "create_notification_channel" -> do
+        name <- arg "name" ""
+        channelType <- arg "type" ""
+        baseUrl <- arg "base_url" ""
+        tokenEnv <- arg "token_env" ""
+        enabledText <- arg "enabled" "true"
+        confirmed <- argBool "confirmed" False
+        if channelType `notElem` channelTypes
+            then pure ("invalid: type must be one of " <> Text.intercalate "|" channelTypes)
+            else do
+                existing <- query @NotificationChannel |> filterWhere (#name, name) |> fetchOneOrNothing
+                case existing of
+                    Just _ -> pure ("invalid: a notification channel named \"" <> name <> "\" already exists")
+                    Nothing ->
+                        if not confirmed
+                            then pure ("plan: create notification channel \"" <> name <> "\" (type=" <> channelType <> ", base_url=" <> (if Text.null baseUrl then "-" else baseUrl) <> ", token_env=" <> (if Text.null tokenEnv then "-" else tokenEnv) <> ", enabled=" <> enabledText <> ")\nconfirmation required: call create_notification_channel again with confirmed=true only after explicit agreement")
+                            else do
+                                _ <-
+                                    newRecord @NotificationChannel
+                                        |> set #name name
+                                        |> set #type_ channelType
+                                        |> set #baseUrl baseUrl
+                                        |> set #config (tokenEnvConfig tokenEnv (Aeson.object []))
+                                        |> set #enabled (enabledText /= "false")
+                                        |> createRecord
+                                pure ("created notification channel \"" <> name <> "\"")
+    "update_notification_channel" -> do
+        name <- arg "name" ""
+        confirmed <- argBool "confirmed" False
+        channel <- fetchNotificationChannelByName name
+        if get #protected channel
+            then pure "forbidden: this notification channel is provisioned-protected"
+            else do
+                channelType <- argMaybe "type"
+                baseUrl <- argMaybe "base_url"
+                tokenEnv <- argMaybe "token_env"
+                enabledText <- argMaybe "enabled"
+                if maybe False (`notElem` channelTypes) channelType
+                    then pure ("invalid: type must be one of " <> Text.intercalate "|" channelTypes)
+                    else
+                        if not confirmed
+                            then pure ("plan: update notification channel \"" <> name <> "\"\nconfirmation required: call update_notification_channel again with confirmed=true only after the user's explicit agreement")
+                            else do
+                                let withType = maybe channel (\value -> channel |> set #type_ value) channelType
+                                    withBaseUrl = maybe withType (\value -> withType |> set #baseUrl value) baseUrl
+                                    withTokenEnv = maybe withBaseUrl (\value -> withBaseUrl |> set #config (tokenEnvConfig value (get #config withBaseUrl))) tokenEnv
+                                    withEnabled = maybe withTokenEnv (\value -> withTokenEnv |> set #enabled (value /= "false")) enabledText
+                                _ <- updateRecord withEnabled
+                                pure ("updated notification channel \"" <> name <> "\"")
+    "delete_notification_channel" -> do
+        name <- arg "name" ""
+        confirmed <- argBool "confirmed" False
+        channel <- fetchNotificationChannelByName name
+        if get #protected channel
+            then pure "forbidden: this notification channel is provisioned-protected"
+            else do
+                referenced <- referencedChannelNames
+                if name `elem` referenced
+                    then pure ("invalid: notification rules still reference channel \"" <> name <> "\"")
+                    else
+                        if not confirmed
+                            then pure ("plan: delete notification channel \"" <> name <> "\"\nconfirmation required: call delete_notification_channel again with confirmed=true only after the user's explicit agreement")
+                            else do
+                                deleteRecord channel
+                                pure ("deleted notification channel \"" <> name <> "\"")
     "list_grouping_rules" -> do
         rules <- query @GroupingRule |> orderByAsc #position |> fetch
         pure case rules of
@@ -1047,6 +1152,38 @@ clauseText clause =
         OpNotIn -> "not-in"
 
 -- Helpers: teams
+splitCsv :: Text -> [Text]
+splitCsv = filter (not . Text.null) . map Text.strip . Text.splitOn ","
+
+teamPlanExtras :: Text -> Maybe Text -> Maybe Text -> Text
+teamPlanExtras hostGroupsText mmTeam mmChannel =
+    (if Text.null hostGroupsText then "" else "; host_groups=" <> hostGroupsText)
+        <> ( if isJust mmChannel
+                then "; mattermost=" <> fromMaybe "halemans" mmTeam <> "/" <> fromMaybe "" mmChannel
+                else ""
+           )
+
+-- | Merge the mattermost destination args into a team defaults JSON value
+-- ({"mattermost":{"team","channel"}}): Nothing leaves the key unchanged,
+-- Just "" removes it.
+applyMattermostArgs :: Maybe Text -> Maybe Text -> Aeson.Value -> Aeson.Value
+applyMattermostArgs mmTeam mmChannel defaults =
+    let base = case defaults of
+            Aeson.Object object_ -> object_
+            _ -> KeyMap.empty
+        existingMm = case KeyMap.lookup "mattermost" base of
+            Just (Aeson.Object object_) -> object_
+            _ -> KeyMap.empty
+        setField key value object_ = case value of
+            Nothing -> object_
+            Just text
+                | Text.null text -> KeyMap.delete (Key.fromText key) object_
+                | otherwise -> KeyMap.insert (Key.fromText key) (Aeson.String text) object_
+        mm' = setField "team" mmTeam (setField "channel" mmChannel existingMm)
+     in if KeyMap.null mm'
+            then Aeson.Object (KeyMap.delete "mattermost" base)
+            else Aeson.Object (KeyMap.insert "mattermost" (Aeson.Object mm') base)
+
 listTeams :: (?modelContext :: ModelContext) => IO Text
 listTeams = do
     teams <- query @Team |> orderByAsc #name |> fetch
@@ -1136,6 +1273,54 @@ listNotificationRules = do
                         <> protectedMark rule
                     )
             pure (Text.intercalate "\n" lines')
+
+-- Helpers: notification channels
+channelTypes :: [Text]
+channelTypes = ["browser_push", "email", "mattermost"]
+
+channelLine :: NotificationChannel -> Text
+channelLine channel =
+    "- "
+        <> channel.name
+        <> " ("
+        <> channel.type_
+        <> ")"
+        <> (if channel.enabled then "" else " (disabled)")
+        <> (if Text.null channel.baseUrl then "" else ", base_url=" <> channel.baseUrl)
+        <> (let tokenEnv = channelTokenEnv channel in if Text.null tokenEnv then "" else ", token_env=" <> tokenEnv)
+        <> protectedMark channel
+
+channelTokenEnv :: NotificationChannel -> Text
+channelTokenEnv channel = case get #config channel of
+    Aeson.Object object_ -> case KeyMap.lookup "tokenEnv" object_ of
+        Just (Aeson.String value) -> value
+        _ -> ""
+    _ -> ""
+
+-- | Overlay the managed tokenEnv key onto a channel config JSON (the
+-- sourceConfig/channelFromForm pattern): empty value removes the key, other
+-- config keys survive.
+tokenEnvConfig :: Text -> Aeson.Value -> Aeson.Value
+tokenEnvConfig tokenEnv config =
+    Aeson.Object
+        ( if Text.null tokenEnv
+            then KeyMap.delete "tokenEnv" base
+            else KeyMap.insert "tokenEnv" (Aeson.String tokenEnv) base
+        )
+  where
+    base = case config of
+        Aeson.Object object_ -> object_
+        _ -> KeyMap.empty
+
+fetchNotificationChannelByName :: (?modelContext :: ModelContext) => Text -> IO NotificationChannel
+fetchNotificationChannelByName name =
+    query @NotificationChannel |> filterWhere (#name, name) |> fetchOneOrNothing
+        >>= maybe (error ("unknown notification channel: " <> name)) pure
+
+referencedChannelNames :: (?modelContext :: ModelContext) => IO [Text]
+referencedChannelNames = do
+    rules <- query @NotificationRule |> fetch
+    pure (nub [rule.channel | rule <- rules, rule.channel /= ""])
 
 fetchNotificationRuleByName :: (?modelContext :: ModelContext) => Text -> IO NotificationRule
 fetchNotificationRuleByName name =
