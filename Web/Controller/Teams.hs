@@ -2,6 +2,8 @@ module Web.Controller.Teams where
 
 import Application.Service.HostGroups (hostGroupsToJson, teamHostGroups)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.List (nub, sort)
 import qualified Data.Text as Text
 import IHP.TypedSql (sqlExecTyped, typedSql)
@@ -32,11 +34,13 @@ instance Controller TeamsController where
         render NewView{users, currentRoles = [], availableGroups}
     action CreateTeamAction = do
         requirePrivilege "manage_users"
+        defaults <- applyMattermostInputs (Aeson.object [])
         team <-
             newRecord @Team
                 |> set #name (param @Text "name")
                 |> set #description (param @Text "description")
                 |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
+                |> set #defaults defaults
                 |> createRecord
         saveMembers team
         setSuccessMessage (tr "Team created")
@@ -72,13 +76,14 @@ instance Controller TeamsController where
             Just (Right value) -> Just value
             _ -> Nothing
         updateTeam team config defaults = do
+            mergedDefaults <- applyMattermostInputs (fromMaybe (Aeson.object []) defaults)
             updated <-
                 team
                     |> set #name (param @Text "name")
                     |> set #description (param @Text "description")
                     |> set #hostGroups (hostGroupsToJson (paramList @Text "hostGroups"))
                     |> set #defaultDashboardConfig config
-                    |> set #defaults (fromMaybe (Aeson.object []) defaults)
+                    |> set #defaults mergedDefaults
                     |> updateRecord
             _ <- sqlExecTyped [typedSql| DELETE FROM team_members WHERE team_id = ${teamId} |]
             saveMembers updated
@@ -101,6 +106,28 @@ optionalJsonParam name = case paramOrNothing @Text name of
         | not (Text.null (Text.strip raw)) ->
             Just (maybe (Left ()) Right (Aeson.decode (cs raw)))
     _ -> Nothing
+
+-- | Merge the dedicated Mattermost destination inputs into the team defaults
+-- JSON ({"mattermost":{"team","channel"}}); a blank input removes its key.
+applyMattermostInputs :: (?request :: Request) => Aeson.Value -> IO Aeson.Value
+applyMattermostInputs defaults = do
+    let mmTeam = Text.strip (fromMaybe "" (paramOrNothing @Text "mattermostTeam"))
+        mmChannel = Text.strip (fromMaybe "" (paramOrNothing @Text "mattermostChannel"))
+    let base = case defaults of
+            Aeson.Object object_ -> object_
+            _ -> KeyMap.empty
+        mmBase = case KeyMap.lookup "mattermost" base of
+            Just (Aeson.Object object_) -> object_
+            _ -> KeyMap.empty
+        setField key value object_
+            | Text.null value = KeyMap.delete (Key.fromText key) object_
+            | otherwise = KeyMap.insert (Key.fromText key) (Aeson.String value) object_
+        mm' = setField "team" mmTeam (setField "channel" mmChannel mmBase)
+        base' =
+            if KeyMap.null mm'
+                then KeyMap.delete "mattermost" base
+                else KeyMap.insert "mattermost" (Aeson.Object mm') base
+    pure (Aeson.Object base')
 
 -- | Distinct host group names across all zabbix source caches
 -- (zabbix_host_groups), offered in the team form picker.

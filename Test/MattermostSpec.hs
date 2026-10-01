@@ -1,5 +1,6 @@
 module Test.MattermostSpec where
 
+import Application.Service.Mattermost (mattermostTarget)
 import Application.Service.Mattermost.Render
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -111,3 +112,29 @@ spec = describe "Application.Service.Mattermost.Render" do
         syncsKind "comment" `shouldBe` False
         syncsKind "writeback" `shouldBe` False
         syncsKind "external" `shouldBe` False
+
+mkRule :: Aeson.Value -> NotificationRule
+mkRule channelConfig =
+    newRecord @NotificationRule
+        |> set #name "cpu-rules"
+        |> set #channelConfig channelConfig
+
+teamDefaults :: Aeson.Value
+teamDefaults = fromMaybe (error "bad test JSON") (Aeson.decode "{\"mattermost\":{\"team\":\"sre\",\"channel\":\"oncall\"}}")
+
+targetSpec :: Spec
+targetSpec = describe "Application.Service.Mattermost.mattermostTarget" do
+    it "uses the rule channelConfig when set" do
+        let rule = mkRule (fromMaybe (error "bad test JSON") (Aeson.decode "{\"team\":\"cfg-team\",\"channel\":\"cfg-chan\"}"))
+        mattermostTarget teamDefaults rule `shouldBe` Right ("cfg-team", "cfg-chan")
+
+    it "falls back to the team defaults and the halemans team name" do
+        mattermostTarget teamDefaults (mkRule (Aeson.object [])) `shouldBe` Right ("sre", "oncall")
+        let noTeamName = fromMaybe (error "bad test JSON") (Aeson.decode "{\"mattermost\":{\"channel\":\"oncall\"}}")
+        mattermostTarget noTeamName (mkRule (Aeson.object [])) `shouldBe` Right ("halemans", "oncall")
+
+    it "errors when neither the rule nor the team names a channel" do
+        let result = mattermostTarget (Aeson.object []) (mkRule (Aeson.object []))
+        case result of
+            Left err -> err `shouldSatisfy` Text.isInfixOf "has no channel"
+            Right _ -> expectationFailure "expected Left"

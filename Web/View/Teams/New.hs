@@ -1,5 +1,8 @@
 module Web.View.Teams.New where
 
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
 import Web.View.Fragments (pageHeaderHtml)
@@ -28,10 +31,45 @@ instance View NewView where
             </div>
             {hostGroupPicker availableGroups []}
             {memberPicker users currentRoles}
+            {mattermostDestinationFields "" ""}
             <button type="submit" class="btn btn-brand" data-testid="team-submit">{tr "Create"}</button>
         </form>
         </div></div>
     |]
+
+-- | The team's default Mattermost destination, read from the
+-- {"mattermost":{"team","channel"}} keys of teams.defaults. Shared with the
+-- edit form.
+mattermostFieldValues :: Aeson.Value -> (Text, Text)
+mattermostFieldValues defaults =
+    ( nestedLookup ["mattermost", "team"] defaults
+    , nestedLookup ["mattermost", "channel"] defaults
+    )
+  where
+    nestedLookup :: [Text] -> Aeson.Value -> Text
+    nestedLookup [] (Aeson.String value) = value
+    nestedLookup (key : rest) (Aeson.Object object_) =
+        case KeyMap.lookup (Key.fromText key) object_ of
+            Just inner -> nestedLookup rest inner
+            Nothing -> ""
+    nestedLookup _ _ = ""
+
+mattermostDestinationFields :: (CurrentUserRecord ~ User, ?request :: Request) => Text -> Text -> Html
+mattermostDestinationFields teamName channelName =
+    [hsx|
+    <div class="mb-3" data-testid="team-mattermost">
+        <label class="form-label">{tr "Mattermost notifications"}</label>
+        <div class="row g-2">
+            <div class="col">
+                <input name="mattermostTeam" type="text" class="form-control" value={teamName} placeholder={tr "Mattermost team (default: halemans)"} data-testid="team-mattermost-team"/>
+            </div>
+            <div class="col">
+                <input name="mattermostChannel" type="text" class="form-control" value={channelName} placeholder={tr "Channel"} data-testid="team-mattermost-channel"/>
+            </div>
+        </div>
+        <div class="form-text">{tr "Default destination for this team's mattermost notification rules; a rule's channel config overrides it. Stored in the team defaults."}</div>
+    </div>
+|]
 
 -- | Multi-select of zabbix host groups gathered into zabbix_host_groups by
 -- manual source sync. With an empty cache there is nothing to pick from, so

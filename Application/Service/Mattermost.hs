@@ -5,6 +5,8 @@ module Application.Service.Mattermost (
     statusSnapshot,
     actionSecret,
     mattermostConfigForRule,
+    mattermostTarget,
+    mattermostTargetForRule,
 ) where
 
 import Application.Service.Mattermost.Api (MattermostConfig)
@@ -78,6 +80,29 @@ renderContextFor rule alert = do
             , mrcAlertId = tshow (get #id alert)
             }
 
+-- | Where a rule posts, pure part: the rule's channelConfig wins; otherwise
+-- the rule's team defaults (Admin → Teams stores {"mattermost":{"team",
+-- "channel"}} in teams.defaults); the MM team name falls back to "halemans".
+-- Left carries the job-visible error.
+mattermostTarget :: Aeson.Value -> NotificationRule -> Either Text (Text, Text)
+mattermostTarget teamDefaults rule =
+    let fromTeam key = nestedConfigText ["mattermost", key] teamDefaults
+        teamName = configText "team" rule.channelConfig `orElse` fromTeam "team" `orElse` "halemans"
+        channelName = configText "channel" rule.channelConfig `orElse` fromTeam "channel"
+     in if Text.null channelName
+            then Left ("mattermost: rule \"" <> rule.name <> "\" has no channel (set the rule channelConfig or the team's Mattermost channel)")
+            else Right (teamName, channelName)
+
+-- | mattermostTarget with the rule's team defaults fetched from its team.
+mattermostTargetForRule :: (?modelContext :: ModelContext) => NotificationRule -> IO (Either Text (Text, Text))
+mattermostTargetForRule rule = do
+    teamDefaults <- case get #teamId rule of
+        Just teamId -> do
+            teamOrNothing <- fetchOneOrNothing teamId
+            pure (maybe (Aeson.object []) (get #defaults) teamOrNothing)
+        Nothing -> pure (Aeson.object [])
+    pure (mattermostTarget teamDefaults rule)
+
 -- | Initial delivery: resolve the channel, post the root message, post the
 -- details into its thread, remember the mapping. When the (alert, rule)
 -- already has a root post, falls through to a sync instead of duplicating
@@ -98,11 +123,10 @@ deliverNotify alert rule = do
                 Just config -> deliver config
   where
     deliver config = do
-        let teamName = configText "team" rule.channelConfig `orElse` "halemans"
-            channelName = configText "channel" rule.channelConfig
-        if Text.null channelName
-            then pure (Left ("mattermost: rule \"" <> rule.name <> "\" has no channelConfig.channel"))
-            else do
+        target <- mattermostTargetForRule rule
+        case target of
+            Left err -> pure (Left err)
+            Right (teamName, channelName) -> do
                 resolved <- Api.resolveChannel config teamName channelName
                 case resolved of
                     Left err -> pure (Left err)
@@ -168,6 +192,14 @@ syncAlertPosts alert = do
 
 statusSnapshot :: Alert -> Text
 statusSnapshot alert = alert.status
+
+nestedConfigText :: [Text] -> Aeson.Value -> Text
+nestedConfigText [] (Aeson.String value) = value
+nestedConfigText (key : rest) (Aeson.Object object_) =
+    case KeyMap.lookup (Key.fromText key) object_ of
+        Just inner -> nestedConfigText rest inner
+        Nothing -> ""
+nestedConfigText _ _ = ""
 
 configText :: Text -> Aeson.Value -> Text
 configText key config = case config of

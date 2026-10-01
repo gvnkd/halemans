@@ -3,7 +3,7 @@ module Web.View.Teams.Edit where
 import qualified Data.Aeson as Aeson
 import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
-import Web.View.Teams.New (hostGroupPicker, memberPicker)
+import Web.View.Teams.New (hostGroupPicker, mattermostDestinationFields, mattermostFieldValues, memberPicker)
 
 data EditView = EditView
     { team :: Team
@@ -30,6 +30,7 @@ instance View EditView where
             </div>
             {hostGroupPicker availableGroups hostGroups}
             {memberPicker users currentRoles}
+            {mattermostDestinationFields mmTeam mmChannel}
             <div class="mb-3">
                 <label class="form-label">{tr "Default dashboard config (JSON)"}</label>
                 <textarea name="defaultDashboardConfig" class="form-control font-monospace" rows="4" data-testid="team-default-dashboard-config">{defaultConfig}</textarea>
@@ -49,5 +50,6 @@ instance View EditView where
         defaultConfig = maybe "" (cs . Aeson.encode) team.defaultDashboardConfig
         defaultsValue :: Text
         defaultsValue = cs (Aeson.encode team.defaults)
+        (mmTeam, mmChannel) = mattermostFieldValues team.defaults
         exampleConfig :: Text
         exampleConfig = "[{\"env\": \"dev\"}]"

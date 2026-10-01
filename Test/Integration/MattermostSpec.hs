@@ -97,6 +97,39 @@ spec = describe "Mattermost notification channel" do
                 [] -> expectationFailure "expected a mattermost job"
             posts <- mockPosts
             length posts `shouldBe` 2 -- still just root + details
+    it "a rule without channelConfig posts to its team's mattermost channel" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-team-env-" <> suffix
+            channelRowName = "mm-team-chanrow-" <> suffix
+            teamChannelName = "alerts-team-itest-" <> suffix
+        withMattermostEnv do
+            mockReset
+            source <- testSource
+            team <-
+                newRecord @Team
+                    |> set #name ("mm-team-" <> suffix)
+                    |> set #description ""
+                    |> set
+                        #defaults
+                        ( Aeson.object
+                            [ "mattermost"
+                                Aeson..= Aeson.object
+                                    [ "team" Aeson..= ("mock" :: Text)
+                                    , "channel" Aeson..= teamChannelName
+                                    ]
+                            ]
+                        )
+                    |> createRecord
+            rule <- mattermostRule ("mm-team-rule-" <> suffix) channelRowName envName
+            _ <- rule |> set #teamId (Just (get #id team)) |> set #channelConfig (Aeson.object []) |> updateRecord
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            notifyJob <- expectOne =<< query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
+            perform notifyJob
+            posts <- mockPosts
+            (root, _reply) <- expectRootAndReply posts
+            postMessage root `shouldBe` "[FIRING] integration test alert"
+
     it "ack click resolves the actor by display name, else the service account" do
         suffix <- tshow <$> nextRandom
         withMattermostEnv do

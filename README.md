@@ -26,6 +26,7 @@ Built with Haskell + [IHP](https://ihp.digitallyinduced.com/), PostgreSQL, serve
 - **Public API & metrics** — read-only JSON API (`/api/v1/alerts`, `/api/v1/environments`) with per-token rate limits, `/metrics` Prometheus exporter, audit export (CSV/JSONL).
 - **Provisioning** — declarative JSON config (users/teams/sources/rules/LLM/integration configs) applied idempotently at boot; env-var indirection for secrets.
 - **Source health** — connector failure tracking with exponential backoff, webhook silence detection, reverse state reconciliation (acks, silences, missed resolves), internal health alerts.
+- **Mattermost notifications** — alert delivery as threaded bot posts with severity-colored attachments, an inline **Ack** action, and live re-rendering on status changes; destinations resolve per rule or per team (see below).
 
 Full design: [`design_docs/01_highlevel.md`](design_docs/01_highlevel.md); per-milestone notes in `design_docs/milestone_*.md`.
 
@@ -224,6 +225,21 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 - Since 2.0 these DB rows are the ONLY way to configure Jira/Confluence — the legacy `HALEMANS_JIRA_URL` / `HALEMANS_CONFLUENCE_URL` env fallback was removed (the token env vars referenced by `tokenEnv` are still required).
 - Per-source keys (Sources form / source `config`): `jiraProjects` / `cmdbSpaces` (JSON arrays, or comma-separated in the form) REPLACE the connection's search scope for that source's alerts — precedence is source > connection; the first `jiraProjects` entry is the ticket-creation target. The legacy scalar keys `jiraProject` / `cmdbSpace` are still read when the array key is absent. `jiraWritable: true` allows creating Jira tickets from the source's alerts (default: read-only), `writeBack: true` mirrors ack/close back to the alert source.
 - The **related-tasks filter** prompt/template lives with the other LLM prompts (Admin → LLM): role `jira-related-filter`, template `jira_related_filter`, tool whitelist seeded with `jira_issue_details`.
+
+## Mattermost notifications
+
+Alert notifications can be delivered to Mattermost as threaded bot posts. A **bot account with a personal access token is required** (incoming webhooks cannot edit posts, and the Ack flow re-renders the root message after the click).
+
+1. **Channel row** — Admin → Notification channels, type `mattermost`: the server `baseUrl` plus `tokenEnv` naming the environment variable that holds the bot token (the same secret-indirection pattern as Jira/Confluence; the token never lands in the DB). The row's Test button verifies the token (`GET /api/v4/users/me`).
+2. **Notification rule** — set the rule's channel to the row's name. The destination (MM team + channel) resolves in this order:
+   - the rule's channel config `{"team","channel"}` (per-rule override; team defaults to `halemans`), else
+   - the rule's **team** default, set on Admin → Teams as "Mattermost notifications" (stored in `teams.defaults` as `{"mattermost":{"team","channel"}}`), else
+   - delivery fails with a job error naming the two places to configure.
+3. **Delivery** — the worker posts a root message (severity-colored attachment, fields, deep link, Ack button when `HALEMANS_BASE_URL` is set) plus a details reply in its thread, and remembers the mapping in `mattermost_posts`. Status changes (ack/resolve/close/…) patch the root post in place; a repeated notify for the same (alert, rule) re-syncs instead of duplicating.
+4. **Ack action** — the button POSTs back to `<HALEMANS_BASE_URL>/hooks/mattermost/actions/<MATTERMOST_ACTION_SECRET>` (the secret falls back to the bot token). The clicker is matched to a Halemans user by Mattermost username = display name, else a `mattermost@localhost` service account acks.
+
+Env: `HALEMANS_BASE_URL` (enables the Ack button + deep links), `MATTERMOST_ACTION_SECRET` (optional), and the token env var named by the channel row. Channels/provision: `notificationChannels` (type `mattermost`, `baseUrl`, `tokenEnv`) referenced by name from `notificationRules.channel`; team defaults provision under `teams.<name>.defaults`. The Sources "Fire test" button drives a synthetic `[TEST]` alert through the whole pipeline (including Mattermost) without touching the real source.
+
 
 ## API
 

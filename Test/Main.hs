@@ -76,6 +76,7 @@ main = hspec do
     Test.FilterPrefsSpec.spec
     Test.MarkdownSpec.spec
     Test.MattermostSpec.spec
+    Test.MattermostSpec.targetSpec
     Test.MetricChartSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec
