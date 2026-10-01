@@ -226,6 +226,16 @@ Jira and Confluence are context integrations, not alert sources. Connections are
 - Per-source keys (Sources form / source `config`): `jiraProjects` / `cmdbSpaces` (JSON arrays, or comma-separated in the form) REPLACE the connection's search scope for that source's alerts — precedence is source > connection; the first `jiraProjects` entry is the ticket-creation target. The legacy scalar keys `jiraProject` / `cmdbSpace` are still read when the array key is absent. `jiraWritable: true` allows creating Jira tickets from the source's alerts (default: read-only), `writeBack: true` mirrors ack/close back to the alert source.
 - The **related-tasks filter** prompt/template lives with the other LLM prompts (Admin → LLM): role `jira-related-filter`, template `jira_related_filter`, tool whitelist seeded with `jira_issue_details`.
 
+## Alert visibility by zabbix host groups
+
+Zabbix alerts are scoped per team through host groups. Each alert carries the zabbix host group names of its host (resolved at poll time via `host.get selectHostGroups`); a user sees a zabbix-source alert only when its groups intersect the union of the host groups configured on **their teams** (Admin → Teams). A user with no team memberships (or empty host groups everywhere) sees nothing; non-zabbix alerts and Halemans' own internal alerts (`halemans:*` fingerprints) stay visible to everyone. A per-user profile checkbox "Show all alerts" (`users.settings.alertScopeBypass`) disables the scoping. Enforcement covers the alert list, env pages, alert detail, websocket updates, the agent tools, and the REST API.
+
+Consequences worth knowing:
+
+- **Ungrouped hosts** — events from a zabbix host with no host groups are dropped before ingest (no alert, no notification); one info-severity Halemans alert per such host (`halemans:ungrouped-host:<fqdn>`) tells operators about it and self-resolves once the host gains groups.
+- **Team-targeted notification rules** fire only for alerts the team could see (same predicate), so a team with empty host groups gets no zabbix notifications either.
+- Poll ingestion is host-group-aware end to end: the missing-problem scan and the event cursor both restrict `trigger.get`/`event.get` by the source's host group scope (`source.config.hostGroupScope = "teams"`).
+
 ## Mattermost notifications
 
 Alert notifications can be delivered to Mattermost as threaded bot posts. A **bot account with a personal access token is required** (incoming webhooks cannot edit posts, and the Ack flow re-renders the root message after the click).
@@ -233,12 +243,12 @@ Alert notifications can be delivered to Mattermost as threaded bot posts. A **bo
 1. **Channel row** — Admin → Notification channels, type `mattermost`: the server `baseUrl` plus `tokenEnv` naming the environment variable that holds the bot token (the same secret-indirection pattern as Jira/Confluence; the token never lands in the DB). The row's Test button verifies the token (`GET /api/v4/users/me`).
 2. **Notification rule** — set the rule's channel to the row's name. The destination (MM team + channel) resolves in this order:
    - the rule's channel config `{"team","channel"}` (per-rule override; team defaults to `halemans`), else
-   - the rule's **team** default, set on Admin → Teams as "Mattermost notifications" (stored in `teams.defaults` as `{"mattermost":{"team","channel"}}`), else
+   - the rule's **team** default, set on Admin → Teams as "Mattermost notifications" (stored in `teams.defaults` as `{"mattermost":{"team","channel"}}`; the team is matched against the MM team name and its display name, e.g. both `knn-gd` and `GD` work), else
    - delivery fails with a job error naming the two places to configure.
 3. **Delivery** — the worker posts a root message (severity-colored attachment, fields, deep link, Ack button when `HALEMANS_BASE_URL` is set) plus a details reply in its thread, and remembers the mapping in `mattermost_posts`. Status changes (ack/resolve/close/…) patch the root post in place; a repeated notify for the same (alert, rule) re-syncs instead of duplicating.
-4. **Ack action** — the button POSTs back to `<HALEMANS_BASE_URL>/hooks/mattermost/actions/<MATTERMOST_ACTION_SECRET>` (the secret falls back to the bot token). The clicker is matched to a Halemans user by Mattermost username = display name, else a `mattermost@localhost` service account acks.
+4. **Ack action** — the button POSTs back to `<public base URL>/hooks/mattermost/actions/<MATTERMOST_ACTION_SECRET>` (the secret falls back to the bot token). Each user sets their **Mattermost username** on their profile page (stored in `users.settings.mattermostUsername`); the clicker is matched to a Halemans user by that field first, then by display name, else a `mattermost@localhost` service account acks. The acked alert shows the actor and time both on the Halemans alert card and in the re-rendered MM root post ("Acked by X at …").
 
-Env: `HALEMANS_BASE_URL` (enables the Ack button + deep links), `MATTERMOST_ACTION_SECRET` (optional), and the token env var named by the channel row. Channels/provision: `notificationChannels` (type `mattermost`, `baseUrl`, `tokenEnv`) referenced by name from `notificationRules.channel`; team defaults provision under `teams.<name>.defaults`. The Sources "Fire test" button drives a synthetic `[TEST]` alert through the whole pipeline (including Mattermost) without touching the real source.
+Env: a public base URL (`HALEMANS_BASE_URL`, falling back to `IHP_BASEURL`/`APPROOT`; it enables the Ack button + deep links), `MATTERMOST_ACTION_SECRET` (optional), and the token env var named by the channel row. The bot's Mattermost account must be a member of the destination team **and** channel — Mattermost answers lookups for non-members with 404, which is indistinguishable from a wrong name. Channels/provision: `notificationChannels` (type `mattermost`, `baseUrl`, `tokenEnv`) referenced by name from `notificationRules.channel`; team defaults provision under `teams.<name>.defaults`. The Sources "Fire test" button drives a synthetic `[TEST]` alert through the whole pipeline (including Mattermost) without touching the real source.
 
 
 ## API
