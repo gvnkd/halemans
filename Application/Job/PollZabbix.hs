@@ -16,6 +16,7 @@ import Data.Bits ((.&.))
 import Data.Either (fromRight)
 import Data.List (nub, sortOn)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Generated.Types
@@ -136,8 +137,11 @@ pollSource source = do
                             recordSuccess source
                             ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl source.env) events)
                             reconcileAcks source token
-                            when (reconcileResolvedEnabled source && reconcileDue now source) do
-                                reconcileProblemStates source token now
+                            when (reconcileDue now source) do
+                                when (reconcileResolvedEnabled source) do
+                                    reconcileProblemStates source token now
+                                when (scanMissingProblemsEnabled source) do
+                                    scanMissingProblems source token now
                                 void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                             -- +1s: event.get's time_from is INCLUSIVE, so a
                             -- cursor at maxClock re-ingests the boundary event
@@ -292,6 +296,11 @@ lastMaybe = last
 --                                     to the token) is treated as resolved
 --                                     (default 86400)
 --   eventPageLimit              int   event.get page size (default 1000)
+--   scanMissingProblems         bool  master switch for the missing-problem
+--                                     scan below (default true)
+--   scanWindowSeconds           int   how far back lastchange may be for an
+--                                     untracked problem to be scanned (default
+--                                     86400)
 reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
 reconcileProblemStates source token now = do
     alerts <-
@@ -316,6 +325,64 @@ reconcileProblemStates source token now = do
                             updated <- resolveFromProblem alert resolvedAt
                             when (updated.status == "resolved") do
                                 logInfo ("zabbix source \"" <> source.name <> "\": resolved alert " <> tshow (get #id alert) <> " (trigger " <> triggerId <> " not in problem state)")
+
+-- Missing-problem scan: cursor-based event.get only sees NEW events, so a
+-- trigger that went to problem before the cursor (standing problem at attach
+-- time, older than initialHistoryDays on the first poll, or skipped by the
+-- same-second page-truncation guard) never produces a local alert even though
+-- trigger.get reports it in problem state. Each due reconcile cycle, fetch
+-- ALL triggers currently in problem state, keep those whose lastchange is
+-- inside the scan window AND have no tracked (firing/ack/stalled) local
+-- alert, then fetch their events in one batched event.get (objectids) and
+-- ingest them through the normal pipeline. The event cursor is untouched;
+-- overlap with the cursor path dedupes by fingerprint in ingest, and an OK
+-- event we also missed is healed by the resolved-state reconcile on a later
+-- cycle. Triggers with only resolved/closed local rows are rescanned on
+-- purpose: a refire we never saw (skipped tail) looks exactly like that.
+scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
+scanMissingProblems source token now = do
+    result <- Zabbix.problemTriggersGet source.baseUrl token
+    case result of
+        Left err -> do
+            logWarn ("zabbix source \"" <> source.name <> "\" missing-problem scan failed: " <> err)
+            recordReconcileFailure source err
+        Right triggers -> do
+            alerts <-
+                query @Alert
+                    |> filterWhere (#sourceId, Just (get #id source))
+                    |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
+                    |> fetch
+            let tracked = Set.fromList (map (.fingerprint) alerts)
+                candidates = missingProblemCandidates now (scanWindowSeconds source) tracked triggers
+            unless (null candidates) do
+                let triggerIds = map (.triggerStateId) candidates
+                    windowStart = floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral (scanWindowSeconds source))) now))
+                eventsResult <- Zabbix.eventsByTriggersGet source.baseUrl token windowStart triggerIds (eventPageLimit source)
+                case eventsResult of
+                    Left err ->
+                        logWarn ("zabbix source \"" <> source.name <> "\" missed-problem event fetch failed: " <> err)
+                    Right events -> do
+                        recordReconcileSuccess source
+                        logInfo ("zabbix source \"" <> source.name <> "\": ingesting " <> tshow (length events) <> " missed events for " <> tshow (length candidates) <> " untracked problem trigger(s)")
+                        ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl source.env) events)
+
+-- | Problem-state triggers worth fetching events for: lastchange inside the
+-- window and no tracked local alert with the trigger's fingerprint.
+missingProblemCandidates :: UTCTime -> Int -> Set.Set Text -> [Zabbix.ZabbixTriggerState] -> [Zabbix.ZabbixTriggerState]
+missingProblemCandidates now windowSeconds tracked triggers =
+    [ trigger
+    | trigger <- triggers
+    , trigger.triggerStateLastChange >= windowStart
+    , not (Set.member ("zabbix:trigger:" <> trigger.triggerStateId) tracked)
+    ]
+  where
+    windowStart = floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral windowSeconds)) now))
+
+scanMissingProblemsEnabled :: Source -> Bool
+scanMissingProblemsEnabled = configBool True "scanMissingProblems"
+
+scanWindowSeconds :: Source -> Int
+scanWindowSeconds = configInt 86400 "scanWindowSeconds"
 
 -- | Resolve the tracked row itself through the normal transition path (state
 -- machine, audit events, notifications, WS fan-out), then back-date

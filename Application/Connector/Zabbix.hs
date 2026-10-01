@@ -10,6 +10,8 @@ module Application.Connector.Zabbix (
     ackStateGet,
     ZabbixTriggerState (..),
     triggerStateGet,
+    problemTriggersGet,
+    eventsByTriggersGet,
     usersGet,
     ZabbixTriggerItem (..),
     triggerItemsGet,
@@ -22,7 +24,7 @@ import Control.Exception (SomeException, try)
 import Control.Lens ((&), (.~), (^.))
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
-import Data.Aeson.Types (parseMaybe)
+import Data.Aeson.Types (Pair, parseMaybe)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -69,25 +71,41 @@ instance Aeson.FromJSON ZabbixEvent where
 -- (time_from is inclusive), so results are deduped by eventid. Empty groupIds
 -- means no host group restriction.
 eventGet :: Text -> Text -> Integer -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
-eventGet baseUrl token timeFrom groupIds pageLimit = go timeFrom []
+eventGet baseUrl token timeFrom groupIds pageLimit =
+    pagedEventGet baseUrl token timeFrom extra pageLimit
+  where
+    extra = ["groupids" .= groupIds | not (null groupIds)]
+
+-- | Problem events for a known set of triggers (event.get objectids), paged
+-- like eventGet. Backs the missing-problem scan: fetches the problem events
+-- behind triggers that trigger.get reports in problem state but the cursor
+-- path never delivered (standing problem, skipped same-second page tail).
+eventsByTriggersGet :: Text -> Text -> Integer -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
+eventsByTriggersGet _ _ _ [] _ = pure (Right [])
+eventsByTriggersGet baseUrl token timeFrom triggerIds pageLimit =
+    pagedEventGet baseUrl token timeFrom ["objectids" .= triggerIds] pageLimit
+
+-- Shared event.get paging loop; extra params ride alongside the fixed ones
+-- (groupids for the cursor path, objectids for the scan path). A full page
+-- whose max clock didn't move means more than pageLimit events share one
+-- clock second; stop rather than loop forever.
+pagedEventGet :: Text -> Text -> Integer -> [Pair] -> Int -> IO (Either Text [ZabbixEvent])
+pagedEventGet baseUrl token timeFrom extra pageLimit = go timeFrom []
   where
     go cursor acc = do
-        result <- eventGetPage baseUrl token cursor groupIds pageLimit
+        result <- eventGetPage baseUrl token cursor extra pageLimit
         case result of
             Left err -> pure (Left err)
             Right page ->
                 let acc' = acc ++ page
-                    -- A full page whose max clock didn't move means more than
-                    -- pageLimit events share one clock second; stop rather
-                    -- than loop forever (reconcile covers any state we miss).
                     nextCursor = maximum (map (.clock) page)
                  in if length page < pageLimit || nextCursor <= cursor
                         then pure (Right (dedupEvents acc'))
                         else go nextCursor acc'
     dedupEvents = nubBy (\a b -> a.eventId == b.eventId)
 
-eventGetPage :: Text -> Text -> Integer -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
-eventGetPage baseUrl token timeFrom groupIds pageLimit = do
+eventGetPage :: Text -> Text -> Integer -> [Pair] -> Int -> IO (Either Text [ZabbixEvent])
+eventGetPage baseUrl token timeFrom extra pageLimit = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
         body =
             Aeson.object
@@ -106,7 +124,7 @@ eventGetPage baseUrl token timeFrom groupIds pageLimit = do
                           , "selectRelatedObject" .= (["description"] :: [Text])
                           , "limit" .= pageLimit
                           ]
-                            ++ ["groupids" .= groupIds | not (null groupIds)]
+                            ++ extra
                         )
                 ]
     resp <- Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body
@@ -319,6 +337,34 @@ triggerStateGet baseUrl token triggerIds = do
                     .= Aeson.object
                         [ "triggerids" .= triggerIds
                         , "output" .= (["triggerid", "value", "lastchange"] :: [Text])
+                        ]
+                ]
+    result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+    case result of
+        Left err -> pure (Left (tshow (err :: SomeException)))
+        Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
+            Left err -> pure (Left (cs err))
+            Right decoded ->
+                case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
+                    Just triggers -> pure (Right triggers)
+                    Nothing -> pure (Left (rpcError decoded))
+
+-- | All triggers currently in problem state (trigger.get filter value=1),
+-- with lastchange. Backs the missing-problem scan: unlike problem.get's
+-- ok_period window, trigger.get reports the LIVE value, so a problem that
+-- fired any amount of time ago is visible as long as it is still open.
+problemTriggersGet :: Text -> Text -> IO (Either Text [ZabbixTriggerState])
+problemTriggersGet baseUrl token = do
+    let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("trigger.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "output" .= (["triggerid", "value", "lastchange"] :: [Text])
+                        , "filter" .= Aeson.object ["value" .= ("1" :: Text)]
                         ]
                 ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)

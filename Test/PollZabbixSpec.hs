@@ -7,14 +7,18 @@ import Application.Job.PollZabbix (
     eventPageLimit,
     initialCursor,
     initialHistoryDays,
+    missingProblemCandidates,
     reconcileDue,
     reconcileGraceSeconds,
     reconcileIntervalSeconds,
     reconcileResolvedEnabled,
     resolveDecision,
+    scanMissingProblemsEnabled,
+    scanWindowSeconds,
  )
 import Data.Aeson (eitherDecode, object, (.=))
 import qualified Data.Aeson
+import qualified Data.Set as Set
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Generated.Types
 import IHP.ModelSupport (newRecord)
@@ -98,6 +102,40 @@ spec = describe "Application.Job.PollZabbix" do
         it "clamps eventPageLimit to at least 1" do
             let source = newRecord @Source |> set #config (object ["eventPageLimit" .= (0 :: Int)])
             eventPageLimit source `shouldBe` 1
+        it "applies documented defaults for the missing-problem scan" do
+            let source = newRecord @Source
+            scanMissingProblemsEnabled source `shouldBe` True
+            scanWindowSeconds source `shouldBe` 86400
+        it "reads missing-problem scan overrides from source config" do
+            let source =
+                    newRecord @Source
+                        |> set
+                            #config
+                            ( object
+                                [ "scanMissingProblems" .= False
+                                , "scanWindowSeconds" .= (7200 :: Int)
+                                ]
+                            )
+            scanMissingProblemsEnabled source `shouldBe` False
+            scanWindowSeconds source `shouldBe` 7200
+
+    describe "missingProblemCandidates" do
+        it "keeps in-window untracked triggers" do
+            missingProblemCandidates now 86400 Set.empty [problemTrigger] `shouldBe` [problemTrigger]
+        it "drops triggers whose lastchange is older than the window" do
+            let old = problemTrigger{triggerStateLastChange = nowPosix - 90000}
+            missingProblemCandidates now 86400 Set.empty [old] `shouldBe` []
+        it "drops triggers with a tracked local alert" do
+            let tracked = Set.fromList ["zabbix:trigger:42" :: Text]
+            missingProblemCandidates now 86400 tracked [problemTrigger] `shouldBe` []
+        it "keeps triggers whose local rows are all resolved" do
+            let tracked = Set.fromList ["zabbix:trigger:7" :: Text]
+                other = problemTrigger{triggerStateId = "7"}
+            missingProblemCandidates now 86400 tracked [other, problemTrigger] `shouldBe` [problemTrigger]
+        it "honors scanWindowSeconds overrides" do
+            let recent = problemTrigger{triggerStateLastChange = nowPosix - 5000}
+            missingProblemCandidates now 3600 Set.empty [recent] `shouldBe` []
+            missingProblemCandidates now 3600 Set.empty [problemTrigger] `shouldBe` [problemTrigger]
 
     describe "reconcileDue" do
         it "is due when the source never reconciled" do
