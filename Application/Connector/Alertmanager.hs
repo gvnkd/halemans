@@ -60,6 +60,7 @@ toEvent externalUrl a@(Object _) = do
             , checkName = labelText "check" <|> labelText "alertname"
             , labels
             , annotations
+            , hostGroups = []
             , startedAt = lookupTime "startsAt" a
             , sourceUrl = lookupText "generatorURL" a <|> externalUrl
             }

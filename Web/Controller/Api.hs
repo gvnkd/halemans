@@ -1,5 +1,6 @@
 module Web.Controller.Api where
 
+import Application.Service.AlertScope (scopeForUser)
 import Application.Service.Api.Alerts (AlertFilters (..), alertDetail, defaultFilters, listAlertsPage)
 import Application.Service.Api.Auth (apiError, withApiToken)
 import Application.Service.Api.Cursor (decodeCursor)
@@ -16,20 +17,22 @@ import Web.View.Dashboard.Index (computeEnvCards)
 -- (last_seen_at desc, id desc); the cursor is an opaque base64 of the last
 -- row's key, stable under concurrent inserts.
 instance Controller ApiController where
-    action ApiAlertsAction = withApiToken LimitApi "alerts:read" \_ _ -> do
+    action ApiAlertsAction = withApiToken LimitApi "alerts:read" \_ user -> do
         parsed <- parseListParams
+        scope <- scopeForUser user
         case parsed of
             Left badParam -> apiError status400 "bad_request" ("invalid " <> badParam <> " parameter")
             Right filters -> do
-                (alerts, nextCursor) <- listAlertsPage filters
+                (alerts, nextCursor) <- listAlertsPage filters scope
                 renderJson
                     ( object
                         [ "alerts" .= map encodeAlertSummary alerts
                         , "next_cursor" .= nextCursor
                         ]
                     )
-    action ApiAlertAction{alertId} = withApiToken LimitApi "alerts:read" \_ _ -> do
-        detail <- alertDetail alertId
+    action ApiAlertAction{alertId} = withApiToken LimitApi "alerts:read" \_ user -> do
+        scope <- scopeForUser user
+        detail <- alertDetail alertId scope
         case detail of
             Nothing -> apiError status404 "not_found" "unknown alert id"
             Just found -> renderJson (encodeAlertDetail found)

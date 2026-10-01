@@ -35,6 +35,7 @@ fireTestAlert source = do
                 , checkName = Nothing
                 , labels = Aeson.object []
                 , annotations = Aeson.object []
+                , hostGroups = []
                 , startedAt = Nothing
                 , sourceUrl = Nothing
                 }

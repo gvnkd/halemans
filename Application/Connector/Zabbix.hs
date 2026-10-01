@@ -12,6 +12,7 @@ module Application.Connector.Zabbix (
     triggerStateGet,
     problemTriggersGet,
     eventsByTriggersGet,
+    hostsGroupsGet,
     usersGet,
     ZabbixTriggerItem (..),
     triggerItemsGet,
@@ -19,17 +20,17 @@ module Application.Connector.Zabbix (
 ) where
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
-import qualified Application.Service.Http as Http
+import Application.Service.Http qualified as Http
 import Control.Exception (SomeException, try)
 import Control.Lens ((&), (.~), (^.))
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (Pair, parseMaybe)
-import qualified Data.Map.Strict as Map
-import qualified Data.Text
+import Data.Map.Strict qualified as Map
+import Data.Text qualified
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import IHP.Prelude
-import qualified Network.Wreq as Wreq
+import Network.Wreq qualified as Wreq
 import Text.Read (readMaybe)
 
 -- A trigger event from zabbix event.get (source=0, object=0).
@@ -80,10 +81,49 @@ eventGet baseUrl token timeFrom groupIds pageLimit =
 -- like eventGet. Backs the missing-problem scan: fetches the problem events
 -- behind triggers that trigger.get reports in problem state but the cursor
 -- path never delivered (standing problem, skipped same-second page tail).
-eventsByTriggersGet :: Text -> Text -> Integer -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
-eventsByTriggersGet _ _ _ [] _ = pure (Right [])
-eventsByTriggersGet baseUrl token timeFrom triggerIds pageLimit =
-    pagedEventGet baseUrl token timeFrom ["objectids" .= triggerIds] pageLimit
+-- groupIds restricts to the same host group scope as the cursor path.
+eventsByTriggersGet :: Text -> Text -> Integer -> [Text] -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
+eventsByTriggersGet _ _ _ [] _ _ = pure (Right [])
+eventsByTriggersGet baseUrl token timeFrom triggerIds groupIds pageLimit =
+    pagedEventGet baseUrl token timeFrom (("objectids" .= triggerIds) : groupParam) pageLimit
+  where
+    groupParam = ["groupids" .= groupIds | not (null groupIds)]
+
+-- | Host -> zabbix host group names for a set of host names (ONE batched
+-- host.get, selectHostGroups). Hosts the token can't see or that have no
+-- groups are ABSENT from the result — the caller decides what that means
+-- (the poller treats absent/no-groups as ungrouped and drops the event).
+hostsGroupsGet :: Text -> Text -> [Text] -> IO (Either Text [(Text, [Text])])
+hostsGroupsGet _ _ [] = pure (Right [])
+hostsGroupsGet baseUrl token hostNames = do
+    let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
+        body =
+            Aeson.object
+                [ "jsonrpc" .= ("2.0" :: Text)
+                , "method" .= ("host.get" :: Text)
+                , "id" .= (1 :: Int)
+                , "params"
+                    .= Aeson.object
+                        [ "output" .= (["hostid", "host"] :: [Text])
+                        , "selectHostGroups" .= (["groupid", "name"] :: [Text])
+                        , "filter" .= Aeson.object ["host" .= hostNames]
+                        ]
+                ]
+    result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
+    case result of
+        Left err -> pure (Left (tshow (err :: SomeException)))
+        Right resp -> case Aeson.eitherDecode (resp ^. Wreq.responseBody) of
+            Left err -> pure (Left (cs err))
+            Right decoded ->
+                case parseMaybe (Aeson.withObject "rpc" (.: "result")) decoded of
+                    Just hosts -> pure (Right (mapMaybe hostGroupsOf hosts))
+                    Nothing -> pure (Left (rpcError decoded))
+  where
+    hostGroupsOf = parseMaybe $ Aeson.withObject "host" \o -> do
+        host <- o .: "host"
+        groups <- o .:? "hostgroups" .!= []
+        names <- mapM (Aeson.withObject "group" (\g -> g .: "name")) groups
+        pure (host, names :: [Text])
 
 -- Shared event.get paging loop; extra params ride alongside the fixed ones
 -- (groupids for the cursor path, objectids for the scan path). A full page
@@ -176,9 +216,10 @@ hostGroupsGetAll baseUrl token = do
 -- Fingerprint is trigger-scoped (a zabbix trigger has at most one open
 -- problem at a time), so the OK event resolves the alert created by the
 -- corresponding problem event. Zabbix events carry no environment concept,
--- so the env comes from the source row (sources.env).
-toNormalizedEvent :: Text -> Text -> ZabbixEvent -> NormalizedEvent
-toNormalizedEvent baseUrl envName event =
+-- so the env comes from the source row (sources.env). Host groups are
+-- resolved separately (host.get selectHostGroups) and passed in.
+toNormalizedEvent :: Text -> Text -> [Text] -> ZabbixEvent -> NormalizedEvent
+toNormalizedEvent baseUrl envName groups event =
     NormalizedEvent
         { fingerprint = "zabbix:trigger:" <> event.triggerId
         , externalId = Just event.eventId
@@ -192,6 +233,7 @@ toNormalizedEvent baseUrl envName event =
         , checkName = Just event.name
         , labels = Aeson.object ["source" .= ("zabbix" :: Text)]
         , annotations = Aeson.object []
+        , hostGroups = groups
         , startedAt = Just (posixSecondsToUTCTime (fromIntegral event.clock))
         , sourceUrl = Just (baseUrl <> "/tr_events.php?triggerid=" <> event.triggerId <> "&eventid=" <> event.eventId)
         }
@@ -353,8 +395,9 @@ triggerStateGet baseUrl token triggerIds = do
 -- with lastchange. Backs the missing-problem scan: unlike problem.get's
 -- ok_period window, trigger.get reports the LIVE value, so a problem that
 -- fired any amount of time ago is visible as long as it is still open.
-problemTriggersGet :: Text -> Text -> IO (Either Text [ZabbixTriggerState])
-problemTriggersGet baseUrl token = do
+-- groupIds restricts to the same host group scope as the cursor path.
+problemTriggersGet :: Text -> Text -> [Text] -> IO (Either Text [ZabbixTriggerState])
+problemTriggersGet baseUrl token groupIds = do
     let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
         body =
             Aeson.object
@@ -363,9 +406,11 @@ problemTriggersGet baseUrl token = do
                 , "id" .= (1 :: Int)
                 , "params"
                     .= Aeson.object
-                        [ "output" .= (["triggerid", "value", "lastchange"] :: [Text])
-                        , "filter" .= Aeson.object ["value" .= ("1" :: Text)]
-                        ]
+                        ( [ "output" .= (["triggerid", "value", "lastchange"] :: [Text])
+                          , "filter" .= Aeson.object ["value" .= ("1" :: Text)]
+                          ]
+                            ++ ["groupids" .= groupIds | not (null groupIds)]
+                        )
                 ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)
     case result of

@@ -14,34 +14,35 @@ module Application.Service.Live (
 import Application.Helper.DashboardConfig (DashboardCard (..), clauseValue, decodeDashboardConfig, matchCardAlert)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters, seenCutoff)
-import qualified Application.Service.Assets.Cache as AssetsCache
+import Application.Service.AlertScope (alertScopeBypassFromSettings, alertVisibleWith, scopeNamesFor)
+import Application.Service.Assets.Cache qualified as AssetsCache
 import Application.Service.DashboardCards (ExpandedCard (..), expandDashboardCards, expandedDomId)
 import Application.Service.Llm.Queue (latestJobErrors)
 import Application.Service.Timeline (headTimelineGroup, timelineHiddenKind)
-import qualified Control.Exception.Safe as Exception
+import Control.Exception.Safe qualified as Exception
 import Control.Monad (guard)
 import Data.Aeson (object, (.=))
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
-import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Lazy qualified as BL
 import Data.IORef
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.UUID (UUID)
-import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUIDV4
+import Data.UUID qualified as UUID
+import Data.UUID.V4 qualified as UUIDV4
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.HSX.Markup (Markup, renderMarkupText)
-import IHP.LoginSupport.Helper.Controller (currentUserOrNothing)
+import IHP.LoginSupport.Helper.Controller (CurrentUserRecord, currentUserOrNothing)
 import IHP.ModelSupport
-import qualified IHP.PGListener as PGListener
+import IHP.PGListener qualified as PGListener
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
 import IHP.RequestVault ()
 import IHP.WebSocket
 import Network.Wai (Request)
-import qualified Network.WebSockets as WS
+import Network.WebSockets qualified as WS
 import System.IO.Unsafe (unsafePerformIO)
 import Web.View.Dashboard.Index (EnvCard (..), cardDomId, computeEnvCards, renderCard)
 import Web.View.Dashboards.Show (fetchCardData, renderCardSection)
@@ -64,7 +65,13 @@ data Scope
     | ScopeNone
     deriving (Eq, Show)
 
-type ConnectionEntry = (UUID, IORef [Scope], Text -> IO ())
+-- The second component is the logged-in user's id (Nothing for anonymous
+-- pages), so broadcast-time checks (per-user host group alert visibility)
+-- never trust client-sent scope data.
+type ConnectionEntry = (UUID, Maybe UUID, IORef [Scope], Text -> IO ())
+
+userIdUuid :: Id User -> UUID
+userIdUuid (Id uuid) = uuid
 
 registry :: IORef [ConnectionEntry]
 registry = unsafePerformIO (newIORef [])
@@ -85,7 +92,7 @@ liveConnectionCount = length <$> readIORef registry
 broadcastAgentTurn :: UUID -> Aeson.Value -> IO ()
 broadcastAgentTurn userId payload = do
     connections <- readIORef registry
-    forM_ connections \(_, scopeRef, send) -> do
+    forM_ connections \(_, _, scopeRef, send) -> do
         scopes <- readIORef scopeRef
         when (ScopeAgentUser userId `elem` scopes) do
             -- one dead peer must not take down the fan-out (or, worse, the
@@ -95,14 +102,18 @@ broadcastAgentTurn userId payload = do
 
 -- | Connection loop of the /ws WSApp (see Web.Controller.Live).
 liveBroadcastLoop ::
-    (?request :: Request, ?modelContext :: ModelContext, ?connection :: WS.Connection) =>
+    (?request :: Request, ?modelContext :: ModelContext, ?connection :: WS.Connection, CurrentUserRecord ~ User) =>
     IO ()
 liveBroadcastLoop = do
     connectionId <- UUIDV4.nextRandom
     scopeRef <- newIORef []
     let send = WS.sendTextData ?connection
-    modifyIORef' registry ((connectionId, scopeRef, send) :)
-    flip Exception.finally (modifyIORef' registry (filter (\(id, _, _) -> id /= connectionId))) do
+    let user = currentUserOrNothing
+        userUuid = case user of
+            Just u -> Just (userIdUuid (get #id u))
+            Nothing -> Nothing
+    modifyIORef' registry ((connectionId, userUuid, scopeRef, send) :)
+    flip Exception.finally (modifyIORef' registry (filter (\(id, _, _, _) -> id /= connectionId))) do
         forever do
             message <- receiveData @LByteString
             if isResetFrame message
@@ -205,9 +216,9 @@ broadcast modelContext notification = do
         Nothing -> pure ()
         Just event -> do
             connections <- readIORef registry
-            forM_ connections \(_, scopeRef, send) -> do
+            forM_ connections \(_, userUuid, scopeRef, send) -> do
                 scopes <- readIORef scopeRef
-                updates <- concat <$> forM scopes \scope -> updatesFor scope event
+                updates <- concat <$> forM scopes \scope -> updatesFor userUuid scope event
                 unless (null updates && not (isBanner event)) do
                     let banner = case (isBanner event, event.leAlertId) of
                             (True, Just alertId) -> Just (object ["title" .= event.leTitle, "severity" .= event.leSeverity, "alertId" .= alertId])
@@ -217,9 +228,33 @@ broadcast modelContext notification = do
 isBanner :: LiveEvent -> Bool
 isBanner event = event.leKind == "created" && event.leSeverity `elem` [Just "critical", Just "high"] && isJust event.leAlertId
 
--- | Compute the fragment updates relevant for a connection scope.
-updatesFor :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => Scope -> LiveEvent -> IO [Aeson.Value]
-updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
+-- Per-user host group visibility for a websocket connection: Nothing user
+-- (anonymous page) or bypass on = unrestricted; otherwise the union of the
+-- user's teams' zabbix host groups (AlertScope).
+scopeNamesForConnection :: (?modelContext :: ModelContext) => Maybe UUID -> IO (Maybe [Text])
+scopeNamesForConnection Nothing = pure Nothing
+scopeNamesForConnection (Just uuid) = do
+    user <- fetchOneOrNothing (Id uuid :: Id User)
+    case user of
+        Nothing -> pure Nothing
+        Just u
+            | alertScopeBypassFromSettings u.settings -> pure Nothing
+            | otherwise -> scopeNamesFor (get #id u)
+
+-- Visibility leg alone (for the env page, which has its own filter predicate).
+scopeVisible :: (?modelContext :: ModelContext) => Maybe [Text] -> Alert -> IO Bool
+scopeVisible Nothing _ = pure True
+scopeVisible (Just names) alert = do
+    isZabbix <- case alert.sourceId of
+        Nothing -> pure False
+        Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
+    pure (alertVisibleWith names isZabbix alert)
+
+-- | Compute the fragment updates relevant for a connection scope. userUuid is
+-- the connection's logged-in user: the alert-list scopes apply the SAME
+-- server-side per-user host group visibility as the list query (AlertScope).
+updatesFor :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => Maybe UUID -> Scope -> LiveEvent -> IO [Aeson.Value]
+updatesFor userUuid scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeDashboard, Just alertId, _) -> do
         (cards, unassigned) <- computeEnvCards
         let allCards = cards ++ maybeToList unassigned
@@ -261,7 +296,8 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
                     pure (updates ++ removals)
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
-        matches <- matchesFilters scopeFilters alert
+        scope <- scopeNamesForConnection userUuid
+        matches <- matchesFilters scopeFilters scope alert
         -- Rows re-render with the subscribed view's visible columns; the
         -- group key is fetched only when the group column is shown.
         groupKey <- case alert.groupId of
@@ -277,7 +313,8 @@ updatesFor scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeEnv name scopeFilters, Just alertId, _)
         | event.leEnv == Just name -> do
             alert <- fetch (Id alertId)
-            matches <- matchesEnvFilters scopeFilters alert
+            scope <- scopeNamesForConnection userUuid
+            matches <- (&&) <$> matchesEnvFilters scopeFilters alert <*> scopeVisible scope alert
             groupKey <- case alert.groupId of
                 Just groupId | "group" `elem` scopeFilters.alfColumns -> do
                     group <- fetch groupId

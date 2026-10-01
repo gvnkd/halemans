@@ -1,8 +1,9 @@
 module Web.Controller.Environments where
 
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize, validAlertSortColumns)
-import qualified Application.Helper.FilterPrefs as FilterPrefs
-import qualified Application.Service.AlertList as AlertList
+import Application.Helper.FilterPrefs qualified as FilterPrefs
+import Application.Service.AlertList qualified as AlertList
+import Application.Service.AlertScope qualified as AlertScope
 import Application.Service.DynTable (pageCountFor)
 import Network.HTTP.Types.URI (renderQuery)
 import Web.Controller.Prelude
@@ -48,7 +49,7 @@ instance Controller EnvironmentsController where
                         _ -> Nothing
                     }
 
-renderEnv :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) => Text -> EnvFilters -> Text -> IO ResponseReceived
+renderEnv :: (?context :: ControllerContext, ?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, CurrentUserRecord ~ User) => Text -> EnvFilters -> Text -> IO ResponseReceived
 renderEnv environmentName filters viewMode = do
     -- The inventory row is optional: an env name that exists only as a
     -- materialized env facet (field-mapping override) still gets a page.
@@ -59,9 +60,11 @@ renderEnv environmentName filters viewMode = do
     -- The flat list reuses the /alerts query engine (typedSql, dynamic
     -- sort, offset pagination); unlike /alerts, an empty status selection
     -- shows ALL statuses here, closed included (alfIncludeClosed).
-    total <- AlertList.countAlerts alertFilters
+    -- Same per-user host group visibility as /alerts (AlertScope).
+    scope <- AlertScope.scopeNamesFor currentUserId
+    total <- AlertList.countAlerts alertFilters scope
     let effAlertFilters = alertFilters{AlertList.alfPage = min alertFilters.alfPage (pageCountFor total alertFilters.alfPageSize)}
-    alerts <- AlertList.listAlerts effAlertFilters
+    alerts <- AlertList.listAlerts effAlertFilters scope
     groupKeys <- case filters.filterCols of
         cols
             | "group" `elem` cols && not (null alerts) ->

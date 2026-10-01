@@ -2,29 +2,30 @@ module Web.Controller.Alerts where
 
 import Application.Connector.GrafanaMetrics (ruleUidFromSourceUrl)
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize)
-import qualified Application.Helper.FilterPrefs as FilterPrefs
+import Application.Helper.FilterPrefs qualified as FilterPrefs
 import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, validSortColumns)
-import qualified Application.Service.AlertList as AlertList
-import qualified Application.Service.Assets.Cache as AssetsCache
-import qualified Application.Service.Chart as Chart
-import qualified Application.Service.Cmdb.DbConfig as Cmdb
+import Application.Service.AlertList qualified as AlertList
+import Application.Service.AlertScope qualified as AlertScope
+import Application.Service.Assets.Cache qualified as AssetsCache
+import Application.Service.Chart qualified as Chart
+import Application.Service.Cmdb.DbConfig qualified as Cmdb
 import Application.Service.DynTable (pageCountFor)
-import qualified Application.Service.Facets as Facets
+import Application.Service.Facets qualified as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
-import qualified Application.Service.Jira.DbConfig as Jira
+import Application.Service.Jira.DbConfig qualified as Jira
 import Application.Service.Llm.Queue (ensureLanguageVariant, latestJobErrors)
 import Application.Service.MetricChart (MetricChartData (..), chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
 import Control.Monad (void)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.Types (parseMaybe)
-import qualified Data.List as List
-import qualified Data.Text as Text
+import Data.List qualified as List
+import Data.Text qualified as Text
 import IHP.HSX.Markup (renderMarkupText)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.ViewPrelude (Html, preEscapedToHtml)
-import Network.HTTP.Types (status200)
+import Network.HTTP.Types (status200, status404)
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (responseLBS)
 import Web.Controller.Prelude
@@ -38,6 +39,22 @@ alertFilterQueryKeys = ["severity", "status", "env", "host", "service", "q", "gr
 sourceConfigBool :: Text -> Source -> Bool
 sourceConfigBool key source =
     fromMaybe False (parseMaybe (Aeson.withObject "config" (\o -> o Aeson..:? Key.fromText key Aeson..!= False)) source.config)
+
+-- Per-user host group visibility (AlertScope) applied to direct id access:
+-- a restricted user poking an out-of-scope alert id gets a bare 404.
+assertAlertVisible :: (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, CurrentUserRecord ~ User) => Alert -> IO ()
+assertAlertVisible alert = do
+    let bypass = AlertScope.alertScopeBypassFromSettings currentUser.settings
+    unless bypass do
+        names <- AlertScope.scopeNamesFor currentUserId
+        case names of
+            Nothing -> pure ()
+            Just scope -> do
+                isZabbix <- case alert.sourceId of
+                    Nothing -> pure False
+                    Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
+                unless (AlertScope.alertVisibleWith scope isZabbix alert) do
+                    respondAndExit (responseLBS status404 [("Content-Type", "text/plain")] "not found")
 
 instance Controller AlertsController where
     beforeAction = ensureIsUser
@@ -81,13 +98,16 @@ instance Controller AlertsController where
                     , alfIncludeClosed = False
                     }
         renderAlertList filters = do
-            total <- AlertList.countAlerts filters
+            -- Per-user host group visibility (AlertScope): computed
+            -- server-side, never from request params.
+            scope <- AlertScope.scopeNamesFor currentUserId
+            total <- AlertList.countAlerts filters scope
             -- Clamp the requested page into range: filters shrink the set
             -- under a pinned page (e.g. prefs replay) and an empty mid-list
             -- page would be confusing.
             let effFilters = filters{alfPage = min filters.alfPage (pageCountFor total filters.alfPageSize)}
-            alerts <- AlertList.listAlerts effFilters
-            counts <- AlertList.countBySeverity effFilters
+            alerts <- AlertList.listAlerts effFilters scope
+            counts <- AlertList.countBySeverity effFilters scope
             -- Filter options: inventory names plus override-only names
             -- that exist solely as materialized env facets.
             inventoryNames <- map (.name) <$> (query @Environment |> orderByAsc #name |> fetch)
@@ -102,6 +122,7 @@ instance Controller AlertsController where
             render IndexView{alerts = alerts, filters = effFilters, counts = counts, envNames = envNames, total = total, groupKeys = groupKeys}
     action ShowAlertAction{alertId} = do
         alert <- fetch alertId
+        assertAlertVisible alert
         events <-
             query @AlertEvent
                 |> filterWhere (#alertId, alertId)

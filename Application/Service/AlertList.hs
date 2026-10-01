@@ -18,16 +18,17 @@ module Application.Service.AlertList (
 
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize, validAlertSortColumns)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
+import Application.Service.AlertScope (alertVisibleWith)
 import Control.Monad (guard)
 import Data.Aeson ((.!=), (.=))
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Char (isDigit)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, fromGregorian)
 import Data.UUID (UUID)
 import Generated.Types
-import IHP.Fetch (fetch)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.ModelSupport (Id' (..))
 import IHP.Prelude
@@ -132,8 +133,13 @@ mutedMode muted
 -- value: a materialized facet named like the field overrides the raw column.
 -- Pagination is LIMIT/OFFSET over the same ordering (offset paging keeps
 -- arbitrary sort columns and direct page jumps possible).
-listAlerts :: (?modelContext :: ModelContext) => AlertListFilters -> IO [Alert]
-listAlerts filters = do
+--
+-- scopeNames is the per-user host group visibility (AlertScope): Nothing =
+-- unrestricted, Just names = only zabbix alerts whose host groups intersect
+-- names, plus non-zabbix and "halemans:" internal alerts. Applied HERE and
+-- in countAlerts/countBySeverity — never from client input.
+listAlerts :: (?modelContext :: ModelContext) => AlertListFilters -> Maybe [Text] -> IO [Alert]
+listAlerts filters scopeNames = do
     now <- getCurrentTime
     let sevs = filters.alfSeverities
         statuses = filters.alfStatuses
@@ -151,6 +157,8 @@ listAlerts filters = do
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
+        unrestricted = isNothing scopeNames
+        scope = fromMaybe [] scopeNames
     rows :: [Id Alert] <-
         sqlQueryTyped
             [typedSql|
@@ -169,6 +177,7 @@ listAlerts filters = do
                 a.last_seen_at
             FROM alerts a
             LEFT JOIN alert_groups g ON g.id = a.group_id
+            LEFT JOIN sources sc ON sc.id = a.source_id
             WHERE (CASE WHEN cardinality(${statuses}::text[]) = 0 THEN (${inclClosed} OR a.status <> 'closed') ELSE a.status = ANY(${statuses}) END)
               AND (cardinality(${sevs}::text[]) = 0 OR a.severity = ANY(${sevs}))
               AND (cardinality(${envs}::text[]) = 0 OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ANY(${envs}))
@@ -184,6 +193,7 @@ listAlerts filters = do
                    END)
               AND (${occMin} = 0 OR a.occurrences >= ${occMin})
               AND (a.last_seen_at > ${cutoff})
+              AND (${unrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${scope})
         ) AS sorted
         ORDER BY
             CASE WHEN ${dir} = 'asc' THEN sorted.sort_key END ASC,
@@ -196,8 +206,8 @@ listAlerts filters = do
 
 -- Total rows matching the filters (drives the /alerts pager). Same WHERE as
 -- listAlerts/countBySeverity — keep the three in sync.
-countAlerts :: (?modelContext :: ModelContext) => AlertListFilters -> IO Int64
-countAlerts filters = do
+countAlerts :: (?modelContext :: ModelContext) => AlertListFilters -> Maybe [Text] -> IO Int64
+countAlerts filters scopeNames = do
     now <- getCurrentTime
     let sevs = filters.alfSeverities
         statuses = filters.alfStatuses
@@ -211,12 +221,15 @@ countAlerts filters = do
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
+        unrestricted = isNothing scopeNames
+        scope = fromMaybe [] scopeNames
     rows <-
         sqlQueryTyped
             [typedSql|
         SELECT COUNT(*) AS n
         FROM alerts a
         LEFT JOIN alert_groups g ON g.id = a.group_id
+        LEFT JOIN sources sc ON sc.id = a.source_id
         WHERE (CASE WHEN cardinality(${statuses}::text[]) = 0 THEN (${inclClosed} OR a.status <> 'closed') ELSE a.status = ANY(${statuses}) END)
           AND (cardinality(${sevs}::text[]) = 0 OR a.severity = ANY(${sevs}))
           AND (cardinality(${envs}::text[]) = 0 OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ANY(${envs}))
@@ -232,14 +245,15 @@ countAlerts filters = do
                END)
           AND (${occMin} = 0 OR a.occurrences >= ${occMin})
           AND (a.last_seen_at > ${cutoff})
+          AND (${unrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${scope})
     |]
     -- Single-column typedSql results decode as bare values (no get #n).
     pure (fromMaybe 0 (listToMaybe rows))
 
 -- Totals per severity over the currently filtered set (drives the count
 -- badges on /alerts).
-countBySeverity :: (?modelContext :: ModelContext) => AlertListFilters -> IO [(Text, Int64)]
-countBySeverity filters = do
+countBySeverity :: (?modelContext :: ModelContext) => AlertListFilters -> Maybe [Text] -> IO [(Text, Int64)]
+countBySeverity filters scopeNames = do
     now <- getCurrentTime
     let sevs = filters.alfSeverities
         statuses = filters.alfStatuses
@@ -253,12 +267,15 @@ countBySeverity filters = do
         inclClosed = filters.alfIncludeClosed
         occMin = fromMaybe 0 filters.alfMinOccurrences
         cutoff = seenCutoff now filters.alfSeenWithin
+        unrestricted = isNothing scopeNames
+        scope = fromMaybe [] scopeNames
     rows <-
         sqlQueryTyped
             [typedSql|
         SELECT a.severity, COUNT(*) AS n
         FROM alerts a
         LEFT JOIN alert_groups g ON g.id = a.group_id
+        LEFT JOIN sources sc ON sc.id = a.source_id
         WHERE (CASE WHEN cardinality(${statuses}::text[]) = 0 THEN (${inclClosed} OR a.status <> 'closed') ELSE a.status = ANY(${statuses}) END)
           AND (cardinality(${sevs}::text[]) = 0 OR a.severity = ANY(${sevs}))
           AND (cardinality(${envs}::text[]) = 0 OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ANY(${envs}))
@@ -274,6 +291,7 @@ countBySeverity filters = do
                END)
           AND (${occMin} = 0 OR a.occurrences >= ${occMin})
           AND (a.last_seen_at > ${cutoff})
+          AND (${unrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${scope})
         GROUP BY a.severity
     |]
     pure (map (\row -> (get #severity row, get #n row)) rows)
@@ -296,9 +314,18 @@ effectiveEnvNames = do
 
 -- Pure predicate mirror of the list query, used by the websocket
 -- broadcaster to decide whether an alert event is visible to a filtered
--- /alerts view. IO only for the group-key pattern (needs the group row).
-matchesFilters :: (?modelContext :: ModelContext) => AlertListFilters -> Alert -> IO Bool
-matchesFilters filters alert = do
+-- /alerts view. IO for the group-key pattern (needs the group row) and the
+-- scope check (needs the source row's type). scopeNames is the SAME
+-- server-side per-user value the list query takes (AlertScope).
+matchesFilters :: (?modelContext :: ModelContext) => AlertListFilters -> Maybe [Text] -> Alert -> IO Bool
+matchesFilters filters scopeNames alert = do
+    scopeOk <- case scopeNames of
+        Nothing -> pure True
+        Just names -> do
+            isZabbix <- case alert.sourceId of
+                Nothing -> pure False
+                Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
+            pure (alertVisibleWith names isZabbix alert)
     groupOk <- case filters.alfGroup of
         Nothing -> pure True
         Just pat -> case alert.groupId of
@@ -309,7 +336,8 @@ matchesFilters filters alert = do
     now <- getCurrentTime
     pure
         ( and
-            [ null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
+            [ scopeOk
+            , null filters.alfSeverities || alert.severity `elem` filters.alfSeverities
             , statusOk
             , null filters.alfEnvs || maybe False (`elem` filters.alfEnvs) (effectiveFieldText FieldEnv alert)
             , maybe True (\host -> effectiveFieldText FieldHost alert == Just host) filters.alfHost

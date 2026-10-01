@@ -201,6 +201,7 @@ reconcileAbsences source now listedFingerprints = do
                     , checkName = alert.checkName
                     , labels = alert.labels
                     , annotations = alert.annotations
+                    , hostGroups = []
                     , startedAt = alert.startedAt
                     , sourceUrl = alert.sourceUrl
                     }

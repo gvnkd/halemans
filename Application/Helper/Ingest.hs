@@ -5,6 +5,7 @@ module Application.Helper.Ingest (
     ingestEvents,
     ingest,
     transitionAlert,
+    hostGroupNamesOf,
     fetchActiveBlackouts,
     publishAlertUpdate,
 ) where
@@ -13,17 +14,18 @@ import Application.Job.Mattermost (enqueueSyncIfPosted)
 import Application.Pipeline.Blackouts (BlackoutSubject (..), blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
-import qualified Application.Pipeline.StateMachine as SM
+import Application.Pipeline.StateMachine qualified as SM
 import Application.Service.Escalation (cancelTrackersFor)
-import qualified Application.Service.Facets as Facets
+import Application.Service.Facets qualified as Facets
 import Application.Service.Groups (assignGroup, recomputeGroupRollup)
 import Application.Service.I18n (defaultLanguage, languageCode)
-import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
+import Application.Service.Llm.AutoAnalyze qualified as AutoAnalyze
 import Application.Service.Notify (dispatchNotification)
 import Control.Monad (void)
 import Data.Aeson (Value, object, (.=))
-import qualified Data.Aeson as Aeson
-import qualified Data.Text as Text
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Types (parseMaybe)
+import Data.Text qualified as Text
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
@@ -48,6 +50,9 @@ data NormalizedEvent = NormalizedEvent
     , checkName :: Maybe Text
     , labels :: Value
     , annotations :: Value
+    , hostGroups :: [Text]
+    -- ^ Zabbix host group names for the event's host (empty for non-zabbix
+    -- sources); drives per-team alert visibility.
     , startedAt :: Maybe UTCTime
     , sourceUrl :: Maybe Text
     }
@@ -101,6 +106,7 @@ ingest source event = do
                         |> set #checkName event.checkName
                         |> set #labels event.labels
                         |> set #annotations event.annotations
+                        |> set #hostGroups (Aeson.toJSON event.hostGroups)
                         |> set #sourceUrl event.sourceUrl
                         |> set #startedAt event.startedAt
                         |> set #environmentId environmentRef
@@ -156,8 +162,14 @@ ingest source event = do
                     alert
                         |> set #title event.title
                         |> (if Text.null event.description then (\x -> x) else set #description event.description)
+                        |> set #hostGroups (Aeson.toJSON (nub (event.hostGroups ++ hostGroupNamesOf alert)))
             updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow refreshed
             pure (Just (get #id updated))
+
+-- | Zabbix host group names stored on an alert row ([] for legacy rows and
+-- non-zabbix alerts).
+hostGroupNamesOf :: Alert -> [Text]
+hostGroupNamesOf alert = fromMaybe [] (parseMaybe Aeson.parseJSON alert.hostGroups)
 
 -- | State-machine transition + side effects (escalation cancel, notification,
 -- WS fan-out) for a source status applied to a KNOWN alert row. Split from

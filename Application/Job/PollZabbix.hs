@@ -1,7 +1,7 @@
 module Application.Job.PollZabbix where
 
-import qualified Application.Connector.Zabbix as Zabbix
-import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
+import Application.Connector.Zabbix qualified as Zabbix
+import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
@@ -9,15 +9,15 @@ import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalSuppress,
 import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Control.Exception (SomeException, try)
 import Control.Monad (void)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.Types (parseMaybe)
 import Data.Bits ((.&.))
 import Data.Either (fromRight)
 import Data.List (nub, sortOn)
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
-import qualified Data.Text as Text
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Generated.Types
 import IHP.Fetch (fetch)
@@ -65,8 +65,8 @@ instance Job PollZabbixJob where
                 if null sources
                     then do
                         logInfo "no enabled zabbix sources; poll loop stopped (re-arms on source create/enable)"
-                        void $
-                            sqlExecTyped
+                        void
+                            $ sqlExecTyped
                                 [typedSql|
                             DELETE FROM poll_zabbix_jobs
                             WHERE status = 'job_status_not_started'
@@ -94,8 +94,8 @@ reschedule = do
     |]
     case inserted of
         (nextId : _) ->
-            void $
-                sqlExecTyped
+            void
+                $ sqlExecTyped
                     [typedSql|
             DELETE FROM poll_zabbix_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}
@@ -135,14 +135,29 @@ pollSource source = do
                         Right events -> do
                             logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (length events) <> " events")
                             recordSuccess source
-                            ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl source.env) events)
-                            reconcileAcks source token
-                            when (reconcileDue now source) do
-                                when (reconcileResolvedEnabled source) do
-                                    reconcileProblemStates source token now
-                                when (scanMissingProblemsEnabled source) do
-                                    scanMissingProblems source token now
-                                void (source |> set #lastReconcileAt (Just now) |> updateRecord)
+                            groupsResult <- Zabbix.hostsGroupsGet source.baseUrl token (nub (mapMaybe (.host) events))
+                            case groupsResult of
+                                Left err -> do
+                                    -- Host groups decide both per-team
+                                    -- visibility and the ungrouped-host drop,
+                                    -- so without them the cycle is a failure:
+                                    -- the cursor stays put and the batch
+                                    -- retries next cycle instead of silently
+                                    -- ingesting ungrouped (invisible) alerts.
+                                    recordFailure source err
+                                    logWarn ("zabbix source \"" <> source.name <> "\" host group lookup failed; ingest skipped this cycle (will retry): " <> err)
+                                Right hostGroupPairs -> do
+                                    let hostGroups = Map.fromList hostGroupPairs
+                                        (groupedEvents, ungroupedHosts) = partitionUngrouped hostGroups events
+                                    ingestEvents source (map (normalizeWithGroups source hostGroups) groupedEvents)
+                                    syncUngroupedHostAlerts source (nub ungroupedHosts) (nub [h | e <- groupedEvents, Just h <- [e.host]])
+                                    reconcileAcks source token
+                                    when (reconcileDue now source) do
+                                        when (reconcileResolvedEnabled source) do
+                                            reconcileProblemStates source token now
+                                        when (scanMissingProblemsEnabled source) do
+                                            scanMissingProblems source token groupIds now
+                                        void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                             -- +1s: event.get's time_from is INCLUSIVE, so a
                             -- cursor at maxClock re-ingests the boundary event
                             -- every cycle (resolved→resolved no-op flood, and
@@ -331,17 +346,18 @@ reconcileProblemStates source token now = do
 -- time, older than initialHistoryDays on the first poll, or skipped by the
 -- same-second page-truncation guard) never produces a local alert even though
 -- trigger.get reports it in problem state. Each due reconcile cycle, fetch
--- ALL triggers currently in problem state, keep those whose lastchange is
--- inside the scan window AND have no tracked (firing/ack/stalled) local
--- alert, then fetch their events in one batched event.get (objectids) and
--- ingest them through the normal pipeline. The event cursor is untouched;
--- overlap with the cursor path dedupes by fingerprint in ingest, and an OK
--- event we also missed is healed by the resolved-state reconcile on a later
--- cycle. Triggers with only resolved/closed local rows are rescanned on
--- purpose: a refire we never saw (skipped tail) looks exactly like that.
-scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
-scanMissingProblems source token now = do
-    result <- Zabbix.problemTriggersGet source.baseUrl token
+-- triggers currently in problem state (restricted to the source's host group
+-- scope), keep those whose lastchange is inside the scan window AND have no
+-- tracked (firing/ack/stalled) local alert, then fetch their events in one
+-- batched event.get (objectids) and ingest them through the normal pipeline.
+-- The event cursor is untouched; overlap with the cursor path dedupes by
+-- fingerprint in ingest, and an OK event we also missed is healed by the
+-- resolved-state reconcile on a later cycle. Triggers with only
+-- resolved/closed local rows are rescanned on purpose: a refire we never saw
+-- (skipped tail) looks exactly like that.
+scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> [Text] -> UTCTime -> IO ()
+scanMissingProblems source token groupIds now = do
+    result <- Zabbix.problemTriggersGet source.baseUrl token groupIds
     case result of
         Left err -> do
             logWarn ("zabbix source \"" <> source.name <> "\" missing-problem scan failed: " <> err)
@@ -357,14 +373,26 @@ scanMissingProblems source token now = do
             unless (null candidates) do
                 let triggerIds = map (.triggerStateId) candidates
                     windowStart = floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral (scanWindowSeconds source))) now))
-                eventsResult <- Zabbix.eventsByTriggersGet source.baseUrl token windowStart triggerIds (eventPageLimit source)
+                eventsResult <- Zabbix.eventsByTriggersGet source.baseUrl token windowStart triggerIds groupIds (eventPageLimit source)
                 case eventsResult of
                     Left err ->
                         logWarn ("zabbix source \"" <> source.name <> "\" missed-problem event fetch failed: " <> err)
                     Right events -> do
                         recordReconcileSuccess source
                         logInfo ("zabbix source \"" <> source.name <> "\": ingesting " <> tshow (length events) <> " missed events for " <> tshow (length candidates) <> " untracked problem trigger(s)")
-                        ingestEvents source (map (Zabbix.toNormalizedEvent source.baseUrl source.env) events)
+                        groupsResult <- Zabbix.hostsGroupsGet source.baseUrl token (nub (mapMaybe (.host) events))
+                        case groupsResult of
+                            -- Unlike the cursor path there is nothing to
+                            -- retry (the cursor doesn't move), but the
+                            -- trigger stays in problem state so the next
+                            -- due cycle rescans it; just warn.
+                            Left err ->
+                                logWarn ("zabbix source \"" <> source.name <> "\" missed-problem host group lookup failed; events not ingested this cycle: " <> err)
+                            Right hostGroupPairs -> do
+                                let hostGroups = Map.fromList hostGroupPairs
+                                    (groupedEvents, ungroupedHosts) = partitionUngrouped hostGroups events
+                                ingestEvents source (map (normalizeWithGroups source hostGroups) groupedEvents)
+                                syncUngroupedHostAlerts source (nub ungroupedHosts) (nub [h | e <- groupedEvents, Just h <- [e.host]])
 
 -- | Problem-state triggers worth fetching events for: lastchange inside the
 -- window and no tracked local alert with the trigger's fingerprint.
@@ -383,6 +411,74 @@ scanMissingProblemsEnabled = configBool True "scanMissingProblems"
 
 scanWindowSeconds :: Source -> Int
 scanWindowSeconds = configInt 86400 "scanWindowSeconds"
+
+-- | Split events by the host group map (one batched host.get per cycle):
+-- events whose host positively has groups are ingested (with the groups
+-- attached); events from a host with NO groups — or missing from host.get,
+-- e.g. invisible to the token — are DROPPED from ingest entirely and the host
+-- is reported (Sergey 2026-10-01: such hosts get no alerts, no
+-- notifications, no processing at all). Hostless events (template/calculated
+-- triggers) pass through with no groups, which makes them invisible under
+-- per-team visibility.
+partitionUngrouped :: Map Text [Text] -> [Zabbix.ZabbixEvent] -> ([Zabbix.ZabbixEvent], [Text])
+partitionUngrouped hostGroups = foldr step ([], [])
+  where
+    step event (grouped, ungrouped) = case event.host of
+        Nothing -> (event : grouped, ungrouped)
+        Just host -> case Map.lookup host hostGroups of
+            Just groups | not (null groups) -> (event : grouped, ungrouped)
+            _ -> (grouped, host : ungrouped)
+
+normalizeWithGroups :: Source -> Map Text [Text] -> Zabbix.ZabbixEvent -> Application.Helper.Ingest.NormalizedEvent
+normalizeWithGroups source hostGroups event =
+    Zabbix.toNormalizedEvent source.baseUrl source.env (Map.findWithDefault [] (fromMaybe "" event.host) hostGroups) event
+
+-- | One info-severity Halemans alert per ungrouped host (raised via the
+-- normal ingest pipeline, so dedupe/occurrences/grouping all behave), and
+-- resolved as soon as a poll sees the same host WITH groups. The "halemans:"
+-- fingerprint prefix keeps these visible to every user regardless of host
+-- group scope.
+ungroupedHostFingerprint :: Text -> Text
+ungroupedHostFingerprint host = "halemans:ungrouped-host:" <> host
+
+syncUngroupedHostAlerts :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> [Text] -> [Text] -> IO ()
+syncUngroupedHostAlerts source ungroupedHosts groupedHosts = do
+    now <- getCurrentTime
+    ingestEvents source [ungroupedEvent now host | host <- ungroupedHosts]
+    unless (null groupedHosts) do
+        rows <-
+            query @Alert
+                |> filterWhere (#sourceId, Just (get #id source))
+                |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
+                |> fetch
+        blackouts <- fetchActiveBlackouts now
+        forM_ rows \alert -> case alert.host of
+            Just host
+                | host `elem` groupedHosts
+                , isJust (Text.stripPrefix "halemans:ungrouped-host:" alert.fingerprint) -> do
+                    let suppressedNow = any (blackoutApplies now (alertSubject alert)) blackouts
+                    void (transitionAlert now Resolved (if Text.null source.env then Nothing else Just source.env) alert.environmentId alert.hostId alert.serviceId suppressedNow alert)
+            _ -> pure ()
+
+ungroupedEvent :: UTCTime -> Text -> NormalizedEvent
+ungroupedEvent now host =
+    NormalizedEvent
+        { fingerprint = ungroupedHostFingerprint host
+        , externalId = Nothing
+        , status = Firing
+        , severity = "info"
+        , title = "Zabbix host has no host groups: " <> host
+        , description = "Halemans dropped alerts from this host: it has no zabbix host groups (or is invisible to the source token), and hosts without groups are not processed. Add the host to a zabbix host group; this alert resolves itself on the next poll cycle once the host has groups."
+        , env = Nothing
+        , host = Just host
+        , service = Nothing
+        , checkName = Nothing
+        , labels = Aeson.object ["source" Aeson..= ("halemans" :: Text)]
+        , annotations = Aeson.object []
+        , hostGroups = []
+        , startedAt = Just now
+        , sourceUrl = Nothing
+        }
 
 -- | Resolve the tracked row itself through the normal transition path (state
 -- machine, audit events, notifications, WS fan-out), then back-date

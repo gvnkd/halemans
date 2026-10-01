@@ -3,8 +3,8 @@ module Application.Service.SourceHealth where
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest, publishAlertUpdate)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key as Key
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.Types (parseMaybe)
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
@@ -109,6 +109,7 @@ recordFailureWith setBackoff source err = do
                 , checkName = Just "source_health"
                 , labels = object ["source" .= source.name, "kind" .= ("source_health" :: Text)]
                 , annotations = object []
+                , hostGroups = []
                 , startedAt = Just now
                 , sourceUrl = Nothing
                 }
@@ -159,6 +160,7 @@ recordSuccess source =
                     , checkName = Just "source_health"
                     , labels = object ["source" .= source.name, "kind" .= ("source_health" :: Text)]
                     , annotations = object []
+                    , hostGroups = []
                     , startedAt = Just now
                     , sourceUrl = Nothing
                     }
@@ -176,8 +178,8 @@ recordReconcileFailure :: (?modelContext :: ModelContext) => Source -> Text -> I
 recordReconcileFailure source err = do
     now <- getCurrentTime
     hostName <- halemansHostName
-    void $
-        ingest
+    void
+        $ ingest
             source
             NormalizedEvent
                 { fingerprint = reconcileFingerprint (get #id source)
@@ -192,6 +194,7 @@ recordReconcileFailure source err = do
                 , checkName = Just "source_reconcile"
                 , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
                 , annotations = object []
+                , hostGroups = []
                 , startedAt = Just now
                 , sourceUrl = Nothing
                 }
@@ -208,8 +211,8 @@ recordReconcileSuccess source = do
     forM_ open \_ -> do
         now <- getCurrentTime
         hostName <- halemansHostName
-        void $
-            ingest
+        void
+            $ ingest
                 source
                 NormalizedEvent
                     { fingerprint = reconcileFingerprint (get #id source)
@@ -224,6 +227,7 @@ recordReconcileSuccess source = do
                     , checkName = Just "source_reconcile"
                     , labels = object ["source" .= source.name, "kind" .= ("source_reconcile" :: Text)]
                     , annotations = object []
+                    , hostGroups = []
                     , startedAt = Just now
                     , sourceUrl = Nothing
                     }

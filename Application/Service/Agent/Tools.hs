@@ -10,6 +10,7 @@ module Application.Service.Agent.Tools (
 import Application.Helper.Controller (userPrivileges)
 import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), MatchOp (..), decodeDashboardConfig, encodeDashboardConfig, facetRefText)
 import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
+import Application.Service.AlertScope (alertVisibleWith, scopeForUser)
 import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage)
 import Application.Service.Api.Token (newApiToken)
 import Application.Service.DashboardCards (cardBaseQuery)
@@ -19,21 +20,21 @@ import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Control.Exception (SomeException, try)
 import Control.Monad (void, when)
 import Data.Aeson (Value (..), object, (.!=), (.:), (.:?), (.=))
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encode.Pretty as Pretty
-import qualified Data.Aeson.Key as Key
-import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Encode.Pretty qualified as Pretty
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Int (Int64)
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes)
 import Data.Scientific (floatingOrInteger)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Text.Read ()
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601ParseM)
 import Data.Traversable (traverse)
-import qualified Data.Vector as Vector
+import Data.Vector qualified as Vector
 import Generated.Types hiding (createDashboard)
 import IHP.Fetch (fetch, fetchCount, fetchOneOrNothing)
 import IHP.ModelSupport
@@ -244,6 +245,7 @@ dispatch context name arguments = case name of
         status <- arg "status" ""
         limitRaw <- argInt "limit" 20
         let limit = max 1 (min 100 limitRaw)
+        scope <- scopeForUser context.acUser
         (alerts, _cursor) <-
             listAlertsPage
                 defaultFilters
@@ -254,26 +256,27 @@ dispatch context name arguments = case name of
                     , afStatus = status
                     , afLimit = limit
                     }
+                scope
         pure case alerts of
             [] -> "no matching alerts"
             _ -> Text.intercalate "\n" (map alertLine alerts)
-    "list_environments" -> listEnvironments
+    "list_environments" -> listEnvironments =<< scopeForUser context.acUser
     "ack_alert" -> do
-        alert <- fetchAlert =<< arg "alert_id" ""
+        alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
         comment <- argMaybe "comment"
         _ <- ackAlert context.acUser alert comment Nothing
         pure ("acknowledged alert " <> alert.title)
     "unack_alert" -> do
-        alert <- fetchAlert =<< arg "alert_id" ""
+        alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
         _ <- unackAlert (Just context.acUser) alert "agent unack"
         pure ("unacknowledged alert " <> alert.title)
     "close_alert" -> do
-        alert <- fetchAlert =<< arg "alert_id" ""
+        alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
         reason <- argMaybe "reason"
         _ <- closeAlert (Just context.acUser) alert reason
         pure ("closed alert " <> alert.title)
     "comment_alert" -> do
-        alert <- fetchAlert =<< arg "alert_id" ""
+        alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
         body <- arg "body" ""
         _ <- addComment context.acUser alert body
         pure ("comment added to alert " <> alert.title)
@@ -464,15 +467,36 @@ fetchAlert rawId = do
         Right alert -> pure alert
         Left (_ :: SomeException) -> error "unknown alert id"
 
--- Helpers: environments
-listEnvironments :: (?modelContext :: ModelContext) => IO Text
-listEnvironments = do
+-- | fetchAlert plus the per-user host group visibility (AlertScope): the
+-- agent sees exactly what its user sees — an out-of-scope alert id is
+-- indistinguishable from a missing one.
+fetchVisibleAlert :: (?modelContext :: ModelContext) => User -> Text -> IO Alert
+fetchVisibleAlert user rawId = do
+    alert <- fetchAlert rawId
+    scope <- scopeForUser user
+    case scope of
+        Nothing -> pure alert
+        Just names -> do
+            isZabbix <- case alert.sourceId of
+                Nothing -> pure False
+                Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
+            if alertVisibleWith names isZabbix alert
+                then pure alert
+                else error "unknown alert id (not visible to this user)"
+
+-- Helpers: environments. Open-alert counts respect the per-user host group
+-- visibility (AlertScope) so the agent's summary matches what its user sees.
+listEnvironments :: (?modelContext :: ModelContext) => Maybe [Text] -> IO Text
+listEnvironments scopeNames = do
+    let unrestricted = isNothing scopeNames
+        scope = fromMaybe [] scopeNames
     rows <-
         sqlQueryTyped
             [typedSql|
-        SELECT e.name, COUNT(a.id) AS n
+        SELECT e.name, COUNT(a.id) FILTER (WHERE ${unrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${scope})::bigint AS n
         FROM environments e
         LEFT JOIN alerts a ON a.environment_id = e.id AND a.status <> 'closed'
+        LEFT JOIN sources sc ON sc.id = a.source_id
         GROUP BY e.name
         ORDER BY e.name
     |]
@@ -936,22 +960,29 @@ dispatchRest context name arguments = case name of
     "list_alert_groups" -> do
         limitRaw <- argInt "limit" 20
         let limit = max 1 (min 100 limitRaw)
+        scope <- scopeForUser context.acUser
         groups <- query @AlertGroup |> orderByDesc #createdAt |> fetch
         let limited = take limit groups
             ids = map (get #id) limited
+            unrestricted = isNothing scope
+            scopeNames = fromMaybe [] scope
         rows <-
             sqlQueryTyped
                 [typedSql|
-            SELECT g.id, COUNT(a.id)::bigint AS n
+            SELECT g.id, COUNT(a.id) FILTER (WHERE ${unrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${scopeNames})::bigint AS n
             FROM alert_groups g
             LEFT JOIN alerts a ON a.group_id = g.id AND a.status <> 'closed'
+            LEFT JOIN sources sc ON sc.id = a.source_id
             WHERE g.id = ANY(${ids})
             GROUP BY g.id
         |]
         let countsById = Map.fromList [(get #id row, get #n row) | row <- rows]
             groupsById = Map.fromList [(get #id g, g) | g <- limited]
-        pure case limited of
-            [] -> "no alert groups"
+            -- The agent sees what its user sees: a group whose open alerts
+            -- are all out of scope disappears entirely.
+            visibleGroups = [g | g <- limited, Map.lookup (get #id g) countsById /= Just 0]
+        pure case visibleGroups of
+            [] -> "no alert groups visible to you"
             _ ->
                 Text.intercalate
                     "\n"
@@ -962,7 +993,8 @@ dispatchRest context name arguments = case name of
                         <> " open alert(s) (id="
                         <> tshow gid
                         <> ")"
-                    | gid <- ids
+                    | g <- visibleGroups
+                    , let gid = get #id g
                     ]
     "explain_last_turn" -> explainLastTurn context
     other -> pure ("unknown tool: " <> other)
@@ -1213,12 +1245,16 @@ listTeams = do
 
 fetchTeamByName :: (?modelContext :: ModelContext) => Text -> IO Team
 fetchTeamByName name =
-    query @Team |> filterWhere (#name, name) |> fetchOneOrNothing
+    query @Team
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
         >>= maybe (error ("unknown team: " <> name)) pure
 
 fetchUserByEmail :: (?modelContext :: ModelContext) => Text -> IO User
 fetchUserByEmail email =
-    query @User |> filterWhere (#email, email) |> fetchOneOrNothing
+    query @User
+        |> filterWhere (#email, email)
+        |> fetchOneOrNothing
         >>= maybe (error ("unknown user: " <> email)) pure
 
 -- Helpers: rules
@@ -1246,7 +1282,9 @@ protectedMark record = if get #protected record then " [provisioned-protected]" 
 
 fetchPolicyByName :: (?modelContext :: ModelContext) => Text -> IO EscalationPolicy
 fetchPolicyByName name =
-    query @EscalationPolicy |> filterWhere (#name, name) |> fetchOneOrNothing
+    query @EscalationPolicy
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
         >>= maybe (error ("unknown escalation policy: " <> name)) pure
 
 listNotificationRules :: (?modelContext :: ModelContext) => IO Text
@@ -1314,7 +1352,9 @@ tokenEnvConfig tokenEnv config =
 
 fetchNotificationChannelByName :: (?modelContext :: ModelContext) => Text -> IO NotificationChannel
 fetchNotificationChannelByName name =
-    query @NotificationChannel |> filterWhere (#name, name) |> fetchOneOrNothing
+    query @NotificationChannel
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
         >>= maybe (error ("unknown notification channel: " <> name)) pure
 
 referencedChannelNames :: (?modelContext :: ModelContext) => IO [Text]
@@ -1324,19 +1364,25 @@ referencedChannelNames = do
 
 fetchNotificationRuleByName :: (?modelContext :: ModelContext) => Text -> IO NotificationRule
 fetchNotificationRuleByName name =
-    query @NotificationRule |> filterWhere (#name, name) |> fetchOneOrNothing
+    query @NotificationRule
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
         >>= maybe (error ("unknown notification rule: " <> name)) pure
 
 fetchGroupingRuleByName :: (?modelContext :: ModelContext) => Text -> IO GroupingRule
 fetchGroupingRuleByName name =
-    query @GroupingRule |> filterWhere (#name, name) |> fetchOneOrNothing
+    query @GroupingRule
+        |> filterWhere (#name, name)
+        |> fetchOneOrNothing
         >>= maybe (error ("unknown grouping rule: " <> name)) pure
 
 -- Helpers: sources
 setSourceEnabled :: (?modelContext :: ModelContext) => Bool -> Text -> IO Text
 setSourceEnabled enabled name = do
     source <-
-        query @Source |> filterWhere (#name, name) |> fetchOneOrNothing
+        query @Source
+            |> filterWhere (#name, name)
+            |> fetchOneOrNothing
             >>= maybe (error ("unknown source: " <> name)) pure
     when (get #protected source) (error "this source is provisioned-protected")
     _ <- source |> set #enabled enabled |> updateRecord

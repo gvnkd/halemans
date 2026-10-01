@@ -47,9 +47,9 @@ spec = describe "Application.Service.Live" do
             scopeRef <- newIORef []
             let send (_ :: Text) = pure ()
             let connId = fromJust (UUID.fromText "0c0ee9a4-76b5-4c10-9d51-9f5b6e8c8f04")
-            modifyIORef' registry ((connId, scopeRef, send) :)
+            modifyIORef' registry ((connId, Nothing, scopeRef, send) :)
             during <- liveConnectionCount
-            modifyIORef' registry (filter (\(cid, _, _) -> cid /= connId))
+            modifyIORef' registry (filter (\(cid, _, _, _) -> cid /= connId))
             after <- liveConnectionCount
             during `shouldBe` before + 1
             after `shouldBe` before

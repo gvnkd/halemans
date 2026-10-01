@@ -75,6 +75,7 @@ toEvent mode a@(Object _) = do
             , checkName = labelText "check"
             , labels
             , annotations
+            , hostGroups = []
             , startedAt = lookupTime "startsAt" a
             , sourceUrl = lookupText "generatorURL" a
             }
@@ -227,6 +228,7 @@ amAlertToNormalized now amAlert =
             , checkName = labelText "check"
             , labels = amAlert.amLabels
             , annotations = amAlert.amAnnotations
+            , hostGroups = []
             , startedAt = amAlert.amStartsAt
             , sourceUrl = amAlert.amGeneratorUrl
             }

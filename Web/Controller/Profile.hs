@@ -2,14 +2,15 @@ module Web.Controller.Profile where
 
 import Application.Helper.Theme (isValidTheme, themeFromSettings, themes)
 import Application.Helper.Timezone (isValidTimezone, timezoneFromSettings)
+import Application.Service.AlertScope (alertScopeBypassFromSettings)
 import Application.Service.Api.Token (allScopes, newApiToken)
 import Application.Service.I18n (isValidLanguage, languageFromSettings, languages)
 import Application.Service.Push (vapidPublicKey)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.KeyMap as KeyMap
-import qualified Data.Text as Text
+import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
 import IHP.ControllerSupport (respondAndExit)
 import Network.HTTP.Types (status403)
@@ -76,6 +77,20 @@ instance Controller ProfileController where
                 setErrorMessage (trp "Unknown language: {language}" [("language", language)])
                 redirectTo ProfileAction
 
+    -- Alert visibility bypass (users.settings.alertScopeBypass): when on,
+    -- the user sees every alert regardless of team zabbix host groups.
+    -- Plain form POST (checkbox), so this redirects back to the profile page.
+    action UpdateAlertScopeAction = do
+        let bypass = isJust (paramOrNothing @Text "bypass")
+            merged = case currentUser.settings of
+                Aeson.Object o -> Aeson.Object (KeyMap.insert "alertScopeBypass" (Aeson.Bool bypass) o)
+                _ -> object ["alertScopeBypass" .= bypass]
+        _ <-
+            currentUser
+                |> set #settings merged
+                |> updateRecord
+        redirectTo ProfileAction
+
     -- API token management (design_docs/milestone_6.md §4): the plaintext is
     -- rendered exactly once, straight from the POST (no redirect, no flash).
     action CreateApiTokenAction = do
@@ -121,4 +136,5 @@ renderProfile newToken = do
     let currentTheme = themeFromSettings currentUser.settings
         currentTimezone = timezoneFromSettings currentUser.settings
         currentLanguage = languageFromSettings currentUser.settings
+        alertScopeBypass = alertScopeBypassFromSettings currentUser.settings
     render ShowView{..}

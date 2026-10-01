@@ -6,10 +6,11 @@ module Application.Service.Api.Alerts (
     alertDetail,
 ) where
 
+import Application.Service.AlertScope (alertVisibleWith)
 import Application.Service.Api.Cursor (Cursor (..), encodeCursor)
 import Data.Time.Calendar (fromGregorian)
 import Data.UUID (UUID)
-import qualified Data.UUID as UUID
+import Data.UUID qualified as UUID
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
@@ -49,16 +50,22 @@ defaultFilters =
 
 -- One page of matching alerts plus the cursor for the next page (Nothing
 -- when the page was not full). Fetches limit+1 keys to detect the last page.
-listAlertsPage :: (?modelContext :: ModelContext) => AlertFilters -> IO ([Alert], Maybe Text)
-listAlertsPage AlertFilters{..} = do
+-- scopeNames is the SAME per-user host group visibility the web list uses
+-- (AlertScope): Nothing = unrestricted, Just names = only zabbix alerts
+-- whose host groups intersect the names (plus non-zabbix and internal).
+listAlertsPage :: (?modelContext :: ModelContext) => AlertFilters -> Maybe [Text] -> IO ([Alert], Maybe Text)
+listAlertsPage AlertFilters{..} scopeNames = do
     let (cursorSeenAt, cursorId) = case afCursor of
             Just Cursor{..} -> (cursorLastSeenAt, cursorAlertId)
             Nothing -> (UTCTime (fromGregorian 9999 12 31) 0, maxUuid)
+        unrestricted = isNothing scopeNames
+        scope = fromMaybe [] scopeNames
     rows <-
         sqlQueryTyped
             [typedSql|
         SELECT a.id, a.last_seen_at
         FROM alerts a
+        LEFT JOIN sources sc ON sc.id = a.source_id
         WHERE ('' = ${afEnvironment} OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${afEnvironment})
           AND ('' = ${afStatus} OR a.status = ${afStatus})
           AND ('' = ${afSeverity} OR a.severity = ${afSeverity})
@@ -68,6 +75,7 @@ listAlertsPage AlertFilters{..} = do
           AND a.last_seen_at >= ${afSince}
           AND a.last_seen_at <= ${afUntil}
           AND (a.last_seen_at, a.id) < (${cursorSeenAt}, ${cursorId})
+          AND (${unrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${scope})
         ORDER BY a.last_seen_at DESC, a.id DESC
         LIMIT (${afLimit} + 1)
     |]
@@ -100,57 +108,70 @@ data AlertDetail = AlertDetail
 
 -- Alert detail (design §3 D4): refs resolved, latest done LLM analysis, and
 -- the alert_events timeline ordered by created_at. No live upstream calls.
-alertDetail :: (?modelContext :: ModelContext) => Id Alert -> IO (Maybe AlertDetail)
-alertDetail alertId = do
+-- scopeNames is the per-user host group visibility (AlertScope): an
+-- out-of-scope alert is indistinguishable from a missing one (Nothing).
+alertDetail :: (?modelContext :: ModelContext) => Id Alert -> Maybe [Text] -> IO (Maybe AlertDetail)
+alertDetail alertId scopeNames = do
     alertOrNothing <-
         query @Alert
             |> filterWhere (#id, alertId)
             |> fetchOneOrNothing
-    case alertOrNothing of
-        Nothing -> pure Nothing
-        Just alert -> do
-            environment <- mapM fetch alert.environmentId
-            host <- mapM fetch alert.hostId
-            service <- mapM fetch alert.serviceId
-            group <- mapM fetch alert.groupId
-            jiraLinks <-
-                query @JiraLink
-                    |> filterWhere (#alertId, alertId)
-                    |> orderByAsc #createdAt
-                    |> fetch
-            cmdbEntry <- case (alert.hostId, alert.serviceId) of
-                (Just hostId, _) ->
-                    query @CmdbEntry
-                        |> filterWhere (#hostId, Just hostId)
-                        |> fetchOneOrNothing
-                (Nothing, Just serviceId) ->
-                    query @CmdbEntry
-                        |> filterWhere (#serviceId, Just serviceId)
-                        |> fetchOneOrNothing
-                (Nothing, Nothing) -> pure Nothing
-            analysis <-
-                query @LlmAnalysis
-                    |> filterWhere (#alertId, alertId)
-                    |> filterWhere (#status, "done" :: Text)
-                    |> orderByDesc #createdAt
-                    |> limit 1
+    visible <- case alertOrNothing of
+        Nothing -> pure False
+        Just alert -> case scopeNames of
+            Nothing -> pure True
+            Just names -> do
+                isZabbix <- case alert.sourceId of
+                    Nothing -> pure False
+                    Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
+                pure (alertVisibleWith names isZabbix alert)
+    case (alertOrNothing, visible) of
+        (Just alert, True) -> detailFor alert
+        _ -> pure Nothing
+  where
+    detailFor alert = do
+        environment <- mapM fetch alert.environmentId
+        host <- mapM fetch alert.hostId
+        service <- mapM fetch alert.serviceId
+        group <- mapM fetch alert.groupId
+        jiraLinks <-
+            query @JiraLink
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
+        cmdbEntry <- case (alert.hostId, alert.serviceId) of
+            (Just hostId, _) ->
+                query @CmdbEntry
+                    |> filterWhere (#hostId, Just hostId)
                     |> fetchOneOrNothing
-            events <-
-                query @AlertEvent
-                    |> filterWhere (#alertId, alertId)
-                    |> orderByAsc #createdAt
-                    |> fetch
-            emails <- mapM (\event -> fmap (fmap (get #email)) (mapM fetch event.userId)) events
-            pure $
-                Just
-                    AlertDetail
-                        { adAlert = alert
-                        , adEnvironment = environment
-                        , adHost = host
-                        , adService = service
-                        , adGroup = group
-                        , adJiraLinks = jiraLinks
-                        , adCmdb = cmdbEntry
-                        , adAnalysis = analysis
-                        , adTimeline = zip events emails
-                        }
+            (Nothing, Just serviceId) ->
+                query @CmdbEntry
+                    |> filterWhere (#serviceId, Just serviceId)
+                    |> fetchOneOrNothing
+            (Nothing, Nothing) -> pure Nothing
+        analysis <-
+            query @LlmAnalysis
+                |> filterWhere (#alertId, alertId)
+                |> filterWhere (#status, "done" :: Text)
+                |> orderByDesc #createdAt
+                |> limit 1
+                |> fetchOneOrNothing
+        events <-
+            query @AlertEvent
+                |> filterWhere (#alertId, alertId)
+                |> orderByAsc #createdAt
+                |> fetch
+        emails <- mapM (\event -> fmap (fmap (get #email)) (mapM fetch event.userId)) events
+        pure
+            $ Just
+                AlertDetail
+                    { adAlert = alert
+                    , adEnvironment = environment
+                    , adHost = host
+                    , adService = service
+                    , adGroup = group
+                    , adJiraLinks = jiraLinks
+                    , adCmdb = cmdbEntry
+                    , adAnalysis = analysis
+                    , adTimeline = zip events emails
+                    }

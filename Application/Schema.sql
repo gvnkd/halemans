@@ -54,6 +54,7 @@ CREATE TABLE alerts (
     labels JSONB NOT NULL DEFAULT '{}',
     annotations JSONB NOT NULL DEFAULT '{}',
     facets JSONB NOT NULL DEFAULT '{}',
+    host_groups JSONB NOT NULL DEFAULT '[]',
     source_url TEXT DEFAULT NULL,
     occurrences INT NOT NULL DEFAULT 1,
     started_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,

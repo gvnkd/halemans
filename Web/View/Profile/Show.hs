@@ -4,7 +4,7 @@ import Application.Helper.Theme (themes)
 import Application.Helper.Timezone (timezones)
 import Application.Service.Api.Token (allScopes)
 import Application.Service.I18n (Language, languageCode, languages)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
 import Web.View.Fragments (calloutInfoHtml, calloutWarningHtml, emptyStateHtml, inlinePostFormHtml, pageHeaderHtml)
@@ -16,6 +16,7 @@ data ShowView = ShowView
     , currentTheme :: Text
     , currentTimezone :: Maybe Text
     , currentLanguage :: Language
+    , alertScopeBypass :: Bool
     , apiTokens :: [ApiToken]
     , newToken :: Maybe Text
     , dashboardCount :: Int
@@ -54,6 +55,21 @@ instance View ShowView where
                         <select name="language" class="select" data-autosubmit="" data-testid="language-select">
                             {forEach languages languageOption}
                         </select>
+                    </form>
+                </div></div>
+            </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card h-100"><div class="card-body">
+                    <h2 class="card-heading">{tr "Alert visibility"}</h2>
+                    <p class="card-desc">{tr "By default you only see alerts from the zabbix host groups configured on your teams. Enable this to see all alerts regardless of host groups."}</p>
+                    <form method="POST" action={UpdateAlertScopeAction} data-testid="alert-scope-form">
+                        <label class="form-check">
+                            <input type="checkbox" name="bypass" value="1" checked={alertScopeBypass} data-autosubmit="" class="form-check-input" data-testid="alert-scope-bypass"/>
+                            <span class="form-check-label">{tr "Show all alerts (bypass team host groups)"}</span>
+                        </label>
                     </form>
                 </div></div>
             </div>
