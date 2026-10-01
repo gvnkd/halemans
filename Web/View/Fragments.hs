@@ -387,8 +387,8 @@ groupHeaderHtml group =
 alertDetailsDomId :: Text
 alertDetailsDomId = "alert-details-panel"
 
-alertDetailsCardHtml :: Alert -> Html
-alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsDomId) (tr "Alert details") badges body
+alertDetailsCardHtml :: Alert -> Maybe Text -> Html
+alertDetailsCardHtml alert ackedByName = panelHtml "alert-details-panel" (Just alertDetailsDomId) (tr "Alert details") badges body
   where
     badges =
         [hsx|
@@ -414,12 +414,18 @@ alertDetailsCardHtml alert = panelHtml "alert-details-panel" (Just alertDetailsD
                 {field "occurrences" (tr "Occurrences") occurrencesBadge}
                 {field "started-at" (tr "Started at") (maybeUtcTimeHtml alert.startedAt)}
                 {field "last-seen" (tr "Last seen") (utcTimeHtml alert.lastSeenAt)}
+                {ackedField}
                 {field "resolved-at" (tr "Resolved at") (maybeUtcTimeHtml alert.resolvedAt)}
             </dl>
             {sourceFooter}
             <h6>{tr "Description"}</h6>
             <p data-testid="alert-description">{alert.description}</p>
         |]
+    ackedField = case (ackedByName, alert.acknowledgedAt) of
+        (Nothing, Nothing) -> mempty
+        _ ->
+            let who = fromMaybe "-" ackedByName
+             in field "acked" (tr "Acked") [hsx|{who} {maybeUtcTimeHtml alert.acknowledgedAt}|]
     fingerprintValue = [hsx|<code>{alert.fingerprint}</code>|]
     checkValue = [hsx|{fromMaybe "-" alert.checkName}|]
     occurrencesBadge = [hsx|<span class="badge" data-testid="alert-occurrences">{alert.occurrences}</span>|]

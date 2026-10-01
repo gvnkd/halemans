@@ -353,9 +353,12 @@ updatesFor userUuid scope event = case (scope, event.leAlertId, event.leGroupId)
                                     Just group -> [fragment (timelineGroupDomId group) (timelineGroupHtml group) "replaceOrPrepend" timelineDomId]
                                     Nothing -> []
                             _ -> []
+                    ackedByName <- forM alert.acknowledgedBy \userId -> do
+                        user <- fetch userId
+                        pure user.displayName
                     pure
                         ( [ fragment (alertStatusDomId alert) (alertStatusBadgeHtml alert) "replace" ""
-                          , fragment alertDetailsDomId (alertDetailsCardHtml alert) "replace" ""
+                          , fragment alertDetailsDomId (alertDetailsCardHtml alert ackedByName) "replace" ""
                           ]
                             ++ timelineUpdates
                             ++ panelUpdates

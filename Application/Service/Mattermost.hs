@@ -5,6 +5,7 @@ module Application.Service.Mattermost (
     statusSnapshot,
     actionSecret,
     mattermostConfigForRule,
+    mattermostUsernameFromSettings,
     mattermostTarget,
     mattermostTargetForRule,
 ) where
@@ -15,6 +16,7 @@ import Application.Service.Mattermost.Render (MattermostRenderContext (..), rend
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (parseMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Traversable (traverse)
@@ -44,6 +46,13 @@ mattermostConfigForRule rule = do
     case channelOrNothing of
         Just channel | channel.enabled -> Api.configForChannel channel
         _ -> pure Nothing
+
+-- | Mattermost username stored in a user profile (users.settings
+-- "mattermostUsername"). This is the PRIMARY identity the MM Ack action
+-- matches the clicker by (displayName is only a fallback); "" = unset.
+mattermostUsernameFromSettings :: Aeson.Value -> Text
+mattermostUsernameFromSettings settings =
+    fromMaybe "" (parseMaybe (Aeson.withObject "settings" (\o -> o Aeson..:? "mattermostUsername" Aeson..!= "")) settings)
 
 -- | Shared-secret path segment of the action endpoint. Falls back to the bot
 -- token env var so a working setup needs only the channel row + one secret.
@@ -83,6 +92,7 @@ renderContextFor rule alert = do
         MattermostRenderContext
             { mrcRuleName = maybe "-" (.name) rule
             , mrcAckedBy = ackedBy
+            , mrcAckedAt = alert.acknowledgedAt
             , mrcClosedBy = closedBy
             , mrcActionUrl = actionUrl
             , mrcAlertUrl = alertUrl

@@ -23,6 +23,8 @@ data ShowView = ShowView
     , canClose :: Bool
     , jiraWritable :: Bool
     , metricsAvailable :: Bool
+    , ackedByName :: Maybe Text
+    -- ^ display name of the acknowledging user (Nothing = not acked).
     }
 
 instance View ShowView where
@@ -38,7 +40,7 @@ instance View ShowView where
                 {writeBackChipHtml (head writeBackAttempts)}
             </p>
 
-            {alertDetailsCardHtml alert}
+            {alertDetailsCardHtml alert ackedByName}
 
             {actionBar}
 

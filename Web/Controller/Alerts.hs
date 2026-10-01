@@ -201,6 +201,9 @@ instance Controller AlertsController where
                     "grafana" -> isJust (ruleUidFromSourceUrl =<< alert.sourceUrl)
                     "zabbix" -> isJust (Text.stripPrefix "zabbix:trigger:" alert.fingerprint)
                     _ -> False
+        ackedByName <- forM alert.acknowledgedBy \userId -> do
+            user <- fetch userId
+            pure user.displayName
         render ShowView{..}
     action RenderMetricChartAction{alertId} = do
         requirePrivilege "view"

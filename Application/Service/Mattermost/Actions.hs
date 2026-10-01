@@ -1,12 +1,13 @@
-module Application.Service.Mattermost.Actions (ackFromMattermost) where
+module Application.Service.Mattermost.Actions (ackFromMattermost, resolveActor) where
 
 import Application.Pipeline.Actions (ackAlert)
-import Application.Service.Mattermost (syncAlertPosts)
+import Application.Service.Mattermost (mattermostUsernameFromSettings, syncAlertPosts)
 import Generated.Types
 import IHP.Fetch (fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 
 -- The Ack button action. Kept in its own module because it imports the alert
 -- pipeline (ackAlert → ingest fan-out → Mattermost job → Service.Mattermost);
@@ -17,10 +18,26 @@ import IHP.QueryBuilder
 mattermostEmail :: Text
 mattermostEmail = "mattermost@localhost"
 
--- | Resolve the clicker (Mattermost username matches a Halemans display
--- name, else the mattermost@localhost service account), ack the alert, then
--- refresh the root posts so the button state follows. Returns the ephemeral
--- reply text Mattermost shows the clicker.
+-- | Resolve the clicker: the explicit profile field (users.settings
+-- "mattermostUsername", set on the Halemans profile page) wins; a user
+-- whose displayName happens to equal the MM username is the legacy
+-- fallback; otherwise the mattermost@localhost service account acks.
+resolveActorByUsername :: (?modelContext :: ModelContext) => Text -> IO (Maybe User)
+resolveActorByUsername username = do
+    rows <-
+        sqlQueryTyped
+            [typedSql|
+        SELECT id FROM users
+        WHERE settings ->> 'mattermostUsername' = ${username}
+        LIMIT 1
+    |]
+    case rows of
+        (userId : _) -> fetchOneOrNothing userId
+        [] -> pure Nothing
+
+-- | Resolve the clicker, ack the alert, then refresh the root posts so the
+-- button state follows. Returns the ephemeral reply text Mattermost shows
+-- the clicker.
 ackFromMattermost :: (?modelContext :: ModelContext) => Id Alert -> Text -> IO (Either Text Text)
 ackFromMattermost alertId username = do
     alertOrNothing <- fetchOneOrNothing alertId
@@ -34,10 +51,14 @@ ackFromMattermost alertId username = do
 
 resolveActor :: (?modelContext :: ModelContext) => Text -> IO User
 resolveActor username = do
-    byName <- query @User |> filterWhere (#displayName, username) |> fetchOneOrNothing
-    case byName of
+    byProfileField <- resolveActorByUsername username
+    case byProfileField of
         Just user -> pure user
-        Nothing -> ensureServiceUser
+        Nothing -> do
+            byName <- query @User |> filterWhere (#displayName, username) |> fetchOneOrNothing
+            case byName of
+                Just user -> pure user
+                Nothing -> ensureServiceUser
 
 ensureServiceUser :: (?modelContext :: ModelContext) => IO User
 ensureServiceUser = do

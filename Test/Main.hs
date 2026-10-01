@@ -79,6 +79,7 @@ main = hspec do
     Test.MarkdownSpec.spec
     Test.MattermostSpec.spec
     Test.MattermostSpec.targetSpec
+    Test.MattermostSpec.usernameSpec
     Test.MetricChartSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec

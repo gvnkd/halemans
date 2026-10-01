@@ -10,6 +10,7 @@ import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as Text
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Generated.Types
 import IHP.Prelude
 
@@ -21,6 +22,8 @@ import IHP.Prelude
 data MattermostRenderContext = MattermostRenderContext
     { mrcRuleName :: Text
     , mrcAckedBy :: Maybe Text
+    , mrcAckedAt :: Maybe UTCTime
+    -- ^ Ack timestamp for the root status line ("Acked by X at Y").
     , mrcClosedBy :: Maybe Text
     , mrcActionUrl :: Maybe Text
     -- ^ Nothing = Ack button omitted (no public base URL configured).
@@ -79,6 +82,11 @@ renderDetailsMessage context alert =
 statusText :: Alert -> Text
 statusText alert = alert.status
 
+-- UTC stamp for the root status line; the post is re-rendered server-side,
+-- so no per-user timezone is available here.
+formatStamp :: UTCTime -> Text
+formatStamp = cs . formatTime defaultTimeLocale "%Y-%m-%d %H:%M UTC"
+
 stateLabel :: Text -> Text
 stateLabel status = case status of
     "firing" -> "FIRING"
@@ -101,7 +109,10 @@ stateColor alert = case statusText alert of
 
 statusLine :: MattermostRenderContext -> Alert -> Text
 statusLine context alert = case statusText alert of
-    "ack" -> "Acked by " <> fromMaybe "unknown" context.mrcAckedBy
+    "ack" ->
+        "Acked by "
+            <> fromMaybe "unknown" context.mrcAckedBy
+            <> maybe "" (" at " <>) (formatStamp <$> context.mrcAckedAt)
     "closed" -> "Closed" <> maybe "" (" by " <>) context.mrcClosedBy
     "resolved" -> "Resolved by the source"
     "stalled" -> "Stalled: no source updates"

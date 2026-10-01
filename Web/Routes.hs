@@ -94,6 +94,7 @@ POST /profile/theme   UpdateThemeAction
 POST /profile/timezone UpdateTimezoneAction
 POST /profile/language UpdateLanguageAction
 POST /profile/alert-scope UpdateAlertScopeAction
+POST /profile/mattermost-user UpdateMattermostUserAction
 POST /profile/api-tokens                          CreateApiTokenAction
 POST /profile/api-tokens/{apiTokenId}/revoke      RevokeApiTokenAction
 |]

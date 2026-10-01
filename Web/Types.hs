@@ -51,6 +51,7 @@ data ProfileController
     | UpdateTimezoneAction
     | UpdateLanguageAction
     | UpdateAlertScopeAction
+    | UpdateMattermostUserAction
     | CreateApiTokenAction
     | RevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     deriving (Eq, Show)

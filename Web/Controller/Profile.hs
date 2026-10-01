@@ -3,6 +3,7 @@ module Web.Controller.Profile where
 import Application.Helper.Theme (isValidTheme, themeFromSettings, themes)
 import Application.Helper.Timezone (isValidTimezone, timezoneFromSettings)
 import Application.Service.AlertScope (alertScopeBypassFromSettings)
+import Application.Service.Mattermost (mattermostUsernameFromSettings)
 import Application.Service.Api.Token (allScopes, newApiToken)
 import Application.Service.I18n (isValidLanguage, languageFromSettings, languages)
 import Application.Service.Push (vapidPublicKey)
@@ -91,6 +92,23 @@ instance Controller ProfileController where
                 |> updateRecord
         redirectTo ProfileAction
 
+    -- Mattermost username (users.settings.mattermostUsername): the MM Ack
+    -- action matches the clicker to a Halemans user by this value. Empty
+    -- input removes the key (the legacy displayName fallback still applies).
+    action UpdateMattermostUserAction = do
+        let raw = paramOrNothing @Text "mattermost_username" |> fromMaybe "" |> Text.strip
+            username = fromMaybe raw (Text.stripPrefix "@" raw)
+            merged = case currentUser.settings of
+                Aeson.Object o
+                    | Text.null username -> Aeson.Object (KeyMap.delete "mattermostUsername" o)
+                    | otherwise -> Aeson.Object (KeyMap.insert "mattermostUsername" (Aeson.String username) o)
+                _ -> object ["mattermostUsername" .= username]
+        _ <-
+            currentUser
+                |> set #settings merged
+                |> updateRecord
+        redirectTo ProfileAction
+
     -- API token management (design_docs/milestone_6.md §4): the plaintext is
     -- rendered exactly once, straight from the POST (no redirect, no flash).
     action CreateApiTokenAction = do
@@ -137,4 +155,5 @@ renderProfile newToken = do
         currentTimezone = timezoneFromSettings currentUser.settings
         currentLanguage = languageFromSettings currentUser.settings
         alertScopeBypass = alertScopeBypassFromSettings currentUser.settings
+        mattermostUsername = mattermostUsernameFromSettings currentUser.settings
     render ShowView{..}

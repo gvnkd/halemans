@@ -17,6 +17,7 @@ data ShowView = ShowView
     , currentTimezone :: Maybe Text
     , currentLanguage :: Language
     , alertScopeBypass :: Bool
+    , mattermostUsername :: Text
     , apiTokens :: [ApiToken]
     , newToken :: Maybe Text
     , dashboardCount :: Int
@@ -70,6 +71,19 @@ instance View ShowView where
                             <input type="checkbox" name="bypass" value="1" checked={alertScopeBypass} data-autosubmit="" class="form-check-input" data-testid="alert-scope-bypass"/>
                             <span class="form-check-label">{tr "Show all alerts (bypass team host groups)"}</span>
                         </label>
+                    </form>
+                </div></div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card h-100"><div class="card-body">
+                    <h2 class="card-heading">{tr "Mattermost"}</h2>
+                    <p class="card-desc">{tr "Your Mattermost username (without @). Ack clicks from Mattermost are attributed to your Halemans account via this value."}</p>
+                    <form method="POST" action={UpdateMattermostUserAction} data-testid="mattermost-user-form">
+                        <label class="form-label">{tr "Mattermost username"}</label>
+                        <div class="input-group">
+                            <input type="text" name="mattermost_username" class="form-control" value={mattermostUsername} placeholder="john.doe" data-testid="mattermost-username-input"/>
+                            <button type="submit" class="btn btn-brand" data-testid="mattermost-user-submit">{tr "Save"}</button>
+                        </div>
                     </form>
                 </div></div>
             </div>

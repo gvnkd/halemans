@@ -1,10 +1,12 @@
 module Test.MattermostSpec where
 
-import Application.Service.Mattermost (mattermostTarget)
+import Application.Service.Mattermost (mattermostTarget, mattermostUsernameFromSettings)
 import Application.Service.Mattermost.Render
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.Text as Text
+import Data.Time.Calendar (fromGregorian)
+import Data.Time.Clock (UTCTime (..))
 import Generated.Types
 import IHP.ModelSupport (newRecord, textToId)
 import IHP.Prelude
@@ -25,6 +27,7 @@ renderContext =
     MattermostRenderContext
         { mrcRuleName = "cpu-rules"
         , mrcAckedBy = Just "sre-1"
+        , mrcAckedAt = Nothing
         , mrcClosedBy = Nothing
         , mrcActionUrl = Just "http://halemans.example/hooks/mattermost/actions/secret"
         , mrcAlertUrl = "http://halemans.example/alerts/abc"
@@ -76,6 +79,10 @@ spec = describe "Application.Service.Mattermost.Render" do
     it "shows the ack actor on acked alerts" do
         attachmentText (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
 
+    it "shows the ack timestamp alongside the actor" do
+        let ackedContext = renderContext{mrcAckedAt = Just (UTCTime (fromGregorian 2026 10 1) (18 * 3600 + 30 * 60))}
+        attachmentText (renderRootProps ackedContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1 at 2026-10-01 18:30 UTC"
+
     it "offers the Ack action only on firing alerts with an action URL" do
         actionNames (renderRootProps renderContext (mkAlert "firing" "high")) `shouldBe` ["Ack"]
         actionNames (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` []
@@ -121,6 +128,13 @@ mkRule channelConfig =
 
 teamDefaults :: Aeson.Value
 teamDefaults = fromMaybe (error "bad test JSON") (Aeson.decode "{\"mattermost\":{\"team\":\"sre\",\"channel\":\"oncall\"}}")
+
+usernameSpec :: Spec
+usernameSpec = describe "Application.Service.Mattermost.mattermostUsernameFromSettings" do
+    it "defaults to empty when unset" do
+        mattermostUsernameFromSettings (Aeson.object []) `shouldBe` ""
+    it "reads the stored username" do
+        mattermostUsernameFromSettings (Aeson.object ["mattermostUsername" Aeson..= Aeson.String "john.doe"]) `shouldBe` "john.doe"
 
 targetSpec :: Spec
 targetSpec = describe "Application.Service.Mattermost.mattermostTarget" do
