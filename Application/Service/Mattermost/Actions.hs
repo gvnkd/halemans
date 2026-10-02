@@ -46,7 +46,7 @@ ackFromMattermost alertId username = do
         Just alert -> do
             actor <- resolveActor username
             _ <- ackAlert actor alert (Just "acked via Mattermost") Nothing
-            syncAlertPosts alert
+            _ <- syncAlertPosts alert
             pure (Right ("Acked by " <> actor.displayName))
 
 resolveActor :: (?modelContext :: ModelContext) => Text -> IO User

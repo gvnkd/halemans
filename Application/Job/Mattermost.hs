@@ -31,7 +31,11 @@ instance Job MattermostJob where
                     case result of
                         Right () -> pure ()
                         Left err -> error (cs err) -- job retry/backoff
-            _ -> syncAlertPosts alert
+            _ -> do
+                result <- syncAlertPosts alert
+                case result of
+                    Right () -> pure ()
+                    Left err -> error (cs err) -- job retry/backoff + visible last_error
 
     maxAttempts = 5
 

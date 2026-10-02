@@ -146,7 +146,7 @@ deliverNotify alert rule = do
             |> filterWhere (#notificationRuleId, Just (get #id rule))
             |> fetchOneOrNothing
     case existing of
-        Just _ -> Right <$> syncAlertPosts alert
+        Just _ -> syncAlertPosts alert
         Nothing -> do
             configOrNothing <- mattermostConfigForRule rule
             case configOrNothing of
@@ -184,32 +184,39 @@ deliverNotify alert rule = do
 -- | Status sync: re-render and patch every root post the alert has. Each
 -- post resolves its server config through the rule that created it (falling
 -- back to the first enabled mattermost channel). Missing config or posts are
--- silent no-ops.
-syncAlertPosts :: (?modelContext :: ModelContext) => Alert -> IO ()
+-- silent no-ops. A PATCH failure is RETURNED (the job layer turns it into a
+-- retry with a visible last_error — a silently skipped patch leaves the MM
+-- card stale forever, which is worse than a red job).
+syncAlertPosts :: (?modelContext :: ModelContext) => Alert -> IO (Either Text ())
 syncAlertPosts alert = do
     posts <-
         query @MattermostPost
             |> filterWhere (#alertId, get #id alert)
             |> fetch
-    unless (null posts) do
-        fallback <- firstEnabledConfig
-        forM_ posts \post -> do
-            configOrNothing <- case post.notificationRuleId of
-                Just ruleId -> do
-                    rule <- fetch ruleId
-                    mattermostConfigForRule rule
-                Nothing -> pure fallback
-            case configOrNothing of
-                Nothing -> pure ()
-                Just config -> do
-                    context <- renderContextFor Nothing alert
-                    result <- Api.patchPost config post.rootPostId (renderRootMessage alert) (renderRootProps context alert)
-                    case result of
-                        Left _ -> pure ()
-                        Right () -> do
-                            now <- getCurrentTime
-                            _ <- post |> set #renderedStatus (statusSnapshot alert) |> set #updatedAt now |> updateRecord
-                            pure ()
+    if null posts
+        then pure (Right ())
+        else do
+            fallback <- firstEnabledConfig
+            results <- forM posts \post -> do
+                configOrNothing <- case post.notificationRuleId of
+                    Just ruleId -> do
+                        rule <- fetch ruleId
+                        mattermostConfigForRule rule
+                    Nothing -> pure fallback
+                case configOrNothing of
+                    Nothing -> pure (Right ())
+                    Just config -> do
+                        context <- renderContextFor Nothing alert
+                        result <- Api.patchPost config post.rootPostId (renderRootMessage alert) (renderRootProps context alert)
+                        case result of
+                            Left err -> pure (Left err)
+                            Right () -> do
+                                now <- getCurrentTime
+                                _ <- post |> set #renderedStatus (statusSnapshot alert) |> set #updatedAt now |> updateRecord
+                                pure (Right ())
+            pure case [err | Left err <- results] of
+                [] -> Right ()
+                (firstErr : _) -> Left firstErr
   where
     firstEnabledConfig = do
         channels <-
