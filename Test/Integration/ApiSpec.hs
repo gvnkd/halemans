@@ -120,7 +120,7 @@ m6Spec = describe "public API (milestone 6)" do
             Just a1 <- ingest source (testEventIn envName fp1 Firing)
             Just a2 <- ingest source ((testEventIn envName fp2 Firing){severity = "critical"})
             void (ingest source (testEventIn envName fp2 Resolved))
-            let idsOf filters = map (get #id) . fst <$> listAlertsPage filters
+            let idsOf filters = map (get #id) . fst <$> listAlertsPage filters Nothing
             idsOf defaultFilters{afEnvironment = envName} `shouldReturn` [a2, a1]
             idsOf defaultFilters{afEnvironment = envName, afStatus = "firing"} `shouldReturn` [a1]
             idsOf defaultFilters{afEnvironment = envName, afStatus = "resolved"} `shouldReturn` [a2]
@@ -138,12 +138,12 @@ m6Spec = describe "public API (milestone 6)" do
             Just a1 <- fire
             Just a2 <- fire
             Just a3 <- fire
-            (page1, next1) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2}
+            (page1, next1) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2} Nothing
             map (get #id) page1 `shouldBe` [a3, a2]
             -- An alert inserted between pages is newer than the cursor and
             -- must not appear on the next page (keyset stability).
             Just _ <- fire
-            (page2, next2) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2, afCursor = decodeCursor =<< next1}
+            (page2, next2) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2, afCursor = decodeCursor =<< next1} Nothing
             map (get #id) page2 `shouldBe` [a1]
             next2 `shouldBe` Nothing
 
@@ -155,7 +155,7 @@ m6Spec = describe "public API (milestone 6)" do
             now <- getCurrentTime
             let old = addUTCTime (-3600) now
             void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = ${old} WHERE id = ${a1} |])
-            let idsOf filters = map (get #id) . fst <$> listAlertsPage filters
+            let idsOf filters = map (get #id) . fst <$> listAlertsPage filters Nothing
             idsOf defaultFilters{afEnvironment = envName, afSince = addUTCTime (-60) now} `shouldReturn` []
             idsOf defaultFilters{afEnvironment = envName, afUntil = addUTCTime (-60) now} `shouldReturn` [a1]
             idsOf defaultFilters{afEnvironment = envName, afSince = addUTCTime (-7200) now, afUntil = now} `shouldReturn` [a1]
@@ -191,7 +191,7 @@ m6Spec = describe "public API (milestone 6)" do
                     |> set #resultMd "new analysis"
                     |> set #createdAt (UTCTime (fromGregorian 2999 1 1) 0)
                     |> createRecord
-            Just detail <- alertDetail a1
+            Just detail <- alertDetail a1 Nothing
             let kinds = map (get #kind . fst) detail.adTimeline
             head kinds `shouldBe` Just "created"
             kinds `shouldSatisfy` elem "repeated"
@@ -204,7 +204,7 @@ m6Spec = describe "public API (milestone 6)" do
 
         it "returns Nothing for an unknown id" do
             missing <- Id <$> nextRandom
-            detail <- alertDetail missing
+            detail <- alertDetail missing Nothing
             isNothing detail `shouldBe` True
 
     describe "collectMetrics" do

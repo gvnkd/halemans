@@ -1033,10 +1033,10 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             Just sourceAlertId <- ingest source (testEvent fpSource Firing)
             sourceAlert <- fetch sourceAlertId
             void (mirrorExternalSuppress sourceAlert "zabbix" "admin" now)
-            sourceMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["source"]}
+            sourceMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["source"]} Nothing
             sourceMutedIds `shouldSatisfy` (elem sourceAlertId)
             sourceMutedIds `shouldSatisfy` (notElem blackoutAlertId)
-            blackoutMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["blackout"]}
+            blackoutMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["blackout"]} Nothing
             blackoutMutedIds `shouldSatisfy` (elem blackoutAlertId)
             blackoutMutedIds `shouldSatisfy` (notElem sourceAlertId)
 
@@ -1058,15 +1058,15 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             Just sourceAlertId <- ingest source (testEvent fpSource Firing)
             sourceAlert <- fetch sourceAlertId
             void (mirrorExternalSuppress sourceAlert "zabbix" "admin" now)
-            visibleIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["hide"]}
+            visibleIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["hide"]} Nothing
             visibleIds `shouldSatisfy` (elem plainAlertId)
             visibleIds `shouldSatisfy` (notElem sourceAlertId)
             visibleIds `shouldSatisfy` (notElem blackoutAlertId)
-            allMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["all"]}
+            allMutedIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["all"]} Nothing
             allMutedIds `shouldSatisfy` (notElem plainAlertId)
             allMutedIds `shouldSatisfy` (elem sourceAlertId)
             allMutedIds `shouldSatisfy` (elem blackoutAlertId)
-            allBlackoutIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["all", "blackout"]}
+            allBlackoutIds <- map (get #id) <$> listAlerts defaultAlertListFilters{alfMuted = ["all", "blackout"]} Nothing
             allBlackoutIds `shouldSatisfy` (elem blackoutAlertId)
             allBlackoutIds `shouldSatisfy` (notElem sourceAlertId)
 
