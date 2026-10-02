@@ -319,10 +319,15 @@ class Handler(BaseHTTPRequestHandler):
         if validation_error:
             self._send(400, validation_error)
             return
+        if body.get("stream"):
+            self._respond_stream(body)
+            return
+        self._respond(self._analysis_for(body), body)
+
+    def _analysis_for(self, body):
         content = last_user_content(body)
         if "## candidate jira tasks" in content.lower():
-            self._respond(related_verdict(content), body)
-            return
+            return related_verdict(content)
         analysis = DISK_ANALYSIS if "disk" in content.lower() else GENERIC_ANALYSIS
         # Deterministic context echo (milestone 8 D10): when the prompt's
         # "## Linked assets" section is non-empty, the first asset line is
@@ -336,29 +341,35 @@ class Handler(BaseHTTPRequestHandler):
                 "Linked asset observed in context: " + assets_line + "\n\n```json",
                 1,
             )
-        if body.get("stream"):
-            self._respond_stream(body)
-            return
-        self._respond(analysis, body)
+        return analysis
 
     # SSE mode (admin integration test): a couple of data chunks plus the
     # [DONE] terminator, same payload shape as the non-streaming choice.
-    def _respond_stream(self, body):
+    def _respond_stream(self, body, content=None):
         self.server.completion_count += 1
-        chunk = {
-            "id": f"chatcmpl-mock-{self.server.completion_count}",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": body.get("model", MODEL),
-            "choices": [{
-                "index": 0,
-                "delta": {"role": "assistant", "content": "mock-llm-1"},
-                "finish_reason": None,
-            }],
-        }
+        # Stream the actual content in a few deltas (was: the literal model
+        # name twice — every streaming consumer, e.g. the agent widget,
+        # renders that junk instead of the canned analysis).
+        text = content if content is not None else self._analysis_for(body)
+        third = max(1, len(text) // 3)
+        parts = [text[:third], text[third : 2 * third], text[2 * third :]]
+        chunks = [
+            {
+                "id": f"chatcmpl-mock-{self.server.completion_count}",
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": body.get("model", MODEL),
+                "choices": [{
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": part},
+                    "finish_reason": None,
+                }],
+            }
+            for part in parts
+        ]
         payload = "".join(
             "data: " + json.dumps(part) + "\n\n"
-            for part in (chunk, chunk)
+            for part in chunks
         ) + "data: [DONE]\n\n"
         self._send(
             200,

@@ -577,7 +577,12 @@ with sync_playwright() as pw:
         alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
         assert alert_id, "no alert from cmdb check"
         page.goto(f"{APP}/alerts/{alert_id}")
-        page.get_by_test_id("jira-create-form").wait_for()
+        try:
+            page.get_by_test_id("jira-create-form").wait_for(timeout=60000)
+        except Exception:
+            print("  DEBUG jira-create url:", page.url, flush=True)
+            print("  DEBUG jira-create html:", page.content()[:1200], flush=True)
+            raise
         page.get_by_test_id("jira-summary").fill(f"pw smoke ticket {int(time.time())}")
         page.get_by_test_id("jira-create-submit").click()
         page.get_by_test_id("jira-origin").filter(has_text="manual").first.wait_for()
@@ -739,11 +744,12 @@ with sync_playwright() as pw:
         page.goto(f"{APP}/alerts/{alert_id}")
         page.get_by_test_id("alert-card").wait_for()
         # the worker completes the analysis and pushes an "enriched" fragment
-        page.get_by_test_id("llm-markdown").wait_for(timeout=90000)
-        page.get_by_test_id("llm-probable-cause").wait_for()
-        page.get_by_test_id("llm-actions").wait_for()
-        page.get_by_test_id("llm-references").wait_for()
-        footer = page.get_by_test_id("llm-footer").inner_text()
+        # .first: per-language variants/history can render several panels.
+        page.get_by_test_id("llm-markdown").first.wait_for(timeout=90000)
+        page.get_by_test_id("llm-probable-cause").first.wait_for()
+        page.get_by_test_id("llm-actions").first.wait_for()
+        page.get_by_test_id("llm-references").first.wait_for()
+        footer = page.get_by_test_id("llm-footer").first.inner_text()
         # milestone 8: the seeded active alert_enrichment template is v2
         # (assets excerpt slot)
         assert "mock-llm-1" in footer and "v2" in footer, footer
@@ -887,7 +893,7 @@ with sync_playwright() as pw:
         row.wait_for()
         assert "pw internal boom" in row.get_by_test_id("llm-queue-error").inner_text()
         admin.goto(f"{APP}/alerts/{alert_id}")
-        assert "pw internal boom" in admin.get_by_test_id("llm-unavailable").inner_text()
+        assert "pw internal boom" in admin.get_by_test_id("llm-unavailable").filter(has_text="pw internal boom").first.inner_text()
         admin.goto(f"{APP}/admin/llm/queue")
         admin.get_by_test_id("llm-queue-row").filter(has_text=analysis_id).get_by_test_id("llm-queue-drop").click()
         deadline = time.time() + 15
@@ -899,7 +905,7 @@ with sync_playwright() as pw:
         assert sql(f"SELECT status FROM llm_analyses WHERE id = '{analysis_id}'") == "failed"
         assert sql(f"SELECT error_message FROM llm_analyses WHERE id = '{analysis_id}'") == "dropped by admin"
         admin.goto(f"{APP}/alerts/{alert_id}")
-        assert "dropped by admin" in admin.get_by_test_id("llm-unavailable").inner_text()
+        assert "dropped by admin" in admin.get_by_test_id("llm-unavailable").filter(has_text="dropped by admin").first.inner_text()
         sql(f"DELETE FROM llm_analysis_jobs WHERE analysis_id = '{analysis_id}'")
         sql(f"DELETE FROM llm_analyses WHERE id = '{analysis_id}'")
         admin.close()
@@ -928,7 +934,7 @@ with sync_playwright() as pw:
                 time.sleep(1)
             assert status == "failed", f"analysis status: {status!r}"
             page.goto(f"{APP}/alerts/{alert_id}")
-            page.get_by_test_id("llm-unavailable").wait_for(timeout=30000)
+            page.get_by_test_id("llm-unavailable").first.wait_for(timeout=30000)
             # internal errors are recorded but hidden from the timeline
             assert sql(f"SELECT kind FROM alert_events WHERE alert_id = '{alert_id}' AND kind = 'llm_failed'") == "llm_failed"
             kinds = page.get_by_test_id("alert-timeline").inner_text()
@@ -1042,10 +1048,14 @@ with sync_playwright() as pw:
 
     @check("admin job metrics page renders counters and failures table")
     def _():
+        # Seed one deterministic failed job row: the failures table only
+        # renders when some app job failed in the last 24h, and a fully
+        # green smoke run has none.
+        sql("INSERT INTO retention_jobs (status, last_error, attempts_count) VALUES ('job_status_failed', 'pw seeded failure', 1)")
         admin = context.new_page()
         login(admin, "admin")
         admin.goto(f"{APP}/admin")
-        admin.get_by_test_id("job-metrics-table").wait_for()
+        admin.get_by_test_id("job-metrics-table").wait_for(timeout=60000)
         rows = admin.get_by_test_id("job-metrics-row").all()
         assert len(rows) >= 10, f"metrics rows: {len(rows)}"
         admin.get_by_test_id("job-failures-table").wait_for()
