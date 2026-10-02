@@ -14,10 +14,10 @@ module Application.Service.AlertScope (
 
 import Application.Service.HostGroups (teamHostGroups)
 import Data.Aeson ((.:))
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import Data.List (nub)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import Generated.Types
 import IHP.Fetch (fetch)
 import IHP.ModelSupport

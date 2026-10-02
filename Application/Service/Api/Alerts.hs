@@ -10,7 +10,7 @@ import Application.Service.AlertScope (alertVisibleWith)
 import Application.Service.Api.Cursor (Cursor (..), encodeCursor)
 import Data.Time.Calendar (fromGregorian)
 import Data.UUID (UUID)
-import Data.UUID qualified as UUID
+import qualified Data.UUID as UUID
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
@@ -162,8 +162,8 @@ alertDetail alertId scopeNames = do
                 |> orderByAsc #createdAt
                 |> fetch
         emails <- mapM (\event -> fmap (fmap (get #email)) (mapM fetch event.userId)) events
-        pure
-            $ Just
+        pure $
+            Just
                 AlertDetail
                     { adAlert = alert
                     , adEnvironment = environment

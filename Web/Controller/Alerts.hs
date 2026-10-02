@@ -2,34 +2,34 @@ module Web.Controller.Alerts where
 
 import Application.Connector.GrafanaMetrics (ruleUidFromSourceUrl)
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize)
-import Application.Helper.FilterPrefs qualified as FilterPrefs
+import qualified Application.Helper.FilterPrefs as FilterPrefs
 import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
 import Application.Service.ActionTokens (consumeActionToken)
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, validSortColumns)
-import Application.Service.AlertList qualified as AlertList
-import Application.Service.AlertScope qualified as AlertScope
-import Application.Service.Assets.Cache qualified as AssetsCache
-import Application.Service.Chart qualified as Chart
-import Application.Service.Cmdb.DbConfig qualified as Cmdb
+import qualified Application.Service.AlertList as AlertList
+import qualified Application.Service.AlertScope as AlertScope
+import qualified Application.Service.Assets.Cache as AssetsCache
+import qualified Application.Service.Chart as Chart
+import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import Application.Service.DynTable (pageCountFor)
-import Application.Service.Facets qualified as Facets
+import qualified Application.Service.Facets as Facets
 import Application.Service.I18n (languageCode, languageFromSettings)
-import Application.Service.Jira.DbConfig qualified as Jira
+import qualified Application.Service.Jira.DbConfig as Jira
 import Application.Service.Llm.Queue (ensureLanguageVariant, latestJobErrors)
 import Application.Service.Mattermost.Actions (ensureServiceUser)
 import Application.Service.MetricChart (MetricChartData (..), chartDataSvg, chartHoverJson, chartRenderMeta, fetchAlertMetricSeries, metricWindowForRange, parseScaleParam)
 import Control.Exception (SomeException, try)
 import Control.Monad (void)
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Key
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
-import Data.List qualified as List
-import Data.Text qualified as Text
+import qualified Data.List as List
+import qualified Data.Text as Text
+import IHP.ControllerSupport (respondAndExit)
 import IHP.HSX.Markup (renderMarkupText)
+import IHP.LoginSupport.Helper.Controller (currentUserOrNothing)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 import IHP.ViewPrelude (Html, preEscapedToHtml)
-import IHP.ControllerSupport (respondAndExit)
-import IHP.LoginSupport.Helper.Controller (currentUserOrNothing)
 import Network.HTTP.Types (Status, status200, status403, status404)
 import Network.HTTP.Types.URI (renderQuery)
 import Network.Wai (responseLBS)

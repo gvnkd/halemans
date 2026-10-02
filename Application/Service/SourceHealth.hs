@@ -3,8 +3,8 @@ module Application.Service.SourceHealth where
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest, publishAlertUpdate)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Key
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
@@ -178,8 +178,8 @@ recordReconcileFailure :: (?modelContext :: ModelContext) => Source -> Text -> I
 recordReconcileFailure source err = do
     now <- getCurrentTime
     hostName <- halemansHostName
-    void
-        $ ingest
+    void $
+        ingest
             source
             NormalizedEvent
                 { fingerprint = reconcileFingerprint (get #id source)
@@ -211,8 +211,8 @@ recordReconcileSuccess source = do
     forM_ open \_ -> do
         now <- getCurrentTime
         hostName <- halemansHostName
-        void
-            $ ingest
+        void $
+            ingest
                 source
                 NormalizedEvent
                     { fingerprint = reconcileFingerprint (get #id source)

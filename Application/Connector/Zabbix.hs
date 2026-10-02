@@ -20,18 +20,18 @@ module Application.Connector.Zabbix (
 ) where
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))
-import Application.Service.Http qualified as Http
+import qualified Application.Service.Http as Http
 import Control.Exception (SomeException, try)
 import Control.Lens ((&), (.~), (^.))
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Pair, parseMaybe)
-import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
-import Data.Text qualified
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import qualified Data.Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import IHP.Prelude
-import Network.Wreq qualified as Wreq
+import qualified Network.Wreq as Wreq
 import Text.Read (readMaybe)
 
 -- A trigger event from zabbix event.get (source=0, object=0).

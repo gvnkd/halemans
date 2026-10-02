@@ -7,21 +7,21 @@ module Application.Service.Mattermost.Api (
     testConnection,
 ) where
 
-import Application.Service.Http qualified as Http
+import qualified Application.Service.Http as Http
 import Control.Exception (SomeException, displayException, try)
 import Control.Lens ((&), (.~), (^.))
 import Control.Monad (void)
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Key
-import Data.Aeson.KeyMap qualified as KeyMap
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
-import Data.ByteString.Lazy qualified as L
+import qualified Data.ByteString.Lazy as L
 import Data.Traversable (traverse)
-import Data.Vector qualified as Vector
+import qualified Data.Vector as Vector
 import Generated.Types
 import IHP.Prelude
-import Network.Wreq qualified as Wreq
+import qualified Network.Wreq as Wreq
 import System.Environment (lookupEnv)
 
 -- Mattermost bot-API client (the v4 subset the notification channel needs).

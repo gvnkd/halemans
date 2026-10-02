@@ -12,14 +12,14 @@ module Application.Service.Mattermost (
 
 import Application.Service.ActionTokens (ensureActionToken)
 import Application.Service.Mattermost.Api (MattermostConfig)
-import Application.Service.Mattermost.Api qualified as Api
+import qualified Application.Service.Mattermost.Api as Api
 import Application.Service.Mattermost.Render (MattermostRenderContext (..), renderDetailsMessage, renderRootMessage, renderRootProps)
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Key
-import Data.Aeson.KeyMap qualified as KeyMap
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import Data.Text (Text)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import Data.Traversable (traverse)
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)

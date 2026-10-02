@@ -15,34 +15,34 @@ import Application.Helper.DashboardConfig (DashboardCard (..), clauseValue, deco
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, matchesFilters, parseAlertFilters, seenCutoff)
 import Application.Service.AlertScope (alertScopeBypassFromSettings, alertVisibleWith, scopeNamesFor)
-import Application.Service.Assets.Cache qualified as AssetsCache
+import qualified Application.Service.Assets.Cache as AssetsCache
 import Application.Service.DashboardCards (ExpandedCard (..), expandDashboardCards, expandedDomId)
 import Application.Service.Llm.Queue (latestJobErrors)
 import Application.Service.Timeline (headTimelineGroup, timelineHiddenKind)
-import Control.Exception.Safe qualified as Exception
+import qualified Control.Exception.Safe as Exception
 import Control.Monad (guard)
 import Data.Aeson (object, (.=))
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
-import Data.ByteString.Lazy qualified as BL
+import qualified Data.ByteString.Lazy as BL
 import Data.IORef
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import Data.UUID (UUID)
-import Data.UUID qualified as UUID
-import Data.UUID.V4 qualified as UUIDV4
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUIDV4
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.HSX.Markup (Markup, renderMarkupText)
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord, currentUserOrNothing)
 import IHP.ModelSupport
-import IHP.PGListener qualified as PGListener
+import qualified IHP.PGListener as PGListener
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
 import IHP.RequestVault ()
 import IHP.WebSocket
 import Network.Wai (Request)
-import Network.WebSockets qualified as WS
+import qualified Network.WebSockets as WS
 import System.IO.Unsafe (unsafePerformIO)
 import Web.View.Dashboard.Index (EnvCard (..), cardDomId, computeEnvCards, renderCard)
 import Web.View.Dashboards.Show (fetchCardData, renderCardSection)

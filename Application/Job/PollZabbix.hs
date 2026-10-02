@@ -1,6 +1,6 @@
 module Application.Job.PollZabbix where
 
-import Application.Connector.Zabbix qualified as Zabbix
+import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
@@ -9,15 +9,15 @@ import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalSuppress,
 import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Control.Exception (SomeException, try)
 import Control.Monad (void)
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Key qualified as Key
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import Data.Bits ((.&.))
 import Data.Either (fromRight)
 import Data.List (nub, sortOn)
-import Data.Map.Strict qualified as Map
-import Data.Set qualified as Set
-import Data.Text qualified as Text
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Generated.Types
 import IHP.Fetch (fetch)
@@ -65,8 +65,8 @@ instance Job PollZabbixJob where
                 if null sources
                     then do
                         logInfo "no enabled zabbix sources; poll loop stopped (re-arms on source create/enable)"
-                        void
-                            $ sqlExecTyped
+                        void $
+                            sqlExecTyped
                                 [typedSql|
                             DELETE FROM poll_zabbix_jobs
                             WHERE status = 'job_status_not_started'
@@ -94,8 +94,8 @@ reschedule = do
     |]
     case inserted of
         (nextId : _) ->
-            void
-                $ sqlExecTyped
+            void $
+                sqlExecTyped
                     [typedSql|
             DELETE FROM poll_zabbix_jobs
             WHERE status = 'job_status_not_started' AND id <> ${nextId}

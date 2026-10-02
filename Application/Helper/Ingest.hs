@@ -10,22 +10,22 @@ module Application.Helper.Ingest (
 ) where
 
 import Application.Job.Mattermost (enqueueSyncIfPosted)
-import Application.Service.AlertScope (hostGroupNamesOf)
 import Application.Pipeline.Blackouts (BlackoutSubject (..), blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
-import Application.Pipeline.StateMachine qualified as SM
+import qualified Application.Pipeline.StateMachine as SM
+import Application.Service.AlertScope (hostGroupNamesOf)
 import Application.Service.Escalation (cancelTrackersFor)
-import Application.Service.Facets qualified as Facets
+import qualified Application.Service.Facets as Facets
 import Application.Service.Groups (assignGroup, recomputeGroupRollup)
 import Application.Service.I18n (defaultLanguage, languageCode)
-import Application.Service.Llm.AutoAnalyze qualified as AutoAnalyze
+import qualified Application.Service.Llm.AutoAnalyze as AutoAnalyze
 import Application.Service.Notify (dispatchNotification)
 import Control.Monad (void)
 import Data.Aeson (Value, object, (.=))
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport

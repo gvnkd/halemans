@@ -7,13 +7,13 @@ module Application.Service.ActionTokens (
 import Control.Monad (void)
 import Data.ByteArray.Encoding (Base (Base16), convertToBase)
 import qualified Data.ByteString.Base64.URL as Base64Url
-import "cryptonite" Crypto.Hash (SHA256 (..), hashWith)
-import "cryptonite" Crypto.Random (getRandomBytes)
 import Data.Time.Clock (addUTCTime, getCurrentTime)
 import Generated.Types
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
+import "cryptonite" Crypto.Hash (SHA256 (..), hashWith)
+import "cryptonite" Crypto.Random (getRandomBytes)
 
 -- One-time capability tokens for external interactions (Sergey 2026-10-01:
 -- replay-safe links, "any other external interaction" extensible via the

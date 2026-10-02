@@ -1,9 +1,9 @@
 module Web.Controller.Environments where
 
 import Application.Helper.DashboardConfig (alertListColumnKeys, alertListPageSizes, defaultAlertListColumns, defaultAlertListPageSize, validAlertSortColumns)
-import Application.Helper.FilterPrefs qualified as FilterPrefs
-import Application.Service.AlertList qualified as AlertList
-import Application.Service.AlertScope qualified as AlertScope
+import qualified Application.Helper.FilterPrefs as FilterPrefs
+import qualified Application.Service.AlertList as AlertList
+import qualified Application.Service.AlertScope as AlertScope
 import Application.Service.DynTable (pageCountFor)
 import Network.HTTP.Types.URI (renderQuery)
 import Web.Controller.Prelude

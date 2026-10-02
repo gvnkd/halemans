@@ -21,10 +21,10 @@ import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Service.AlertScope (alertVisibleWith)
 import Control.Monad (guard)
 import Data.Aeson ((.!=), (.=))
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Char (isDigit)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, fromGregorian)
 import Data.UUID (UUID)
 import Generated.Types

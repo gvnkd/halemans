@@ -41,6 +41,8 @@ zabbixAlert :: [Text] -> Alert
 zabbixAlert groups =
     newRecord @Alert
         |> set
-        #fingerprint ("zabbix:trigger:42" :: Text)
+            #fingerprint
+            ("zabbix:trigger:42" :: Text)
         |> set
-        #hostGroups (toJSON groups)
+            #hostGroups
+            (toJSON groups)

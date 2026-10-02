@@ -74,9 +74,11 @@ spec = describe "Application.Job.PollZabbix" do
                 source =
                     newRecord @Source
                         |> set
-                        #lastSyncCursor (Just cursorTime)
+                            #lastSyncCursor
+                            (Just cursorTime)
                         |> set
-                        #config (object ["initialHistoryDays" .= (30 :: Int)])
+                            #config
+                            (object ["initialHistoryDays" .= (30 :: Int)])
             initialCursor now source `shouldBe` floor (utcTimeToPOSIXSeconds cursorTime)
 
     describe "reconcile config accessors" do
@@ -91,7 +93,7 @@ spec = describe "Application.Job.PollZabbix" do
             let source =
                     newRecord @Source
                         |> set
-                        #config
+                            #config
                             ( object
                                 [ "reconcileResolved" .= False
                                 , "reconcileGraceSeconds" .= (120 :: Int)
@@ -116,7 +118,7 @@ spec = describe "Application.Job.PollZabbix" do
             let source =
                     newRecord @Source
                         |> set
-                        #config
+                            #config
                             ( object
                                 [ "scanMissingProblems" .= False
                                 , "scanWindowSeconds" .= (7200 :: Int)
@@ -173,17 +175,21 @@ spec = describe "Application.Job.PollZabbix" do
             let source =
                     newRecord @Source
                         |> set
-                        #lastReconcileAt (Just (addUTCTime (-100) now))
+                            #lastReconcileAt
+                            (Just (addUTCTime (-100) now))
                         |> set
-                        #config (object ["reconcileIntervalSeconds" .= (300 :: Int)])
+                            #config
+                            (object ["reconcileIntervalSeconds" .= (300 :: Int)])
             reconcileDue now source `shouldBe` False
         it "is due once the interval passed" do
             let source =
                     newRecord @Source
                         |> set
-                        #lastReconcileAt (Just (addUTCTime (-301) now))
+                            #lastReconcileAt
+                            (Just (addUTCTime (-301) now))
                         |> set
-                        #config (object ["reconcileIntervalSeconds" .= (300 :: Int)])
+                            #config
+                            (object ["reconcileIntervalSeconds" .= (300 :: Int)])
             reconcileDue now source `shouldBe` True
 
     describe "resolveDecision" do
@@ -216,13 +222,17 @@ spec = describe "Application.Job.PollZabbix" do
     firingAlert =
         newRecord @Alert
             |> set
-            #fingerprint "zabbix:trigger:42"
+                #fingerprint
+                "zabbix:trigger:42"
             |> set
-            #status "firing"
+                #status
+                "firing"
             |> set
-            #lastSeenAt (addUTCTime (-3600) now)
+                #lastSeenAt
+                (addUTCTime (-3600) now)
             |> set
-            #startedAt (Just (addUTCTime (-90000) now))
+                #startedAt
+                (Just (addUTCTime (-90000) now))
     problemTrigger =
         ZabbixTriggerState
             { triggerStateId = "42"

@@ -3,15 +3,15 @@ module Web.Controller.Profile where
 import Application.Helper.Theme (isValidTheme, themeFromSettings, themes)
 import Application.Helper.Timezone (isValidTimezone, timezoneFromSettings)
 import Application.Service.AlertScope (alertScopeBypassFromSettings)
-import Application.Service.Mattermost (mattermostUsernameFromSettings)
 import Application.Service.Api.Token (allScopes, newApiToken)
 import Application.Service.I18n (isValidLanguage, languageFromSettings, languages)
+import Application.Service.Mattermost (mattermostUsernameFromSettings)
 import Application.Service.Push (vapidPublicKey)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
-import Data.Aeson qualified as Aeson
-import Data.Aeson.KeyMap qualified as KeyMap
-import Data.Text qualified as Text
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Text as Text
 import Data.Time.Clock (getCurrentTime)
 import IHP.ControllerSupport (respondAndExit)
 import Network.HTTP.Types (status403)

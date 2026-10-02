@@ -20,21 +20,21 @@ import Application.Service.Llm.DbConfig (currentLlmConfig)
 import Control.Exception (SomeException, try)
 import Control.Monad (void, when)
 import Data.Aeson (Value (..), object, (.!=), (.:), (.:?), (.=))
-import Data.Aeson qualified as Aeson
-import Data.Aeson.Encode.Pretty qualified as Pretty
-import Data.Aeson.Key qualified as Key
-import Data.Aeson.KeyMap qualified as KeyMap
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encode.Pretty as Pretty
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (Parser, parseMaybe)
 import Data.Int (Int64)
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
 import Data.Scientific (floatingOrInteger)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import Data.Text.Read ()
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601ParseM)
 import Data.Traversable (traverse)
-import Data.Vector qualified as Vector
+import qualified Data.Vector as Vector
 import Generated.Types hiding (createDashboard)
 import IHP.Fetch (fetch, fetchCount, fetchOneOrNothing)
 import IHP.ModelSupport

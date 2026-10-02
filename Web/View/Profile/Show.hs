@@ -4,7 +4,7 @@ import Application.Helper.Theme (themes)
 import Application.Helper.Timezone (timezones)
 import Application.Service.Api.Token (allScopes)
 import Application.Service.I18n (Language, languageCode, languages)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
 import Web.View.Fragments (calloutInfoHtml, calloutWarningHtml, emptyStateHtml, inlinePostFormHtml, pageHeaderHtml)
