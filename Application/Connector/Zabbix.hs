@@ -1,6 +1,6 @@
 module Application.Connector.Zabbix (
     ZabbixEvent (..),
-    eventGet,
+    eventGetFold,
     ZabbixGroup (..),
     hostGroupsGetAll,
     toNormalizedEvent,
@@ -11,7 +11,7 @@ module Application.Connector.Zabbix (
     ZabbixTriggerState (..),
     triggerStateGet,
     problemTriggersGet,
-    eventsByTriggersGet,
+    eventsByTriggersFold,
     hostsGroupsGet,
     usersGet,
     ZabbixTriggerItem (..),
@@ -27,6 +27,7 @@ import Data.Aeson ((.!=), (.:), (.:?), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (Pair, parseMaybe)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text qualified
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import IHP.Prelude
@@ -65,27 +66,35 @@ instance Aeson.FromJSON ZabbixEvent where
                 _ -> Nothing
         pure ZabbixEvent{..}
 
--- | Fetch trigger events (problems and OKs) newer than the cursor, paging
--- until a short page: after an outage the backlog can exceed one page and a
--- single truncated fetch would permanently skip the OK events past the page
--- boundary (stuck firing alerts). Pages overlap at the boundary clock second
--- (time_from is inclusive), so results are deduped by eventid. Empty groupIds
--- means no host group restriction.
-eventGet :: Text -> Text -> Integer -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
-eventGet baseUrl token timeFrom groupIds pageLimit =
-    pagedEventGet baseUrl token timeFrom extra pageLimit
+-- | Constant-memory paged fold over trigger events (problems and OKs) newer
+-- than the cursor: pages are fetched exactly as before (time_from = max
+-- clock of the previous page, until a short page or an unmoving cursor), but
+-- the per-page step runs as soon as each page arrives instead of
+-- accumulating every page into one list — a source with the host group
+-- filter removed can have a huge backlog, and holding the whole batch (plus
+-- one host.get over all of it) grew the worker until OOM. Only one page
+-- (bounded by pageLimit) is ever resident; the accumulator is the caller's
+-- to keep bounded. Pages overlap at the boundary clock second (time_from is
+-- inclusive), so events whose eventid appeared in the previous page are
+-- dropped. The step returns Left to abort the fold; the caller decides what
+-- an abort means for its cursor. Empty groupIds means no host group
+-- restriction.
+eventGetFold :: Text -> Text -> Integer -> [Text] -> Int -> (acc -> [ZabbixEvent] -> IO (Either Text acc)) -> acc -> IO (Either Text acc)
+eventGetFold baseUrl token timeFrom groupIds pageLimit step =
+    pagedEventFold baseUrl token timeFrom extra pageLimit step
   where
     extra = ["groupids" .= groupIds | not (null groupIds)]
 
--- | Problem events for a known set of triggers (event.get objectids), paged
--- like eventGet. Backs the missing-problem scan: fetches the problem events
--- behind triggers that trigger.get reports in problem state but the cursor
--- path never delivered (standing problem, skipped same-second page tail).
--- groupIds restricts to the same host group scope as the cursor path.
-eventsByTriggersGet :: Text -> Text -> Integer -> [Text] -> [Text] -> Int -> IO (Either Text [ZabbixEvent])
-eventsByTriggersGet _ _ _ [] _ _ = pure (Right [])
-eventsByTriggersGet baseUrl token timeFrom triggerIds groupIds pageLimit =
-    pagedEventGet baseUrl token timeFrom (("objectids" .= triggerIds) : groupParam) pageLimit
+-- | Constant-memory fold over problem events for a known set of triggers
+-- (event.get objectids), paged like eventGetFold. Backs the missing-problem
+-- scan: fetches the problem events behind triggers that trigger.get reports
+-- in problem state but the cursor path never delivered (standing problem,
+-- skipped same-second page tail). groupIds restricts to the same host group
+-- scope as the cursor path.
+eventsByTriggersFold :: Text -> Text -> Integer -> [Text] -> [Text] -> Int -> (acc -> [ZabbixEvent] -> IO (Either Text acc)) -> acc -> IO (Either Text acc)
+eventsByTriggersFold _ _ _ [] _ _ _ acc = pure (Right acc)
+eventsByTriggersFold baseUrl token timeFrom triggerIds groupIds pageLimit step acc =
+    pagedEventFold baseUrl token timeFrom (("objectids" .= triggerIds) : groupParam) pageLimit step acc
   where
     groupParam = ["groupids" .= groupIds | not (null groupIds)]
 
@@ -125,24 +134,35 @@ hostsGroupsGet baseUrl token hostNames = do
         names <- mapM (Aeson.withObject "group" (\g -> g .: "name")) groups
         pure (host, names :: [Text])
 
--- Shared event.get paging loop; extra params ride alongside the fixed ones
+-- Shared event.get paging fold; extra params ride alongside the fixed ones
 -- (groupids for the cursor path, objectids for the scan path). A full page
 -- whose max clock didn't move means more than pageLimit events share one
--- clock second; stop rather than loop forever.
-pagedEventGet :: Text -> Text -> Integer -> [Pair] -> Int -> IO (Either Text [ZabbixEvent])
-pagedEventGet baseUrl token timeFrom extra pageLimit = go timeFrom []
+-- clock second; stop rather than loop forever. Boundary dedup keeps only the
+-- previous page's eventids: time_from is the previous page's max clock and
+-- pages are clock-ascending, so a repeated eventid can only straddle the
+-- boundary between adjacent pages — one page's worth of ids is enough and
+-- the set stays bounded by pageLimit.
+pagedEventFold :: Text -> Text -> Integer -> [Pair] -> Int -> (acc -> [ZabbixEvent] -> IO (Either Text acc)) -> acc -> IO (Either Text acc)
+pagedEventFold baseUrl token timeFrom extra pageLimit step = go timeFrom Set.empty
   where
-    go cursor acc = do
+    go cursor prevIds acc = do
         result <- eventGetPage baseUrl token cursor extra pageLimit
         case result of
             Left err -> pure (Left err)
             Right page ->
-                let acc' = acc ++ page
+                let pageEvents = dedupePage prevIds page
                     nextCursor = maximum (map (.clock) page)
-                 in if length page < pageLimit || nextCursor <= cursor
-                        then pure (Right (dedupEvents acc'))
-                        else go nextCursor acc'
-    dedupEvents = nubBy (\a b -> a.eventId == b.eventId)
+                    morePages = length page >= pageLimit && nextCursor > cursor
+                 in do
+                        stepped <- step acc pageEvents
+                        case stepped of
+                            Left err -> pure (Left err)
+                            Right acc'
+                                | morePages -> go nextCursor (Set.fromList (map (.eventId) page)) acc'
+                                | otherwise -> pure (Right acc')
+    dedupePage prevIds page =
+        let intraUnique = nubBy (\a b -> a.eventId == b.eventId) page
+         in filter (\event -> not (Set.member event.eventId prevIds)) intraUnique
 
 eventGetPage :: Text -> Text -> Integer -> [Pair] -> Int -> IO (Either Text [ZabbixEvent])
 eventGetPage baseUrl token timeFrom extra pageLimit = do

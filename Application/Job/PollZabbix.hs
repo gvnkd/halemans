@@ -124,47 +124,39 @@ pollSource source = do
                     logWarn ("zabbix source \"" <> source.name <> "\" host group scope failed: " <> err)
                 Right Nothing -> logDebug ("zabbix source \"" <> source.name <> "\": hostGroupScope=teams but no cached groups match; skipping poll cycle")
                 Right (Just groupIds) -> do
-                    outcome <- try (Zabbix.eventGet source.baseUrl token cursor groupIds (eventPageLimit source))
+                    outcome <- try (Zabbix.eventGetFold source.baseUrl token cursor groupIds (eventPageLimit source) (ingestPage source token) emptyPageAcc)
                     result <- pure case outcome of
                         Left err -> Left (tshow (err :: SomeException))
                         Right result -> result
                     case result of
                         Left err -> do
+                            -- Cursor NOT advanced: the fold aborted on a page
+                            -- fetch or a host-group lookup, so the next cycle
+                            -- refetches from the last good cursor and the
+                            -- already-ingested pages dedupe by fingerprint —
+                            -- rather than skipping unprocessed events.
                             recordFailure source err
                             logWarn ("zabbix source \"" <> source.name <> "\" poll failed: " <> err)
-                        Right events -> do
-                            logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (length events) <> " events")
+                        Right acc -> do
+                            logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (paCount acc) <> " events")
                             recordSuccess source
-                            groupsResult <- Zabbix.hostsGroupsGet source.baseUrl token (nub (mapMaybe (.host) events))
-                            case groupsResult of
-                                Left err -> do
-                                    -- Host groups decide both per-team
-                                    -- visibility and the ungrouped-host drop,
-                                    -- so without them the cycle is a failure:
-                                    -- the cursor stays put and the batch
-                                    -- retries next cycle instead of silently
-                                    -- ingesting ungrouped (invisible) alerts.
-                                    recordFailure source err
-                                    logWarn ("zabbix source \"" <> source.name <> "\" host group lookup failed; ingest skipped this cycle (will retry): " <> err)
-                                Right hostGroupPairs -> do
-                                    let hostGroups = Map.fromList hostGroupPairs
-                                        (groupedEvents, ungroupedHosts) = partitionUngrouped hostGroups events
-                                    ingestEvents source (map (normalizeWithGroups source hostGroups) groupedEvents)
-                                    syncUngroupedHostAlerts source (nub ungroupedHosts) (nub [h | e <- groupedEvents, Just h <- [e.host]])
-                                    reconcileAcks source token
-                                    when (reconcileDue now source) do
-                                        when (reconcileResolvedEnabled source) do
-                                            reconcileProblemStates source token now
-                                        when (scanMissingProblemsEnabled source) do
-                                            scanMissingProblems source token groupIds now
-                                        void (source |> set #lastReconcileAt (Just now) |> updateRecord)
+                            syncUngroupedHostAlerts source (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
+                            reconcileAcks source token
+                            when (reconcileDue now source) do
+                                when (reconcileResolvedEnabled source) do
+                                    reconcileProblemStates source token now
+                                when (scanMissingProblemsEnabled source) do
+                                    scanMissingProblems source token groupIds now
+                                void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                             -- +1s: event.get's time_from is INCLUSIVE, so a
                             -- cursor at maxClock re-ingests the boundary event
                             -- every cycle (resolved→resolved no-op flood, and
                             -- occurrences inflation when the boundary event is
                             -- a problem). Same-second events are all in this
-                            -- paged fetch, so nothing is skipped.
-                            case maximumMaybe (map (.clock) events) of
+                            -- paged fetch, so nothing is skipped. Written only
+                            -- after the whole fold succeeded, so the cursor
+                            -- never passes an event that failed to ingest.
+                            case paMaxClock acc of
                                 Just maxClock -> do
                                     _ <-
                                         source
@@ -172,6 +164,53 @@ pollSource source = do
                                             |> updateRecord
                                     pure ()
                                 Nothing -> pure ()
+
+-- | Per-cycle state threaded through the paged event fold: a running count,
+-- the max clock seen (the cursor frontier), a host -> groups cache (a []
+-- value is a negative entry: looked up and ungrouped/invisible to the
+-- token), and the hosts seen ungrouped this cycle. Everything is bounded by
+-- the page size and the host inventory — never by the event backlog, which
+-- is what OOMed the worker on sources with the host group filter removed.
+data PageAcc = PageAcc
+    { paCount :: Int
+    , paMaxClock :: Maybe Integer
+    , paGroups :: Map.Map Text [Text]
+    , paUngrouped :: Set.Set Text
+    }
+
+emptyPageAcc :: PageAcc
+emptyPageAcc = PageAcc 0 Nothing Map.empty Set.empty
+
+-- | One page of the event fold: resolve host groups for the page's hosts
+-- that are not in the cycle cache yet (one batched host.get per page), drop
+-- ungrouped-host events, ingest the rest, and thread the accumulator. Left
+-- aborts the whole fold (e.g. a host-group lookup failure); the caller does
+-- not advance the cursor, so the next cycle refetches from the last good
+-- cursor and the already-ingested pages dedupe by fingerprint.
+ingestPage :: (?modelContext :: ModelContext) => Source -> Text -> PageAcc -> [Zabbix.ZabbixEvent] -> IO (Either Text PageAcc)
+ingestPage source token acc page = do
+    let pageHosts = nub (mapMaybe (.host) page)
+        unknownHosts = [host | host <- pageHosts, not (Map.member host (paGroups acc))]
+    fetched <-
+        if null unknownHosts
+            then pure (Right [])
+            else Zabbix.hostsGroupsGet source.baseUrl token unknownHosts
+    case fetched of
+        Left err -> pure (Left err)
+        Right pairs -> do
+            let resolved = Map.fromList [(host, fromMaybe [] (lookup host pairs)) | host <- unknownHosts]
+                hostGroups = Map.union resolved (paGroups acc)
+                (groupedEvents, ungroupedHosts) = partitionUngrouped hostGroups page
+            ingestEvents source (map (normalizeWithGroups source hostGroups) groupedEvents)
+            pure
+                ( Right
+                    acc
+                        { paCount = paCount acc + length page
+                        , paMaxClock = max (paMaxClock acc) (maximumMaybe (map (.clock) page))
+                        , paGroups = hostGroups
+                        , paUngrouped = Set.union (paUngrouped acc) (Set.fromList ungroupedHosts)
+                        }
+                )
 
 -- | Host group ids for event.get: Right Nothing means skip this cycle
 -- (hostGroupScope=teams but no cached group matches the teams' names — never
@@ -373,26 +412,17 @@ scanMissingProblems source token groupIds now = do
             unless (null candidates) do
                 let triggerIds = map (.triggerStateId) candidates
                     windowStart = floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral (scanWindowSeconds source))) now))
-                eventsResult <- Zabbix.eventsByTriggersGet source.baseUrl token windowStart triggerIds groupIds (eventPageLimit source)
+                eventsResult <- Zabbix.eventsByTriggersFold source.baseUrl token windowStart triggerIds groupIds (eventPageLimit source) (ingestPage source token) emptyPageAcc
                 case eventsResult of
                     Left err ->
                         logWarn ("zabbix source \"" <> source.name <> "\" missed-problem event fetch failed: " <> err)
-                    Right events -> do
+                    Right acc -> do
                         recordReconcileSuccess source
-                        logInfo ("zabbix source \"" <> source.name <> "\": ingesting " <> tshow (length events) <> " missed events for " <> tshow (length candidates) <> " untracked problem trigger(s)")
-                        groupsResult <- Zabbix.hostsGroupsGet source.baseUrl token (nub (mapMaybe (.host) events))
-                        case groupsResult of
-                            -- Unlike the cursor path there is nothing to
-                            -- retry (the cursor doesn't move), but the
-                            -- trigger stays in problem state so the next
-                            -- due cycle rescans it; just warn.
-                            Left err ->
-                                logWarn ("zabbix source \"" <> source.name <> "\" missed-problem host group lookup failed; events not ingested this cycle: " <> err)
-                            Right hostGroupPairs -> do
-                                let hostGroups = Map.fromList hostGroupPairs
-                                    (groupedEvents, ungroupedHosts) = partitionUngrouped hostGroups events
-                                ingestEvents source (map (normalizeWithGroups source hostGroups) groupedEvents)
-                                syncUngroupedHostAlerts source (nub ungroupedHosts) (nub [h | e <- groupedEvents, Just h <- [e.host]])
+                        logInfo ("zabbix source \"" <> source.name <> "\": ingesting " <> tshow (paCount acc) <> " missed events for " <> tshow (length candidates) <> " untracked problem trigger(s)")
+                        -- Unlike the cursor path there is nothing to retry
+                        -- (the cursor doesn't move), but the trigger stays in
+                        -- problem state so the next due cycle rescans it.
+                        syncUngroupedHostAlerts source (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
 
 -- | Problem-state triggers worth fetching events for: lastchange inside the
 -- window and no tracked local alert with the trigger's fingerprint.
