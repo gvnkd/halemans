@@ -574,14 +574,24 @@ with sync_playwright() as pw:
 
     @check("jira: create ticket from alert card links with origin manual")
     def _():
-        alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
-        assert alert_id, "no alert from cmdb check"
+        # Fresh alert: reusing the shared cmdb alert here flaked when its
+        # state drifted between checks (form needs status /= closed).
+        fp = f"pw-jira-{int(time.time())}"
+        fire_generic_alert(fp)
+        alert_id = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'", 30)
+        assert alert_id, "alert never arrived"
         page.goto(f"{APP}/alerts/{alert_id}")
         try:
             page.get_by_test_id("jira-create-form").wait_for(timeout=60000)
-        except Exception:
+        except Exception as e:
+            print("  DEBUG jira-create error:", e, flush=True)
             print("  DEBUG jira-create url:", page.url, flush=True)
-            print("  DEBUG jira-create html:", page.content()[:1200], flush=True)
+            html = page.content()
+            print("  DEBUG form attached:", html.count('data-testid="jira-create-form"'), flush=True)
+            print("  DEBUG jira-panel attached:", html.count('data-testid="jira-panel"'), flush=True)
+            print("  DEBUG alert status:", sql(f"SELECT status FROM alerts WHERE id = '{alert_id}'"), flush=True)
+            print("  DEBUG grafana sources:", sql("SELECT config FROM sources WHERE type = 'grafana'"), flush=True)
+            print("  DEBUG canAck probes:", html.count('data-testid="ack-button"'), html.count('data-testid="close-button"'), flush=True)
             raise
         page.get_by_test_id("jira-summary").fill(f"pw smoke ticket {int(time.time())}")
         page.get_by_test_id("jira-create-submit").click()
@@ -591,8 +601,10 @@ with sync_playwright() as pw:
 
     @check("jira: create form hidden when the source is not jira-writable")
     def _():
-        alert_id = sql("SELECT id FROM alerts WHERE fingerprint LIKE 'grafana:pw-cmdb-%' ORDER BY created_at DESC LIMIT 1")
-        assert alert_id, "no alert from cmdb check"
+        fp = f"pw-jira-ro-{int(time.time())}"
+        fire_generic_alert(fp)
+        alert_id = wait_sql_value(f"SELECT id FROM alerts WHERE fingerprint = 'grafana:{fp}'", 30)
+        assert alert_id, "alert never arrived"
         sql("UPDATE sources SET config = config - 'jiraWritable' WHERE type = 'grafana'")
         try:
             page.goto(f"{APP}/alerts/{alert_id}")
@@ -1132,12 +1144,19 @@ with sync_playwright() as pw:
         row.get_by_test_id("admin-api-token-revoke").click()
         row.get_by_text("revoked").wait_for()
         admin.close()
-        try:
-            urllib.request.urlopen(urllib.request.Request(
-                f"{APP}/api/v1/alerts", headers={"Authorization": f"Bearer {token}"}))
-            raise AssertionError("expected 401 after admin revoke")
-        except urllib.error.HTTPError as e:
-            assert e.code == 401, e.code
+        # Poll: the badge renders from the revoke redirect, but the API
+        # read is a separate request path — allow brief propagation.
+        deadline = time.time() + 15
+        while True:
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{APP}/api/v1/alerts", headers={"Authorization": f"Bearer {token}"}))
+            except urllib.error.HTTPError as e:
+                assert e.code == 401, e.code
+                break
+            if time.time() > deadline:
+                raise AssertionError("expected 401 after admin revoke")
+            time.sleep(1)
         login(page, "sre")
 
     # milestone 8: assets info sources CRUD (design_docs/milestone_8.md §8/§10)
