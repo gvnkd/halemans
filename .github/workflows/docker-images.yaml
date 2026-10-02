@@ -19,7 +19,31 @@ env:
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  # A tag must pass the same canonical gate as master before the image
+  # builds — previously tags only built the image, so broken releases
+  # (e.g. v2.15.1) looked green.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: wimpysworld/nothing-but-nix@main
+      with:
+        hatchet-protocol: 'rampage'
+    - uses: DeterminateSystems/nix-installer-action@main
+      with:
+        extra-conf: "lazy-trees = true"
+    - uses: cachix/cachix-action@v16
+      with:
+        name: digitallyinduced
+        skipPush: true
+    - uses: cachix/cachix-action@v16
+      with:
+        name: halemans
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+    - run: nix flake check --impure -L
+
   build-push:
+    needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: read
