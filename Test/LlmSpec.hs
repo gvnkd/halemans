@@ -15,7 +15,6 @@ import Data.Int (Int64)
 import qualified Data.Text as Text
 import IHP.Prelude
 import Network.HTTP.Types (status200)
-import Network.Socket (close)
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
 import Test.Helpers (atTime)
@@ -287,8 +286,11 @@ fieldOf key parsed = do
 -- terminates with [DONE]; runs the action against the ephemeral base URL.
 withScriptedSse :: [Aeson.Value] -> (Text -> IO a) -> IO a
 withScriptedSse chunks action = do
+    -- openFreePort returns an ALREADY-BOUND-AND-LISTENING socket; hand it to
+    -- Warp directly. The old close-then-Warp.run port flow raced on loaded
+    -- CI runners (client connected before the re-bind -> Connection
+    -- refused).
     (port, socket) <- Warp.openFreePort
-    close socket
     let body =
             cs
                 ( Text.concat ["data: " <> cs (Aeson.encode chunk) <> "\n\n" | chunk <- chunks]
@@ -296,7 +298,7 @@ withScriptedSse chunks action = do
                 ) ::
                 LByteString
     withAsync
-        (Warp.run port (\_request respond -> respond (Wai.responseLBS status200 [("Content-Type", "text/event-stream")] body)))
+        (Warp.runSettingsSocket Warp.defaultSettings socket (\_request respond -> respond (Wai.responseLBS status200 [("Content-Type", "text/event-stream")] body)))
         (\_server -> action ("http://127.0.0.1:" <> tshow port))
 
 deltaWithCalls :: [Aeson.Value] -> Aeson.Value
