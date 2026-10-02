@@ -232,6 +232,7 @@ testEventIn envName fp status =
         , checkName = Just "itest-check"
         , labels = object []
         , annotations = object []
+        , hostGroups = []
         , startedAt = Nothing
         , sourceUrl = Nothing
         }
