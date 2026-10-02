@@ -189,6 +189,7 @@ data LiveEvent = LiveEvent
     { leAlertId :: Maybe UUID
     , leGroupId :: Maybe UUID
     , leEnv :: Maybe Text
+    , leHost :: Maybe Text
     , leKind :: Text
     , leTitle :: Maybe Text
     , leSeverity :: Maybe Text
@@ -201,10 +202,11 @@ parseLiveEvent bytes = do
         alertId <- o Aeson..:? "alertId" >>= maybe (pure Nothing) (fmap Just . parseUuid)
         groupId <- o Aeson..:? "groupId" >>= maybe (pure Nothing) (fmap Just . parseUuid)
         env <- o Aeson..:? "env"
+        host <- o Aeson..:? "host"
         kind <- o Aeson..: "kind"
         title <- o Aeson..:? "title"
         severity <- o Aeson..:? "severity"
-        pure LiveEvent{leAlertId = alertId, leGroupId = groupId, leEnv = env, leKind = kind, leTitle = title, leSeverity = severity}
+        pure LiveEvent{leAlertId = alertId, leGroupId = groupId, leEnv = env, leHost = host, leKind = kind, leTitle = title, leSeverity = severity}
   where
     parseUuid raw = maybe (fail "bad uuid") pure (UUID.fromText raw)
 
@@ -215,18 +217,35 @@ broadcast modelContext notification = do
     case parseLiveEvent notification.notificationData of
         Nothing -> pure ()
         Just event -> do
+            -- The banner popup (in-page + browser Notification) must respect
+            -- the same per-user host group visibility as the list rows, so
+            -- the alert row is fetched once and checked per connection.
+            bannerAlert <- case (isBanner event, event.leAlertId) of
+                (True, Just alertId) -> fetchOneOrNothing (Id alertId :: Id Alert)
+                _ -> pure Nothing
             connections <- readIORef registry
             forM_ connections \(_, userUuid, scopeRef, send) -> do
                 scopes <- readIORef scopeRef
                 updates <- concat <$> forM scopes \scope -> updatesFor userUuid scope event
-                unless (null updates && not (isBanner event)) do
-                    let banner = case (isBanner event, event.leAlertId) of
-                            (True, Just alertId) -> Just (object ["title" .= event.leTitle, "severity" .= event.leSeverity, "alertId" .= alertId])
-                            _ -> Nothing
+                banner <- bannerForConnection userUuid event bannerAlert
+                unless (null updates && isNothing banner) do
                     send (cs (Aeson.encode (object ["updates" .= updates, "banner" .= banner])))
 
 isBanner :: LiveEvent -> Bool
 isBanner event = event.leKind == "created" && event.leSeverity `elem` [Just "critical", Just "high"] && isJust event.leAlertId
+
+-- The new-alert popup for one connection: Nothing for non-banner events or
+-- when the alert is invisible to the user's team host group scope (the same
+-- AlertScope predicate the /alerts list query applies).
+bannerForConnection :: (?modelContext :: ModelContext) => Maybe UUID -> LiveEvent -> Maybe Alert -> IO (Maybe Aeson.Value)
+bannerForConnection _ _ Nothing = pure Nothing
+bannerForConnection userUuid event (Just alert) = do
+    scope <- scopeNamesForConnection userUuid
+    visible <- scopeVisible scope alert
+    pure $
+        if visible
+            then Just (object ["title" .= event.leTitle, "severity" .= event.leSeverity, "host" .= event.leHost, "alertId" .= event.leAlertId])
+            else Nothing
 
 -- Per-user host group visibility for a websocket connection: Nothing user
 -- (anonymous page) or bypass on = unrestricted; otherwise the union of the

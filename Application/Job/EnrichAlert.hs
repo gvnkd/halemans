@@ -3,6 +3,7 @@ module Application.Job.EnrichAlert where
 import Application.Helper.Ingest (publishAlertUpdate)
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Cmdb.DbConfig as Cmdb
+import Application.Service.Expose (exposeAlert)
 import qualified Application.Service.Facets as Facets
 import qualified Application.Service.Groups as Groups
 import qualified Application.Service.Http as Http
@@ -102,6 +103,11 @@ instance Job EnrichAlertJob where
         -- websocket broadcaster re-renders context panels without touching
         -- the timeline on this kind.
         publishAlertUpdate alert "assets"
+        -- Staged pipeline: enrichment has resolved CMDB/Jira/assets/facets —
+        -- now expose the alert (notifications + "created" WS fan-out). The
+        -- deadline ExposeAlertJob from ingest is a claim-gated no-op after
+        -- this.
+        exposeAlert (get #id alert)
         maybeRetriggerAnalysis alert startedAt
 
     maxAttempts = 3

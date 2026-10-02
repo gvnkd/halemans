@@ -4,7 +4,7 @@ self.addEventListener('push', function (event) {
     try { data = event.data ? event.data.json() : {}; } catch (e) { /* keep default */ }
     event.waitUntil(
         self.registration.showNotification(data.title || 'Halemans alert', {
-            body: (data.severity || '') + (data.env ? ' in ' + data.env : ''),
+            body: (data.severity || '') + (data.host ? ' · ' + data.host : '') + (data.env ? ' in ' + data.env : ''),
             data: { url: data.url || '/' }
         })
     );

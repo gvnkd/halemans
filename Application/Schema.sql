@@ -75,6 +75,7 @@ CREATE TABLE alerts (
     close_reason TEXT DEFAULT NULL,
     group_id UUID DEFAULT NULL,
     grouped_by_version INT DEFAULT NULL,
+    exposed_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -1011,4 +1012,22 @@ CREATE TABLE notification_channels (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 CREATE UNIQUE INDEX notification_channels_name_idx ON notification_channels(name);
+
+-- Staged alert pipeline (migration 1790947449): the Expose stage defers
+-- notification dispatch + the "created" WS fan-out until the Enrich stage
+-- completes. exposed_at (inline in CREATE TABLE alerts above) is the
+-- idempotency claim (first exposer wins).
+CREATE TABLE expose_alert_jobs (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    alert_id UUID NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    status JOB_STATUS DEFAULT 'job_status_not_started' NOT NULL,
+    last_error TEXT DEFAULT NULL,
+    attempts_count INT DEFAULT 0 NOT NULL,
+    locked_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    locked_by UUID DEFAULT NULL,
+    run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+ALTER TABLE expose_alert_jobs ADD CONSTRAINT expose_alert_jobs_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES alerts (id);
 

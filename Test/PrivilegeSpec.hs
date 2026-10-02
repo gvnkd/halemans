@@ -96,6 +96,7 @@ spec = around withTestApp do
             void $ sqlExecTyped [typedSql| INSERT INTO jira_links (alert_id, ticket_key) VALUES (${alertId}, 'PURGE-1') |]
             void $ sqlExecTyped [typedSql| INSERT INTO write_back_attempts (alert_id, action, source_id) VALUES (${alertId}, 'ack', (SELECT source_id FROM alerts WHERE id = ${alertId})) |]
             void $ sqlExecTyped [typedSql| INSERT INTO enrich_alert_jobs (alert_id) VALUES (${alertId}) |]
+            void $ sqlExecTyped [typedSql| INSERT INTO expose_alert_jobs (alert_id) VALUES (${alertId}) |]
             analysisRows <- sqlQueryTyped [typedSql| INSERT INTO llm_analyses (alert_id, prompt_hash) VALUES (${alertId}, 'purge-hash') RETURNING id |]
             analysisId <- case analysisRows of
                 [row] -> pure row
@@ -115,7 +116,7 @@ spec = around withTestApp do
                      + (SELECT count(*) FROM comments) + (SELECT count(*) FROM push_notification_jobs)
                      + (SELECT count(*) FROM escalation_trackers) + (SELECT count(*) FROM jira_links)
                      + (SELECT count(*) FROM write_back_jobs) + (SELECT count(*) FROM write_back_attempts)
-                     + (SELECT count(*) FROM enrich_alert_jobs) + (SELECT count(*) FROM llm_analyses)
+                     + (SELECT count(*) FROM enrich_alert_jobs) + (SELECT count(*) FROM expose_alert_jobs) + (SELECT count(*) FROM llm_analyses)
                      + (SELECT count(*) FROM llm_feedback)
                      + (SELECT count(*) FROM mattermost_posts) + (SELECT count(*) FROM mattermost_jobs)
                      + (SELECT count(*) FROM action_tokens)

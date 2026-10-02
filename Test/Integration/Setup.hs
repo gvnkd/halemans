@@ -1,4 +1,4 @@
-module Test.Integration.Setup (schemaPresent, testSource, integrationSource, payloadText, retryWriteBack, fetchEnvironment, testUser, freshFingerprint, testEvent, testEventIn, eventKinds, notifiedEvents, groupingRule, notificationRule, m6User, mockFail, m7Apply, m7User, m7UserKeepItems, m7SourceKeepItems, m7TeamKeepItems, m7LlmKeepItems, restoreEnv, itestAttrNames, ensureAssetsConfig, ensureMockJiraConfig, ensureMockCmdbConfig, withOnlyCmdbConfig, enrichJobFor, freshEnrichJob, assetAttr, assetsMockReset, assetsMockFail, ensureMapping, cleanupMappings, ensureTemplate, latestAnalysis, enqueueAnalysis, performLatestJob, counterRequestsAfter, pendingZabbixJobs, resetToolCache, resetToolCacheConfig, integrationMain) where
+module Test.Integration.Setup (schemaPresent, testSource, integrationSource, payloadText, retryWriteBack, fetchEnvironment, testUser, freshFingerprint, testEvent, testEventIn, eventKinds, notifiedEvents, groupingRule, notificationRule, m6User, mockFail, m7Apply, m7User, m7UserKeepItems, m7SourceKeepItems, m7TeamKeepItems, m7LlmKeepItems, restoreEnv, itestAttrNames, ensureAssetsConfig, ensureMockJiraConfig, ensureMockCmdbConfig, withOnlyCmdbConfig, enrichJobFor, freshEnrichJob, exposeFor, assetAttr, assetsMockReset, assetsMockFail, ensureMapping, cleanupMappings, ensureTemplate, latestAnalysis, enqueueAnalysis, performLatestJob, counterRequestsAfter, pendingZabbixJobs, resetToolCache, resetToolCacheConfig, integrationMain) where
 
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
@@ -41,6 +41,7 @@ import Application.Service.Api.Cursor (decodeCursor)
 import Application.Service.Api.Metrics (collectMetrics)
 import Application.Service.Api.Token (hashToken, newApiToken, resolveToken)
 import Application.Service.Assets.Attrs (objectAttributes)
+import Application.Service.Expose (exposeAlert)
 import Application.Service.DashboardCards (CardGroup (..), CardSummary (..), ExpandedCard (..), expandDashboardCards, runCardQuery, runCardQueryGroups, runCardSummary)
 import Application.Service.Jira.DbConfig (syncOpenLinks)
 import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
@@ -481,6 +482,13 @@ freshEnrichJob alertId = do
         |> set #alertId alertId
         |> set #runAt (addUTCTime 86400 now)
         |> createRecord
+
+-- Runs the Expose stage synchronously. In the staged pipeline the stage
+-- normally fires at EnrichAlertJob completion (or the +2min deadline job);
+-- specs that assert notification side effects drive it explicitly. Claim-
+-- gated: a no-op when something already exposed the alert.
+exposeFor :: (?modelContext :: ModelContext) => Id Alert -> IO ()
+exposeFor = exposeAlert
 
 assetAttr :: Text -> AssetsObject -> Maybe Text
 assetAttr name object = lookup name (objectAttributes object)

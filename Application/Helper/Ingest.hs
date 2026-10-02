@@ -127,14 +127,20 @@ ingest source event = do
             -- Step 5 grouping (milestone_2.md §3): first matching rule wins;
             -- no match leaves the alert standalone.
             grouped <- assignGroup alert
-            unless suppressedNow do
-                void (dispatchNotification grouped)
-            publishAlertUpdate grouped "created"
-            -- Step 8 enrichment (milestone_3.md §3): CMDB + Jira lookups run
-            -- async so ingestion never blocks on external systems.
+            -- Staged pipeline: the Expose stage (notification dispatch + the
+            -- "created" WS fan-out) is DEFERRED until the Enrich stage
+            -- completes (EnrichAlertJob triggers it) so every channel
+            -- renders the fully resolved alert. The ExposeAlertJob below is
+            -- the deadline: if enrichment hard-fails, exposition still runs
+            -- — an alert is never lost. See Application.Service.Expose.
             void do
                 newRecord @EnrichAlertJob
                     |> set #alertId (get #id grouped)
+                    |> createRecord
+            void do
+                newRecord @ExposeAlertJob
+                    |> set #alertId (get #id grouped)
+                    |> set #runAt (addUTCTime exposeDeadlineSeconds now)
                     |> createRecord
             -- Step 8 extension (milestone_4.md §4): queue an LLM analysis on
             -- new alerts only (never on dedupe hits), gated by the
@@ -342,6 +348,11 @@ fetchActiveBlackouts now =
         |> filterWhereSql (#endsAt, "> NOW()")
         |> fetch
 
+-- | Seconds after ingest at which the Expose-stage deadline job fires
+-- regardless of enrichment state (Application.Service.Expose).
+exposeDeadlineSeconds :: NominalDiffTime
+exposeDeadlineSeconds = 120
+
 -- | Websocket fan-out (milestone_1.md §7): the web process LISTENs on
 -- halemans_events and re-renders fragments for connected clients.
 publishAlertUpdate :: (?modelContext :: ModelContext) => Alert -> Text -> IO ()
@@ -353,6 +364,7 @@ publishAlertUpdate alert kind = do
                     ( object
                         [ "alertId" .= get #id alert
                         , "env" .= effectiveFieldText FieldEnv alert
+                        , "host" .= effectiveFieldText FieldHost alert
                         , "kind" .= kind
                         , "title" .= alert.title
                         , "severity" .= alert.severity

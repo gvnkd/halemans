@@ -42,6 +42,7 @@ instance Job PushNotificationJob where
                     , "severity" .= alert.severity
                     , "status" .= alert.status
                     , "env" .= effectiveFieldText FieldEnv alert
+                    , "host" .= effectiveFieldText FieldHost alert
                     , "alertId" .= get #id alert
                     , "url" .= ("/alerts/" <> tshow (get #id alert))
                     ]

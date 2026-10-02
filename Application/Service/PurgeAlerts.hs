@@ -26,5 +26,6 @@ purgeAllAlerts = withTransaction do
     void $ sqlExecTyped [typedSql| DELETE FROM write_back_jobs |]
     void $ sqlExecTyped [typedSql| DELETE FROM write_back_attempts |]
     void $ sqlExecTyped [typedSql| DELETE FROM enrich_alert_jobs |]
+    void $ sqlExecTyped [typedSql| DELETE FROM expose_alert_jobs |]
     void $ sqlExecTyped [typedSql| DELETE FROM alerts |]
     void $ sqlExecTyped [typedSql| DELETE FROM alert_groups |]

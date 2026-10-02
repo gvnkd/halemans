@@ -416,10 +416,47 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             fp2 <- freshFingerprint
             Just alertId1 <- ingest source ((testEventIn "itest-env-g3" fp1 Firing){severity = "critical"})
             Just alertId2 <- ingest source ((testEventIn "itest-env-g3" fp2 Firing){severity = "critical"})
+            exposeFor alertId1
+            exposeFor alertId2
             notified1 <- notifiedEvents alertId1
             notified2 <- notifiedEvents alertId2
             length notified1 `shouldBe` 1
             length notified2 `shouldBe` 0
+
+        it "exposition is deferred to the Expose stage and claim-gated" do
+            source <- testSource
+            user <- testUser
+            rule <- notificationRule "it-notify-defer" (Just (get #id user)) Nothing
+            let ruleIdText = tshow (get #id rule) :: Text
+                -- dirty-DB reruns accumulate enabled match-all rules from
+                -- other examples: count only THIS rule's notified events.
+                mine = filter (\e -> notifiedRuleId e == Just ruleIdText)
+                notifiedRuleId e =
+                    parseMaybe (Aeson.withObject "payload" (\o -> o Aeson..:? "ruleId" Aeson..!= "")) e.payload
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEvent fp Firing){severity = "critical"})
+            -- ingest alone (Intake/Resolve/Enrich enqueue) notifies nobody:
+            -- the Expose stage has not run yet.
+            notified0 <- mine <$> notifiedEvents alertId
+            null notified0 `shouldBe` True
+            pushJobs <-
+                query @PushNotificationJob
+                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#ruleId, Just (get #id rule))
+                    |> fetch
+            length pushJobs `shouldBe` 0
+            unexposed <- fetch alertId
+            unexposed.exposedAt `shouldBe` Nothing
+            exposeFor alertId
+            notified <- mine <$> notifiedEvents alertId
+            length notified `shouldBe` 1
+            exposed <- fetch alertId
+            isJust exposed.exposedAt `shouldBe` True
+            -- the exposed_at claim makes a second trigger a no-op: no
+            -- duplicate notifications (the deadline job races the same way).
+            exposeFor alertId
+            notifiedAgain <- mine <$> notifiedEvents alertId
+            length notifiedAgain `shouldBe` 1
 
         it "rule edit bumps version; grouped alerts keep their group and version" do
             source <- testSource
@@ -486,6 +523,7 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             _ <- notificationRule "it-notify-esc1" (Just (get #id user)) (Just (get #id policy))
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEvent fp Firing){severity = "critical"})
+            exposeFor alertId
             tracker <-
                 query @EscalationTracker
                     |> filterWhere (#alertId, alertId)
@@ -514,6 +552,7 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             _ <- notificationRule "it-notify-esc2" (Just (get #id user)) (Just (get #id policy))
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEvent fp Firing){severity = "critical"})
+            exposeFor alertId
             alert <- fetch alertId
             acked <- ackAlert user alert Nothing Nothing
             tracker <-
@@ -660,7 +699,7 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             resolved.host `shouldBe` Just ("itest-host" :: Text)
 
     describe "milestone 3: context layer" do
-        it "new alert enqueues EnrichAlertJob; refire does not" do
+        it "new alert enqueues EnrichAlertJob and the Expose deadline; refire does neither" do
             source <- testSource
             fp <- freshFingerprint
             Just alertId <- ingest source (testEvent fp Firing)
@@ -669,12 +708,22 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                     |> filterWhere (#alertId, alertId)
                     |> fetch
             length jobs `shouldBe` 1
+            exposeJobs <-
+                query @ExposeAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+            length exposeJobs `shouldBe` 1
             void (ingest source (testEvent fp Firing))
             jobsAfterRefire <-
                 query @EnrichAlertJob
                     |> filterWhere (#alertId, alertId)
                     |> fetch
             length jobsAfterRefire `shouldBe` 1
+            exposeJobsAfterRefire <-
+                query @ExposeAlertJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+            length exposeJobsAfterRefire `shouldBe` 1
 
         it "enrich job populates cmdb cache and jira links" do
             ensureMockJiraConfig

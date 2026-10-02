@@ -23,7 +23,7 @@ import IHP.QueryBuilder
 import System.Environment (lookupEnv, setEnv)
 import System.Process (readProcess)
 import Test.Hspec
-import Test.Integration.Setup (freshFingerprint, integrationSource, m7Apply, restoreEnv, testEventIn, testSource, testUser)
+import Test.Integration.Setup (exposeFor, freshFingerprint, integrationSource, m7Apply, restoreEnv, testEventIn, testSource, testUser)
 
 -- Mattermost channel end-to-end against the mock (nix/mocks/mock_mattermost.py,
 -- started by checks.nix on 18088; focused local runs start it manually with
@@ -41,6 +41,7 @@ spec = describe "Mattermost notification channel" do
             _ <- mattermostRule ("mm-itest-rule-" <> suffix) ("alerts-itest-" <> suffix) envName
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
             alert <- fetch alertId
             alert.status `shouldBe` "firing"
 
@@ -87,6 +88,7 @@ spec = describe "Mattermost notification channel" do
             _ <- mattermostRule ("mm-itest-rule-dup-" <> suffix) ("alerts-itest-dup-" <> suffix) envName
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
             jobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
             notifyJob <- expectOne jobs
             perform notifyJob
@@ -124,6 +126,7 @@ spec = describe "Mattermost notification channel" do
             _ <- rule |> set #teamId (Just (get #id team)) |> set #channelConfig (Aeson.object []) |> updateRecord
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
             notifyJob <- expectOne =<< query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
             perform notifyJob
             posts <- mockPosts
@@ -186,6 +189,7 @@ spec = describe "Mattermost notification channel" do
             _ <- rule |> set #escalationPolicyId (Just (get #id policy)) |> updateRecord
 
             alertId <- fireTestAlert source
+            exposeFor alertId
             alert <- fetch alertId
             alert.title `shouldSatisfy` ("[TEST]" `Text.isInfixOf`)
             alert.fingerprint `shouldSatisfy` ("test:" `Text.isPrefixOf`)
@@ -235,6 +239,7 @@ spec = describe "Mattermost notification channel" do
             source <- testSource
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn ("mm-prov-env-" <> suffix) fp Firing){severity = "warning"})
+            exposeFor alertId
             notifyJobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
             notifyJob <- expectOne notifyJobs
             perform notifyJob

@@ -91,15 +91,16 @@
     }
 
     function showBanner(banner) {
+        var hostPart = banner.host ? ' · ' + banner.host : '';
         var el = document.getElementById('push-banner');
         if (el) {
-            el.textContent = (banner.severity || '').toUpperCase() + ': ' + (banner.title || 'new alert');
+            el.textContent = (banner.severity || '').toUpperCase() + hostPart + ': ' + (banner.title || 'new alert');
             el.classList.remove('d-none');
             el.onclick = function () { window.location = '/alerts/' + banner.alertId; };
         }
         if ('Notification' in window && Notification.permission === 'granted') {
             new Notification(banner.title || 'Halemans alert', {
-                body: banner.severity,
+                body: (banner.severity || '') + hostPart,
                 data: { url: '/alerts/' + banner.alertId }
             });
         }

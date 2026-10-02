@@ -3,6 +3,7 @@ module WorkerMain () where
 import Application.Job.AutoClose ()
 import Application.Job.EnrichAlert ()
 import Application.Job.Escalation ()
+import Application.Job.ExposeAlert ()
 import Application.Job.FacetBackfill ()
 import Application.Job.JiraSync ()
 import Application.Job.LlmAnalysis ()
@@ -28,6 +29,7 @@ instance Worker RootApplication where
         , worker @PollGrafanaJob
         , worker @EscalationJob
         , worker @EnrichAlertJob
+        , worker @ExposeAlertJob
         , worker @WriteBackJob
         , worker @JiraSyncJob
         , worker @LlmAnalysisJob

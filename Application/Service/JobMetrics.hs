@@ -34,6 +34,7 @@ jobTables =
     , "push_notification_jobs"
     , "escalation_jobs"
     , "enrich_alert_jobs"
+    , "expose_alert_jobs"
     , "write_back_jobs"
     , "jira_sync_jobs"
     , "llm_analysis_jobs"
@@ -86,6 +87,13 @@ jobTypeMetrics =
                count(*) FILTER (WHERE attempts_count > 0) AS retried,
                count(*) FILTER (WHERE status = 'job_status_succeeded') AS succeeded
         FROM enrich_alert_jobs WHERE updated_at > NOW() - INTERVAL '24 hours' |]
+        , metricsFor
+            "expose_alert_jobs"
+            [typedSql|
+        SELECT count(*) FILTER (WHERE status = 'job_status_failed') AS failed,
+               count(*) FILTER (WHERE attempts_count > 0) AS retried,
+               count(*) FILTER (WHERE status = 'job_status_succeeded') AS succeeded
+        FROM expose_alert_jobs WHERE updated_at > NOW() - INTERVAL '24 hours' |]
         , metricsFor
             "write_back_jobs"
             [typedSql|
@@ -163,6 +171,11 @@ recentFailedJobs = do
                     "enrich_alert_jobs"
                     [typedSql|
             SELECT id, last_error, updated_at FROM enrich_alert_jobs
+            WHERE status = 'job_status_failed' ORDER BY updated_at DESC LIMIT 20 |]
+                , failuresFor
+                    "expose_alert_jobs"
+                    [typedSql|
+            SELECT id, last_error, updated_at FROM expose_alert_jobs
             WHERE status = 'job_status_failed' ORDER BY updated_at DESC LIMIT 20 |]
                 , failuresFor
                     "write_back_jobs"
