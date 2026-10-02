@@ -65,6 +65,7 @@ in
             gnumake
             postgresql_18
             python3
+            curl
         ];
         MOCK_CONFLUENCE_PY = "${self}/nix/mocks/mock_confluence.py";
         MOCK_JIRA_PY = "${self}/nix/mocks/mock_jira.py";

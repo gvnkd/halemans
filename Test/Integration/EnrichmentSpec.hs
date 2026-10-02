@@ -1,5 +1,6 @@
 module Test.Integration.EnrichmentSpec (spec) where
 
+import Application.Service.Llm.GlobalConfig (GlobalBudgetConfig (..), saveGlobalBudgetConfig)
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
@@ -174,46 +175,47 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
             mapMaybe (payloadText "subsystem" . (get #payload)) failures `shouldBe` ["assets"]
 
     it "a role on the analysis drives the prompt template and is recorded" do
-        _ <- ensureTemplate
-        -- m7 provisioning tests leave an enabled llm_configs row behind;
-        -- disable DB providers so the env mock config applies (DB-first
-        -- resolution, milestone_7.md §7).
-        void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
-        suffix <- tshow <$> nextRandom
-        let templateName = "itest_role_marker_" <> suffix
-            roleName = "itest-role-" <> suffix
-        template <-
-            newRecord @LlmPromptTemplate
-                |> set #name templateName
-                |> set #version 1
-                |> set #body "ROLE MARKER {{alert.title}}\nAssets:\n{{assets_excerpt}}"
-                |> set #active True
-                |> createRecord
-        role <-
-            newRecord @LlmAgentRole
-                |> set #name roleName
-                |> set #promptTemplateName templateName
-                |> set #tools (Aeson.toJSON ["assets_lookup" :: Text])
-                |> set #enabled True
-                |> set #isDefault False
-                |> createRecord
-        source <- testSource
-        fp <- freshFingerprint
-        Just alertId <- ingest source (testEvent fp Firing)
-        analysis <-
-            newRecord @LlmAnalysis
-                |> set #alertId alertId
-                |> set #agentRoleId (Just (get #id role))
-                |> createRecord
-        void do
-            newRecord @LlmAnalysisJob
-                |> set #analysisId (get #id analysis)
-                |> createRecord
-        performLatestJob (get #id analysis)
-        done <- fetch (get #id analysis)
-        done.status `shouldBe` "done"
-        done.agentRoleId `shouldBe` Just (get #id role)
-        done.promptTemplateId `shouldBe` Just (get #id template)
+        withOpenGlobalBudget do
+            _ <- ensureTemplate
+            -- m7 provisioning tests leave an enabled llm_configs row behind;
+            -- disable DB providers so the env mock config applies (DB-first
+            -- resolution, milestone_7.md §7).
+            void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
+            suffix <- tshow <$> nextRandom
+            let templateName = "itest_role_marker_" <> suffix
+                roleName = "itest-role-" <> suffix
+            template <-
+                newRecord @LlmPromptTemplate
+                    |> set #name templateName
+                    |> set #version 1
+                    |> set #body "ROLE MARKER {{alert.title}}\nAssets:\n{{assets_excerpt}}"
+                    |> set #active True
+                    |> createRecord
+            role <-
+                newRecord @LlmAgentRole
+                    |> set #name roleName
+                    |> set #promptTemplateName templateName
+                    |> set #tools (Aeson.toJSON ["assets_lookup" :: Text])
+                    |> set #enabled True
+                    |> set #isDefault False
+                    |> createRecord
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            analysis <-
+                newRecord @LlmAnalysis
+                    |> set #alertId alertId
+                    |> set #agentRoleId (Just (get #id role))
+                    |> createRecord
+            void do
+                newRecord @LlmAnalysisJob
+                    |> set #analysisId (get #id analysis)
+                    |> createRecord
+            performLatestJob (get #id analysis)
+            done <- fetch (get #id analysis)
+            done.status `shouldBe` "done"
+            done.agentRoleId `shouldBe` Just (get #id role)
+            done.promptTemplateId `shouldBe` Just (get #id template)
 
     it "assets_lookup returns an in-band summary from the mock" do
         _ <- ensureAssetsConfig
@@ -238,26 +240,45 @@ m8Spec = describe "enrichment phase 0 (milestone 8)" do
         failing `shouldBe` "no assets found"
 
     it "the default role applies to automatic analyses" do
-        _ <- ensureTemplate
-        void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
-        void $ sqlExecTyped [typedSql| UPDATE llm_agent_roles SET is_default = false |]
-        suffix <- tshow <$> nextRandom
-        role <-
-            newRecord @LlmAgentRole
-                |> set #name ("itest-default-role-" <> suffix)
-                |> set #promptTemplateName "alert_enrichment"
-                |> set #tools (Aeson.toJSON ([] :: [Text]))
-                |> set #enabled True
-                |> set #isDefault True
-                |> createRecord
-        source <- testSource
-        fp <- freshFingerprint
-        Just alertId <- ingest source (testEvent fp Firing)
-        analysis <- latestAnalysis alertId
-        performLatestJob (get #id analysis)
-        done <- fetch (get #id analysis)
-        done.status `shouldBe` "done"
-        done.agentRoleId `shouldBe` Just (get #id role)
+        withOpenGlobalBudget do
+            _ <- ensureTemplate
+            void $ sqlExecTyped [typedSql| UPDATE llm_configs SET enabled = false |]
+            void $ sqlExecTyped [typedSql| UPDATE llm_agent_roles SET is_default = false |]
+            suffix <- tshow <$> nextRandom
+            role <-
+                newRecord @LlmAgentRole
+                    |> set #name ("itest-default-role-" <> suffix)
+                    |> set #promptTemplateName "alert_enrichment"
+                    |> set #tools (Aeson.toJSON ([] :: [Text]))
+                    |> set #enabled True
+                    |> set #isDefault True
+                    |> createRecord
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEvent fp Firing)
+            analysis <- latestAnalysis alertId
+            performLatestJob (get #id analysis)
+            done <- fetch (get #id analysis)
+            done.status `shouldBe` "done"
+            done.agentRoleId `shouldBe` Just (get #id role)
+
+-- | The global budget/rate gate is suite-global: AgentSpec persists an
+-- llm_global_config row (ratePerMinute = 9) and mock-LLM spend accumulates in
+-- llm_budget_counters, so depending on hspec's random order an analysis here
+-- gets requeued as \"queued\". Open the gate for one example and restore the
+-- previous config row afterwards.
+withOpenGlobalBudget :: (?modelContext :: ModelContext) => IO a -> IO a
+withOpenGlobalBudget action = do
+    old <- query @LlmGlobalConfig |> fetchOneOrNothing
+    void $ sqlExecTyped [typedSql| DELETE FROM llm_budget_counters |]
+    saveGlobalBudgetConfig GlobalBudgetConfig{gbcDailyTokenBudget = 999999999, gbcRatePerMinute = 1000000}
+    finally action do
+        case old of
+            -- Raw: the compile-time scratch DB for the test suite may
+            -- predate the llm_global_config table, so typedSql cannot
+            -- introspect it here.
+            Nothing -> void $ sqlExec "DELETE FROM llm_global_config" ()
+            Just row -> saveGlobalBudgetConfig GlobalBudgetConfig{gbcDailyTokenBudget = row.dailyTokenBudget, gbcRatePerMinute = row.ratePerMinute}
 
 -- | Enrichment phase 0 (m8).
 spec :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Spec

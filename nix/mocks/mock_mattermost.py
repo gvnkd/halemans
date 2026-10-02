@@ -106,6 +106,10 @@ class Handler(BaseHTTPRequestHandler):
                 if channel["team_id"] == m.group(1) and channel["name"] == m.group(2):
                     self._send(200, channel)
                     return
+            for team in self.server.teams.values():
+                if team["id"] == m.group(1):
+                    self._send(200, self.server.channel(team["name"], m.group(2)))
+                    return
             self._send(404, {"id": "api.context.404.app_error", "message": "channel not found"})
             return
         self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
@@ -292,11 +296,14 @@ class Server(ThreadingHTTPServer):
 
     def reset(self):
         self.posts = {}
-        self.teams = {}
         self.channels = {}
         self.channel_names = {}
         self.action_calls = []
         self.next_post_id = 1
+        # The client's resolveChannel lists bot team memberships BEFORE any
+        # post exists, so the default team must survive /debug/reset.
+        self.teams = {}
+        self.team("mock")
 
     def team(self, name):
         if name not in self.teams:
