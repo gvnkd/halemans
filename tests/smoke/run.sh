@@ -477,7 +477,7 @@ dead_insert_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO sources (type, name, 
 dead_source_id=$(printf '%s\n' "$dead_insert_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
 dead_id=""
 if [ -n "$dead_source_id" ]; then
-    dead_insert_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO alerts (fingerprint, source_id, external_id, title, severity, status) VALUES ('smoke:dead-source', '$dead_source_id', '999', 'smoke dead source alert', 'warning', 'firing') RETURNING id" 2>&1)
+    dead_insert_out=$(psql "$DATABASE_URL" -tA -c "INSERT INTO alerts (fingerprint, source_id, external_id, title, severity, status, host_groups) VALUES ('smoke:dead-source', '$dead_source_id', '999', 'smoke dead source alert', 'warning', 'firing', '[\"dev\"]'::jsonb) RETURNING id" 2>&1)
     dead_id=$(printf '%s\n' "$dead_insert_out" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
 fi
 if [ -z "$dead_source_id" ]; then echo "source insert error: $dead_insert_out" >&2; fi

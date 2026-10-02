@@ -366,9 +366,13 @@ SQL
 # rule reproduces milestone-1 dispatch: severity >= high pages the sre team,
 # throttled to 5m.
 psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
-INSERT INTO teams (name, description) VALUES
-    ('sre', 'Site reliability engineering')
-ON CONFLICT (name) DO NOTHING;
+-- host_groups scopes the team's alert visibility to zabbix hosts in those
+-- groups (per-team visibility feature); the dev zabbix seed puts dev-host-01
+-- in the 'dev' group, so the smoke suite (and the dev stand) needs the sre
+-- team scoped to it — otherwise zabbix alert cards 404 for sre@dev.
+INSERT INTO teams (name, description, host_groups) VALUES
+    ('sre', 'Site reliability engineering', '["dev"]'::jsonb)
+ON CONFLICT (name) DO UPDATE SET host_groups = EXCLUDED.host_groups;
 
 INSERT INTO team_members (team_id, user_id, team_role)
 SELECT t.id, u.id, 'lead' FROM teams t, users u
