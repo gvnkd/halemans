@@ -1,5 +1,7 @@
 # Halemans
 
+[![Test](https://github.com/gvnkd/halemans/actions/workflows/nix-flake-check.yml/badge.svg?branch=master)](https://github.com/gvnkd/halemans/actions/workflows/nix-flake-check.yml?query=branch%3Amaster)
+
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="images/halemans-lockup-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="images/halemans-lockup-light.png">
