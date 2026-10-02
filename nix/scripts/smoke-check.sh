@@ -469,9 +469,12 @@ SQL
 # Teams + default routing rules (milestone 2 D4/D5): same SQL as
 # seed-halemans. The default notification rule reproduces milestone-1
 # dispatch: severity >= high pages the sre team, throttled to 5m.
+# host_groups scopes the team's zabbix alert visibility to the 'dev' group
+# (seeded dev-host-01 lives there); without it every zabbix alert card
+# 404s for sre@dev in the smoke suite.
 psql -h "$PGHOST" -d halemans -v ON_ERROR_STOP=1 -q <<'SQL'
-INSERT INTO teams (name, description) VALUES
-    ('sre', 'Site reliability engineering');
+INSERT INTO teams (name, description, host_groups) VALUES
+    ('sre', 'Site reliability engineering', '["dev"]'::jsonb);
 
 INSERT INTO team_members (team_id, user_id, team_role)
 SELECT t.id, u.id, 'lead' FROM teams t, users u
