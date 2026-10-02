@@ -78,7 +78,12 @@ createPost config channelId message rootId props =
 -- | Edit a post's message + props (the status-sync path).
 patchPost :: MattermostConfig -> Text -> Text -> Aeson.Value -> IO (Either Text ())
 patchPost config postId message props =
-    fmap Control.Monad.void (putJson config ("/api/v4/posts/" <> postId) payload)
+    -- The /patch sub-resource, NOT PUT /posts/{id}: the full-post update
+    -- endpoint is rejected on some servers (verified 2026-10-02 against
+    -- MM 11.8.3/mm.officesvc.bz — the sync silently no-op'd there because
+    -- the old path errored and the error was swallowed), while /patch is
+    -- the standard edit endpoint and works with the same token.
+    fmap Control.Monad.void (putJson config ("/api/v4/posts/" <> postId <> "/patch") payload)
   where
     payload = Aeson.object ["message" .= message, "props" .= props]
 

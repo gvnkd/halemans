@@ -2,7 +2,10 @@
 # Covers exactly what Application.Service.Mattermost.Api needs:
 #   POST /api/v4/posts                      create post (root or thread reply)
 #   GET  /api/v4/posts/{id}                 fetch post
-#   PUT  /api/v4/posts/{id}                 edit message/props (status sync)
+#   PUT  /api/v4/posts/{id}/patch           edit message/props (status sync)
+#   PUT  /api/v4/posts/{id}                 edit message/props (legacy alias)
+#   GET  /api/v4/users/me/teams             bot team memberships
+#   GET  /api/v4/teams/{id}/channels/name/{c}  channel by team id + name
 #   GET  /api/v4/teams/name/{team}          resolve team name -> id
 #   GET  /api/v4/channels/name/{t}/{c}      resolve channel name -> id
 #   GET  /api/v4/users/me                   bot identity check
@@ -91,6 +94,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v4/users/me":
             self._send(200, {"id": "bot-mock-mattermost", "username": "halemans", "email": "halemans@localhost"})
             return
+        # Bot membership listing + team-id channel lookup: the client's
+        # resolveChannel uses ONLY these two (the channels/name/{t}/{c}
+        # shortcut 404s on some real servers).
+        if path == "/api/v4/users/me/teams":
+            self._send(200, list(self.server.teams.values()))
+            return
+        m = re.fullmatch(r"/api/v4/teams/([\w-]+)/channels/name/([\w-]+)", path)
+        if m:
+            for channel in self.server.channels.values():
+                if channel["team_id"] == m.group(1) and channel["name"] == m.group(2):
+                    self._send(200, channel)
+                    return
+            self._send(404, {"id": "api.context.404.app_error", "message": "channel not found"})
+            return
         self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
 
     def do_POST(self):
@@ -110,6 +127,10 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         if not self._authorized():
+            return
+        m = re.fullmatch(r"/api/v4/posts/([\w-]+)/patch", path)
+        if m:
+            self._patch_post(m.group(1))
             return
         m = re.fullmatch(r"/api/v4/posts/([\w-]+)", path)
         if m:
