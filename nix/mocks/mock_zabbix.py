@@ -12,9 +12,13 @@ DEFAULT_PORT = 18087
 TOKEN = os.environ.get("MOCK_ZABBIX_TOKEN") or os.environ.get("ZABBIX_TOKEN", "")
 
 TRIGGERS = {
+    # 42: standing problem (used by the stalled-alert reconcile test) plus the
+    # metric-chart dataset; 77: trigger back to OK (reconcile negative case).
     "42": {
         "triggerid": "42",
         "expression": "last(/mock/system.cpu.load)>80 or last(/mock/vm.memory.util)>70",
+        "value": "1",
+        "lastchange": "1700000000",
         "items": [
             {
                 "itemid": "1001",
@@ -41,9 +45,16 @@ TRIGGERS = {
                 "key_": "agent.variant",
                 "name": "Agent variant",
                 "value_type": "4",
-                "units": "",
+                "units": ""
             }
         ],
+    },
+    "77": {
+        "triggerid": "77",
+        "expression": "last(/mock/net.if.in)>90",
+        "value": "0",
+        "lastchange": "1700000100",
+        "items": [],
     },
 }
 

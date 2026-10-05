@@ -24,7 +24,7 @@ import Test.Hspec
 import qualified Application.Connector.Grafana as Grafana
 import Application.Helper.DashboardConfig (DashboardCard (..), FacetRef (..), MatchClause (..), MatchOp (..), decodeDashboardConfig)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
-import Application.Job.AutoClose (autoCloseResolved, closeStalledAlerts, stallStaleAlerts, unackExpiredAcks, unsuppressExpired)
+import Application.Job.AutoClose (autoCloseResolved, closeStalledAlerts, reconcileStalledZabbix, stallStaleAlerts, unackExpiredAcks, unsuppressExpired)
 import Application.Job.EnrichAlert ()
 import Application.Job.Escalation (runDueTrackers)
 import Application.Job.FacetBackfill ()
@@ -351,6 +351,45 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                     |> filterWhere (#alertId, alertId)
                     |> fetch
             length pushJobs `shouldBe` 0
+
+    it "stalled zabbix alerts are reconciled against trigger state: still-problem refires, ok trigger stays stalled" do
+        suffix <- tshow <$> nextRandom
+        baseUrl <- cs . fromMaybe "http://127.0.0.1:18087" <$> lookupEnv "MOCK_ZABBIX_URL"
+        source <- integrationSource "zabbix" ("itest-zbx-stalled-" <> suffix) baseUrl (object ["tokenEnv" .= ("ZABBIX_TOKEN" :: Text)])
+        _ <- source |> set #enabled True |> updateRecord
+        now <- getCurrentTime
+        let old = addUTCTime (-7200) now
+            envName = "itest-zbx-stalled-env-" <> suffix
+        standing <-
+            newRecord @Alert
+                |> set #fingerprint "zabbix:trigger:42"
+                |> set #title "standing problem"
+                |> set #status "stalled"
+                |> set #sourceId (Just (get #id source))
+                |> set #env (Just envName)
+                |> set #occurrences 1
+                |> set #lastSeenAt old
+                |> set #updatedAt old
+                |> createRecord
+        quiet <-
+            newRecord @Alert
+                |> set #fingerprint "zabbix:trigger:77"
+                |> set #title "trigger already ok"
+                |> set #status "stalled"
+                |> set #sourceId (Just (get #id source))
+                |> set #env (Just envName)
+                |> set #lastSeenAt old
+                |> set #updatedAt old
+                |> createRecord
+        reconcileStalledZabbix
+        refired <- fetch (get #id standing)
+        refired.status `shouldBe` "firing"
+        refired.lastSeenAt `shouldSatisfy` (> old)
+        refired.occurrences `shouldBe` 2
+        events <- eventKinds (get #id standing)
+        events `shouldSatisfy` ("repeated" `elem`)
+        stillStalled <- fetch (get #id quiet)
+        stillStalled.status `shouldBe` "stalled"
 
     it "ack timeout unacks via unackExpiredAcks" do
         source <- testSource
