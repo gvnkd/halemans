@@ -2,6 +2,7 @@ module Test.Integration.AgentSpec (spec) where
 
 import Application.Helper.Controller (userPrivileges)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
+import Application.Pipeline.Blackouts (openEndedBlackoutEndsAt)
 import Application.Service.Agent.Core (agentTurnGate, buildSystemMessage, defaultAgentTemplateBody, internalAgentTemplateName, maxToolRounds, runAgentTurnWith)
 import Application.Service.Agent.Mcp (McpConfig (..), defaultMcpEmail, defaultMcpRoleName, handleMessage, resolveMcpUser)
 import Application.Service.Agent.Tools (AgentContext (..), agentToolDefinitionsFor, channelTokenEnv, executeAgentTool, requiredPrivilegeFor)
@@ -65,6 +66,14 @@ spec = describe "agent tools (internal API milestone)" do
             bad <- runTool user "validate_dashboard" (args [("name", "t"), ("config", "[{]")])
             bad `shouldSatisfy` ("invalid config" `Text.isInfixOf`)
 
+        it "validate_dashboard accepts config passed as raw JSON, not only a string" do
+            user <- m6User ["view"]
+            let configArray = Aeson.Array (Vector.fromList [object ["title" .= ("{{value}} card" :: Text), "match" .= ([] :: [Int])]])
+            rawValue <- runTool user "validate_dashboard" (argsKV [("name", String "t"), ("config", configArray)])
+            rawValue `shouldSatisfy` ("plan:" `Text.isPrefixOf`)
+            garbage <- runTool user "validate_dashboard" (args [("name", "t"), ("config", "{]")])
+            garbage `shouldSatisfy` ("invalid config" `Text.isPrefixOf`)
+
         it "requires confirmation before creating a dashboard" do
             user <- m6User ["view"]
             email <- ("agent-dash-" <>) . tshow <$> nextRandom
@@ -93,7 +102,176 @@ spec = describe "agent tools (internal API milestone)" do
             denied <- runTool demoted "search_alerts" "{}"
             denied `shouldSatisfy` ("forbidden" `Text.isInfixOf`)
 
-        it "soft-fails unknown tools and invalid arguments" do
+        it "search_alerts supports globs, title filter, pagination and totals" do
+            source <- testSource
+            token <- ("g" <>) . tshow <$> nextRandom
+            let envName = "agent-glob-" <> token <> "-env"
+                envGlob = "agent-glob-" <> token <> "-*"
+                hostName = "agent-glob-" <> token <> "-web-01"
+            let fire = do
+                    fp <- freshFingerprint
+                    ingest source ((testEventIn envName fp Firing){host = Just hostName, title = "VIP IP failover"})
+            Just _ <- fire
+            Just _ <- fire
+            Just _ <- fire
+            user <- m6User ["view"]
+            globbed <- runTool user "search_alerts" (args [("env", envGlob)])
+            globbed `shouldSatisfy` ("total: 3 matching" `Text.isPrefixOf`)
+            page1 <- runTool user "search_alerts" (args [("env", envName), ("limit", "2")])
+            page1 `shouldSatisfy` ("total: 3 matching alert(s); showing 2" `Text.isPrefixOf`)
+            page1 `shouldSatisfy` ("next_cursor:" `Text.isInfixOf`)
+            -- IHP.Prelude's last is Maybe (safe list accessors)
+            Just cursor <- pure (last (Text.lines page1) >>= Text.stripPrefix "next_cursor: ")
+            page2 <- runTool user "search_alerts" (args [("env", envName), ("limit", "2"), ("cursor", cursor)])
+            page2 `shouldSatisfy` ("showing 1" `Text.isInfixOf`)
+            page2 `shouldSatisfy` (not . ("next_cursor:" `Text.isInfixOf`))
+            byTitle <- runTool user "search_alerts" (args [("env", envName), ("title", "VIP IP*")])
+            byTitle `shouldSatisfy` ("total: 3" `Text.isInfixOf`)
+            none <- runTool user "search_alerts" (args [("env", envName), ("title", "vip ip*")])
+            none `shouldBe` "no matching alerts"
+            badCursor <- runTool user "search_alerts" (args [("cursor", "bogus")])
+            badCursor `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
+
+        it "get_alert returns the full record for any status with comments and escalation" do
+            source <- testSource
+            envName <- ("agent-get-" <>) . tshow <$> nextRandom
+            fp <- freshFingerprint
+            Just alertId <- ingest source (testEventIn envName fp Firing)
+            user <- m6User ["view", "ack", "close"]
+            let aid = tshow alertId
+            out <- runTool user "get_alert" (args [("alert_id", aid)])
+            out `shouldSatisfy` ("status: firing" `Text.isInfixOf`)
+            out `shouldSatisfy` ("title: integration test alert" `Text.isInfixOf`)
+            out `shouldSatisfy` (("env: " <> envName) `Text.isInfixOf`)
+            out `shouldSatisfy` ("muted: false" `Text.isInfixOf`)
+            out `shouldSatisfy` (("id: " <> aid) `Text.isInfixOf`)
+            _ <- runTool user "comment_alert" (args [("alert_id", aid), ("body", "agent probe comment")])
+            policy <- newRecord @EscalationPolicy |> set #name ("agent-get-pol-" <> envName) |> createRecord
+            _ <-
+                newRecord @EscalationTracker
+                    |> set #alertId alertId
+                    |> set #policyId (get #id policy)
+                    |> set #currentStep 2
+                    |> set #status "active"
+                    |> createRecord
+            -- close requires acked/stalled (state machine): ack first
+            _ <- runTool user "ack_alert" (args [("alert_id", aid), ("comment", "acked before close")])
+            ackedOut <- runTool user "get_alert" (args [("alert_id", aid)])
+            ackedOut `shouldSatisfy` ("status: ack" `Text.isInfixOf`)
+            ackedOut `shouldSatisfy` ("acknowledged_at:" `Text.isInfixOf`)
+            _ <- runTool user "close_alert" (args [("alert_id", aid), ("reason", "agent done")])
+            closed <- runTool user "get_alert" (args [("alert_id", aid)])
+            closed `shouldSatisfy` ("status: closed" `Text.isInfixOf`)
+            closed `shouldSatisfy` ("close_reason: agent done" `Text.isInfixOf`)
+            closed `shouldSatisfy` ("closed_at:" `Text.isInfixOf`)
+            closed `shouldSatisfy` ("agent probe comment" `Text.isInfixOf`)
+            closed `shouldSatisfy` ("policy" `Text.isInfixOf`)
+            closed `shouldSatisfy` ("step 2" `Text.isInfixOf`)
+            unknown <- runTool user "get_alert" (args [("alert_id", "00000000-0000-0000-0000-000000000000")])
+            unknown `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
+
+        it "close_alerts and ack_alerts run two-phase in bulk, all or nothing" do
+            source <- testSource
+            envName <- ("agent-bulk-" <>) . tshow <$> nextRandom
+            fp1 <- freshFingerprint
+            fp2 <- freshFingerprint
+            Just a1 <- ingest source (testEventIn envName fp1 Firing)
+            Just a2 <- ingest source (testEventIn envName fp2 Firing)
+            user <- m6User ["view", "close", "ack"]
+            let idsJson = cs (Aeson.encode [tshow a1, tshow a2])
+            -- close requires acked/stalled: firing alerts are reported as skipped
+            skipped <- runTool user "close_alerts" (argsV [("alert_ids", String idsJson), ("confirmed", Bool True)])
+            skipped `shouldSatisfy` ("closed 0 of 2" `Text.isPrefixOf`)
+            skipped `shouldSatisfy` ("skipped: status is firing" `Text.isInfixOf`)
+            _ <- runTool user "ack_alerts" (argsV [("alert_ids", String idsJson), ("comment", String "bulk ack"), ("confirmed", Bool True)])
+            plan <- runTool user "close_alerts" (args [("alert_ids", idsJson)])
+            plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            plan `shouldSatisfy` ("close 2 alert(s)" `Text.isInfixOf`)
+            stillAcked <- fetch a1
+            stillAcked.status `shouldBe` "ack"
+            done <- runTool user "close_alerts" (argsV [("alert_ids", String idsJson), ("reason", String "cleanup"), ("confirmed", Bool True)])
+            done `shouldSatisfy` ("closed 2 of 2 alert(s)" `Text.isPrefixOf`)
+            done `shouldSatisfy` (tshow a1 `Text.isInfixOf`)
+            closed1 <- fetch a1
+            closed1.status `shouldBe` "closed"
+            closed1.closeReason `shouldBe` Just "cleanup"
+            -- idempotent-ish: already-closed rows are reported as skipped
+            again <- runTool user "close_alerts" (argsV [("alert_ids", String idsJson), ("confirmed", Bool True)])
+            again `shouldSatisfy` ("closed 0 of 2" `Text.isPrefixOf`)
+            again `shouldSatisfy` ("skipped: already closed" `Text.isInfixOf`)
+            -- all or nothing: an unknown id aborts before anything changes
+            fp3 <- freshFingerprint
+            Just a3 <- ingest source (testEventIn envName fp3 Firing)
+            let mixedJson = cs (Aeson.encode [tshow a3, ("00000000-0000-0000-0000-000000000000" :: Text)])
+            aborted <- runTool user "close_alerts" (argsV [("alert_ids", String mixedJson), ("confirmed", Bool True)])
+            aborted `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
+            untouched <- fetch a3
+            untouched.status `shouldBe` "firing"
+            -- ack_alerts
+            fp4 <- freshFingerprint
+            fp5 <- freshFingerprint
+            Just a4 <- ingest source (testEventIn envName fp4 Firing)
+            Just a5 <- ingest source (testEventIn envName fp5 Firing)
+            acked <- runTool user "ack_alerts" (argsV [("alert_ids", String (cs (Aeson.encode [tshow a4, tshow a5]))), ("comment", String "bulk ack"), ("confirmed", Bool True)])
+            acked `shouldSatisfy` ("acknowledged 2 of 2" `Text.isPrefixOf`)
+            acked4 <- fetch a4
+            acked4.status `shouldBe` "ack"
+            acked4.ackComment `shouldBe` Just "bulk ack"
+            badShape <- runTool user "close_alerts" (args [("alert_ids", "not json")])
+            badShape `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
+            emptyIds <- runTool user "close_alerts" (args [("alert_ids", "[]")])
+            emptyIds `shouldSatisfy` ("invalid arguments" `Text.isPrefixOf`)
+
+        it "close_by_match and ack_by_match accept glob shorthand and clause arrays" do
+            source <- testSource
+            token <- ("m" <>) . tshow <$> nextRandom
+            let envName = "agent-match-" <> token
+                web1 = "agent-match-" <> token <> "-web-01"
+                web2 = "agent-match-" <> token <> "-web-02"
+                db1 = "agent-match-" <> token <> "-db-01"
+            let fire host = do
+                    fp <- freshFingerprint
+                    ingest source ((testEventIn envName fp Firing){host = Just host})
+            Just m1 <- fire web1
+            Just m2 <- fire web2
+            Just m3 <- fire db1
+            user <- m6User ["view", "close", "ack"]
+            let shorthand = "{\"host\": \"agent-match-" <> token <> "-web-*\"}"
+            -- close requires acked/stalled: ack the web hosts first
+            ackPlan <- runTool user "ack_by_match" (args [("match", shorthand)])
+            ackPlan `shouldSatisfy` ("plan: acknowledge 2 alert(s)" `Text.isPrefixOf`)
+            ackDone <- runTool user "ack_by_match" (argsV [("match", String shorthand), ("comment", String "web rebuild"), ("confirmed", Bool True)])
+            ackDone `shouldSatisfy` ("acknowledged 2 of 2" `Text.isPrefixOf`)
+            acked1 <- fetch m1
+            acked1.status `shouldBe` "ack"
+            plan <- runTool user "close_by_match" (args [("match", shorthand)])
+            plan `shouldSatisfy` ("plan: close 2 alert(s)" `Text.isPrefixOf`)
+            plan `shouldSatisfy` (("field:host ~ \"agent-match-" <> token <> "-web-*\"") `Text.isInfixOf`)
+            done <- runTool user "close_by_match" (argsV [("match", String shorthand), ("reason", String "web rebuild"), ("confirmed", Bool True)])
+            done `shouldSatisfy` ("closed 2 of 2" `Text.isInfixOf`)
+            closed1 <- fetch m1
+            closed1.status `shouldBe` "closed"
+            other <- fetch m3
+            other.status `shouldBe` "firing"
+            -- clause array form, passed as a raw JSON value (not a string)
+            let clauseArray = Aeson.Array (Vector.fromList [object ["facet" .= ("field:host" :: Text), "op" .= ("~" :: Text), "value" .= ("agent-match-" <> token <> "-db-*" :: Text)]])
+            ackDb <- runTool user "ack_by_match" (argsKV [("match", clauseArray), ("confirmed", Bool True)])
+            ackDb `shouldSatisfy` ("acknowledged 1 of 1" `Text.isPrefixOf`)
+            done2 <- runTool user "close_by_match" (argsKV [("match", clauseArray), ("confirmed", Bool True)])
+            done2 `shouldSatisfy` ("closed 1 of 1" `Text.isInfixOf`)
+            closed3 <- fetch m3
+            closed3.status `shouldBe` "closed"
+            -- raw JSON object value form works for the shorthand too
+            let shorthandValue = object ["host" .= ("agent-match-" <> token <> "-web-*" :: Text)]
+            acked <- runTool user "ack_by_match" (argsKV [("match", shorthandValue), ("confirmed", Bool True)])
+            acked `shouldSatisfy` ("acknowledged 0 of 0" `Text.isPrefixOf`)
+            badMatch <- runTool user "close_by_match" (args [("match", "{\"bogus facet\": 42}")])
+            badMatch `shouldSatisfy` ("invalid match" `Text.isPrefixOf`)
+            badFacet <- runTool user "close_by_match" (args [("match", "{\"nosuchfield\": \"x*\"}")])
+            badFacet `shouldSatisfy` ("invalid match" `Text.isPrefixOf`)
+            closed2 <- fetch m2
+            closed2.status `shouldBe` "closed"
+
             user <- m6User ["view"]
             runTool user "nope" "{}" `shouldReturn` "unknown tool: nope"
             bad <- runTool user "search_alerts" "{]"
@@ -415,6 +593,10 @@ spec = describe "agent tools (internal API milestone)" do
                 `shouldSatisfy` all (`elem` names ["manage_rules"])
             requiredPrivilegeFor "create_notification_channel" `shouldBe` Just "manage_rules"
             requiredPrivilegeFor "update_team" `shouldBe` Just "manage_users"
+            names ["view"] `shouldSatisfy` (\xs -> "list_mattermost_templates" `Data.List.notElem` xs)
+            ["list_mattermost_templates", "update_mattermost_template"]
+                `shouldSatisfy` all (`elem` names ["manage_rules"])
+            requiredPrivilegeFor "update_mattermost_template" `shouldBe` Just "manage_rules"
             ["create_blackout", "list_teams", "ack_alert", "list_sources", "list_escalation_policies"]
                 `shouldSatisfy` all (`elem` names ["view", "ack", "manage_blackouts", "manage_users", "manage_rules", "manage_sources", "close"])
             names ["admin"] `shouldSatisfy` (\xs -> "create_blackout" `Data.List.notElem` xs) -- raw "admin" is expanded by userPrivileges, not here
@@ -492,6 +674,37 @@ spec = describe "agent tools (internal API milestone)" do
             titleRow `shouldSatisfy` isJust
             noScope <- runTool user "create_blackout" (args [("starts_at", "2026-09-24T18:00:00Z"), ("ends_at", "2026-09-24T20:00:00Z")])
             noScope `shouldSatisfy` ("invalid scope" `Text.isPrefixOf`)
+        it "create_blackout treats an omitted ends_at as open-ended" do
+            user <- m6User ["view", "manage_blackouts"]
+            let openArgs confirmed =
+                    argsV
+                        [ ("title", String "rbac-open-ended-*")
+                        , ("starts_at", String "2026-09-24T18:00:00Z")
+                        , ("confirmed", Bool confirmed)
+                        ]
+            plan <- runTool user "create_blackout" (openArgs False)
+            plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+            plan `shouldSatisfy` ("forever (open-ended)" `Text.isInfixOf`)
+            done <- runTool user "create_blackout" (openArgs True)
+            done `shouldSatisfy` ("created blackout" `Text.isInfixOf`)
+            Just row <- query @Blackout |> filterWhere (#titleGlob, Just "rbac-open-ended-*") |> fetchOneOrNothing
+            row.endsAt `shouldBe` openEndedBlackoutEndsAt
+            listed <- runTool user "list_blackouts" "{}"
+            listed `shouldSatisfy` ("rbac-open-ended-*" `Text.isInfixOf`)
+            listed `shouldSatisfy` (" to forever" `Text.isInfixOf`)
+            -- an explicit ends_at still wins
+            let boundedArgs =
+                    argsV
+                        [ ("title", String "rbac-bounded-*")
+                        , ("starts_at", String "2026-09-24T18:00:00Z")
+                        , ("ends_at", String "2026-09-24T20:00:00Z")
+                        , ("confirmed", Bool True)
+                        ]
+            _ <- runTool user "create_blackout" boundedArgs
+            Just bounded <- query @Blackout |> filterWhere (#titleGlob, Just "rbac-bounded-*") |> fetchOneOrNothing
+            bounded.endsAt `shouldSatisfy` (/= openEndedBlackoutEndsAt)
+            bad <- runTool user "create_blackout" (argsV [("title", String "rbac-bad-time-*"), ("starts_at", String "2026-09-24T18:00:00Z"), ("ends_at", String "not-a-time"), ("confirmed", Bool True)])
+            bad `shouldSatisfy` ("invalid time" `Text.isPrefixOf`)
 
     describe "notification channel and team mattermost tools" do
         it "notification channels: create, list, update token_env, delete blocked by rule reference" do
@@ -569,6 +782,44 @@ spec = describe "agent tools (internal API milestone)" do
             cleared <- query @Team |> filterWhere (#name, name) |> fetchOne
             mattermostFieldValues (get #defaults cleared) `shouldBe` ("", "")
             get #defaults cleared `shouldBe` Aeson.object []
+
+    describe "mattermost message template tools" do
+        it "list shows the active body; update appends a version and activates it" do
+            user <- m6User ["view", "manage_rules"]
+            -- Clean slate (idempotent reruns) and cleanup afterwards: a
+            -- customized mattermost_root row would leak into the Mattermost
+            -- delivery specs sharing this database.
+            deleteMattermostRootTemplates
+            flip finally deleteMattermostRootTemplates do
+                _ <-
+                    newRecord @LlmPromptTemplate
+                        |> set #name "mattermost_root"
+                        |> set #version (1 :: Int)
+                        |> set #body "[{{alert.state}}] {{alert.title}}"
+                        |> set #active True
+                        |> createRecord
+                listed <- runTool user "list_mattermost_templates" "{}"
+                listed `shouldSatisfy` ("mattermost_root v1 (active)" `Text.isInfixOf`)
+                listed `shouldSatisfy` ("[{{alert.state}}]" `Text.isInfixOf`)
+                let newBody = "ALERT {{alert.severity}}: {{alert.title}}"
+                    updateArgs confirmed =
+                        argsV
+                            [ ("name", String "mattermost_root")
+                            , ("body", String newBody)
+                            , ("confirmed", Bool confirmed)
+                            ]
+                invalid <- runTool user "update_mattermost_template" (args [("name", "alert_enrichment"), ("body", "x")])
+                invalid `shouldSatisfy` ("invalid: name must be one of" `Text.isPrefixOf`)
+                emptyBody <- runTool user "update_mattermost_template" (args [("name", "mattermost_root")])
+                emptyBody `shouldSatisfy` ("invalid: body must not be empty" `Text.isPrefixOf`)
+                plan <- runTool user "update_mattermost_template" (updateArgs False)
+                plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
+                applied <- runTool user "update_mattermost_template" (updateArgs True)
+                applied `shouldSatisfy` ("updated mattermost template" `Text.isPrefixOf`)
+                activeRow <- query @LlmPromptTemplate |> filterWhere (#name, "mattermost_root") |> filterWhere (#active, True) |> fetchOne
+                get #body activeRow `shouldBe` newBody
+                previous <- query @LlmPromptTemplate |> filterWhere (#name, "mattermost_root") |> filterWhere (#body, "[{{alert.state}}] {{alert.title}}") |> fetchOne
+                get #active previous `shouldBe` False
 
     describe "turn traces (agent observability)" do
         it "explain_last_turn renders the current session's per-round trace" do
@@ -656,11 +907,16 @@ spec = describe "agent tools (internal API milestone)" do
                     case tools of
                         Array items -> mapM (lookupKeyAsText "name") (Vector.toList items)
                         _ -> Nothing
-            fmap length toolNames `shouldBe` Just 21
+            fmap length toolNames `shouldBe` Just 22
             -- privilege filter, not just a count: view tools present,
-            -- manage_blackouts-only tools hidden
+            -- manage_blackouts/close/ack-only tools hidden
             fmap ("search_alerts" `elem`) toolNames `shouldBe` Just True
+            fmap ("get_alert" `elem`) toolNames `shouldBe` Just True
             fmap ("create_blackout" `elem`) toolNames `shouldBe` Just False
+            fmap ("close_alerts" `elem`) toolNames `shouldBe` Just False
+            fmap ("close_by_match" `elem`) toolNames `shouldBe` Just False
+            fmap ("ack_alerts" `elem`) toolNames `shouldBe` Just False
+            fmap ("ack_by_match" `elem`) toolNames `shouldBe` Just False
 
         it "executes tools/call and flags errors" do
             user <- m6User ["view"]
@@ -685,8 +941,12 @@ spec = describe "agent tools (internal API milestone)" do
     resetAgentTemplates = void do
         sqlExecTyped
             [typedSql| DELETE FROM llm_prompt_templates WHERE name = 'internal_agent' |]
+    deleteMattermostRootTemplates = void do
+        sqlExecTyped
+            [typedSql| DELETE FROM llm_prompt_templates WHERE name = 'mattermost_root' |]
     args pairs = argsV [(key, String value) | (key, value) <- pairs]
     argsV pairs = cs (Aeson.encode (Aeson.object [(Key.fromText key, value) | (key, value) <- pairs]))
+    argsKV pairs = cs (Aeson.encode (Aeson.object pairs))
     testMcpConfig user = McpConfig{mcpUser = user, mcpLanguage = "English", mcpPrivileges = ["view"]}
     functionField key tool = field "function" tool >>= field key
     field key (Object obj) = KeyMap.lookup key obj

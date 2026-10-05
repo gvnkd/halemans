@@ -191,6 +191,7 @@ catalogRu =
         , ("Endpoint", "Эндпоинт")
         , ("Ends", "Конец")
         , ("Ends at (UTC, ISO 8601)", "Конец (UTC, ISO 8601)")
+        , ("Ends at (UTC, ISO 8601; empty = open-ended)", "Конец (UTC, ISO 8601; пусто = бессрочно)")
         , ("Entries cached: {count}", "Записей в кэше: {count}")
         , ("Env", "Среда")
         , ("Environment", "Среда")

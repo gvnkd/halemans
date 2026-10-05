@@ -14,6 +14,8 @@ module Application.Pipeline.Grouping (
     facetValue,
     ruleReferencesFacets,
     renderTemplate,
+    parseTemplate,
+    TemplateSegment (..),
     groupKeyForRule,
     severityAtLeast,
     severityRank,
@@ -30,7 +32,7 @@ import IHP.Prelude
 -- Pure grouping-rule core (design_docs/milestone_2.md §4). Rules are rows;
 -- this module never touches the DB so it stays unit-testable.
 
-data AlertField = FieldEnv | FieldHost | FieldService | FieldCheck | FieldSeverity | FieldStatus
+data AlertField = FieldEnv | FieldHost | FieldService | FieldCheck | FieldSeverity | FieldStatus | FieldMuted | FieldTitle
     deriving (Eq, Show)
 
 data MatchExpr = MatchExpr
@@ -84,6 +86,8 @@ alertFieldName = \case
     FieldCheck -> "check"
     FieldSeverity -> "severity"
     FieldStatus -> "status"
+    FieldMuted -> "muted"
+    FieldTitle -> "title"
 
 parseAlertField :: Text -> Maybe AlertField
 parseAlertField = \case
@@ -93,8 +97,12 @@ parseAlertField = \case
     "check" -> Just FieldCheck
     "severity" -> Just FieldSeverity
     "status" -> Just FieldStatus
+    "muted" -> Just FieldMuted
+    "title" -> Just FieldTitle
     _ -> Nothing
 
+-- | muted renders as the text "true"/"false" so match clauses (=, !=, ~,
+-- in, not-in) compare uniformly in Haskell and SQL (suppressed::text).
 alertFieldText :: AlertField -> Alert -> Maybe Text
 alertFieldText = \case
     FieldEnv -> (.env)
@@ -103,6 +111,11 @@ alertFieldText = \case
     FieldCheck -> (.checkName)
     FieldSeverity -> Just . (.severity)
     FieldStatus -> Just . (.status)
+    FieldMuted -> Just . boolText . (.suppressed)
+    FieldTitle -> Just . (.title)
+
+boolText :: Bool -> Text
+boolText value = if value then "true" else "false"
 
 -- | A materialized facet named exactly like an overridable field becomes the
 -- effective value of that field everywhere (display, filters, dashboards,
@@ -138,6 +151,8 @@ effectiveFieldSql alias field
         FieldCheck -> "check_name"
         FieldSeverity -> "severity"
         FieldStatus -> "status"
+        FieldMuted -> "suppressed"
+        FieldTitle -> "title"
 
 -- | Conjunction only (§13 decision): every field-equals, every label glob
 -- and every facet glob must hold. An empty MatchExpr matches everything.

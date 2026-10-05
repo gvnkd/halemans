@@ -3,11 +3,28 @@ module Application.Pipeline.Blackouts (
     alertSubject,
     blackoutWindowActive,
     blackoutApplies,
+    openEndedBlackoutEndsAt,
+    blackoutEndsLabel,
 ) where
 
 import Application.Pipeline.Grouping (globMatch)
+import Data.Time.Calendar (fromGregorian)
 import Generated.Types
 import IHP.Prelude
+
+-- | Stored ends_at for open-ended blackouts (a null/empty endsAt in the
+-- agent or web API). The column stays NOT NULL so every window comparison
+-- and the (starts_at, ends_at) provision identity keep working; this value
+-- never passes `now < endsAt` in practice. All display paths render it via
+-- 'blackoutEndsLabel' as "forever".
+openEndedBlackoutEndsAt :: UTCTime
+openEndedBlackoutEndsAt = UTCTime (fromGregorian 9999 12 31) 0
+
+-- | Human-facing end of a blackout window.
+blackoutEndsLabel :: Blackout -> Text
+blackoutEndsLabel blackout
+    | blackout.endsAt == openEndedBlackoutEndsAt = "forever"
+    | otherwise = tshow blackout.endsAt
 
 -- | The inventory refs AND raw names of one alert. Blackouts match by ref
 -- (exact inventory row) or by glob (raw ingest name, so a glob covers

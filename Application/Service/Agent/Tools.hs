@@ -8,23 +8,27 @@ module Application.Service.Agent.Tools (
 ) where
 
 import Application.Helper.Controller (userPrivileges)
-import Application.Helper.DashboardConfig (DashboardCard (..), MatchClause (..), MatchOp (..), decodeDashboardConfig, encodeDashboardConfig, facetRefText)
+import Application.Helper.DashboardConfig (DashboardCard (..), FacetRef (..), MatchClause (..), MatchOp (..), decodeDashboardConfig, encodeDashboardConfig, facetRefText, parseFacetRef)
 import Application.Pipeline.Actions (ackAlert, addComment, closeAlert, unackAlert)
+import Application.Pipeline.Blackouts (blackoutEndsLabel, openEndedBlackoutEndsAt)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText, parseAlertField)
 import Application.Service.AlertScope (alertVisibleWith, scopeForUser)
-import Application.Service.Api.Alerts (AlertFilters (..), defaultFilters, listAlertsPage)
+import Application.Service.Api.Alerts (AlertFilters (..), AlertPage (..), defaultFilters, listAlertsPage)
+import Application.Service.Api.Cursor (decodeCursor)
 import Application.Service.Api.Token (newApiToken)
 import Application.Service.DashboardCards (cardBaseQuery)
 import Application.Service.HostGroups (hostGroupsToJson)
 import Application.Service.Llm (LlmProviderConfig (..), ToolCall (..))
 import Application.Service.Llm.DbConfig (currentLlmConfig)
+import Application.Service.Mattermost.Render (mattermostTemplateNames)
 import Control.Exception (SomeException, try)
-import Control.Monad (void, when)
+import Control.Monad (filterM, void, when)
 import Data.Aeson (Value (..), object, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Pretty
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.Aeson.Types (Parser, parseMaybe)
+import Data.Aeson.Types (Parser, parseEither, parseMaybe)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
@@ -40,7 +44,7 @@ import IHP.Fetch (fetch, fetchCount, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
-import IHP.TypedSql (sqlQueryTyped, typedSql)
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import Text.Read (readMaybe)
 
 -- Agent tool registry (internal API milestone). One implementation backs the
@@ -66,14 +70,19 @@ data AgentContext = AgentContext
 toolCatalog :: [(Text, Text, [(Text, Value)], Maybe Text)]
 toolCatalog =
     [ -- P1: day-2 ops
-      tool "search_alerts" "Search open alerts (newest first). All filters optional, exact match on effective env/host/service values. Requires the view privilege." [envP, hostP, serviceP, sevP, statusP, limitP] (Just "view")
+      tool "search_alerts" "Search alerts newest first (any status unless filtered). env/host/service accept shell globs (*, ?) or exact values; title is a glob match; status/severity exact. limit caps the page (max 100); when the output has a next_cursor line, pass it as the cursor argument for the next page. The header reports the total match count. Requires the view privilege." [envP, hostP, serviceP, sevP, statusP, titleP, limitP, cursorP] (Just "view")
+    , tool "get_alert" "Get one alert by id: the full record regardless of status (firing/ack/resolved/stalled/closed) — status, severity, effective env/host/service, title, muted flag, fingerprint, occurrences, timestamps (first/last seen, acked/resolved/closed), ack/close details, group, comments and escalation state. Use this when you have an alert URL or id that search_alerts does not explain. Requires the view privilege." [req "alert_id" "alert UUID"] (Just "view")
     , tool "list_environments" "List monitoring environments with the count of currently open (non-closed) alerts in each. Requires the view privilege." [] (Just "view")
     , tool "ack_alert" "Acknowledge an alert by id (stops escalation). Requires the ack privilege." [req "alert_id" "alert UUID", opt "comment" "ack comment"] (Just "ack")
     , tool "unack_alert" "Remove the acknowledgement from an alert (restarts escalation). Requires the ack privilege." [req "alert_id" "alert UUID"] (Just "ack")
-    , tool "close_alert" "Close an alert by id (it is resolved/done). Requires the close privilege." [req "alert_id" "alert UUID", opt "reason" "close reason"] (Just "close")
+    , tool "close_alert" "Close an alert by id (it is resolved/done). Only acked or stalled alerts can be closed — ack a firing alert first. Requires the close privilege." [req "alert_id" "alert UUID", opt "reason" "close reason"] (Just "close")
+    , tool "ack_alerts" "Acknowledge several alerts by id in one call (all or nothing: any unknown/invisible id aborts before anything changes). Returns per-id results. Two-phase (confirmed). Requires the ack privilege." [req "alert_ids" "JSON array of alert UUID strings, e.g. [\"id1\",\"id2\"]", opt "comment" "ack comment", optC "confirmed"] (Just "ack")
+    , tool "close_alerts" "Close several alerts by id in one call (all or nothing: any unknown/invisible id aborts before anything changes). Only acked or stalled alerts can be closed — firing alerts are reported as skipped, ack them first. Returns per-id results. Two-phase (confirmed). Requires the close privilege." [req "alert_ids" "JSON array of alert UUID strings, e.g. [\"id1\",\"id2\"]", opt "reason" "close reason", optC "confirmed"] (Just "close")
+    , tool "ack_by_match" "Acknowledge all open (non-closed) alerts matching a dashboard-style match, limited to what the acting user can see: a JSON object mapping facets to globs (e.g. {\"host\": \"web-*\"}, keys may be plain field names, field:/attr:/label: references) or an array of dashboard match clauses. Returns per-id results. Two-phase (confirmed). Requires the ack privilege." [req "match" "match JSON (object of facet->glob or clause array)", opt "comment" "ack comment", opt "limit" "max alerts, default 50, max 200", optC "confirmed"] (Just "ack")
+    , tool "close_by_match" "Close all open (non-closed) alerts matching a dashboard-style match, limited to what the acting user can see: a JSON object mapping facets to globs (e.g. {\"host\": \"web-*\"}, keys may be plain field names, field:/attr:/label: references) or an array of dashboard match clauses. Only acked or stalled alerts can be closed — firing alerts are reported as skipped, ack them first (ack_by_match). Returns per-id results. Two-phase (confirmed). Requires the close privilege." [req "match" "match JSON (object of facet->glob or clause array)", opt "reason" "close reason", opt "limit" "max alerts, default 50, max 200", optC "confirmed"] (Just "close")
     , tool "comment_alert" "Add a comment to an alert by id. Requires the view privilege." [req "alert_id" "alert UUID", req "body" "comment text"] (Just "view")
     , tool "list_blackouts" "List silence/maintenance windows (newest first)." [] Nothing
-    , tool "create_blackout" "Create a silence/maintenance window. Scope is optional env/host/service/title values (at least one); env/host/service names containing * or ? are stored as shell globs against the raw alert names instead of being resolved to inventory rows; a title is always stored as a glob (plain text matches exactly). Two-phase: call with confirmed=false first to show the plan. Requires manage_blackouts." [opt "env" "environment name or glob", opt "host" "host name or glob", opt "service" "service name or glob", opt "title" "alert title glob (e.g. test memory leak*; plain text matches exactly)", req "starts_at" "ISO8601, e.g. 2026-09-24T18:00:00Z", req "ends_at" "ISO8601", opt "reason" "why", optC "confirmed"] (Just "manage_blackouts")
+    , tool "create_blackout" "Create a silence/maintenance window. Scope is optional env/host/service/title values (at least one); env/host/service names containing * or ? are stored as shell globs against the raw alert names instead of being resolved to inventory rows; a title is always stored as a glob (plain text matches exactly). Omit ends_at (or pass null/empty) for an open-ended window that never expires. Two-phase: call with confirmed=false first to show the plan. Requires manage_blackouts." [opt "env" "environment name or glob", opt "host" "host name or glob", opt "service" "service name or glob", opt "title" "alert title glob (e.g. test memory leak*; plain text matches exactly)", req "starts_at" "ISO8601, e.g. 2026-09-24T18:00:00Z", opt "ends_at" "ISO8601; omit/null for open-ended (forever)", opt "reason" "why", optC "confirmed"] (Just "manage_blackouts")
     , tool "delete_blackout" "Delete a blackout by id. Two-phase (confirmed). Requires manage_blackouts." [req "blackout_id" "blackout UUID", optC "confirmed"] (Just "manage_blackouts")
     , tool "list_dashboards" "List the current user's dashboards: name, whether it is the default, and card count." [] Nothing
     , tool "get_dashboard" "Get one of the current user's dashboards by name or id: the full card config JSON (ready to edit and pass to update_dashboard), plus default/position metadata. Use this before modifying an existing dashboard." [opt "name" "dashboard name", opt "id" "dashboard UUID (from the page URL /dashboards/<uuid>)"] Nothing
@@ -117,6 +126,8 @@ toolCatalog =
     , tool "list_users" "List users (email, display name, locked state). Requires manage_users." [] (Just "manage_users")
     , tool "list_roles" "List roles and their privileges. Requires manage_users." [] (Just "manage_users")
     , tool "list_llm_templates" "List LLM prompt templates (name, version, active). Requires manage_rules." [] (Just "manage_rules")
+    , tool "list_mattermost_templates" "List the Mattermost message templates (mattermost_root, mattermost_details): versions, active flags, and the active bodies (slot syntax like {{alert.title}}). Requires manage_rules." [] (Just "manage_rules")
+    , tool "update_mattermost_template" "Update a Mattermost message template by name (mattermost_root|mattermost_details): appends a new version and activates it transactionally, like the admin editor's save+activate. body is the full template text with {{slots}} — call list_mattermost_templates first to see the current body and slot usage. Two-phase (confirmed). Provisioned items are read-only. Requires manage_rules." [req "name" "mattermost_root|mattermost_details", req "body" "template body with {{alert.*}} / context slots", opt "notes" "version notes", optC "confirmed"] (Just "manage_rules")
     , tool "list_llm_providers" "List configured LLM providers (name, model, enabled) — never the API key. Requires manage_rules." [] (Just "manage_rules")
     , tool "get_llm_config" "Get the enabled LLM provider name, model and endpoint (never the API key). For agent bootstrap." [] Nothing
     , tool "list_alert_groups" "List recent alert groups with open-alert counts. Requires the view privilege." [opt "limit" "max results, default 20, max 100"] (Just "view")
@@ -128,12 +139,14 @@ toolCatalog =
     req name description = (name, stringProp description True)
     opt name description = (name, stringProp description False)
     optC name = (name, boolProp "apply for real; false returns the plan without changing anything" False)
-    envP = opt "env" "effective environment name"
-    hostP = opt "host" "effective host name"
-    serviceP = opt "service" "effective service name"
+    envP = opt "env" "environment name or glob (*, ?)"
+    hostP = opt "host" "host name or glob (*, ?)"
+    serviceP = opt "service" "service name or glob (*, ?)"
     sevP = opt "severity" "critical|high|warning|info"
     statusP = opt "status" "firing|ack|resolved|stalled|closed"
+    titleP = opt "title" "alert title glob, e.g. VIP IP*"
     limitP = opt "limit" "max results, default 20, max 100"
+    cursorP = opt "cursor" "next_cursor from a previous search_alerts call (pagination)"
 
 stringProp :: Text -> Bool -> Value
 stringProp description required =
@@ -243,10 +256,15 @@ dispatch context name arguments = case name of
         service <- arg "service" ""
         severity <- arg "severity" ""
         status <- arg "status" ""
+        title <- arg "title" ""
         limitRaw <- argInt "limit" 20
         let limit = max 1 (min 100 limitRaw)
+        cursorArg <- argMaybe "cursor"
+        cursor <- case cursorArg of
+            Nothing -> pure Nothing
+            Just raw -> maybe (error "invalid cursor: pass the next_cursor value verbatim from the previous search_alerts output") (pure . Just) (decodeCursor raw)
         scope <- scopeForUser context.acUser
-        (alerts, _cursor) <-
+        page <-
             listAlertsPage
                 defaultFilters
                     { afEnvironment = env
@@ -254,12 +272,23 @@ dispatch context name arguments = case name of
                     , afService = service
                     , afSeverity = severity
                     , afStatus = status
+                    , afTitle = title
+                    , afCursor = cursor
                     , afLimit = limit
                     }
                 scope
-        pure case alerts of
+        pure case page.apAlerts of
             [] -> "no matching alerts"
-            _ -> Text.intercalate "\n" (map alertLine alerts)
+            _ ->
+                Text.intercalate
+                    "\n"
+                    ( ("total: " <> tshow page.apTotal <> " matching alert(s); showing " <> tshow (length page.apAlerts))
+                        : map alertLine page.apAlerts
+                        ++ ["next_cursor: " <> nextCursor | Just nextCursor <- [page.apNextCursor]]
+                    )
+    "get_alert" -> do
+        alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
+        getAlertDetails alert
     "list_environments" -> listEnvironments =<< scopeForUser context.acUser
     "ack_alert" -> do
         alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
@@ -275,6 +304,40 @@ dispatch context name arguments = case name of
         reason <- argMaybe "reason"
         _ <- closeAlert (Just context.acUser) alert reason
         pure ("closed alert " <> alert.title)
+    "ack_alerts" -> do
+        alertIds <- bulkAlertIds
+        comment <- argMaybe "comment"
+        confirmed <- argBool "confirmed" False
+        alerts <- mapM (fetchVisibleAlert context.acUser) alertIds
+        bulkPlanOrApply confirmed (bulkPlan "acknowledge" "" alerts comment) (applyBulk "acknowledged" "ack" (\alert -> ackAlert context.acUser alert comment Nothing) alerts)
+    "close_alerts" -> do
+        alertIds <- bulkAlertIds
+        reason <- argMaybe "reason"
+        confirmed <- argBool "confirmed" False
+        alerts <- mapM (fetchVisibleAlert context.acUser) alertIds
+        bulkPlanOrApply confirmed (bulkPlan "close" "" alerts reason) (applyBulk "closed" "closed" (\alert -> closeAlert (Just context.acUser) alert reason) alerts)
+    "ack_by_match" -> do
+        matchText <- argJsonText "match"
+        comment <- argMaybe "comment"
+        limitRaw <- argInt "limit" 50
+        confirmed <- argBool "confirmed" False
+        case parseMatchClauses matchText of
+            Left err -> pure ("invalid match: " <> err)
+            Right clauses -> do
+                scope <- scopeForUser context.acUser
+                alerts <- alertsMatchingClauses scope clauses (bulkLimit limitRaw)
+                bulkPlanOrApply confirmed (bulkPlan "acknowledge" (" matching " <> clauseSummary clauses) alerts comment) (applyBulk "acknowledged" "ack" (\alert -> ackAlert context.acUser alert comment Nothing) alerts)
+    "close_by_match" -> do
+        matchText <- argJsonText "match"
+        reason <- argMaybe "reason"
+        limitRaw <- argInt "limit" 50
+        confirmed <- argBool "confirmed" False
+        case parseMatchClauses matchText of
+            Left err -> pure ("invalid match: " <> err)
+            Right clauses -> do
+                scope <- scopeForUser context.acUser
+                alerts <- alertsMatchingClauses scope clauses (bulkLimit limitRaw)
+                bulkPlanOrApply confirmed (bulkPlan "close" (" matching " <> clauseSummary clauses) alerts reason) (applyBulk "closed" "closed" (\alert -> closeAlert (Just context.acUser) alert reason) alerts)
     "comment_alert" -> do
         alert <- fetchVisibleAlert context.acUser =<< arg "alert_id" ""
         body <- arg "body" ""
@@ -287,10 +350,14 @@ dispatch context name arguments = case name of
         serviceName <- argMaybe "service"
         titleName <- argMaybe "title"
         startsRaw <- arg "starts_at" ""
-        endsRaw <- arg "ends_at" ""
+        endsProvided <- argMaybe "ends_at"
         reason <- arg "reason" ""
         confirmed <- argBool "confirmed" False
-        case (iso8601ParseM (cs startsRaw) :: Maybe UTCTime, iso8601ParseM (cs endsRaw) :: Maybe UTCTime) of
+        let openEnded = maybe True (Text.null . Text.strip) endsProvided
+            mEndsAt
+                | openEnded = Just openEndedBlackoutEndsAt
+                | otherwise = iso8601ParseM (cs (fromMaybe "" endsProvided)) :: Maybe UTCTime
+        case (iso8601ParseM (cs startsRaw) :: Maybe UTCTime, mEndsAt) of
             (Just startsAt, Just endsAt)
                 | endsAt > startsAt -> do
                     let envGlob = globName =<< envName
@@ -311,13 +378,14 @@ dispatch context name arguments = case name of
                             hostId <- if isJust hostGlob then pure Nothing else resolveHostId (fromMaybe "" hostName)
                             serviceId <- if isJust serviceGlob then pure Nothing else resolveServiceId (fromMaybe "" serviceName)
                             let scope = blackoutScopeText envName hostName serviceName envGlob hostGlob serviceGlob titleGlob
+                                windowText =
+                                    if openEnded
+                                        then " from " <> tshow startsAt <> " forever (open-ended)"
+                                        else " from " <> tshow startsAt <> " to " <> tshow endsAt
                                 plan =
                                     "plan: blackout "
                                         <> scope
-                                        <> " from "
-                                        <> tshow startsAt
-                                        <> " to "
-                                        <> tshow endsAt
+                                        <> windowText
                                         <> (if Text.null reason then "" else " (" <> reason <> ")")
                             if not confirmed
                                 then pure (plan <> "\nconfirmation required: show this plan to the user; call create_blackout again with confirmed=true only after explicit agreement")
@@ -371,16 +439,16 @@ dispatch context name arguments = case name of
             else pure ("plan: " <> summary <> "\nconfirmation required: present this plan in the chat; proceed with the change only after the user's explicit agreement (Apply), and do not apply if they Discard")
     "validate_dashboard" -> do
         name <- arg "name" ""
-        configText <- arg "config" ""
+        configText <- argJsonText "config"
         validateDashboard name configText
     "create_dashboard" -> do
         name <- arg "name" ""
-        configText <- arg "config" ""
+        configText <- argJsonText "config"
         confirmed <- argBool "confirmed" False
         createDashboardFor context name configText confirmed
     "update_dashboard" -> do
         name <- arg "name" ""
-        configText <- arg "config" ""
+        configText <- argJsonText "config"
         confirmed <- argBool "confirmed" False
         dashboard <- fetchOwnDashboardByName context name
         plan <- validateDashboard name configText
@@ -430,6 +498,8 @@ dispatch context name arguments = case name of
     argInt :: Text -> Int -> IO Int
     argInt key fallback = case KeyMap.lookup (Key.fromText key) arguments of
         Just (Number value) -> pure (fromMaybe fallback (previewInt value))
+        -- Models often quote numbers: accept a numeric string too.
+        Just (String value) -> pure (fromMaybe fallback (readMaybe (cs value)))
         _ -> pure fallback
       where
         previewInt value = case floatingOrInteger value of
@@ -439,6 +509,24 @@ dispatch context name arguments = case name of
     argBool key fallback = case KeyMap.lookup (Key.fromText key) arguments of
         Just (Bool value) -> pure value
         _ -> pure fallback
+    -- Like arg, but models often pass structured JSON where a string is
+    -- documented: accept any JSON value and re-encode it (a String passes
+    -- through verbatim).
+    argJsonText :: Text -> IO Text
+    argJsonText key = case KeyMap.lookup (Key.fromText key) arguments of
+        Just (String value) -> pure value
+        Just other -> pure (cs (Aeson.encode other))
+        Nothing -> pure ""
+    bulkAlertIds :: IO [Text]
+    bulkAlertIds = do
+        raw <- arg "alert_ids" ""
+        case Aeson.decode (cs raw) of
+            Just (Array items)
+                | let ids = [value | String value <- Vector.toList items]
+                , length ids == Vector.length items
+                , not (null ids) ->
+                    pure ids
+            _ -> error "alert_ids must be a non-empty JSON array of alert UUID strings, e.g. [\"id1\",\"id2\"]"
 
 -- Helpers: alerts
 alertLine alert =
@@ -477,12 +565,163 @@ fetchVisibleAlert user rawId = do
     case scope of
         Nothing -> pure alert
         Just names -> do
-            isZabbix <- case alert.sourceId of
-                Nothing -> pure False
-                Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
-            if alertVisibleWith names isZabbix alert
+            visible <- alertVisibleIO names alert
+            if visible
                 then pure alert
                 else error "unknown alert id (not visible to this user)"
+
+alertVisibleIO :: (?modelContext :: ModelContext) => [Text] -> Alert -> IO Bool
+alertVisibleIO names alert = do
+    isZabbix <- case alert.sourceId of
+        Nothing -> pure False
+        Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
+    pure (alertVisibleWith names isZabbix alert)
+
+-- | Full single-alert record for get_alert: status, effective field values,
+-- muted flag, timestamps, ack/close details, group, comments and escalation
+-- trackers — everything needed to answer "why isn't that alert acting the
+-- way I expect" without opening the web UI.
+getAlertDetails :: (?modelContext :: ModelContext) => Alert -> IO Text
+getAlertDetails alert = do
+    ackUser <- traverse userLabel alert.acknowledgedBy
+    closedUser <- traverse userLabel alert.closedBy
+    group <- traverse fetch alert.groupId
+    source <- traverse fetch alert.sourceId
+    comments <- query @Comment |> filterWhere (#alertId, get #id alert) |> orderByAsc #createdAt |> fetch
+    commentLines <- forM comments \comment -> do
+        author <- userLabel comment.userId
+        pure ("- [" <> tshow comment.createdAt <> "] " <> author <> ": " <> comment.body)
+    trackers <- query @EscalationTracker |> filterWhere (#alertId, get #id alert) |> fetch
+    trackerLines <- forM trackers \tracker -> do
+        policyName <- maybe "-" (.name) <$> fetchOneOrNothing tracker.policyId
+        pure
+            ( "- policy \""
+                <> policyName
+                <> "\" step "
+                <> tshow tracker.currentStep
+                <> " ("
+                <> tracker.status
+                <> ")"
+                <> maybe "" (", next: " <>) (tshow <$> tracker.nextDeadline)
+            )
+    let eff field = fromMaybe "-" (effectiveFieldText field alert)
+        mutedText =
+            if alert.suppressed
+                then "true" <> maybe "" (\by -> " (by " <> by <> ")") alert.suppressedBy
+                else "false"
+        maybeLine label = maybe [] (\value -> [label <> ": " <> value])
+        coreLines =
+            [ "id: " <> tshow (get #id alert)
+            , "title: " <> alert.title
+            , "status: " <> alert.status
+            , "severity: " <> alert.severity
+            , "env: " <> eff FieldEnv
+            , "host: " <> eff FieldHost
+            , "service: " <> eff FieldService
+            , "check: " <> fromMaybe "-" alert.checkName
+            , "muted: " <> mutedText
+            , "fingerprint: " <> alert.fingerprint
+            , "occurrences: " <> tshow alert.occurrences
+            , "first_seen_at: " <> tshow alert.firstSeenAt
+            , "last_seen_at: " <> tshow alert.lastSeenAt
+            ]
+                ++ maybeLine "description: " (alertDescription alert)
+                ++ ["started_at: " <> tshow t | Just t <- [alert.startedAt]]
+                ++ ["acknowledged_at: " <> tshow t <> " by " <> by | let by = fromMaybe "-" ackUser, Just t <- [alert.acknowledgedAt]]
+                ++ ["ack_comment: " <> c | Just c <- [alert.ackComment]]
+                ++ ["resolved_at: " <> tshow t | Just t <- [alert.resolvedAt]]
+                ++ ["closed_at: " <> tshow t <> " by " <> by | let by = fromMaybe "-" closedUser, Just t <- [alert.closedAt]]
+                ++ ["close_reason: " <> r | Just r <- [alert.closeReason]]
+                ++ ["group: " <> g.groupKey | Just g <- [group]]
+                ++ ["source: " <> s.name <> " (" <> s.type_ <> ")" | Just s <- [source]]
+    pure case commentLines ++ trackerLines of
+        [] -> Text.intercalate "\n" coreLines
+        _ -> Text.intercalate "\n" (coreLines ++ (if null commentLines then [] else "comments:" : commentLines) ++ (if null trackerLines then [] else "escalation:" : trackerLines))
+  where
+    userLabel uid = maybe "-" (.email) <$> fetchOneOrNothing uid
+    alertDescription value = if Text.null value.description then Nothing else Just (Text.take 300 value.description)
+
+-- Bulk ack/close: shared plan/apply machinery for the by-ids and by-match
+-- variants. Plans are two-phase confirmed like every other mutating tool;
+-- apply reports per-id results and never lies about skipped rows.
+
+bulkLimit :: Int -> Int
+bulkLimit raw = max 1 (min 200 raw)
+
+bulkPlan :: Text -> Text -> [Alert] -> Maybe Text -> Text
+bulkPlan verb suffix alerts note =
+    "plan: "
+        <> verb
+        <> " "
+        <> tshow (length alerts)
+        <> " alert(s)"
+        <> suffix
+        <> ": "
+        <> Text.intercalate "; " (take 5 (map (.title) alerts))
+        <> (if length alerts > 5 then "; ..." else "")
+        <> maybe "" (\value -> " (" <> value <> ")") note
+
+bulkPlanOrApply :: Bool -> Text -> IO Text -> IO Text
+bulkPlanOrApply confirmed plan apply =
+    if not confirmed
+        then pure (plan <> "\nconfirmation required: show this plan to the user; call the tool again with confirmed=true only after explicit agreement")
+        else apply
+
+applyBulk :: (?modelContext :: ModelContext) => Text -> Text -> (Alert -> IO Alert) -> [Alert] -> IO Text
+applyBulk verb targetStatus action alerts = do
+    lines' <- forM alerts \alert ->
+        if alert.status == targetStatus
+            then pure (bulkLine alert ("skipped: already " <> targetStatus))
+            else do
+                updated <- action alert
+                if updated.status == targetStatus
+                    then pure (bulkLine alert "")
+                    else pure (bulkLine alert ("skipped: status is " <> updated.status))
+    let doneCount = length [() | line <- lines', not ("skipped" `Text.isInfixOf` line)]
+    pure (verb <> " " <> tshow doneCount <> " of " <> tshow (length alerts) <> " alert(s)\n" <> Text.intercalate "\n" lines')
+  where
+    bulkLine alert note = "- " <> tshow (get #id alert) <> ": " <> alert.title <> (if Text.null note then "" else " (" <> note <> ")")
+
+-- | by-match parsing: the dashboard match vocabulary, in two accepted
+-- shapes — a full clause array (the "match" member of a dashboard card) or a
+-- shorthand object mapping facet references (or plain field names) to glob
+-- patterns, e.g. {"host": "web-*", "attr:DC": "dc1"}.
+parseMatchClauses :: Text -> Either Text [MatchClause]
+parseMatchClauses raw
+    | Text.null (Text.strip raw) = Left "match is required, e.g. {\"host\": \"web-*\"}"
+    | otherwise = case Aeson.decode (cs raw) of
+        Just (Array items) -> parseClauseArray items
+        Just (Object object_) -> case KeyMap.lookup "match" object_ of
+            Just (Array items) -> parseClauseArray items
+            _ -> parseShorthand (KeyMap.toList object_)
+        Just _ -> Left "match must be a JSON object of facet->glob or an array of match clauses"
+        Nothing -> Left "match is not valid JSON"
+  where
+    parseClauseArray items = mapM parseClause (Vector.toList items)
+    parseClause item = case parseEither Aeson.parseJSON item of
+        Left err -> Left (cs err)
+        Right clause -> Right clause
+    parseShorthand pairs = forM pairs \(key, value) -> case value of
+        String glob -> do
+            let keyText = Key.toText key
+            facet <- maybe (Left ("unknown facet: " <> keyText)) Right (parseFacetRef keyText <|> (FacetField <$> parseAlertField keyText))
+            Right (MatchClause facet OpGlob glob [])
+        _ -> Left "match values must be strings (glob patterns)"
+
+-- | Open (non-closed) alerts matching every clause, filtered to what the
+-- acting user can see, capped at limit. Reuses the dashboard card query so
+-- by-match semantics are identical to card matching.
+alertsMatchingClauses :: (?modelContext :: ModelContext) => Maybe [Text] -> [MatchClause] -> Int -> IO [Alert]
+alertsMatchingClauses scopeNames clauses limit = do
+    let card = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing False [] [] Nothing mempty
+    alerts <- cardBaseQuery card |> fetch
+    visible <- case scopeNames of
+        Nothing -> pure alerts
+        Just names -> filterM (alertVisibleIO names) alerts
+    pure (take limit visible)
+
+clauseSummary :: [MatchClause] -> Text
+clauseSummary clauses = "[" <> Text.intercalate ", " (map clauseText clauses) <> "]"
 
 -- Helpers: environments. Open-alert counts respect the per-user host group
 -- visibility (AlertScope) so the agent's summary matches what its user sees.
@@ -517,7 +756,7 @@ listBlackouts = do
                 <> " "
                 <> tshow blackout.startsAt
                 <> " to "
-                <> tshow blackout.endsAt
+                <> blackoutEndsLabel blackout
                 <> (if Text.null blackout.reason then "" else " — " <> blackout.reason)
             )
     pure case lines' of
@@ -951,6 +1190,53 @@ dispatchRest context name arguments = case name of
         pure case templates of
             [] -> "no prompt templates"
             _ -> Text.intercalate "\n" ["- " <> t.name <> " v" <> tshow t.version <> (if t.active then " (active)" else "") | t <- templates]
+    "list_mattermost_templates" -> do
+        templates <- query @LlmPromptTemplate |> orderByAsc #name |> orderByDesc #version |> fetch
+        let mattermost = [t | t <- templates, t.name `elem` mattermostTemplateNames]
+        pure case mattermost of
+            [] -> "no mattermost templates"
+            _ -> Text.intercalate "\n" (map mattermostTemplateLine mattermost)
+    "update_mattermost_template" -> do
+        name <- arg "name" ""
+        body <- arg "body" ""
+        notes <- argMaybe "notes"
+        confirmed <- argBool "confirmed" False
+        if name `notElem` mattermostTemplateNames
+            then pure ("invalid: name must be one of " <> Text.intercalate "|" mattermostTemplateNames)
+            else do
+                versions <- query @LlmPromptTemplate |> filterWhere (#name, name) |> orderByDesc #version |> fetch
+                case versions of
+                    (latest : _) | get #protected latest -> pure "forbidden: this template is provisioned-protected"
+                    _ ->
+                        if Text.null body
+                            then pure "invalid: body must not be empty"
+                            else
+                                let nextVersion = maybe 1 (\latest -> latest.version + 1) (listToMaybe versions)
+                                 in if not confirmed
+                                        then pure ("plan: update mattermost template \"" <> name <> "\" (creates v" <> tshow nextVersion <> " and activates it)\nconfirmation required: call update_mattermost_template again with confirmed=true only after the user's explicit agreement")
+                                        else do
+                                            void do
+                                                newRecord @LlmPromptTemplate
+                                                    |> set #name name
+                                                    |> set #version nextVersion
+                                                    |> set #body body
+                                                    |> set #active False
+                                                    |> set #notes notes
+                                                    |> createRecord
+                                            withTransaction do
+                                                void do
+                                                    sqlExecTyped
+                                                        [typedSql|
+                                                        UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+                                                        WHERE name = ${name}
+                                                    |]
+                                                void do
+                                                    sqlExecTyped
+                                                        [typedSql|
+                                                        UPDATE llm_prompt_templates SET active = true, updated_at = NOW()
+                                                        WHERE name = ${name} AND version = ${nextVersion}
+                                                    |]
+                                            pure ("updated mattermost template \"" <> name <> "\" (v" <> tshow nextVersion <> ", active)")
     "list_llm_providers" -> do
         providers <- query @LlmConfig |> orderByAsc #providerName |> fetch
         pure case providers of
@@ -1010,6 +1296,7 @@ dispatchRest context name arguments = case name of
     argInt :: Text -> Int -> IO Int
     argInt key fallback = case KeyMap.lookup (Key.fromText key) arguments of
         Just (Number value) -> pure (fromMaybe fallback (previewInt value))
+        Just (String value) -> pure (fromMaybe fallback (readMaybe (cs value)))
         _ -> pure fallback
       where
         previewInt value = case floatingOrInteger value of
@@ -1028,10 +1315,12 @@ dashboardSchemaDoc =
         [ "Dashboard config is a JSON array of card objects. Card fields:"
         , "- match: array of clauses {facet, op, value|values} (conjunction)"
         , "- title, groupBy, forEach: facet references; limit (default 100); sortBy; alertSortBy; size {width,height}; hideWhen {match, maxCount}; summary (bool)"
-        , "Facet references: field:env|host|service|check|severity|status, label:<name>, attr:<facet name>"
+        , "Facet references: field:env|host|service|check|severity|status|muted|title, label:<name>, attr:<facet name>"
+        , "  field:muted matches \"true\"/\"false\" (suppressed alerts); field:title supports glob matching"
         , "Match operators: \"=\" (exact), \"!=\" (not equal), \"~\" (glob: * and ?), \"in\" (list), \"not-in\" (exclude list)"
+        , "forEach cards: the template expands into one card per distinct facet value. Title templating: {value} or {{value}} in the title is replaced with the pinned value; {{field:name}}, {{attr:name}}, {{label:name}} resolve to the pinned value when the forEach facet is the same reference, else \"-\". Omit title to auto-title cards by the pinned value."
         , "Example:"
-        , "[{\"title\":\"Critical alerts\",\"match\":[{\"facet\":\"field:severity\",\"op\":\"in\",\"values\":[\"critical\",\"high\"]},{\"facet\":\"field:env\",\"op\":\"not-in\",\"values\":[\"prod-eu\"]}],\"limit\":50}]"
+        , "[{\"title\":\"Critical alerts\",\"match\":[{\"facet\":\"field:severity\",\"op\":\"in\",\"values\":[\"critical\",\"high\"]},{\"facet\":\"field:muted\",\"op\":\"=\",\"value\":\"false\"}],\"limit\":50}]"
         ]
 
 listDashboards :: (?modelContext :: ModelContext) => AgentContext -> IO Text
@@ -1158,9 +1447,15 @@ nextPosition context = do
     dashboards <- ownDashboards context
     pure (1 + maximum (0 : map (.position) dashboards))
 
+-- | Models sometimes pass the config as a JSON array/object instead of the
+-- documented string; accept both (a String decodes as-is, anything else is
+-- re-encoded) so the error below means genuinely unparseable text.
 decodeConfigText :: Text -> Either Text [DashboardCard]
 decodeConfigText raw =
-    maybe (Left "config is not valid JSON") decodeDashboardConfig (Aeson.decode (cs raw))
+    case Aeson.decode (cs raw) of
+        Just (String value) -> decodeDashboardConfig (String value)
+        Just other -> decodeDashboardConfig other
+        Nothing -> Left "config is not valid JSON"
 
 cardTitleText :: DashboardCard -> Int -> Text
 cardTitleText card index = fromMaybe ("card " <> tshow index) card.cardTitle
@@ -1315,6 +1610,15 @@ listNotificationRules = do
 -- Helpers: notification channels
 channelTypes :: [Text]
 channelTypes = ["browser_push", "email", "mattermost"]
+
+mattermostTemplateLine :: LlmPromptTemplate -> Text
+mattermostTemplateLine template =
+    "- "
+        <> template.name
+        <> " v"
+        <> tshow template.version
+        <> (if template.active then " (active)" else "")
+        <> (if template.active then "\n" <> template.body else "")
 
 channelLine :: NotificationChannel -> Text
 channelLine channel =

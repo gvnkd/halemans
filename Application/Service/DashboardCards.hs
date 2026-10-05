@@ -15,6 +15,7 @@ module Application.Service.DashboardCards (
 
 import Application.Helper.DashboardConfig
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldSql, effectiveFieldText, severityRank)
+import qualified Application.Pipeline.Grouping as Grouping
 import Data.List (nub, sort, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Ord (Down (..))
@@ -222,8 +223,23 @@ pinCard :: DashboardCard -> FacetRef -> Text -> DashboardCard
 pinCard card facetRef value =
     card
         { cardMatch = card.cardMatch ++ [MatchClause facetRef OpEq value []]
-        , cardTitle = Just (Text.replace "{value}" value (fromMaybe value card.cardTitle))
+        , cardTitle = Just (renderPinTitle facetRef value (fromMaybe value card.cardTitle))
         }
+
+-- | Title template of a forEach expansion: {value} or {{value}} is the
+-- pinned value; {{field:name}}, {{attr:name}}, {{label:name}} resolve to the
+-- pinned value when the forEach facet is that same reference, anything
+-- unknown renders "-" (the group-key template convention). Double braces are
+-- normalized to single ones first, so both spellings work.
+renderPinTitle :: FacetRef -> Text -> Text -> Text
+renderPinTitle facetRef value template = mconcat (map renderSegment (Grouping.parseTemplate normalized))
+  where
+    normalized = Text.replace "{{" "{" (Text.replace "}}" "}" template)
+    renderSegment (Grouping.Literal text) = text
+    renderSegment (Grouping.Placeholder "value") = value
+    renderSegment (Grouping.Placeholder name) = case parseFacetRef name of
+        Just ref | ref == facetRef -> value
+        _ -> "-"
 
 -- | sortBy ordering of one template's expanded cards: stable, per template,
 -- so config order between templates is preserved. Metrics (worst severity,
@@ -314,6 +330,10 @@ applyClause clause builder = case clause.mcFacet of
             FieldCheck -> builder |> filterWhereSql (#checkName, fragment "" "alerts.check_name")
             FieldSeverity -> builder |> filterWhereSql (#severity, fragment "" "alerts.severity")
             FieldStatus -> builder |> filterWhereSql (#status, fragment "" "alerts.status")
+            -- muted matches on suppressed rendered as text "true"/"false"
+            -- (same rendering alertFieldText uses for the pure evaluator).
+            FieldMuted -> builder |> filterWhereSql (#suppressed, mutedFragment)
+            FieldTitle -> builder |> filterWhereSql (#title, fragment "" "alerts.title")
             _ -> builder
     FacetLabel name -> builder |> filterWhereSql (#labels, fragment accessor ("alerts.labels " <> accessor))
       where
@@ -323,6 +343,12 @@ applyClause clause builder = case clause.mcFacet of
         accessor = "->> " <> quoteSqlText name
   where
     quotedList = Text.intercalate ", " (map quoteSqlText clause.mcValues)
+    mutedFragment = case clause.mcOp of
+        OpEq -> "::text = " <> quoteSqlText clause.mcValue
+        OpNe -> "::text IS NOT NULL AND alerts.suppressed::text <> " <> quoteSqlText clause.mcValue
+        OpGlob -> "::text LIKE " <> quoteSqlText (globToLike clause.mcValue)
+        OpIn -> "::text IN (" <> quotedList <> ")"
+        OpNotIn -> "::text NOT IN (" <> quotedList <> ")"
     -- A NULL effective value (facet and raw column both absent) never
     -- matches, mirroring matchClauseAlert on Nothing.
     effectiveCondition expr =

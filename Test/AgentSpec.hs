@@ -14,8 +14,13 @@ spec = describe "Application.Service.Agent.Tools" do
     describe "tool catalog" do
         it "tags tools with the privilege they need (RBAC at the executor)" do
             requiredPrivilegeFor "search_alerts" `shouldBe` Just "view"
+            requiredPrivilegeFor "get_alert" `shouldBe` Just "view"
             requiredPrivilegeFor "ack_alert" `shouldBe` Just "ack"
             requiredPrivilegeFor "close_alert" `shouldBe` Just "close"
+            requiredPrivilegeFor "ack_alerts" `shouldBe` Just "ack"
+            requiredPrivilegeFor "close_alerts" `shouldBe` Just "close"
+            requiredPrivilegeFor "ack_by_match" `shouldBe` Just "ack"
+            requiredPrivilegeFor "close_by_match" `shouldBe` Just "close"
             requiredPrivilegeFor "create_blackout" `shouldBe` Just "manage_blackouts"
             requiredPrivilegeFor "create_team" `shouldBe` Just "manage_users"
             requiredPrivilegeFor "create_escalation_policy" `shouldBe` Just "manage_rules"
@@ -28,7 +33,7 @@ spec = describe "Application.Service.Agent.Tools" do
             length (nub names) `shouldBe` length names
         it "marks required parameters" do
             requiredOf "validate_dashboard" `shouldBe` ["name", "config"]
-            requiredOf "create_blackout" `shouldBe` ["starts_at", "ends_at"]
+            requiredOf "create_blackout" `shouldBe` ["starts_at"]
             requiredOf "create_team" `shouldBe` ["name"]
             requiredOf "search_alerts" `shouldBe` []
         it "declares confirmed optional on mutating tools" do

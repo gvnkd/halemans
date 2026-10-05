@@ -48,6 +48,13 @@ spec = describe "Application.Pipeline.Blackouts" do
         it "boundary: starts_at inclusive, ends_at exclusive" do
             blackoutWindowActive (utcTime "2026-09-04 09:00:00") (blackout (utcTime "2026-09-04 09:00:00") (utcTime "2026-09-04 11:00:00")) `shouldBe` True
             blackoutWindowActive (utcTime "2026-09-04 11:00:00") (blackout (utcTime "2026-09-04 09:00:00") (utcTime "2026-09-04 11:00:00")) `shouldBe` False
+        it "open-ended windows (ends_at sentinel) stay active forever" do
+            let openEnded = blackout (utcTime "2026-09-04 09:00:00") openEndedBlackoutEndsAt
+            blackoutWindowActive now openEnded `shouldBe` True
+            blackoutWindowActive (utcTime "2099-01-01 00:00:00") openEnded `shouldBe` True
+            blackoutWindowActive (utcTime "2026-09-04 08:00:00") openEnded `shouldBe` False
+            blackoutEndsLabel openEnded `shouldBe` "forever"
+            blackoutEndsLabel window `shouldSatisfy` (/= "forever")
 
     describe "blackoutApplies" do
         it "matches on environment scope" do

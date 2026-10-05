@@ -1,5 +1,6 @@
 module Web.Controller.Blackouts where
 
+import Application.Pipeline.Blackouts (openEndedBlackoutEndsAt)
 import qualified Data.Text as Text
 import Data.Traversable (traverse)
 import Web.Controller.Prelude
@@ -24,7 +25,7 @@ instance Controller BlackoutsController where
     action CreateBlackoutAction = do
         requirePrivilege "manage_blackouts"
         let startsAt = param @UTCTime "startsAt"
-            endsAt = param @UTCTime "endsAt"
+            endsAt = formEndsAt
         let reason = param @Text "reason"
         case scopeParams of
             Just applyScope -> do
@@ -50,7 +51,7 @@ instance Controller BlackoutsController where
         blackout <- fetch blackoutId
         ensureNotProtected (blackoutLabel blackout) (get #protected blackout)
         let startsAt = param @UTCTime "startsAt"
-            endsAt = param @UTCTime "endsAt"
+            endsAt = formEndsAt
         let reason = param @Text "reason"
         case scopeParams of
             Just applyScope -> do
@@ -71,6 +72,13 @@ instance Controller BlackoutsController where
         deleteRecord blackout
         setSuccessMessage (tr "Blackout deleted")
         redirectTo BlackoutsAction
+
+-- | Empty or missing endsAt = open-ended blackout (stored as the
+-- openEndedBlackoutEndsAt sentinel, displayed "forever").
+formEndsAt :: (?request :: Request) => UTCTime
+formEndsAt = case paramOrNothing @Text "endsAt" of
+    Just raw | not (Text.null (Text.strip raw)) -> param @UTCTime "endsAt"
+    _ -> openEndedBlackoutEndsAt
 
 scopeChoices :: (?modelContext :: ModelContext) => IO ([Environment], [Host], [Service])
 scopeChoices = do

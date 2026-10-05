@@ -307,6 +307,61 @@ m9Spec = describe "resolved facets (milestone 9)" do
             expandedCard.ecValue `shouldBe` Nothing
             expandedCard.ecHidden `shouldBe` expectedHidden
 
+    it "card templates: forEach title templates replace {value}/{{value}}/{{facet ref}}" do
+        suffix <- tshow <$> nextRandom
+        let host = "m9ttl-host-" <> suffix
+            envA = "m9ttl-a-" <> suffix
+            envB = "m9ttl-b-" <> suffix
+        source <- integrationSource "webhook" ("m9ttl-" <> suffix) "" (object [])
+        let eventIn env fp = (testEventIn env fp Firing :: NormalizedEvent){host = Just host}
+        Just _ <- ingest source (eventIn envA ("itest:" <> suffix <> "-a"))
+        Just _ <- ingest source (eventIn envB ("itest:" <> suffix <> "-b"))
+        let expandTitle titleKey = do
+                cards <- case decodeDashboardConfig
+                    ( Aeson.toJSON
+                        [ object (["match" .= [object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]], "forEach" .= ("field:env" :: Text)] ++ titleKey)
+                        ]
+                    ) of
+                    Left err -> expectationFailure (cs err) >> error "unreachable"
+                    Right decoded -> pure decoded
+                map (.cardTitle) . map ecCard <$> expandDashboardCards cards
+        expandTitle ["title" .= ("Site {{field:env}} ({value})" :: Text)]
+            `shouldReturn` [ Just ("Site " <> envA <> " (" <> envA <> ")")
+                           , Just ("Site " <> envB <> " (" <> envB <> ")")
+                           ]
+        expandTitle ["title" .= ("{{value}}!" :: Text)] `shouldReturn` [Just (envA <> "!"), Just (envB <> "!")]
+        -- unknown facet refs render "-"
+        expandTitle ["title" .= ("{{attr:Nope}}" :: Text)] `shouldReturn` [Just "-", Just "-"]
+        -- omitted title auto-titles by the pinned value
+        expandTitle [] `shouldReturn` [Just envA, Just envB]
+
+    it "field:muted and field:title facets filter cards (SQL path)" do
+        suffix <- tshow <$> nextRandom
+        let env = "m9mt-" <> suffix
+            host = "m9mt-host-" <> suffix
+        source <- integrationSource "webhook" ("m9mt-" <> suffix) "" (object [])
+        let eventIn fp title = (testEventIn env fp Firing :: NormalizedEvent){host = Just host, title = title}
+        Just mutedAlert <- ingest source (eventIn ("itest:" <> suffix <> "-m") "VIP IP failover")
+        void (ingest source (eventIn ("itest:" <> suffix <> "-n") "VIP IP failover"))
+        void (sqlExecTyped [typedSql| UPDATE alerts SET suppressed = true WHERE id = ${mutedAlert} |])
+        let countWith clauses = do
+                cards <- case decodeDashboardConfig (Aeson.toJSON [object ["match" .= clauses]]) of
+                    Left err -> expectationFailure (cs err) >> error "unreachable"
+                    Right decoded -> pure decoded
+                case cards of
+                    (card : _) -> length <$> runCardQuery card
+                    [] -> expectationFailure "expected one card" >> error "unreachable"
+        let hostClause = object ["facet" .= ("field:host" :: Text), "op" .= ("=" :: Text), "value" .= host]
+        countWith
+            [ hostClause
+            , object ["facet" .= ("field:muted" :: Text), "op" .= ("=" :: Text), "value" .= ("false" :: Text)]
+            ]
+            `shouldReturn` 1
+        countWith [hostClause, object ["facet" .= ("field:title" :: Text), "op" .= ("~" :: Text), "value" .= ("VIP*" :: Text)]]
+            `shouldReturn` 2
+        countWith [hostClause, object ["facet" .= ("field:title" :: Text), "op" .= ("~" :: Text), "value" .= ("Nope*" :: Text)]]
+            `shouldReturn` 0
+
     it "summary cards aggregate status counts like the overview env cards" do
         suffix <- tshow <$> nextRandom
         let host = "m9sum-host-" <> suffix

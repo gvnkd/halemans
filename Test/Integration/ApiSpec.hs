@@ -35,7 +35,7 @@ import Application.Job.SourceHealth (checkSilence)
 import Application.Pipeline.Actions (ackAlert, closeAlert, unackAlert)
 import Application.Pipeline.Grouping (AlertField (..), facetValue)
 import Application.Service.AlertList (AlertListFilters (..), defaultAlertListFilters, effectiveEnvNames, listAlerts)
-import Application.Service.Api.Alerts (AlertDetail (..), AlertFilters (..), alertDetail, defaultFilters, listAlertsPage)
+import Application.Service.Api.Alerts (AlertDetail (..), AlertFilters (..), AlertPage (..), alertDetail, defaultFilters, listAlertsPage)
 import Application.Service.Api.Auth (AuthDecision (..), authorizeToken)
 import Application.Service.Api.Cursor (decodeCursor)
 import Application.Service.Api.Metrics (collectMetrics)
@@ -120,7 +120,7 @@ m6Spec = describe "public API (milestone 6)" do
             Just a1 <- ingest source (testEventIn envName fp1 Firing)
             Just a2 <- ingest source ((testEventIn envName fp2 Firing){severity = "critical"})
             void (ingest source (testEventIn envName fp2 Resolved))
-            let idsOf filters = map (get #id) . fst <$> listAlertsPage filters Nothing
+            let idsOf filters = map (get #id) . apAlerts <$> listAlertsPage filters Nothing
             idsOf defaultFilters{afEnvironment = envName} `shouldReturn` [a2, a1]
             idsOf defaultFilters{afEnvironment = envName, afStatus = "firing"} `shouldReturn` [a1]
             idsOf defaultFilters{afEnvironment = envName, afStatus = "resolved"} `shouldReturn` [a2]
@@ -138,14 +138,36 @@ m6Spec = describe "public API (milestone 6)" do
             Just a1 <- fire
             Just a2 <- fire
             Just a3 <- fire
-            (page1, next1) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2} Nothing
-            map (get #id) page1 `shouldBe` [a3, a2]
+            page1 <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2} Nothing
+            map (get #id) page1.apAlerts `shouldBe` [a3, a2]
+            page1.apTotal `shouldBe` 3
             -- An alert inserted between pages is newer than the cursor and
             -- must not appear on the next page (keyset stability).
             Just _ <- fire
-            (page2, next2) <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2, afCursor = decodeCursor =<< next1} Nothing
-            map (get #id) page2 `shouldBe` [a1]
-            next2 `shouldBe` Nothing
+            page2 <- listAlertsPage defaultFilters{afEnvironment = envName, afLimit = 2, afCursor = decodeCursor =<< page1.apNextCursor} Nothing
+            map (get #id) page2.apAlerts `shouldBe` [a1]
+            page2.apNextCursor `shouldBe` Nothing
+            page2.apTotal `shouldBe` 4
+
+        it "matches env/host/service/title as globs and reports the total" do
+            source <- testSource
+            token <- tshow <$> nextRandom
+            let envName = "m6env-glob-" <> token <> "-env"
+                envGlob = "m6env-glob-" <> token <> "-*"
+                hostGlob = "web-" <> token <> "-*"
+                hostName = "web-" <> token <> "-01"
+            fp <- freshFingerprint
+            Just a1 <- ingest source ((testEventIn envName fp Firing){host = Just hostName, title = "VIP IP failover"})
+            let idsOf filters = map (get #id) . apAlerts <$> listAlertsPage filters Nothing
+                inEnv filters = filters{afEnvironment = envName}
+            idsOf defaultFilters{afEnvironment = envGlob} `shouldReturn` [a1]
+            idsOf (inEnv defaultFilters{afHost = hostGlob}) `shouldReturn` [a1]
+            idsOf (inEnv defaultFilters{afHost = "web-" <> token <> "-?1"}) `shouldReturn` [a1]
+            idsOf (inEnv defaultFilters{afHost = "db-*"}) `shouldReturn` []
+            idsOf (inEnv defaultFilters{afTitle = "VIP IP*"}) `shouldReturn` [a1]
+            idsOf (inEnv defaultFilters{afTitle = "vip ip*"}) `shouldReturn` [] -- case-sensitive
+            page <- listAlertsPage defaultFilters{afEnvironment = envName} Nothing
+            page.apTotal `shouldBe` 1
 
         it "honors since/until on last_seen_at" do
             source <- testSource
@@ -155,7 +177,7 @@ m6Spec = describe "public API (milestone 6)" do
             now <- getCurrentTime
             let old = addUTCTime (-3600) now
             void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = ${old} WHERE id = ${a1} |])
-            let idsOf filters = map (get #id) . fst <$> listAlertsPage filters Nothing
+            let idsOf filters = map (get #id) . apAlerts <$> listAlertsPage filters Nothing
             idsOf defaultFilters{afEnvironment = envName, afSince = addUTCTime (-60) now} `shouldReturn` []
             idsOf defaultFilters{afEnvironment = envName, afUntil = addUTCTime (-60) now} `shouldReturn` [a1]
             idsOf defaultFilters{afEnvironment = envName, afSince = addUTCTime (-7200) now, afUntil = now} `shouldReturn` [a1]

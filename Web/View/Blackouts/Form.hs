@@ -1,5 +1,6 @@
 module Web.View.Blackouts.Form (blackoutFormFields) where
 
+import Application.Pipeline.Blackouts (openEndedBlackoutEndsAt)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
@@ -43,8 +44,8 @@ blackoutFormFields blackout environments hosts services =
         <input name="startsAt" type="text" class="form-control" value={startsAtValue} placeholder="2026-09-04T10:00:00Z" data-testid="blackout-starts-at" required="required"/>
     </div>
     <div class="mb-3">
-        <label class="form-label">{tr "Ends at (UTC, ISO 8601)"}</label>
-        <input name="endsAt" type="text" class="form-control" value={endsAtValue} placeholder="2026-09-04T12:00:00Z" data-testid="blackout-ends-at" required="required"/>
+        <label class="form-label">{tr "Ends at (UTC, ISO 8601; empty = open-ended)"}</label>
+        <input name="endsAt" type="text" class="form-control" value={endsAtValue} placeholder="2026-09-04T12:00:00Z" data-testid="blackout-ends-at"/>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Reason"}</label>
@@ -59,7 +60,10 @@ blackoutFormFields blackout environments hosts services =
     selectedId :: (Blackout -> Maybe (Id' table)) -> Maybe (Id' table)
     selectedId getter = maybe Nothing getter blackout
     startsAtValue = maybe "" (isoUtc . (.startsAt)) blackout
-    endsAtValue = maybe "" (isoUtc . (.endsAt)) blackout
+    endsAtValue = maybe "" endsAtFormValue blackout
+    endsAtFormValue value
+        | value.endsAt == openEndedBlackoutEndsAt = ""
+        | otherwise = isoUtc value.endsAt
     reasonValue = maybe "" (.reason) blackout
     environmentOption environment =
         [hsx|

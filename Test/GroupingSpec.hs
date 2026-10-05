@@ -96,6 +96,14 @@ spec = describe "Application.Pipeline.Grouping" do
         it "effectiveFieldSql only covers overridable fields" do
             effectiveFieldSql "alerts" FieldEnv `shouldBe` Just "coalesce(nullif(alerts.facets ->> 'env', ''), alerts.env)"
             effectiveFieldSql "alerts" FieldSeverity `shouldBe` Nothing
+        it "muted renders as true/false text and title as-is" do
+            effectiveFieldText FieldMuted alert `shouldBe` Just "false"
+            effectiveFieldText FieldMuted (alert |> set #suppressed True) `shouldBe` Just "true"
+            effectiveFieldText FieldTitle alert `shouldBe` Just "t"
+            effectiveFieldSql "alerts" FieldMuted `shouldBe` Nothing
+            effectiveFieldSql "alerts" FieldTitle `shouldBe` Nothing
+            parseAlertField "muted" `shouldBe` Just FieldMuted
+            parseAlertField "title" `shouldBe` Just FieldTitle
 
     describe "severity ordering" do
         it "critical > high > warning > info" do

@@ -1,5 +1,6 @@
 module Web.View.Blackouts.Index where
 
+import Application.Pipeline.Blackouts (blackoutEndsLabel, openEndedBlackoutEndsAt)
 import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, pageHeaderHtml)
 import Web.View.Prelude
 
@@ -41,10 +42,14 @@ renderBlackout (blackout, scopeName) =
     <tr data-testid="blackout-row">
         <td>{scopeName} {protectedBadgeHtml (get #protected blackout)}</td>
         <td>{utcTimeHtml blackout.startsAt}</td>
-        <td>{utcTimeHtml blackout.endsAt}</td>
+        <td>{blackoutEndsCell}</td>
         <td>{blackout.reason}</td>
         <td>
             {editDeleteActionsHtml (pathTo (EditBlackoutAction blackout.id)) (pathTo (DeleteBlackoutAction blackout.id)) "edit-blackout"}
         </td>
     </tr>
 |]
+  where
+    blackoutEndsCell
+        | blackout.endsAt == openEndedBlackoutEndsAt = [hsx|<span data-testid="blackout-ends-forever">{blackoutEndsLabel blackout}</span>|]
+        | otherwise = utcTimeHtml blackout.endsAt

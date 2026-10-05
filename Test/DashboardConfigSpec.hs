@@ -278,6 +278,27 @@ spec = describe "Application.Helper.DashboardConfig" do
             matchCardAlert (card [MatchClause (FacetAttr "Service") OpNe "MySQL" []]) alert `shouldBe` True
             matchCardAlert (card [MatchClause (FacetAttr "Absent") OpNe "MySQL" []]) alert `shouldBe` False
             matchCardAlert (card [MatchClause (FacetAttr "Absent") OpGlob "*" []]) alert `shouldBe` False
+        it "matches field:muted as true/false and field:title as text" do
+            let card clauses = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing False [] [] Nothing mempty
+                titled = alert |> set #title "VIP IP failover" |> set #suppressed True
+            matchCardAlert (card [MatchClause (FacetField FieldMuted) OpEq "true" []]) titled `shouldBe` True
+            matchCardAlert (card [MatchClause (FacetField FieldMuted) OpEq "true" []]) alert `shouldBe` False
+            matchCardAlert (card [MatchClause (FacetField FieldMuted) OpNe "true" []]) alert `shouldBe` True
+            matchCardAlert (card [MatchClause (FacetField FieldTitle) OpGlob "VIP*" []]) titled `shouldBe` True
+            matchCardAlert (card [MatchClause (FacetField FieldTitle) OpGlob "other*" []]) titled `shouldBe` False
+        it "decodes field:muted and field:title clauses" do
+            case decodeDashboardConfig
+                ( Aeson.toJSON
+                    [ object
+                        [ "match"
+                            .= [ object ["facet" .= ("field:muted" :: Text), "op" .= ("=" :: Text), "value" .= ("false" :: Text)]
+                               , object ["facet" .= ("field:title" :: Text), "op" .= ("~" :: Text), "value" .= ("VIP*" :: Text)]
+                               ]
+                        ]
+                    ]
+                ) of
+                Left err -> expectationFailure (cs err)
+                Right _ -> pure ()
         it "supports not-in list exclusion" do
             let card clauses = DashboardCard Nothing clauses Nothing 100 False Nothing Nothing False [] [] Nothing mempty
             matchCardAlert (card [MatchClause (FacetField FieldEnv) OpNotIn "" ["prod", "staging"]]) alert `shouldBe` True

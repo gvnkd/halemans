@@ -1,7 +1,7 @@
 module Web.Controller.Api where
 
 import Application.Service.AlertScope (scopeForUser)
-import Application.Service.Api.Alerts (AlertFilters (..), alertDetail, defaultFilters, listAlertsPage)
+import Application.Service.Api.Alerts (AlertFilters (..), AlertPage (..), alertDetail, defaultFilters, listAlertsPage)
 import Application.Service.Api.Auth (apiError, withApiToken)
 import Application.Service.Api.Cursor (decodeCursor)
 import Application.Service.Api.Encode (encodeAlertDetail, encodeAlertSummary, encodeEnvCard)
@@ -23,11 +23,12 @@ instance Controller ApiController where
         case parsed of
             Left badParam -> apiError status400 "bad_request" ("invalid " <> badParam <> " parameter")
             Right filters -> do
-                (alerts, nextCursor) <- listAlertsPage filters scope
+                page <- listAlertsPage filters scope
                 renderJson
                     ( object
-                        [ "alerts" .= map encodeAlertSummary alerts
-                        , "next_cursor" .= nextCursor
+                        [ "alerts" .= map encodeAlertSummary page.apAlerts
+                        , "next_cursor" .= page.apNextCursor
+                        , "total" .= page.apTotal
                         ]
                     )
     action ApiAlertAction{alertId} = withApiToken LimitApi "alerts:read" \_ user -> do
@@ -74,6 +75,7 @@ parseListParams = do
                 , afFingerprint = textParam "fingerprint"
                 , afHost = textParam "host"
                 , afService = textParam "service"
+                , afTitle = textParam "title"
                 , afSince
                 , afUntil
                 , afCursor
