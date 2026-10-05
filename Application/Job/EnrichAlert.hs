@@ -1,6 +1,6 @@
 module Application.Job.EnrichAlert where
 
-import Application.Helper.Ingest (publishAlertUpdate)
+import Application.Helper.Ingest (publishAlertUpdate, reevaluateBlackoutOverlay)
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Cmdb.DbConfig as Cmdb
 import Application.Service.Expose (exposeAlert)
@@ -95,6 +95,10 @@ instance Job EnrichAlertJob where
         -- Facet materialization (milestone_9.md §3): re-resolve with the
         -- freshly linked assets objects; publishes below carry the new row.
         alert <- Facets.materializeFacets alert
+        -- Blackout re-evaluation: attr facets may have remapped the effective
+        -- env/host/service, so a blackout scoped by an effective value only
+        -- starts matching now — before Expose dispatches notifications.
+        alert <- reevaluateBlackoutOverlay alert
         -- Regroup replay (milestone_9.md §7): facet-referencing rules only
         -- see attr facets now that they are materialized.
         alert <- Groups.regroupAlert alert

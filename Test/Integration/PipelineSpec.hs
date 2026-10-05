@@ -315,6 +315,43 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         events <- eventKinds alertId
         events `shouldSatisfy` ("unsuppressed" `elem`)
 
+    it "blackout scoped by an effective (attr-mapped) value suppresses after enrichment, before notifications" do
+        _ <- ensureAssetsConfig
+        overrideMapping <- createRecord (newRecord @FieldMapping |> set #facet "env" |> set #rank 50 |> set #kind "attr" |> set #key "Environments" |> set #enabled True)
+        (fallbackMapping, fallbackCreated) <- ensureMapping "env" 100 "field" "env"
+        flip finally (cleanupMappings [(overrideMapping, True), (fallbackMapping, fallbackCreated)]) do
+            source <- testSource
+            fp <- freshFingerprint
+            -- Scoped by the EFFECTIVE env (assets-mapped to PROD), not the raw env:
+            -- at ingest the attr facet is not materialized yet, so the alert
+            -- stays loud; EnrichAlertJob re-evaluates the overlay before Expose.
+            now <- getCurrentTime
+            _ <-
+                newRecord @Blackout
+                    |> set #environmentGlob (Just "PROD*")
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "effective env glob"
+                    |> createRecord
+            Just alertId <- ingest source ((testEvent fp Firing){host = Just "dev-host-01", checkName = Just "halemans test trigger", env = Just "zabbix-prod"})
+            loud <- fetch alertId
+            loud.suppressed `shouldBe` False
+            job <- enrichJobFor alertId
+            perform job
+            covered <- fetch alertId
+            covered.suppressed `shouldBe` True
+            covered.suppressedBy `shouldBe` Just "blackout"
+            -- Expose ran inside the enrich job: claim set, dispatch skipped.
+            covered.exposedAt `shouldSatisfy` isJust
+            events <- eventKinds alertId
+            events `shouldSatisfy` ("suppressed" `elem`)
+            events `shouldSatisfy` (not . ("notified" `elem`))
+            pushJobs <-
+                query @PushNotificationJob
+                    |> filterWhere (#alertId, alertId)
+                    |> fetch
+            length pushJobs `shouldBe` 0
+
     it "ack timeout unacks via unackExpiredAcks" do
         source <- testSource
         fp <- freshFingerprint
@@ -767,6 +804,7 @@ m1Spec = describe "alert pipeline (milestone 1)" do
             links <-
                 query @JiraLink
                     |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#origin, "auto" :: Text)
                     |> fetch
             case links of
                 [link] -> do
@@ -780,9 +818,12 @@ m1Spec = describe "alert pipeline (milestone 1)" do
                     |> filterWhere (#hostId, Just hostId)
                     |> fetch
             length entries `shouldBe` 1
+            -- origin-scoped: a global assets config (created by any example in
+            -- this suite) makes the related-tasks step add origin=related rows.
             linksAfter <-
                 query @JiraLink
                     |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#origin, "auto" :: Text)
                     |> fetch
             length linksAfter `shouldBe` 1
 

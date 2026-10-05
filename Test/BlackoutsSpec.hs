@@ -1,6 +1,7 @@
 module Test.BlackoutsSpec where
 
 import Application.Pipeline.Blackouts
+import Data.Aeson (object, (.=))
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Generated.Types
 import IHP.ModelSupport (newRecord, textToId)
@@ -37,6 +38,26 @@ spec = describe "Application.Pipeline.Blackouts" do
                 , subjectServiceName = Nothing
                 , subjectTitle = Nothing
                 }
+
+    describe "alertSubject" do
+        it "uses effective (facet-overridden) names over the raw columns" do
+            let overridden =
+                    newRecord @Alert
+                        |> set #title "t"
+                        |> set #env (Just "raw-env")
+                        |> set #host (Just "raw-host")
+                        |> set #service (Just "raw-svc")
+                        |> set #facets (object ["env" .= ("PROD" :: Text), "host" .= ("web-01" :: Text)])
+            alertSubject overridden
+                `shouldBe` BlackoutSubject Nothing (Just "PROD") Nothing (Just "web-01") Nothing (Just "raw-svc") (Just "t")
+        it "falls back to the raw columns when no facet override exists" do
+            let plain =
+                    newRecord @Alert
+                        |> set #title "t"
+                        |> set #env (Just "raw-env")
+                        |> set #host (Just "raw-host")
+            alertSubject plain
+                `shouldBe` BlackoutSubject Nothing (Just "raw-env") Nothing (Just "raw-host") Nothing Nothing (Just "t")
 
     describe "blackoutWindowActive" do
         it "is active inside the window" do

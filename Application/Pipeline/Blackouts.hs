@@ -7,7 +7,7 @@ module Application.Pipeline.Blackouts (
     blackoutEndsLabel,
 ) where
 
-import Application.Pipeline.Grouping (globMatch)
+import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText, globMatch)
 import Data.Time.Calendar (fromGregorian)
 import Generated.Types
 import IHP.Prelude
@@ -26,9 +26,10 @@ blackoutEndsLabel blackout
     | blackout.endsAt == openEndedBlackoutEndsAt = "forever"
     | otherwise = tshow blackout.endsAt
 
--- | The inventory refs AND raw names of one alert. Blackouts match by ref
--- (exact inventory row) or by glob (raw ingest name, so a glob covers
--- inventory rows that appear after the blackout was created).
+-- | The inventory refs AND names of one alert. Blackouts match by ref
+-- (exact inventory row) or by glob against the EFFECTIVE name (so a glob
+-- covers inventory rows that appear after the blackout was created and
+-- follows facet overrides — see 'alertSubject').
 data BlackoutSubject = BlackoutSubject
     { subjectEnvironmentId :: Maybe (Id Environment)
     , subjectEnvironmentName :: Maybe Text
@@ -38,16 +39,25 @@ data BlackoutSubject = BlackoutSubject
     , subjectServiceName :: Maybe Text
     , subjectTitle :: Maybe Text
     }
+    deriving (Eq, Show)
 
+-- | Subject from an alert row: inventory refs stay the row's raw-name
+-- upserts; the NAME legs read the EFFECTIVE values (facet override wins,
+-- raw column fallback) so blackouts scope by what operators see in the
+-- UI/dashboards — a grafana alert whose host is remapped by a field/asset
+-- mapping can be silenced by the effective name. Requires the row's facets
+-- to be materialized: ingest resolves field/label facets BEFORE the
+-- coverage check; attr facets land with enrichment, and EnrichAlertJob
+-- re-evaluates the overlay afterwards (before Expose).
 alertSubject :: Alert -> BlackoutSubject
 alertSubject alert =
     BlackoutSubject
         { subjectEnvironmentId = alert.environmentId
-        , subjectEnvironmentName = alert.env
+        , subjectEnvironmentName = effectiveFieldText FieldEnv alert
         , subjectHostId = alert.hostId
-        , subjectHostName = alert.host
+        , subjectHostName = effectiveFieldText FieldHost alert
         , subjectServiceId = alert.serviceId
-        , subjectServiceName = alert.service
+        , subjectServiceName = effectiveFieldText FieldService alert
         , subjectTitle = Just alert.title
         }
 

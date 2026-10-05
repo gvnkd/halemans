@@ -6,11 +6,12 @@ module Application.Helper.Ingest (
     ingest,
     transitionAlert,
     fetchActiveBlackouts,
+    reevaluateBlackoutOverlay,
     publishAlertUpdate,
 ) where
 
 import Application.Job.Mattermost (enqueueSyncIfPosted)
-import Application.Pipeline.Blackouts (BlackoutSubject (..), blackoutApplies)
+import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
 import qualified Application.Pipeline.StateMachine as SM
@@ -69,19 +70,6 @@ ingest source event = do
     hostRef <- forM event.host \fqdn -> upsertHost fqdn environmentRef
     serviceRef <- forM event.service \name -> upsertService name environmentRef
 
-    blackouts <- fetchActiveBlackouts now
-    let subject =
-            BlackoutSubject
-                { subjectEnvironmentId = environmentRef
-                , subjectEnvironmentName = event.env
-                , subjectHostId = hostRef
-                , subjectHostName = event.host
-                , subjectServiceId = serviceRef
-                , subjectServiceName = event.service
-                , subjectTitle = Just event.title
-                }
-        suppressedNow = any (blackoutApplies now subject) blackouts
-
     existing <-
         query @Alert
             |> filterWhere (#fingerprint, event.fingerprint)
@@ -112,14 +100,20 @@ ingest source event = do
                         |> set #environmentId environmentRef
                         |> set #hostId hostRef
                         |> set #serviceId serviceRef
-                        |> set #suppressed suppressedNow
-                        |> set #suppressedBy (if suppressedNow then Just "blackout" else Nothing)
             -- Facet materialization at ingest (milestone_9.md §3): field/label
             -- mappings resolve immediately; attr facets land via EnrichAlertJob.
+            -- Blackouts scope by the EFFECTIVE values (facet override wins over
+            -- the raw ingest name), so the coverage check runs only after the
+            -- field/label facets are resolved; attr overrides are re-evaluated
+            -- after enrichment (reevaluateBlackoutOverlay), before Expose.
             facets <- Facets.computeFacetsValue [] built
+            let enriched = built |> set #facets facets
+            blackouts <- fetchActiveBlackouts now
+            let suppressedNow = any (blackoutApplies now (alertSubject enriched)) blackouts
             alert <-
-                built
-                    |> set #facets facets
+                enriched
+                    |> set #suppressed suppressedNow
+                    |> set #suppressedBy (if suppressedNow then Just "blackout" else Nothing)
                     |> createRecord
             recordEvent (get #id alert) "created" (object ["source" .= get #name source])
             when suppressedNow do
@@ -169,6 +163,10 @@ ingest source event = do
                         |> set #title event.title
                         |> (if Text.null event.description then (\x -> x) else set #description event.description)
                         |> set #hostGroups (Aeson.toJSON (nub (event.hostGroups ++ hostGroupNamesOf alert)))
+            -- Coverage from the row's EFFECTIVE names (facets win over the raw
+            -- ingest names) — see alertSubject.
+            blackouts <- fetchActiveBlackouts now
+            let suppressedNow = any (blackoutApplies now (alertSubject refreshed)) blackouts
             updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow refreshed
             pure (Just (get #id updated))
 
@@ -273,6 +271,35 @@ applyTransition now eventEnv environmentRef hostRef serviceRef suppressedNow ale
     when (alert.suppressed && not effectiveSuppressed) do
         recordEvent (get #id alert) "unsuppressed" (object ["note" .= ("blackout expired or removed" :: Text)])
     pure updated
+
+-- | Re-evaluate the blackout overlay after enrichment materialized attr
+-- facets: the effective env/host/service may now differ from the raw
+-- ingest names (field/asset mappings), so a blackout scoped by an
+-- effective value only starts matching here. Runs BEFORE the Expose stage
+-- so notification dispatch sees the final overlay. Source-owned
+-- suppression (suppressed_by = 'source') is never touched. Publishes the
+-- flip so dashboards refresh.
+reevaluateBlackoutOverlay :: (?modelContext :: ModelContext) => Alert -> IO Alert
+reevaluateBlackoutOverlay alert
+    | alert.suppressedBy == Just "source" = pure alert
+    | otherwise = do
+        now <- getCurrentTime
+        blackouts <- fetchActiveBlackouts now
+        let covered = any (blackoutApplies now (alertSubject alert)) blackouts
+            wasCovered = alert.suppressed && alert.suppressedBy == Just "blackout"
+        if covered == wasCovered
+            then pure alert
+            else do
+                let kind = if covered then "suppressed" else "unsuppressed"
+                updated <-
+                    alert
+                        |> set #suppressed covered
+                        |> set #suppressedBy (if covered then Just "blackout" else Nothing)
+                        |> set #updatedAt now
+                        |> updateRecord
+                recordEvent (get #id alert) kind (object ["note" .= ("blackout coverage re-evaluated after enrichment" :: Text)])
+                publishAlertUpdate updated kind
+                pure updated
 
 recordEvent :: (?modelContext :: ModelContext) => Id Alert -> Text -> Value -> IO ()
 recordEvent alertId kind payload = do
