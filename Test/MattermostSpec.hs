@@ -150,6 +150,9 @@ spec = describe "Application.Service.Mattermost.Render" do
         body `shouldSatisfy` (Text.isInfixOf "load avg 15m above threshold")
         body `shouldSatisfy` (Text.isInfixOf "[Open in Halemans](http://halemans.example/alerts/abc)")
 
+    it "renders no header line for an empty mattermost_root body" do
+        renderRootMessage (Just "") [] renderContext (mkAlert "firing" "critical") `shouldBe` ""
+
     it "renders a custom status template with the shared slots" do
         renderStatusMessage (Just "{{rule}}: {{alert.occurrences}}x {{alert.state}}") [] renderContext (mkAlert "firing" "high")
             `shouldBe` "cpu-rules: 3x FIRING"

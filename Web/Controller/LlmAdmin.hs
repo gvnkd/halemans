@@ -171,7 +171,10 @@ instance Controller LlmAdminController where
             body = param @Text "body"
             notes = paramOrNothing @Text "notes"
             activate = paramOrNothing @Text "active" == Just "on"
-        if Text.null name || version < 1 || Text.null body
+        -- mattermost_* rows may have an EMPTY body on purpose: an empty
+        -- mattermost_root renders no header line at all (attachment-only
+        -- post). LLM templates stay fail-hard, so they still require a body.
+        if Text.null name || version < 1 || (Text.null body && not ("mattermost_" `Text.isPrefixOf` name))
             then do
                 setErrorMessage (tr "Name, positive version and body are required")
                 redirectTo NewLlmTemplateAction

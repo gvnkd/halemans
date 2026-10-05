@@ -1208,35 +1208,34 @@ dispatchRest context name arguments = case name of
                 case versions of
                     (latest : _) | get #protected latest -> pure "forbidden: this template is provisioned-protected"
                     _ ->
-                        if Text.null body
-                            then pure "invalid: body must not be empty"
-                            else
-                                let nextVersion = maybe 1 (\latest -> latest.version + 1) (listToMaybe versions)
-                                 in if not confirmed
-                                        then pure ("plan: update mattermost template \"" <> name <> "\" (creates v" <> tshow nextVersion <> " and activates it)\nconfirmation required: call update_mattermost_template again with confirmed=true only after the user's explicit agreement")
-                                        else do
-                                            void do
-                                                newRecord @LlmPromptTemplate
-                                                    |> set #name name
-                                                    |> set #version nextVersion
-                                                    |> set #body body
-                                                    |> set #active False
-                                                    |> set #notes notes
-                                                    |> createRecord
-                                            withTransaction do
-                                                void do
-                                                    sqlExecTyped
-                                                        [typedSql|
+                        -- An EMPTY body is allowed (and meaningful): an empty
+                        -- mattermost_root renders no header line at all.
+                        let nextVersion = maybe 1 (\latest -> latest.version + 1) (listToMaybe versions)
+                         in if not confirmed
+                                then pure ("plan: update mattermost template \"" <> name <> "\" (creates v" <> tshow nextVersion <> " and activates it)\nconfirmation required: call update_mattermost_template again with confirmed=true only after the user's explicit agreement")
+                                else do
+                                    void do
+                                        newRecord @LlmPromptTemplate
+                                            |> set #name name
+                                            |> set #version nextVersion
+                                            |> set #body body
+                                            |> set #active False
+                                            |> set #notes notes
+                                            |> createRecord
+                                    withTransaction do
+                                        void do
+                                            sqlExecTyped
+                                                [typedSql|
                                                         UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
                                                         WHERE name = ${name}
                                                     |]
-                                                void do
-                                                    sqlExecTyped
-                                                        [typedSql|
+                                        void do
+                                            sqlExecTyped
+                                                [typedSql|
                                                         UPDATE llm_prompt_templates SET active = true, updated_at = NOW()
                                                         WHERE name = ${name} AND version = ${nextVersion}
                                                     |]
-                                            pure ("updated mattermost template \"" <> name <> "\" (v" <> tshow nextVersion <> ", active)")
+                                    pure ("updated mattermost template \"" <> name <> "\" (v" <> tshow nextVersion <> ", active)")
     "list_llm_providers" -> do
         providers <- query @LlmConfig |> orderByAsc #providerName |> fetch
         pure case providers of

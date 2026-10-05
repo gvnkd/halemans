@@ -810,8 +810,11 @@ spec = describe "agent tools (internal API milestone)" do
                             ]
                 invalid <- runTool user "update_mattermost_template" (args [("name", "alert_enrichment"), ("body", "x")])
                 invalid `shouldSatisfy` ("invalid: name must be one of" `Text.isPrefixOf`)
-                emptyBody <- runTool user "update_mattermost_template" (args [("name", "mattermost_root")])
-                emptyBody `shouldSatisfy` ("invalid: body must not be empty" `Text.isPrefixOf`)
+                -- An EMPTY body is allowed on purpose: empty mattermost_root =
+                -- no header line on the card. It goes through the same
+                -- two-phase plan/apply flow.
+                emptyPlan <- runTool user "update_mattermost_template" (args [("name", "mattermost_root"), ("body", "")])
+                emptyPlan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
                 plan <- runTool user "update_mattermost_template" (updateArgs False)
                 plan `shouldSatisfy` ("confirmation required" `Text.isInfixOf`)
                 applied <- runTool user "update_mattermost_template" (updateArgs True)
