@@ -131,6 +131,31 @@ $tpl$, true, 'milestone 8: assets excerpt slot'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2);
 SQL
 
+# Mattermost message templates (root line + details reply). The application
+# falls back to built-in defaults when these rows are absent; the seeds make
+# the active bodies visible/editable in Admin → LLM → Templates. Keep in sync
+# with nix/scripts/smoke-check.sh.
+psql "${DATABASE_URL:?}" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_root', 1, $tpl$[{{alert.state}}] {{alert.title}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_root' AND version = 1);
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_details', 1, $tpl$**{{alert.title}}**
+{{alert.description}}
+
+Severity: {{alert.severity}}
+Status: {{alert.status}}
+Environment: {{alert.env}}
+Host: {{alert.host}}
+Service: {{alert.service}}
+Occurrences: {{alert.occurrences}}
+Fingerprint: `{{alert.fingerprint}}`
+
+[Open in Halemans]({{alert_url}})$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_details' AND version = 1);
+SQL
+
 # Assets info source pointing at the mock (milestone 8 D9) + default agent
 # role (milestone 8 D8, mirrors legacy behaviour: same template, full tool
 # set). Keep in sync with the inline seeding in nix/scripts/smoke-check.sh.

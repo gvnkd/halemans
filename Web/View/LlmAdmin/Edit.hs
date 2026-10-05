@@ -1,6 +1,8 @@
 module Web.View.LlmAdmin.Edit where
 
 import Application.Service.Llm.Prompt (templateSlotNames)
+import Application.Service.Mattermost.Render (mattermostSlotNames)
+import qualified Data.Text as Text
 import Web.View.Fragments (pageHeaderHtml)
 import Web.View.Prelude
 
@@ -15,7 +17,7 @@ instance View EditView where
         {pageHeaderHtml (tr "Edit prompt template") mempty}
         <p class="text-muted">
             {trp "{name} v{version} — saving creates v{nextVersion} (inactive until activated)." [("name", template.name), ("version", tshow template.version), ("nextVersion", tshow (template.version + 1))]}
-            {tr "Placeholders:"} {forEach templateSlotNames placeholderChip}
+            {tr "Placeholders:"} {forEach (slotNamesFor template.name) placeholderChip}
         </p>
         <div class="card maxw-600"><div class="card-body">
         <form method="POST" action={UpdateLlmTemplateAction (get #id template)} data-testid="llm-template-form">
@@ -34,3 +36,6 @@ instance View EditView where
     |]
       where
         placeholderChip name = [hsx|<code>{"{{" <> name <> "}}" :: Text}</code>|]
+        slotNamesFor name
+            | "mattermost_" `Text.isPrefixOf` name = mattermostSlotNames
+            | otherwise = templateSlotNames

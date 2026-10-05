@@ -215,7 +215,12 @@ fi
 # up the fire AND the resolve (single fingerprint, no duplicate).
 scenario "grafana poller reconcile"
 generic_token=$(cat "$STATE/halemans/generic-hook-token")
-grafana_source_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM sources WHERE type = 'grafana' LIMIT 1")
+# Deterministic pick: two grafana sources exist by now (the :3001 source and
+# the metric-chart mock on :18086, which lacks jiraWritable). An unordered
+# LIMIT 1 here re-attached the webhook token to the mock on some plans, after
+# which every generic-hook alert skipped the jira-create form (playwright
+# "jira: create ticket" timed out waiting for it).
+grafana_source_id=$(psql "$DATABASE_URL" -tA -c "SELECT id FROM sources WHERE type = 'grafana' AND config ? 'jiraWritable' LIMIT 1")
 psql "$DATABASE_URL" -c "DELETE FROM webhook_tokens WHERE token = '$generic_token'" > /dev/null 2>&1
 marker=$(psql "$DATABASE_URL" -tA -c "SELECT now()")
 fire-test-alert-grafana || fail "reconcile: fire threshold set"

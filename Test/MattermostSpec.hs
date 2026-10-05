@@ -63,9 +63,29 @@ actionNames props =
 spec :: Spec
 spec = describe "Application.Service.Mattermost.Render" do
     it "labels the root message with the uppercase state" do
-        renderRootMessage (mkAlert "firing" "critical") `shouldBe` "[FIRING] CPU load above 80%"
-        renderRootMessage (mkAlert "ack" "critical") `shouldBe` "[ACKED] CPU load above 80%"
-        renderRootMessage (mkAlert "resolved" "warning") `shouldBe` "[RESOLVED] CPU load above 80%"
+        renderRootMessage Nothing renderContext (mkAlert "firing" "critical") `shouldBe` "[FIRING] CPU load above 80%"
+        renderRootMessage Nothing renderContext (mkAlert "ack" "critical") `shouldBe` "[ACKED] CPU load above 80%"
+        renderRootMessage Nothing renderContext (mkAlert "resolved" "warning") `shouldBe` "[RESOLVED] CPU load above 80%"
+
+    it "renders the built-in fallback through the same slot path as DB templates" do
+        let alert = mkAlert "firing" "critical"
+        renderRootMessage (Just defaultRootTemplateBody) renderContext alert
+            `shouldBe` renderRootMessage Nothing renderContext alert
+
+    it "substitutes a custom root template" do
+        let alert = mkAlert "firing" "critical"
+        renderRootMessage (Just "{{alert.severity}} ({{rule}}): {{alert.title}}") renderContext alert
+            `shouldBe` "critical (cpu-rules): CPU load above 80%"
+
+    it "leaves unknown slots untouched" do
+        let alert = mkAlert "firing" "critical"
+        renderRootMessage (Just "[{{alert.state}}] {{alert.title}} {{unknown.slot}}") renderContext alert
+            `shouldBe` "[FIRING] CPU load above 80% {{unknown.slot}}"
+
+    it "drops blank lines left by empty slots in the details template" do
+        let alert = mkAlert "firing" "critical"
+            body = renderDetailsMessage (Just "**{{alert.title}}**\n{{alert.description}}\n\nSeverity: {{alert.severity}}") renderContext alert
+        body `shouldBe` "**CPU load above 80%**\nSeverity: critical"
 
     it "colors by severity while firing" do
         attachmentColor (renderRootProps renderContext (mkAlert "firing" "critical")) `shouldBe` "#E5484D"
@@ -112,7 +132,7 @@ spec = describe "Application.Service.Mattermost.Render" do
 
     it "renders details with description and the deep link" do
         let alert = (mkAlert "firing" "critical") |> set #description "load avg 15m above threshold"
-            body = renderDetailsMessage renderContext alert
+            body = renderDetailsMessage Nothing renderContext alert
         body `shouldSatisfy` (Text.isInfixOf "load avg 15m above threshold")
         body `shouldSatisfy` (Text.isInfixOf "[Open in Halemans](http://halemans.example/alerts/abc)")
 

@@ -8,12 +8,13 @@ module Application.Service.Mattermost (
     mattermostUsernameFromSettings,
     mattermostTarget,
     mattermostTargetForRule,
+    activeMattermostTemplate,
 ) where
 
 import Application.Service.ActionTokens (ensureActionToken)
 import Application.Service.Mattermost.Api (MattermostConfig)
 import qualified Application.Service.Mattermost.Api as Api
-import Application.Service.Mattermost.Render (MattermostRenderContext (..), renderDetailsMessage, renderRootMessage, renderRootProps)
+import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostDetailsTemplateName, mattermostRootTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -111,6 +112,17 @@ renderContextFor rule alert = do
   where
     statusText' a = a.status
 
+-- | Active template body for a mattermost_* llm_prompt_templates row; Nothing
+-- when no row is active (the renderer falls back to its built-in default).
+activeMattermostTemplate :: (?modelContext :: ModelContext) => Text -> IO (Maybe Text)
+activeMattermostTemplate name = do
+    template <-
+        query @LlmPromptTemplate
+            |> filterWhere (#name, name)
+            |> filterWhere (#active, True)
+            |> fetchOneOrNothing
+    pure ((.body) <$> template)
+
 -- | Where a rule posts, pure part: the rule's channelConfig wins; otherwise
 -- the rule's team defaults (Admin → Teams stores {"mattermost":{"team",
 -- "channel"}} in teams.defaults); the MM team name falls back to "halemans".
@@ -163,11 +175,13 @@ deliverNotify alert rule = do
                     Left err -> pure (Left err)
                     Right channelId -> do
                         context <- renderContextFor (Just rule) alert
-                        root <- Api.createPost config channelId (renderRootMessage alert) Nothing (renderRootProps context alert)
+                        rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
+                        detailsTemplate <- activeMattermostTemplate mattermostDetailsTemplateName
+                        root <- Api.createPost config channelId (renderRootMessage rootTemplate context alert) Nothing (renderRootProps context alert)
                         case root of
                             Left err -> pure (Left err)
                             Right rootPostId -> do
-                                _ <- Api.createPost config channelId (renderDetailsMessage context alert) (Just rootPostId) (Aeson.object [])
+                                _ <- Api.createPost config channelId (renderDetailsMessage detailsTemplate context alert) (Just rootPostId) (Aeson.object [])
                                 now <- getCurrentTime
                                 _ <-
                                     newRecord @MattermostPost
@@ -207,7 +221,8 @@ syncAlertPosts alert = do
                     Nothing -> pure (Right ())
                     Just config -> do
                         context <- renderContextFor Nothing alert
-                        result <- Api.patchPost config post.rootPostId (renderRootMessage alert) (renderRootProps context alert)
+                        rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
+                        result <- Api.patchPost config post.rootPostId (renderRootMessage rootTemplate context alert) (renderRootProps context alert)
                         case result of
                             Left err -> pure (Left err)
                             Right () -> do

@@ -179,6 +179,27 @@ Analyze the probable cause of this alert using the context above and suggest con
 $tpl$, true, 'milestone 8: assets excerpt slot'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'alert_enrichment' AND version = 2);
 
+-- Mattermost message templates (root line + details reply). Keep in sync
+-- with nix/scripts/seed-halemans.sh.
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_root', 1, $tpl$[{{alert.state}}] {{alert.title}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_root' AND version = 1);
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_details', 1, $tpl$**{{alert.title}}**
+{{alert.description}}
+
+Severity: {{alert.severity}}
+Status: {{alert.status}}
+Environment: {{alert.env}}
+Host: {{alert.host}}
+Service: {{alert.service}}
+Occurrences: {{alert.occurrences}}
+Fingerprint: `{{alert.fingerprint}}`
+
+[Open in Halemans]({{alert_url}})$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_details' AND version = 1);
+
 -- Assets info source pointing at the mock (milestone 8 D9) + default agent
 -- role (milestone 8 D8): same as seed-halemans.
 INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, attribute_names, enabled)
