@@ -51,6 +51,20 @@ attachmentColor :: Aeson.Value -> Text
 attachmentColor props =
     fromMaybe "" (parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..:? "color" Aeson..!= "")) (attachment props))
 
+fieldTitlesValues :: [Aeson.Value] -> [(Text, Text)]
+fieldTitlesValues fields =
+    [ (title, value)
+    | field <- fields
+    , Just (title, value) <-
+        [ parseMaybe
+            ( Aeson.withObject
+                "field"
+                (\o -> (,) <$> o Aeson..:? "title" Aeson..!= "" <*> o Aeson..:? "value" Aeson..!= "")
+            )
+            field
+        ]
+    ]
+
 actionNames :: Aeson.Value -> [Text]
 actionNames props =
     fromMaybe [] do
@@ -63,61 +77,61 @@ actionNames props =
 spec :: Spec
 spec = describe "Application.Service.Mattermost.Render" do
     it "labels the root message with the uppercase state" do
-        renderRootMessage Nothing renderContext (mkAlert "firing" "critical") `shouldBe` "[FIRING] CPU load above 80%"
-        renderRootMessage Nothing renderContext (mkAlert "ack" "critical") `shouldBe` "[ACKED] CPU load above 80%"
-        renderRootMessage Nothing renderContext (mkAlert "resolved" "warning") `shouldBe` "[RESOLVED] CPU load above 80%"
+        renderRootMessage Nothing [] renderContext (mkAlert "firing" "critical") `shouldBe` "[FIRING] CPU load above 80%"
+        renderRootMessage Nothing [] renderContext (mkAlert "ack" "critical") `shouldBe` "[ACKED] CPU load above 80%"
+        renderRootMessage Nothing [] renderContext (mkAlert "resolved" "warning") `shouldBe` "[RESOLVED] CPU load above 80%"
 
     it "renders the built-in fallback through the same slot path as DB templates" do
         let alert = mkAlert "firing" "critical"
-        renderRootMessage (Just defaultRootTemplateBody) renderContext alert
-            `shouldBe` renderRootMessage Nothing renderContext alert
+        renderRootMessage (Just defaultRootTemplateBody) [] renderContext alert
+            `shouldBe` renderRootMessage Nothing [] renderContext alert
 
     it "substitutes a custom root template" do
         let alert = mkAlert "firing" "critical"
-        renderRootMessage (Just "{{alert.severity}} ({{rule}}): {{alert.title}}") renderContext alert
+        renderRootMessage (Just "{{alert.severity}} ({{rule}}): {{alert.title}}") [] renderContext alert
             `shouldBe` "critical (cpu-rules): CPU load above 80%"
 
     it "leaves unknown slots untouched" do
         let alert = mkAlert "firing" "critical"
-        renderRootMessage (Just "[{{alert.state}}] {{alert.title}} {{unknown.slot}}") renderContext alert
+        renderRootMessage (Just "[{{alert.state}}] {{alert.title}} {{unknown.slot}}") [] renderContext alert
             `shouldBe` "[FIRING] CPU load above 80% {{unknown.slot}}"
 
     it "drops blank lines left by empty slots in the details template" do
         let alert = mkAlert "firing" "critical"
-            body = renderDetailsMessage (Just "**{{alert.title}}**\n{{alert.description}}\n\nSeverity: {{alert.severity}}") renderContext alert
+            body = renderDetailsMessage (Just "**{{alert.title}}**\n{{alert.description}}\n\nSeverity: {{alert.severity}}") [] renderContext alert
         body `shouldBe` "**CPU load above 80%**\nSeverity: critical"
 
     it "colors by severity while firing" do
-        attachmentColor (renderRootProps renderContext (mkAlert "firing" "critical")) `shouldBe` "#E5484D"
-        attachmentColor (renderRootProps renderContext (mkAlert "firing" "warning")) `shouldBe` "#F7B500"
-        attachmentColor (renderRootProps renderContext (mkAlert "firing" "info")) `shouldBe` "#4C8DFF"
+        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "critical")) `shouldBe` "#E5484D"
+        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "warning")) `shouldBe` "#F7B500"
+        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "info")) `shouldBe` "#4C8DFF"
 
     it "colors terminal states gray regardless of severity" do
-        attachmentColor (renderRootProps renderContext (mkAlert "resolved" "critical")) `shouldBe` "#98A2AD"
-        attachmentColor (renderRootProps renderContext (mkAlert "closed" "critical")) `shouldBe` "#98A2AD"
-        attachmentColor (renderRootProps renderContext (mkAlert "stalled" "high")) `shouldBe` "#98A2AD"
+        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "resolved" "critical")) `shouldBe` "#98A2AD"
+        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "closed" "critical")) `shouldBe` "#98A2AD"
+        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "stalled" "high")) `shouldBe` "#98A2AD"
 
     it "shows the ack actor on acked alerts" do
-        attachmentText (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
+        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
 
     it "shows the ack timestamp alongside the actor" do
         let ackedContext = renderContext{mrcAckedAt = Just (UTCTime (fromGregorian 2026 10 1) (18 * 3600 + 30 * 60))}
-        attachmentText (renderRootProps ackedContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1 at 2026-10-01 18:30 UTC"
+        attachmentText (renderRootProps Nothing Nothing Nothing [] ackedContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1 at 2026-10-01 18:30 UTC"
 
     it "offers the Ack action only on firing alerts with an action URL" do
-        actionNames (renderRootProps renderContext (mkAlert "firing" "high")) `shouldBe` ["Ack"]
-        actionNames (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` []
-        actionNames (renderRootProps renderContext{mrcActionUrl = Nothing} (mkAlert "firing" "high")) `shouldBe` []
+        actionNames (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high")) `shouldBe` ["Ack"]
+        actionNames (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` []
+        actionNames (renderRootProps Nothing Nothing Nothing [] renderContext{mrcActionUrl = Nothing} (mkAlert "firing" "high")) `shouldBe` []
 
     it "renders the one-time markdown Ack link on firing alerts only" do
-        attachmentText (renderRootProps renderContext (mkAlert "firing" "high"))
+        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high"))
             `shouldBe` "Firing · 3 occurrence(s) · [Ack](http://halemans.example/alerts/abc/ack-link?token=tok)"
-        attachmentText (renderRootProps renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
-        attachmentText (renderRootProps renderContext{mrcAckUrl = Nothing} (mkAlert "firing" "high"))
+        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
+        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext{mrcAckUrl = Nothing} (mkAlert "firing" "high"))
             `shouldBe` "Firing · 3 occurrence(s)"
 
     it "carries the alert id in the Ack action context" do
-        let props = renderRootProps renderContext (mkAlert "firing" "high")
+        let props = renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high")
             action = fromMaybe (error "no ack action") do
                 actions <- parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..:? "actions" Aeson..!= [])) (attachment props)
                 case [a | a <- actions, actionId a == Just "ack"] of
@@ -132,9 +146,54 @@ spec = describe "Application.Service.Mattermost.Render" do
 
     it "renders details with description and the deep link" do
         let alert = (mkAlert "firing" "critical") |> set #description "load avg 15m above threshold"
-            body = renderDetailsMessage Nothing renderContext alert
+            body = renderDetailsMessage Nothing [] renderContext alert
         body `shouldSatisfy` (Text.isInfixOf "load avg 15m above threshold")
         body `shouldSatisfy` (Text.isInfixOf "[Open in Halemans](http://halemans.example/alerts/abc)")
+
+    it "renders a custom status template with the shared slots" do
+        renderStatusMessage (Just "{{rule}}: {{alert.occurrences}}x {{alert.state}}") [] renderContext (mkAlert "firing" "high")
+            `shouldBe` "cpu-rules: 3x FIRING"
+
+    it "renders the built-in status template exactly like the old hardcoded lines" do
+        renderStatusMessage Nothing [] renderContext (mkAlert "firing" "high")
+            `shouldBe` "Firing · 3 occurrence(s) · [Ack](http://halemans.example/alerts/abc/ack-link?token=tok)"
+        renderStatusMessage Nothing [] renderContext (mkAlert "ack" "high") `shouldBe` "Acked by sre-1"
+        renderStatusMessage Nothing [] renderContext (mkAlert "resolved" "high") `shouldBe` "Resolved by the source"
+        renderStatusMessage Nothing [] renderContext (mkAlert "stalled" "high") `shouldBe` "Stalled: no source updates"
+        renderStatusMessage Nothing [] renderContext (mkAlert "closed" "high") `shouldBe` "Closed"
+
+    it "renders the fields grid from Title|value template lines and drops empty values" do
+        let fields = renderFields (Just "Rule|{{rule}}\nGone|{{closed_by}}\nBare") [] renderContext (mkAlert "firing" "high")
+        fieldTitlesValues fields `shouldBe` [("Rule", "cpu-rules")]
+
+    it "falls back to the built-in fields grid" do
+        fieldTitlesValues (renderFields Nothing [] renderContext (mkAlert "firing" "high"))
+            `shouldBe` [ ("Environment", "production")
+                       , ("Host", "-")
+                       , ("Service", "-")
+                       , ("Severity", "high")
+                       , ("Rule", "cpu-rules")
+                       ]
+
+    it "resolves the color bar from the config mapping with status winning over severity" do
+        renderColor Nothing [("critical", "#123456")] renderContext (mkAlert "firing" "critical") `shouldBe` "#123456"
+        renderColor Nothing [("resolved", "#AAAAAA"), ("critical", "#123456")] renderContext (mkAlert "resolved" "critical") `shouldBe` "#AAAAAA"
+        renderColor Nothing [] renderContext (mkAlert "firing" "info") `shouldBe` "#4C8DFF"
+
+    it "accepts a literal color template and falls back when it renders empty" do
+        renderColor (Just "#FF00FF") [] renderContext (mkAlert "firing" "critical") `shouldBe` "#FF00FF"
+        renderColor (Just "{{unknown_slot}}") [] renderContext (mkAlert "firing" "critical") `shouldBe` "#E5484D"
+
+    it "parses color overrides from the channel config JSON" do
+        colorMapFromJson (Aeson.object ["colors" Aeson..= Aeson.object ["warning" Aeson..= Aeson.String "#010203"]])
+            `shouldBe` [("warning", "#010203")]
+        colorMapFromJson (Aeson.object []) `shouldBe` []
+        colorMapFromJson (Aeson.object ["colors" Aeson..= Aeson.String "nope"]) `shouldBe` []
+
+    it "passes channel color overrides through to the attachment color" do
+        let overrides = colorMapFromJson (Aeson.object ["colors" Aeson..= Aeson.object ["high" Aeson..= Aeson.String "#0A0B0C"]])
+        attachmentColor (renderRootProps Nothing Nothing Nothing overrides renderContext (mkAlert "firing" "high"))
+            `shouldBe` "#0A0B0C"
 
     it "syncs only state-changing event kinds" do
         syncsKind "ack" `shouldBe` True

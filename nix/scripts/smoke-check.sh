@@ -200,6 +200,29 @@ Fingerprint: `{{alert.fingerprint}}`
 [Open in Halemans]({{alert_url}})$tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_details' AND version = 1);
 
+-- Root-card sub-part templates (status line, fields grid, color bar). Keep
+-- in sync with nix/scripts/seed-halemans.sh and
+-- Application/Service/Mattermost/Render.hs defaults.
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_status', 1, $tpl${{line_ack}}
+{{line_closed}}
+{{line_resolved}}
+{{line_stalled}}
+{{line_firing}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_status' AND version = 1);
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_fields', 1, $tpl$Environment|{{alert.env}}
+Host|{{alert.host}}
+Service|{{alert.service}}
+Severity|{{alert.severity}}
+Rule|{{rule}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_fields' AND version = 1);
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_color', 1, $tpl${{color}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_color' AND version = 1);
+
 -- Assets info source pointing at the mock (milestone 8 D9) + default agent
 -- role (milestone 8 D8): same as seed-halemans.
 INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, attribute_names, enabled)

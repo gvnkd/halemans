@@ -14,7 +14,7 @@ module Application.Service.Mattermost (
 import Application.Service.ActionTokens (ensureActionToken)
 import Application.Service.Mattermost.Api (MattermostConfig)
 import qualified Application.Service.Mattermost.Api as Api
-import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostDetailsTemplateName, mattermostRootTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
+import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostColorTemplateName, mattermostDetailsTemplateName, mattermostFieldsTemplateName, mattermostRootTemplateName, mattermostStatusTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -177,11 +177,15 @@ deliverNotify alert rule = do
                         context <- renderContextFor (Just rule) alert
                         rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
                         detailsTemplate <- activeMattermostTemplate mattermostDetailsTemplateName
-                        root <- Api.createPost config channelId (renderRootMessage rootTemplate context alert) Nothing (renderRootProps context alert)
+                        statusTemplate <- activeMattermostTemplate mattermostStatusTemplateName
+                        fieldsTemplate <- activeMattermostTemplate mattermostFieldsTemplateName
+                        colorTemplate <- activeMattermostTemplate mattermostColorTemplateName
+                        let colorOverrides = Api.mmColorOverrides config
+                        root <- Api.createPost config channelId (renderRootMessage rootTemplate colorOverrides context alert) Nothing (renderRootProps statusTemplate colorTemplate fieldsTemplate colorOverrides context alert)
                         case root of
                             Left err -> pure (Left err)
                             Right rootPostId -> do
-                                _ <- Api.createPost config channelId (renderDetailsMessage detailsTemplate context alert) (Just rootPostId) (Aeson.object [])
+                                _ <- Api.createPost config channelId (renderDetailsMessage detailsTemplate colorOverrides context alert) (Just rootPostId) (Aeson.object [])
                                 now <- getCurrentTime
                                 _ <-
                                     newRecord @MattermostPost
@@ -222,7 +226,11 @@ syncAlertPosts alert = do
                     Just config -> do
                         context <- renderContextFor Nothing alert
                         rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
-                        result <- Api.patchPost config post.rootPostId (renderRootMessage rootTemplate context alert) (renderRootProps context alert)
+                        statusTemplate <- activeMattermostTemplate mattermostStatusTemplateName
+                        fieldsTemplate <- activeMattermostTemplate mattermostFieldsTemplateName
+                        colorTemplate <- activeMattermostTemplate mattermostColorTemplateName
+                        let colorOverrides = Api.mmColorOverrides config
+                        result <- Api.patchPost config post.rootPostId (renderRootMessage rootTemplate colorOverrides context alert) (renderRootProps statusTemplate colorTemplate fieldsTemplate colorOverrides context alert)
                         case result of
                             Left err -> pure (Left err)
                             Right () -> do

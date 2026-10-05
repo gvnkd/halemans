@@ -8,6 +8,7 @@ module Application.Service.Mattermost.Api (
 ) where
 
 import qualified Application.Service.Http as Http
+import qualified Application.Service.Mattermost.Render as Render
 import Control.Exception (SomeException, displayException, try)
 import Control.Lens ((&), (.~), (^.))
 import Control.Monad (void)
@@ -35,18 +36,26 @@ import System.Environment (lookupEnv)
 data MattermostConfig = MattermostConfig
     { mmBaseUrl :: Text
     , mmToken :: Text
+    , mmColorOverrides :: [(Text, Text)]
     }
     deriving (Eq, Show)
 
 -- | Resolve a channel row to a usable config; Nothing when the row is not a
 -- usable mattermost channel (wrong type, empty base URL, unset token env).
+-- mmColorOverrides carries the config "colors" mapping (severity/status →
+-- hex) that templates reference via the {{color}} slot.
 configForChannel :: NotificationChannel -> IO (Maybe MattermostConfig)
 configForChannel channel = do
     maybeToken <- traverse (lookupEnv . cs) tokenEnv
     pure case (channel.type_ == "mattermost", channel.baseUrl, maybeToken) of
         (True, baseUrl, Just (Just token))
             | not (null baseUrl) && not (null token) ->
-                Just MattermostConfig{mmBaseUrl = baseUrl, mmToken = cs token}
+                Just
+                    MattermostConfig
+                        { mmBaseUrl = baseUrl
+                        , mmToken = cs token
+                        , mmColorOverrides = Render.colorMapFromJson channel.config
+                        }
         _ -> Nothing
   where
     tokenEnv :: Maybe Text

@@ -18,10 +18,16 @@ import Application.Service.Defaults (ensureDefaults)
 import Application.Service.Jira.Related (defaultJiraRelatedTemplateBody, relatedTemplateName)
 import Application.Service.Llm.Prompt (defaultEnrichmentTemplateBody, enrichmentTemplateName)
 import Application.Service.Mattermost.Render (
+    defaultColorTemplateBody,
     defaultDetailsTemplateBody,
+    defaultFieldsTemplateBody,
     defaultRootTemplateBody,
+    defaultStatusTemplateBody,
+    mattermostColorTemplateName,
     mattermostDetailsTemplateName,
+    mattermostFieldsTemplateName,
     mattermostRootTemplateName,
+    mattermostStatusTemplateName,
  )
 
 -- Boot-time default provisioning (Application.Service.Defaults). The suite
@@ -94,6 +100,9 @@ templateNames :: [Text]
 templateNames =
     [ mattermostRootTemplateName
     , mattermostDetailsTemplateName
+    , mattermostStatusTemplateName
+    , mattermostFieldsTemplateName
+    , mattermostColorTemplateName
     , internalAgentTemplateName
     , relatedTemplateName
     , enrichmentTemplateName
@@ -105,6 +114,9 @@ defaultBodyFor name = fromMaybe (error "unknown template name") (lookup name bod
     bodies =
         [ (mattermostRootTemplateName, defaultRootTemplateBody)
         , (mattermostDetailsTemplateName, defaultDetailsTemplateBody)
+        , (mattermostStatusTemplateName, defaultStatusTemplateBody)
+        , (mattermostFieldsTemplateName, defaultFieldsTemplateBody)
+        , (mattermostColorTemplateName, defaultColorTemplateBody)
         , (internalAgentTemplateName, defaultAgentTemplateBody)
         , (relatedTemplateName, defaultJiraRelatedTemplateBody)
         , (enrichmentTemplateName, defaultEnrichmentTemplateBody)
@@ -154,11 +166,15 @@ withRestoredDefaults action = do
 
 restoreDefaults :: (?modelContext :: ModelContext) => Snapshot -> IO ()
 restoreDefaults snap = do
-    void do
+    -- Names the snapshot did NOT have: the examples may have seeded built-in
+    -- defaults AND custom rows (the never-touch example inserts one), so the
+    -- whole name scope goes away again. Names that pre-existed: never touch
+    -- (not even our marker rows — the never-touch policy is the point).
+    forM_ [name | (name, rows) <- snapTemplates snap, null rows] \name -> void do
         sqlExecTyped
             [typedSql|
         DELETE FROM llm_prompt_templates t
-        WHERE t.notes = 'built-in default'
+        WHERE t.name = ${name}
           AND NOT EXISTS (SELECT 1 FROM llm_analyses a WHERE a.prompt_template_id = t.id)
     |]
     forM_ (map fst defaultChannels List.\\ snapChannels snap) \name -> void do

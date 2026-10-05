@@ -254,6 +254,20 @@ Alert notifications can be delivered to Mattermost as threaded bot posts. A **bo
 
    Each user sets their **Mattermost username** on their profile page (stored in `users.settings.mattermostUsername`); button clickers are matched to a Halemans user by that field first, then by display name, else the service account acks. The acked alert shows the actor and time both on the Halemans alert card and in the re-rendered MM root post ("Acked by X at …").
 
+**Message templates.** Every text part of the root card is a versioned `llm_prompt_templates` row, editable in Admin → LLM admin → Templates (save appends a version and activates it; a broken template falls back to the built-in default, it can garble a card but never drop the notification):
+
+| Row | Controls |
+|---|---|
+| `mattermost_root` | the post headline (`[{{alert.state}}] {{alert.title}}`) |
+| `mattermost_details` | the thread reply with the full details |
+| `mattermost_status` | the attachment status line ("Firing · N occurrence(s) · [Ack](…)") — one `{{line_*}}` slot per status, empty lines are dropped |
+| `mattermost_fields` | the attachment fields grid — one `Title\|{{value}}` per line; lines with an empty value are dropped |
+| `mattermost_color` | the attachment color bar; the default body `{{color}}` resolves through the channel's color mapping (below), a literal `#RRGGBB` works too |
+
+The **Ack action button** itself stays in code (its URL is functional wiring back to Halemans). All rows share one slot set (`alert.*` fields plus `rule`, `acked_by`, `acked_at`, `closed_by`, `ack_url`, `action_url`, `alert_url`, `alert_id`, `color`, `line_*`); the admin editor shows them as chips. The Halemans agent can list/update the rows via the `list_mattermost_templates` / `update_mattermost_template` tools.
+
+**Severity colors** are config, not code: a `"colors"` object in the Mattermost channel row's `config` JSON maps status/severity names to hex (e.g. `{"tokenEnv":"MATTERMOST_TOKEN","colors":{"critical":"#E5484D","warning":"#F7B500","default":"#4C8DFF"}}`). Lookup order: the alert's **status** first (so `resolved` wins over `critical`), then its **severity**, then `default`; unset keys fall back to the built-in defaults (terminal states gray, critical red, high orange, warning yellow, everything else blue). Templates reference the result via `{{color}}`.
+
 Env: a public base URL (`HALEMANS_BASE_URL`, falling back to `IHP_BASEURL`/`APPROOT`; it enables the Ack button + deep links), `MATTERMOST_ACTION_SECRET` (optional), and the token env var named by the channel row. The bot's Mattermost account must be a member of the destination team **and** channel — Mattermost answers lookups for non-members with 404, which is indistinguishable from a wrong name. Channels/provision: `notificationChannels` (type `mattermost`, `baseUrl`, `tokenEnv`) referenced by name from `notificationRules.channel`; team defaults provision under `teams.<name>.defaults`. The Sources "Fire test" button drives a synthetic `[TEST]` alert through the whole pipeline (including Mattermost) without touching the real source.
 
 

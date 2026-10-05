@@ -10,6 +10,7 @@ import Control.Exception (finally, try)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
@@ -20,6 +21,7 @@ import IHP.Job.Types (Job (..))
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder
+import IHP.TypedSql (sqlExecTyped, typedSql)
 import System.Environment (lookupEnv, setEnv)
 import System.Process (readProcess)
 import Test.Hspec
@@ -78,6 +80,35 @@ spec = describe "Mattermost notification channel" do
             (rootAfterAck, _) <- expectRootAndReply postsAfterAck
             postMessage rootAfterAck `shouldBe` "[ACKED] integration test alert"
             actionNames rootAfterAck `shouldBe` []
+
+    it "renders the root card sub-parts from the status/fields/color templates and the channel colors config" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-tpl-env-" <> suffix
+            ruleName = "mm-tpl-rule-" <> suffix
+            channelName = "mm-tpl-chan-" <> suffix
+        withMattermostEnv do
+            ( do
+                    mockReset
+                    deleteMattermostSubTemplates
+                    _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_status" |> set #version 1 |> set #body "{{alert.state}} x{{alert.occurrences}} via {{rule}}" |> set #active True |> createRecord
+                    _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_fields" |> set #version 1 |> set #body "Env|{{alert.env}}\nSev|{{alert.severity}}" |> set #active True |> createRecord
+                    _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_color" |> set #version 1 |> set #body "{{color}}" |> set #active True |> createRecord
+                    rule <- mattermostRuleWithColors ruleName channelName envName (Aeson.object ["warning" Aeson..= Aeson.String "#0A0B0C"])
+                    _ <- pure rule
+                    source <- testSource
+                    fp <- freshFingerprint
+                    Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+                    exposeFor alertId
+                    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+                    perform notifyJob
+
+                    posts <- mockPosts
+                    (root, _) <- expectRootAndReply posts
+                    attachmentFieldText "text" root `shouldBe` ("FIRING x1 via " <> ruleName)
+                    attachmentFieldText "color" root `shouldBe` "#0A0B0C"
+                    attachmentPairs root `shouldBe` [("Env", envName), ("Sev", "warning")]
+                )
+                `finally` deleteMattermostSubTemplates
 
     it "a second notify for the same alert does not duplicate the channel post" do
         suffix <- tshow <$> nextRandom
@@ -279,6 +310,53 @@ mattermostRule name channel envName = do
 expectOne :: [a] -> IO a
 expectOne [single] = pure single
 expectOne others = expectationFailure (cs ("expected exactly one element, got " <> tshow (length others))) >> error "unreachable"
+
+-- mattermostRule plus a "colors" mapping merged into the channel row config
+-- (the severity/status → hex overrides that {{color}} resolves through).
+mattermostRuleWithColors :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO NotificationRule
+mattermostRuleWithColors name channel envName colors = do
+    rule <- mattermostRule name channel envName
+    chan <- query @NotificationChannel |> filterWhere (#name, channel) |> fetchOne
+    let merged = case chan.config of
+            Aeson.Object object_ -> Aeson.Object (KeyMap.insert "colors" colors object_)
+            other -> other
+    void (chan |> set #config merged |> updateRecord)
+    pure rule
+
+-- The root-card sub-part template rows are global config shared by every MM
+-- delivery, so the example deletes them before AND after (finally) — same
+-- pattern as AgentSpec's mattermost_root template-tool test.
+deleteMattermostSubTemplates :: (?modelContext :: ModelContext) => IO ()
+deleteMattermostSubTemplates = void do
+    sqlExecTyped
+        [typedSql|
+        DELETE FROM llm_prompt_templates
+        WHERE name IN ('mattermost_status', 'mattermost_fields', 'mattermost_color')
+    |]
+
+attachmentFieldText :: Text -> Aeson.Value -> Text
+attachmentFieldText key post = fromMaybe "" do
+    att <- listToMaybe (postAttachments post)
+    pure (fromMaybe "" (parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..:? Key.fromText key Aeson..!= "")) att))
+
+attachmentPairs :: Aeson.Value -> [(Text, Text)]
+attachmentPairs post = concatMap pairs (postAttachments post)
+  where
+    pairs att =
+        fromMaybe [] do
+            fields <- parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..:? "fields" Aeson..!= [])) att
+            pure
+                [ (title, value)
+                | field <- fields
+                , Just (title, value) <-
+                    [ parseMaybe
+                        ( Aeson.withObject
+                            "field"
+                            (\o -> (,) <$> o Aeson..:? "title" Aeson..!= "" <*> o Aeson..:? "value" Aeson..!= "")
+                        )
+                        field
+                    ]
+                ]
 
 expectRootAndReply :: [Aeson.Value] -> IO (Aeson.Value, Aeson.Value)
 expectRootAndReply (root : reply : _) = pure (root, reply)

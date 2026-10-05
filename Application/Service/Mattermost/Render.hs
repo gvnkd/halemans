@@ -3,11 +3,23 @@ module Application.Service.Mattermost.Render (
     renderRootMessage,
     renderRootProps,
     renderDetailsMessage,
+    renderStatusMessage,
+    renderFields,
+    renderColor,
+    resolveColor,
+    defaultColorMap,
+    colorMapFromJson,
     syncsKind,
     defaultRootTemplateBody,
     defaultDetailsTemplateBody,
+    defaultStatusTemplateBody,
+    defaultFieldsTemplateBody,
+    defaultColorTemplateBody,
     mattermostRootTemplateName,
     mattermostDetailsTemplateName,
+    mattermostStatusTemplateName,
+    mattermostFieldsTemplateName,
+    mattermostColorTemplateName,
     mattermostTemplateNames,
     mattermostSlotNames,
 ) where
@@ -16,6 +28,8 @@ import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Service.Llm.Prompt (renderTemplate)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Text as Text
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Generated.Types
@@ -61,11 +75,100 @@ mattermostRootTemplateName = "mattermost_root"
 mattermostDetailsTemplateName :: Text
 mattermostDetailsTemplateName = "mattermost_details"
 
+-- Root-card sub-part templates (llm_prompt_templates rows like the root/details
+-- texts): the attachment status line, the fields grid, and the color bar.
+-- All fail-soft: a missing/broken row falls back to the built-in default, so
+-- a bad edit can garble a card but never drop the notification.
+mattermostStatusTemplateName :: Text
+mattermostStatusTemplateName = "mattermost_status"
+
+mattermostFieldsTemplateName :: Text
+mattermostFieldsTemplateName = "mattermost_fields"
+
+mattermostColorTemplateName :: Text
+mattermostColorTemplateName = "mattermost_color"
+
 mattermostTemplateNames :: [Text]
-mattermostTemplateNames = [mattermostRootTemplateName, mattermostDetailsTemplateName]
+mattermostTemplateNames =
+    [ mattermostRootTemplateName
+    , mattermostDetailsTemplateName
+    , mattermostStatusTemplateName
+    , mattermostFieldsTemplateName
+    , mattermostColorTemplateName
+    ]
 
 defaultRootTemplateBody :: Text
 defaultRootTemplateBody = "[{{alert.state}}] {{alert.title}}"
+
+-- The status line is one line per status; exactly one of the line_* slots is
+-- non-empty for a given alert, and renderTemplateLines drops the empty lines,
+-- so a plain list renders the single applicable line. Admins can restructure
+-- freely (e.g. always show the ack link, add the rule name).
+defaultStatusTemplateBody :: Text
+defaultStatusTemplateBody =
+    Text.intercalate
+        "\n"
+        [ "{{line_ack}}"
+        , "{{line_closed}}"
+        , "{{line_resolved}}"
+        , "{{line_stalled}}"
+        , "{{line_firing}}"
+        ]
+
+-- Fields grid: one "Title|value" per line; the value side takes the same
+-- slots as every other template. Lines whose rendered value is empty are
+-- dropped (an absent slot must not leave an empty row). The title side is
+-- literal text — it is NOT slot-rendered, so a "|" in a title is impossible
+-- by construction.
+defaultFieldsTemplateBody :: Text
+defaultFieldsTemplateBody =
+    Text.intercalate
+        "\n"
+        [ "Environment|{{alert.env}}"
+        , "Host|{{alert.host}}"
+        , "Service|{{alert.service}}"
+        , "Severity|{{alert.severity}}"
+        , "Rule|{{rule}}"
+        ]
+
+-- References the severity→color config mapping (notification_channels.config
+-- "colors", sane defaults in defaultColorMap) through the {{color}} slot;
+-- admins can also hardcode a literal "#RRGGBB" here.
+defaultColorTemplateBody :: Text
+defaultColorTemplateBody = "{{color}}"
+
+-- Sane defaults for the channel config "colors" mapping: terminal states
+-- gray, then severity, then the fallback. resolveColor looks the alert's
+-- STATUS up first (so "resolved" wins over "critical"), then its severity,
+-- then "default" — mirroring the historic hardcoded behavior.
+defaultColorMap :: [(Text, Text)]
+defaultColorMap =
+    [ ("resolved", "#98A2AD")
+    , ("closed", "#98A2AD")
+    , ("stalled", "#98A2AD")
+    , ("critical", "#E5484D")
+    , ("high", "#FF5A1F")
+    , ("warning", "#F7B500")
+    , ("default", "#4C8DFF")
+    ]
+
+resolveColor :: [(Text, Text)] -> Alert -> Text
+resolveColor overrides alert =
+    fromMaybe "#4C8DFF" (lookup (statusText alert) merged <|> lookup alert.severity merged <|> lookup "default" merged)
+  where
+    merged = overrides ++ filter ((`notElem` map fst overrides) . fst) defaultColorMap
+
+-- Overrides from a notification_channels.config JSON: an optional "colors"
+-- object of string values. Unknown shapes yield no overrides (defaults rule).
+colorMapFromJson :: Value -> [(Text, Text)]
+colorMapFromJson config = case config of
+    Aeson.Object object_ -> case KeyMap.lookup "colors" object_ of
+        Just (Aeson.Object colors) ->
+            [ (Key.toText key, value)
+            | (key, Aeson.String value) <- KeyMap.toList colors
+            ]
+        _ -> []
+    _ -> []
 
 defaultDetailsTemplateBody :: Text
 defaultDetailsTemplateBody =
@@ -88,7 +191,7 @@ defaultDetailsTemplateBody =
 -- Slot names for the admin template editor help text; kept next to
 -- mmBindings so the docs cannot drift from the renderer.
 mattermostSlotNames :: [Text]
-mattermostSlotNames = map fst (mmBindings stubContext stubAlert)
+mattermostSlotNames = map fst (mmBindings [] stubContext stubAlert)
   where
     stubContext =
         MattermostRenderContext
@@ -103,11 +206,14 @@ mattermostSlotNames = map fst (mmBindings stubContext stubAlert)
             }
     stubAlert = newRecord @Alert
 
--- | Bindings shared by the root and details templates. Alert fields use the
--- alert.* prefix (the LLM template convention); the render-context values are
--- plain names.
-mmBindings :: MattermostRenderContext -> Alert -> [(Text, Text)]
-mmBindings context alert =
+-- | Bindings shared by all mattermost templates. Alert fields use the
+-- alert.* prefix (the LLM template convention); the render-context values
+-- are plain names. The color overrides come from the channel config and feed
+-- the {{color}} slot (and the color bar's default resolution). line_* are
+-- the per-status status-line phrases — exactly one is non-empty, so the
+-- default mattermost_status body renders the single applicable line.
+mmBindings :: [(Text, Text)] -> MattermostRenderContext -> Alert -> [(Text, Text)]
+mmBindings colorOverrides context alert =
     [ ("alert.title", alert.title)
     , ("alert.severity", alert.severity)
     , ("alert.status", statusText alert)
@@ -126,7 +232,25 @@ mmBindings context alert =
     , ("action_url", fromMaybe "" context.mrcActionUrl)
     , ("alert_url", context.mrcAlertUrl)
     , ("alert_id", context.mrcAlertId)
+    , ("color", resolveColor colorOverrides alert)
+    , ("line_ack", onlyStatus "ack" ackLine)
+    , ("line_closed", onlyStatus "closed" closedLine)
+    , ("line_resolved", onlyStatus "resolved" "Resolved by the source")
+    , ("line_stalled", onlyStatus "stalled" "Stalled: no source updates")
+    , ("line_firing", if statusText alert `elem` (["ack", "closed", "resolved", "stalled"] :: [Text]) then "" else firingLine)
     ]
+  where
+    onlyStatus status text = if statusText alert == status then text else ""
+    ackLine =
+        "Acked by "
+            <> fromMaybe "unknown" context.mrcAckedBy
+            <> maybe "" (" at " <>) (formatStamp <$> context.mrcAckedAt)
+    closedLine = "Closed" <> maybe "" (" by " <>) context.mrcClosedBy
+    firingLine =
+        "Firing · "
+            <> tshow alert.occurrences
+            <> " occurrence(s)"
+            <> maybe "" (\url -> " · [Ack](" <> url <> ")") context.mrcAckUrl
 
 -- Render a template body and drop empty lines, so optional slots (e.g. an
 -- absent description) do not leave blank lines behind.
@@ -136,20 +260,59 @@ renderTemplateLines body bindings =
 
 -- | Root post message line. The Maybe is the active mattermost_root template
 -- body; Nothing falls back to defaultRootTemplateBody.
-renderRootMessage :: Maybe Text -> MattermostRenderContext -> Alert -> Text
-renderRootMessage template context alert =
-    renderTemplateLines (fromMaybe defaultRootTemplateBody template) (mmBindings context alert)
+renderRootMessage :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Text
+renderRootMessage template colorOverrides context alert =
+    renderTemplateLines (fromMaybe defaultRootTemplateBody template) (mmBindings colorOverrides context alert)
+
+-- | Attachment status line (mattermost_status template; falls back to
+-- defaultStatusTemplateBody).
+renderStatusMessage :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Text
+renderStatusMessage template colorOverrides context alert =
+    renderTemplateLines (fromMaybe defaultStatusTemplateBody template) (mmBindings colorOverrides context alert)
+
+-- | Attachment fields grid (mattermost_fields template): rendered
+-- "Title|value" lines become {title, value, short:true} entries; value-empty
+-- lines are dropped. Falls back to defaultFieldsTemplateBody.
+renderFields :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> [Value]
+renderFields template colorOverrides context alert =
+    [ fieldPair (title, value)
+    | line <- Text.lines (renderTemplateLines (fromMaybe defaultFieldsTemplateBody template) bindings)
+    , let (title, rest) = Text.break (== '|') line
+    , let value = Text.drop 1 rest
+    , not (Text.null value)
+    ]
+  where
+    bindings = mmBindings colorOverrides context alert
+
+-- | Attachment color bar (mattermost_color template): the first rendered
+-- line that looks like a color wins (typically "{{color}}" referencing the
+-- config mapping, or a literal "#RRGGBB"; MM also accepts the named colors
+-- good/warning/danger). Anything else — empty, leftover {{slots}}, random
+-- text — falls back to the direct mapping resolution, so a broken color
+-- template degrades to the default bar instead of a broken attachment.
+renderColor :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Text
+renderColor template colorOverrides context alert =
+    case filter isUsableColor (map Text.strip (Text.lines rendered)) of
+        (line : _) -> line
+        [] -> resolveColor colorOverrides alert
+  where
+    rendered = renderTemplateLines (fromMaybe defaultColorTemplateBody template) (mmBindings colorOverrides context alert)
+    isUsableColor line = case Text.uncons line of
+        Just ('#', hex) -> not (Text.null hex) && Text.all (`elem` ("0123456789abcdefABCDEF" :: String)) hex
+        _ -> Text.toLower line `elem` (["good", "warning", "danger"] :: [Text])
 
 -- | Root post props: one attachment with fields, color, and (for firing
--- alerts) the Ack action wired back to Halemans.
-renderRootProps :: MattermostRenderContext -> Alert -> Value
-renderRootProps context alert =
+-- alerts) the Ack action wired back to Halemans. The Maybes are the active
+-- mattermost_status / mattermost_color / mattermost_fields template bodies;
+-- the color overrides come from the channel config (colorMapFromJson).
+renderRootProps :: Maybe Text -> Maybe Text -> Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Value
+renderRootProps statusTemplate colorTemplate fieldsTemplate colorOverrides context alert =
     object
         [ "attachments"
             .= [ object
-                    [ "color" .= stateColor alert
-                    , "text" .= statusLine context alert
-                    , "fields" .= map fieldPair (rootFields context alert)
+                    [ "color" .= renderColor colorTemplate colorOverrides context alert
+                    , "text" .= renderStatusMessage statusTemplate colorOverrides context alert
+                    , "fields" .= renderFields fieldsTemplate colorOverrides context alert
                     , "actions" .= ackAction context alert
                     ]
                ]
@@ -158,9 +321,9 @@ renderRootProps context alert =
 -- | Thread-reply message with the full alert details. The Maybe is the
 -- active mattermost_details template body; Nothing falls back to
 -- defaultDetailsTemplateBody.
-renderDetailsMessage :: Maybe Text -> MattermostRenderContext -> Alert -> Text
-renderDetailsMessage template context alert =
-    renderTemplateLines (fromMaybe defaultDetailsTemplateBody template) (mmBindings context alert)
+renderDetailsMessage :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Text
+renderDetailsMessage template colorOverrides context alert =
+    renderTemplateLines (fromMaybe defaultDetailsTemplateBody template) (mmBindings colorOverrides context alert)
 
 statusText :: Alert -> Text
 statusText alert = alert.status
@@ -178,41 +341,6 @@ stateLabel status = case status of
     "stalled" -> "STALLED"
     "closed" -> "CLOSED"
     _ -> Text.toUpper status
-
-stateColor :: Alert -> Text
-stateColor alert = case statusText alert of
-    "resolved" -> "#98A2AD"
-    "closed" -> "#98A2AD"
-    "stalled" -> "#98A2AD"
-    _ -> case alert.severity of
-        "critical" -> "#E5484D"
-        "high" -> "#FF5A1F"
-        "warning" -> "#F7B500"
-        _ -> "#4C8DFF"
-
-statusLine :: MattermostRenderContext -> Alert -> Text
-statusLine context alert = case statusText alert of
-    "ack" ->
-        "Acked by "
-            <> fromMaybe "unknown" context.mrcAckedBy
-            <> maybe "" (" at " <>) (formatStamp <$> context.mrcAckedAt)
-    "closed" -> "Closed" <> maybe "" (" by " <>) context.mrcClosedBy
-    "resolved" -> "Resolved by the source"
-    "stalled" -> "Stalled: no source updates"
-    _ ->
-        "Firing · "
-            <> tshow alert.occurrences
-            <> " occurrence(s)"
-            <> maybe "" (\url -> " · [Ack](" <> url <> ")") context.mrcAckUrl
-
-rootFields :: MattermostRenderContext -> Alert -> [(Text, Text)]
-rootFields context alert =
-    [ ("Environment", fieldOrDash FieldEnv alert)
-    , ("Host", fieldOrDash FieldHost alert)
-    , ("Service", fieldOrDash FieldService alert)
-    , ("Severity", alert.severity)
-    , ("Rule", context.mrcRuleName)
-    ]
 
 fieldOrDash :: AlertField -> Alert -> Text
 fieldOrDash field alert = fromMaybe "-" (effectiveFieldText field alert)

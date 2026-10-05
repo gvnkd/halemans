@@ -154,6 +154,31 @@ Fingerprint: `{{alert.fingerprint}}`
 
 [Open in Halemans]({{alert_url}})$tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_details' AND version = 1);
+
+-- Root-card sub-part templates (status line, fields grid, color bar). Keep
+-- the bodies in sync with Application/Service/Mattermost/Render.hs
+-- (defaultStatusTemplateBody / defaultFieldsTemplateBody /
+-- defaultColorTemplateBody) — boot-time default provisioning inserts the same
+-- bodies when the rows are absent.
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_status', 1, $tpl${{line_ack}}
+{{line_closed}}
+{{line_resolved}}
+{{line_stalled}}
+{{line_firing}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_status' AND version = 1);
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_fields', 1, $tpl$Environment|{{alert.env}}
+Host|{{alert.host}}
+Service|{{alert.service}}
+Severity|{{alert.severity}}
+Rule|{{rule}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_fields' AND version = 1);
+
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_color', 1, $tpl${{color}}$tpl$, true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_color' AND version = 1);
 SQL
 
 # Assets info source pointing at the mock (milestone 8 D9) + default agent

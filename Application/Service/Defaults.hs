@@ -4,10 +4,16 @@ import Application.Service.Agent.Core (defaultAgentTemplateBody, internalAgentTe
 import Application.Service.Jira.Related (defaultJiraRelatedTemplateBody, relatedTemplateName)
 import Application.Service.Llm.Prompt (defaultEnrichmentTemplateBody, enrichmentTemplateName)
 import Application.Service.Mattermost.Render (
+    defaultColorTemplateBody,
     defaultDetailsTemplateBody,
+    defaultFieldsTemplateBody,
     defaultRootTemplateBody,
+    defaultStatusTemplateBody,
+    mattermostColorTemplateName,
     mattermostDetailsTemplateName,
+    mattermostFieldsTemplateName,
     mattermostRootTemplateName,
+    mattermostStatusTemplateName,
  )
 import Control.Monad (void)
 import Generated.Types
@@ -50,6 +56,9 @@ defaultTemplates :: [(Text, Text)]
 defaultTemplates =
     [ (mattermostRootTemplateName, defaultRootTemplateBody)
     , (mattermostDetailsTemplateName, defaultDetailsTemplateBody)
+    , (mattermostStatusTemplateName, defaultStatusTemplateBody)
+    , (mattermostFieldsTemplateName, defaultFieldsTemplateBody)
+    , (mattermostColorTemplateName, defaultColorTemplateBody)
     , (internalAgentTemplateName, defaultAgentTemplateBody)
     , (relatedTemplateName, defaultJiraRelatedTemplateBody)
     , (enrichmentTemplateName, defaultEnrichmentTemplateBody)
