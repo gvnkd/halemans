@@ -153,6 +153,27 @@ spec = describe "Application.Service.Mattermost.Render" do
     it "renders no header line for an empty mattermost_root body" do
         renderRootMessage (Just "") [] renderContext (mkAlert "firing" "critical") `shouldBe` ""
 
+    it "renders the admin card preview from the sample alert" do
+        let preview = previewCard Nothing Nothing Nothing Nothing
+        preview.mcpHeader `shouldBe` "[FIRING] Sample: CPU load above 80%"
+        preview.mcpStatus `shouldSatisfy` (Text.isPrefixOf "Firing · 3 occurrence(s)")
+        preview.mcpFields
+            `shouldBe` [ ("Environment", "production")
+                       , ("Host", "db-pgsql01")
+                       , ("Service", "postgresql")
+                       , ("Severity", "critical")
+                       , ("Rule", "sample-rule")
+                       ]
+        preview.mcpColor `shouldBe` "#E5484D"
+        preview.mcpAckAction `shouldBe` True
+
+    it "preview reflects a custom header and suppressed fields" do
+        let preview = previewCard (Just "") (Just "{{alert.env}}/{{alert.host}}") (Just "|") (Just "#123456")
+        preview.mcpHeader `shouldBe` ""
+        preview.mcpStatus `shouldBe` "production/db-pgsql01"
+        preview.mcpFields `shouldBe` []
+        preview.mcpColor `shouldBe` "#123456"
+
     it "renders a custom status template with the shared slots" do
         renderStatusMessage (Just "{{rule}}: {{alert.occurrences}}x {{alert.state}}") [] renderContext (mkAlert "firing" "high")
             `shouldBe` "cpu-rules: 3x FIRING"

@@ -87,6 +87,7 @@ navigation =
                     <li><a class="dropdown-item" href={NotificationChannelsAction}>{tr "Notification channels"}</a></li>
                     <li><a class="dropdown-item" href={EscalationPoliciesAction}>{tr "Escalation policies"}</a></li>
                     <li><a class="dropdown-item" href={IntegrationsAction}>{tr "Integrations"}</a></li>
+                    <li><a class="dropdown-item" href={MattermostTemplatesAction}>{tr "Mattermost card"}</a></li>
                     <li><a class="dropdown-item" href={LlmAdminAction}>LLM</a></li>
                     <li><a class="dropdown-item" href={LlmAgentConfigAction}>{tr "Agent"}</a></li>
                     <li><a class="dropdown-item" href={AssetsAdminAction}>{tr "Assets"}</a></li>

@@ -31,6 +31,12 @@ POST /alerts/{alertId}/reanalyze           ReanalyzeAlertAction
 POST /alerts/{alertId}/analyses/{analysisId}/feedback  LlmFeedbackAction
 |]
 
+[routes|MattermostTemplatesController
+GET  /admin/mattermost                         MattermostTemplatesAction
+GET  /admin/mattermost/edit                    EditMattermostTemplateAction
+POST /admin/mattermost/update                  UpdateMattermostTemplateAction
+|]
+
 [routes|LlmAdminController
 GET  /admin/llm                                LlmAdminAction
 GET  /admin/llm/queue                          LlmQueueAction

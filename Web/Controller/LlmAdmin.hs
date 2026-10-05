@@ -11,6 +11,7 @@ import qualified Application.Service.Llm.GlobalConfig as GlobalConfig
 import Application.Service.Llm.Roles (roleToolNames)
 import qualified Application.Service.Llm.ToolCache as ToolCache
 import qualified Application.Service.Log as Log
+import Application.Service.Mattermost.Render (mattermostTemplateNames)
 import Control.Monad (void)
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
@@ -37,6 +38,8 @@ instance Controller LlmAdminController where
 
     action LlmAdminAction = do
         requirePrivilege "manage_rules"
+        -- The mattermost_* rows have their own dedicated page (Admin →
+        -- Mattermost card); keep this list to LLM templates.
         templateRows <-
             sqlQueryTyped
                 [typedSql|
@@ -46,6 +49,7 @@ instance Controller LlmAdminController where
             FROM llm_prompt_templates t
             LEFT JOIN llm_analyses a ON a.prompt_template_id = t.id
             LEFT JOIN llm_feedback f ON f.analysis_id = a.id
+            WHERE NOT (t.name = ANY(${mattermostTemplateNames}))
             GROUP BY t.id, t.name, t.version, t.active, t.notes, t.protected
             ORDER BY t.name, t.version DESC
         |]

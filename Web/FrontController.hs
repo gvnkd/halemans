@@ -27,6 +27,7 @@ import Web.Controller.Integrations
 import Web.Controller.InternalApi
 import Web.Controller.Live
 import Web.Controller.LlmAdmin
+import Web.Controller.MattermostTemplates
 import Web.Controller.Metrics
 import Web.Controller.NotificationChannels
 import Web.Controller.NotificationRules
@@ -65,6 +66,7 @@ instance FrontController WebApplication where
         , parseRoute @DashboardsController
         , parseRoute @IntegrationsController
         , parseRoute @LlmAdminController
+        , parseRoute @MattermostTemplatesController
         , parseRoute @AssetsAdminController
         , parseRoute @AssetsIconsController
         , parseRoute @AdminController

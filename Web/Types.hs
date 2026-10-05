@@ -88,6 +88,12 @@ data IntegrationsController
     | TestCmdbConfigAction {cmdbConfigId :: !(Id CmdbConfig)}
     deriving (Eq, Show)
 
+data MattermostTemplatesController
+    = MattermostTemplatesAction
+    | EditMattermostTemplateAction
+    | UpdateMattermostTemplateAction
+    deriving (Eq, Show)
+
 data LlmAdminController
     = LlmAdminAction
     | LlmQueueAction

@@ -254,7 +254,7 @@ Alert notifications can be delivered to Mattermost as threaded bot posts. A **bo
 
    Each user sets their **Mattermost username** on their profile page (stored in `users.settings.mattermostUsername`); button clickers are matched to a Halemans user by that field first, then by display name, else the service account acks. The acked alert shows the actor and time both on the Halemans alert card and in the re-rendered MM root post ("Acked by X at …").
 
-**Message templates.** Every text part of the root card is a versioned `llm_prompt_templates` row, editable in Admin → LLM admin → Templates (save appends a version and activates it; a broken template falls back to the built-in default, it can garble a card but never drop the notification):
+**Message templates.** Every text part of the root card is a versioned `llm_prompt_templates` row, editable in **Admin → Mattermost card** (a dedicated page with a live sample-alert preview; save appends a version and activates it in one step; a broken template falls back to the built-in default, it can garble a card but never drop the notification). The same rows remain visible to the agent tools:
 
 | Row | Controls |
 |---|---|

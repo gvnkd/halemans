@@ -5,7 +5,12 @@ module Application.Service.Mattermost.Render (
     renderDetailsMessage,
     renderStatusMessage,
     renderFields,
+    renderFieldPairs,
     renderColor,
+    MattermostCardPreview (..),
+    previewCard,
+    sampleRenderContext,
+    sampleAlert,
     resolveColor,
     defaultColorMap,
     colorMapFromJson,
@@ -33,6 +38,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Text as Text
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Generated.Types
+import IHP.HaskellSupport ((|>))
 import IHP.ModelSupport (newRecord)
 import IHP.Prelude
 
@@ -191,20 +197,58 @@ defaultDetailsTemplateBody =
 -- Slot names for the admin template editor help text; kept next to
 -- mmBindings so the docs cannot drift from the renderer.
 mattermostSlotNames :: [Text]
-mattermostSlotNames = map fst (mmBindings [] stubContext stubAlert)
-  where
-    stubContext =
-        MattermostRenderContext
-            { mrcRuleName = ""
-            , mrcAckedBy = Nothing
-            , mrcAckedAt = Nothing
-            , mrcClosedBy = Nothing
-            , mrcActionUrl = Nothing
-            , mrcAckUrl = Nothing
-            , mrcAlertUrl = ""
-            , mrcAlertId = ""
-            }
-    stubAlert = newRecord @Alert
+mattermostSlotNames = map fst (mmBindings [] sampleRenderContext sampleAlert)
+
+-- | Sample render context for the slot-name list and the admin card preview:
+-- representative values so every slot renders something meaningful.
+sampleRenderContext :: MattermostRenderContext
+sampleRenderContext =
+    MattermostRenderContext
+        { mrcRuleName = "sample-rule"
+        , mrcAckedBy = Just "on-call"
+        , mrcAckedAt = Nothing
+        , mrcClosedBy = Nothing
+        , mrcActionUrl = Just "http://halemans.example/hooks/mattermost/actions/secret"
+        , mrcAckUrl = Just "http://halemans.example/alerts/sample/ack-link?token=sample"
+        , mrcAlertUrl = "http://halemans.example/alerts/sample"
+        , mrcAlertId = "sample"
+        }
+
+-- | Sample alert for the admin card preview: firing/critical so the preview
+-- shows the Ack action and the red bar.
+sampleAlert :: Alert
+sampleAlert =
+    newRecord @Alert
+        |> set #title "Sample: CPU load above 80%"
+        |> set #fingerprint "sample-fingerprint"
+        |> set #status "firing"
+        |> set #severity "critical"
+        |> set #occurrences 3
+        |> set #env (Just "production")
+        |> set #host (Just "db-pgsql01")
+        |> set #service (Just "postgresql")
+        |> set #description "load average 15m above threshold"
+
+-- | The rendered root card, decomposed for the admin preview page. Each
+-- Maybe is a template body (Nothing = the built-in default).
+data MattermostCardPreview = MattermostCardPreview
+    { mcpHeader :: Text
+    , mcpStatus :: Text
+    , mcpFields :: [(Text, Text)]
+    , mcpColor :: Text
+    , mcpAckAction :: Bool
+    }
+    deriving (Eq, Show)
+
+previewCard :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> MattermostCardPreview
+previewCard rootTemplate statusTemplate fieldsTemplate colorTemplate =
+    MattermostCardPreview
+        { mcpHeader = renderRootMessage rootTemplate [] sampleRenderContext sampleAlert
+        , mcpStatus = renderStatusMessage statusTemplate [] sampleRenderContext sampleAlert
+        , mcpFields = renderFieldPairs fieldsTemplate [] sampleRenderContext sampleAlert
+        , mcpColor = renderColor colorTemplate [] sampleRenderContext sampleAlert
+        , mcpAckAction = True -- sample context carries an action URL on a firing alert
+        }
 
 -- | Bindings shared by all mattermost templates. Alert fields use the
 -- alert.* prefix (the LLM template convention); the render-context values
@@ -275,7 +319,13 @@ renderStatusMessage template colorOverrides context alert =
 -- lines are dropped. Falls back to defaultFieldsTemplateBody.
 renderFields :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> [Value]
 renderFields template colorOverrides context alert =
-    [ fieldPair (title, value)
+    map fieldPair (renderFieldPairs template colorOverrides context alert)
+
+-- The fields grid as (title, value) pairs — the attachment JSON builder
+-- (renderFields) and the admin page preview share this.
+renderFieldPairs :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> [(Text, Text)]
+renderFieldPairs template colorOverrides context alert =
+    [ (title, value)
     | line <- Text.lines (renderTemplateLines (fromMaybe defaultFieldsTemplateBody template) bindings)
     , let (title, rest) = Text.break (== '|') line
     , let value = Text.drop 1 rest
