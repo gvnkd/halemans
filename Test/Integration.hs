@@ -4,6 +4,7 @@ import IHP.Prelude
 import qualified Test.Integration.AgentSpec
 import qualified Test.Integration.ApiSpec
 import qualified Test.Integration.DashboardsSpec
+import qualified Test.Integration.DefaultsSpec
 import qualified Test.Integration.EnrichmentSpec
 import qualified Test.Integration.LlmSpec
 import qualified Test.Integration.MattermostSpec
@@ -26,3 +27,4 @@ main =
         Test.Integration.MattermostSpec.spec
         Test.Integration.DashboardsSpec.spec
         Test.Integration.AgentSpec.spec
+        Test.Integration.DefaultsSpec.spec

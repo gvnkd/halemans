@@ -11,6 +11,8 @@ module Application.Service.Llm.Prompt (
     sha256Hex,
     BuiltPrompt (..),
     buildPromptForAlert,
+    enrichmentTemplateName,
+    defaultEnrichmentTemplateBody,
 ) where
 
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
@@ -41,6 +43,52 @@ import "cryptonite" Crypto.Hash (SHA256 (..), hashWith)
 
 truncationMarker :: Text
 truncationMarker = "…[truncated]"
+
+-- The active llm_prompt_templates row for this name is REQUIRED (fail-hard:
+-- buildPromptForAlert returns Nothing without it, unlike the Mattermost and
+-- internal-agent paths which fall back to built-in bodies). Boot-time default
+-- provisioning (Application.Service.Defaults) inserts this body as v1 so a
+-- bare DB still has an active row; admins then edit it like any template.
+enrichmentTemplateName :: Text
+enrichmentTemplateName = "alert_enrichment"
+
+-- Slot set must cover bindingsFor below (the admin editor help text derives
+-- from bindingsFor, so a missing slot renders as a literal {{...}}).
+defaultEnrichmentTemplateBody :: Text
+defaultEnrichmentTemplateBody =
+    Text.intercalate
+        "\n"
+        [ "You are an SRE assistant enriching an ops alert for the on-call engineer. Be concise; do not invent facts."
+        , ""
+        , "## Alert"
+        , "- Title: {{alert.title}}"
+        , "- Severity: {{alert.severity}}"
+        , "- Environment: {{alert.env}}"
+        , "- Host: {{alert.host}}"
+        , "- Service: {{alert.service}}"
+        , "- Check: {{alert.check_name}}"
+        , "- Labels: {{alert.labels}}"
+        , "- Annotations: {{alert.annotations}}"
+        , ""
+        , "{{alert.description}}"
+        , ""
+        , "## Recent events"
+        , "{{events}}"
+        , ""
+        , "## CMDB context"
+        , "{{cmdb_excerpt}}"
+        , ""
+        , "## Linked assets"
+        , "{{assets_excerpt}}"
+        , ""
+        , "## Similar past alerts"
+        , "{{similar_alerts}}"
+        , ""
+        , "## Linked Jira tickets"
+        , "{{jira_links}}"
+        , ""
+        , "Analyze the probable cause of this alert using the context above and suggest concrete next steps for the on-call engineer."
+        ]
 
 data PromptInputs = PromptInputs
     { piTitle :: Text

@@ -4,6 +4,7 @@ module Application.Service.Jira.Related (
     relevanceContract,
     relatedRoleName,
     relatedTemplateName,
+    defaultJiraRelatedTemplateBody,
     parseRelevantKeys,
     maxCandidates,
 ) where
@@ -57,6 +58,32 @@ relatedRoleName = "jira-related-filter"
 
 relatedTemplateName :: Text
 relatedTemplateName = "jira_related_filter"
+
+-- v1 seed body for the relatedTemplateName row (boot-time default provisioning
+-- in Application.Service.Defaults; same content as the seed scripts). Slots
+-- must match filterBindings below — the code appends relevanceContract after
+-- rendering, so the verdict format is NOT part of this body.
+defaultJiraRelatedTemplateBody :: Text
+defaultJiraRelatedTemplateBody =
+    Text.intercalate
+        "\n"
+        [ "You are triaging Jira tasks related to a monitoring alert."
+        , ""
+        , "## Alert"
+        , "- Title: {{alert.title}}"
+        , "- Severity: {{alert.severity}}"
+        , "- Environment: {{alert.env}}"
+        , "- Host: {{alert.host}}"
+        , "- Service: {{alert.service}}"
+        , "- Check: {{alert.check_name}}"
+        , ""
+        , "{{alert.description}}"
+        , ""
+        , "## Candidate Jira tasks"
+        , "{{candidates}}"
+        , ""
+        , "You may call jira_issue_details with a task key to inspect its description and comments before deciding."
+        ]
 
 data RelatedCandidate = RelatedCandidate
     { candidateKey :: Text
