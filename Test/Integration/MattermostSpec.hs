@@ -93,7 +93,7 @@ spec = describe "Mattermost notification channel" do
                     _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_status" |> set #version 1 |> set #body "{{alert.state}} x{{alert.occurrences}} via {{rule}}" |> set #active True |> createRecord
                     _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_fields" |> set #version 1 |> set #body "Env|{{alert.env}}\nSev|{{alert.severity}}" |> set #active True |> createRecord
                     _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_color" |> set #version 1 |> set #body "{{color}}" |> set #active True |> createRecord
-                    rule <- mattermostRuleWithColors ruleName channelName envName (Aeson.object ["warning" Aeson..= Aeson.String "#0A0B0C"])
+                    rule <- mattermostRuleWithColors ruleName channelName envName (Aeson.object ["colors" Aeson..= Aeson.object ["warning" Aeson..= Aeson.String "#0A0B0C"]])
                     _ <- pure rule
                     source <- testSource
                     fp <- freshFingerprint
@@ -109,6 +109,48 @@ spec = describe "Mattermost notification channel" do
                     attachmentPairs root `shouldBe` [("Env", envName), ("Sev", "warning")]
                 )
                 `finally` deleteMattermostSubTemplates
+
+    it "renders extra attachment props (footer/title/thumb_url) from mattermost_attachment" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-props-env-" <> suffix
+        withMattermostEnv do
+            ( do
+                    mockReset
+                    deleteMattermostSubTemplates
+                    _ <- newRecord @LlmPromptTemplate |> set #name "mattermost_attachment" |> set #version 1 |> set #body "footer|Halemans {{alert.state}}\ntitle|{{alert.title}}\nthumb_url|https://example/t.png" |> set #active True |> createRecord
+                    _ <- mattermostRule ("mm-props-rule-" <> suffix) ("mm-props-chan-" <> suffix) envName
+                    source <- testSource
+                    fp <- freshFingerprint
+                    Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+                    exposeFor alertId
+                    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+                    perform notifyJob
+
+                    posts <- mockPosts
+                    (root, _) <- expectRootAndReply posts
+                    attachmentFieldText "footer" root `shouldBe` "Halemans FIRING"
+                    attachmentFieldText "title" root `shouldBe` "integration test alert"
+                    attachmentFieldText "thumb_url" root `shouldBe` "https://example/t.png"
+                )
+                `finally` deleteMattermostSubTemplates
+
+    it "channel config ackAction:false hides the Ack button but keeps the markdown link" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-noack-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRuleWithConfig ("mm-noack-rule-" <> suffix) ("mm-noack-chan-" <> suffix) envName (Aeson.object ["ackAction" Aeson..= Aeson.Bool False])
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob
+
+            posts <- mockPosts
+            (root, _) <- expectRootAndReply posts
+            actionNames root `shouldBe` []
+            attachmentFieldText "text" root `shouldSatisfy` (Text.isInfixOf "[Ack](")
 
     it "a second notify for the same alert does not duplicate the channel post" do
         suffix <- tshow <$> nextRandom
@@ -311,17 +353,21 @@ expectOne :: [a] -> IO a
 expectOne [single] = pure single
 expectOne others = expectationFailure (cs ("expected exactly one element, got " <> tshow (length others))) >> error "unreachable"
 
--- mattermostRule plus a "colors" mapping merged into the channel row config
--- (the severity/status → hex overrides that {{color}} resolves through).
-mattermostRuleWithColors :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO NotificationRule
-mattermostRuleWithColors name channel envName colors = do
+-- mattermostRule plus extra config keys merged into the channel row config
+-- (e.g. "colors" mapping for {{color}}, "ackAction": false to hide the
+-- interactive Ack button).
+mattermostRuleWithConfig :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO NotificationRule
+mattermostRuleWithConfig name channel envName extra = do
     rule <- mattermostRule name channel envName
     chan <- query @NotificationChannel |> filterWhere (#name, channel) |> fetchOne
-    let merged = case chan.config of
-            Aeson.Object object_ -> Aeson.Object (KeyMap.insert "colors" colors object_)
-            other -> other
+    let merged = case (chan.config, extra) of
+            (Aeson.Object base, Aeson.Object additions) -> Aeson.Object (KeyMap.union additions base)
+            (base, _) -> base
     void (chan |> set #config merged |> updateRecord)
     pure rule
+
+mattermostRuleWithColors :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO NotificationRule
+mattermostRuleWithColors = mattermostRuleWithConfig
 
 -- The root-card sub-part template rows are global config shared by every MM
 -- delivery, so the example deletes them before AND after (finally) — same
@@ -331,7 +377,7 @@ deleteMattermostSubTemplates = void do
     sqlExecTyped
         [typedSql|
         DELETE FROM llm_prompt_templates
-        WHERE name IN ('mattermost_status', 'mattermost_fields', 'mattermost_color')
+        WHERE name IN ('mattermost_status', 'mattermost_fields', 'mattermost_color', 'mattermost_attachment')
     |]
 
 attachmentFieldText :: Text -> Aeson.Value -> Text

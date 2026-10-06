@@ -7,6 +7,8 @@ module Application.Service.Mattermost.Render (
     renderFields,
     renderFieldPairs,
     renderColor,
+    renderAttachmentPropPairs,
+    attachmentPropKeys,
     MattermostCardPreview (..),
     previewCard,
     sampleRenderContext,
@@ -20,11 +22,14 @@ module Application.Service.Mattermost.Render (
     defaultStatusTemplateBody,
     defaultFieldsTemplateBody,
     defaultColorTemplateBody,
+    defaultTemplateBodyFor,
+    ackActionEnabledFromJson,
     mattermostRootTemplateName,
     mattermostDetailsTemplateName,
     mattermostStatusTemplateName,
     mattermostFieldsTemplateName,
     mattermostColorTemplateName,
+    mattermostAttachmentTemplateName,
     mattermostTemplateNames,
     mattermostSlotNames,
 ) where
@@ -35,12 +40,14 @@ import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Char as Char
 import qualified Data.Text as Text
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Generated.Types
 import IHP.HaskellSupport ((|>))
 import IHP.ModelSupport (newRecord)
 import IHP.Prelude
+import Text.Read (read)
 
 -- Pure Mattermost message rendering. The root post carries the templated
 -- alert summary as a message attachment (color = severity/state, fields,
@@ -94,6 +101,14 @@ mattermostFieldsTemplateName = "mattermost_fields"
 mattermostColorTemplateName :: Text
 mattermostColorTemplateName = "mattermost_color"
 
+-- Extra attachment properties (Mattermost message-attachment keys the four
+-- main widgets don't cover): title/title_link, pretext, author_*,
+-- image_url/thumb_url, footer/footer_icon, fallback, ts. One "key|value"
+-- line per property, same convention as the fields grid. Empty body (the
+-- default) = no extra properties.
+mattermostAttachmentTemplateName :: Text
+mattermostAttachmentTemplateName = "mattermost_attachment"
+
 mattermostTemplateNames :: [Text]
 mattermostTemplateNames =
     [ mattermostRootTemplateName
@@ -101,6 +116,7 @@ mattermostTemplateNames =
     , mattermostStatusTemplateName
     , mattermostFieldsTemplateName
     , mattermostColorTemplateName
+    , mattermostAttachmentTemplateName
     ]
 
 defaultRootTemplateBody :: Text
@@ -142,6 +158,56 @@ defaultFieldsTemplateBody =
 -- admins can also hardcode a literal "#RRGGBB" here.
 defaultColorTemplateBody :: Text
 defaultColorTemplateBody = "{{color}}"
+
+-- The extra-attachment-properties part defaults to EMPTY (no extra props);
+-- an empty body is allowed for mattermost_* rows.
+defaultAttachmentPropsTemplateBody :: Text
+defaultAttachmentPropsTemplateBody = ""
+
+-- Attachment-property keys the mattermost_attachment template may set
+-- (the Mattermost message-attachment spec minus the parts that are their
+-- own templates or code: color, text, fields, actions).
+attachmentPropKeys :: [Text]
+attachmentPropKeys =
+    [ "fallback"
+    , "pretext"
+    , "author_name"
+    , "author_link"
+    , "author_icon"
+    , "title"
+    , "title_link"
+    , "image_url"
+    , "thumb_url"
+    , "footer"
+    , "footer_icon"
+    , "ts"
+    ]
+
+-- The built-in body for a mattermost_* template name (the "Restore default"
+-- button and boot-time default provisioning both go through this, so the
+-- seeded rows and the code fallbacks can never drift apart).
+defaultTemplateBodyFor :: Text -> Maybe Text
+defaultTemplateBodyFor name = lookup name bodies
+  where
+    bodies =
+        [ (mattermostRootTemplateName, defaultRootTemplateBody)
+        , (mattermostDetailsTemplateName, defaultDetailsTemplateBody)
+        , (mattermostStatusTemplateName, defaultStatusTemplateBody)
+        , (mattermostFieldsTemplateName, defaultFieldsTemplateBody)
+        , (mattermostColorTemplateName, defaultColorTemplateBody)
+        , (mattermostAttachmentTemplateName, defaultAttachmentPropsTemplateBody)
+        ]
+
+-- Whether the interactive Ack action renders, from the channel config
+-- "ackAction" key (default True). Hiding it only removes the BUTTON — the
+-- one-time [Ack] markdown link in the status line is template-controlled
+-- ({{line_firing}} / {{ack_url}}).
+ackActionEnabledFromJson :: Value -> Bool
+ackActionEnabledFromJson config = case config of
+    Aeson.Object object_ -> case KeyMap.lookup "ackAction" object_ of
+        Just (Aeson.Bool flag) -> flag
+        _ -> True
+    _ -> True
 
 -- Sane defaults for the channel config "colors" mapping: terminal states
 -- gray, then severity, then the fallback. resolveColor looks the alert's
@@ -236,17 +302,19 @@ data MattermostCardPreview = MattermostCardPreview
     , mcpStatus :: Text
     , mcpFields :: [(Text, Text)]
     , mcpColor :: Text
+    , mcpProps :: [(Text, Text)]
     , mcpAckAction :: Bool
     }
     deriving (Eq, Show)
 
-previewCard :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> MattermostCardPreview
-previewCard rootTemplate statusTemplate fieldsTemplate colorTemplate =
+previewCard :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> MattermostCardPreview
+previewCard rootTemplate statusTemplate fieldsTemplate colorTemplate propsTemplate =
     MattermostCardPreview
         { mcpHeader = renderRootMessage rootTemplate [] sampleRenderContext sampleAlert
         , mcpStatus = renderStatusMessage statusTemplate [] sampleRenderContext sampleAlert
         , mcpFields = renderFieldPairs fieldsTemplate [] sampleRenderContext sampleAlert
         , mcpColor = renderColor colorTemplate [] sampleRenderContext sampleAlert
+        , mcpProps = renderAttachmentPropPairs propsTemplate [] sampleRenderContext sampleAlert
         , mcpAckAction = True -- sample context carries an action URL on a firing alert
         }
 
@@ -351,22 +419,46 @@ renderColor template colorOverrides context alert =
         Just ('#', hex) -> not (Text.null hex) && Text.all (`elem` ("0123456789abcdefABCDEF" :: String)) hex
         _ -> Text.toLower line `elem` (["good", "warning", "danger"] :: [Text])
 
--- | Root post props: one attachment with fields, color, and (for firing
--- alerts) the Ack action wired back to Halemans. The Maybes are the active
--- mattermost_status / mattermost_color / mattermost_fields template bodies;
--- the color overrides come from the channel config (colorMapFromJson).
-renderRootProps :: Maybe Text -> Maybe Text -> Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Value
-renderRootProps statusTemplate colorTemplate fieldsTemplate colorOverrides context alert =
+-- | Extra attachment properties from the mattermost_attachment template:
+-- one "key|value" per line (value side slot-rendered), whitelisted to
+-- attachmentPropKeys, empty values dropped, unknown keys ignored, values
+-- stripped. renderRootProps turns an all-digits "ts" into a JSON number
+-- (Mattermost expects epoch seconds).
+renderAttachmentPropPairs :: Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> [(Text, Text)]
+renderAttachmentPropPairs template colorOverrides context alert =
+    [ (key, value)
+    | line <- Text.lines (renderTemplateLines (fromMaybe defaultAttachmentPropsTemplateBody template) bindings)
+    , let (key, rest) = Text.break (== '|') line
+    , key `elem` attachmentPropKeys
+    , let value = Text.strip (Text.drop 1 rest)
+    , not (Text.null value)
+    ]
+  where
+    bindings = mmBindings colorOverrides context alert
+
+-- | Root post props: one attachment with fields, color, extra properties,
+-- and (for firing alerts) the Ack action wired back to Halemans. The Maybes
+-- are the active mattermost_status / mattermost_color / mattermost_fields /
+-- mattermost_attachment template bodies; the color overrides come from the
+-- channel config (colorMapFromJson).
+renderRootProps :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> [(Text, Text)] -> MattermostRenderContext -> Alert -> Value
+renderRootProps statusTemplate colorTemplate fieldsTemplate propsTemplate colorOverrides context alert =
     object
         [ "attachments"
             .= [ object
-                    [ "color" .= renderColor colorTemplate colorOverrides context alert
-                    , "text" .= renderStatusMessage statusTemplate colorOverrides context alert
-                    , "fields" .= renderFields fieldsTemplate colorOverrides context alert
-                    , "actions" .= ackAction context alert
-                    ]
+                    ( [ "color" .= renderColor colorTemplate colorOverrides context alert
+                      , "text" .= renderStatusMessage statusTemplate colorOverrides context alert
+                      , "fields" .= renderFields fieldsTemplate colorOverrides context alert
+                      , "actions" .= ackAction context alert
+                      ]
+                        <> map propJson (renderAttachmentPropPairs propsTemplate colorOverrides context alert)
+                    )
                ]
         ]
+  where
+    propJson (key, value)
+        | key == "ts" && Text.all Char.isDigit value = Key.fromText key .= Aeson.toJSON (read (cs value) :: Integer)
+        | otherwise = Key.fromText key .= value
 
 -- | Thread-reply message with the full alert details. The Maybe is the
 -- active mattermost_details template body; Nothing falls back to

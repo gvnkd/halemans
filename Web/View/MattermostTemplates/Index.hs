@@ -62,4 +62,5 @@ partLabel name = case name of
     "mattermost_status" -> tr "Status line"
     "mattermost_fields" -> tr "Fields grid"
     "mattermost_color" -> tr "Color bar"
+    "mattermost_attachment" -> tr "Extra attachment properties"
     _ -> name

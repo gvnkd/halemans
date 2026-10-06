@@ -4,11 +4,8 @@ import Application.Service.Agent.Core (defaultAgentTemplateBody, internalAgentTe
 import Application.Service.Jira.Related (defaultJiraRelatedTemplateBody, relatedTemplateName)
 import Application.Service.Llm.Prompt (defaultEnrichmentTemplateBody, enrichmentTemplateName)
 import Application.Service.Mattermost.Render (
-    defaultColorTemplateBody,
-    defaultDetailsTemplateBody,
-    defaultFieldsTemplateBody,
-    defaultRootTemplateBody,
-    defaultStatusTemplateBody,
+    defaultTemplateBodyFor,
+    mattermostAttachmentTemplateName,
     mattermostColorTemplateName,
     mattermostDetailsTemplateName,
     mattermostFieldsTemplateName,
@@ -54,15 +51,21 @@ ensureDefaults = withTransaction do
 
 defaultTemplates :: [(Text, Text)]
 defaultTemplates =
-    [ (mattermostRootTemplateName, defaultRootTemplateBody)
-    , (mattermostDetailsTemplateName, defaultDetailsTemplateBody)
-    , (mattermostStatusTemplateName, defaultStatusTemplateBody)
-    , (mattermostFieldsTemplateName, defaultFieldsTemplateBody)
-    , (mattermostColorTemplateName, defaultColorTemplateBody)
-    , (internalAgentTemplateName, defaultAgentTemplateBody)
-    , (relatedTemplateName, defaultJiraRelatedTemplateBody)
-    , (enrichmentTemplateName, defaultEnrichmentTemplateBody)
+    [ (name, body)
+    | name <-
+        [ mattermostRootTemplateName
+        , mattermostDetailsTemplateName
+        , mattermostStatusTemplateName
+        , mattermostFieldsTemplateName
+        , mattermostColorTemplateName
+        , mattermostAttachmentTemplateName
+        ]
+    , Just body <- [defaultTemplateBodyFor name]
     ]
+        ++ [ (internalAgentTemplateName, defaultAgentTemplateBody)
+           , (relatedTemplateName, defaultJiraRelatedTemplateBody)
+           , (enrichmentTemplateName, defaultEnrichmentTemplateBody)
+           ]
 
 -- Any row carrying the name — a user edit, a provisioned row, a seed-script
 -- version chain — suppresses the insert.

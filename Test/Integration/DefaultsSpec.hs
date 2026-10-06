@@ -23,6 +23,7 @@ import Application.Service.Mattermost.Render (
     defaultFieldsTemplateBody,
     defaultRootTemplateBody,
     defaultStatusTemplateBody,
+    mattermostAttachmentTemplateName,
     mattermostColorTemplateName,
     mattermostDetailsTemplateName,
     mattermostFieldsTemplateName,
@@ -103,6 +104,7 @@ templateNames =
     , mattermostStatusTemplateName
     , mattermostFieldsTemplateName
     , mattermostColorTemplateName
+    , mattermostAttachmentTemplateName
     , internalAgentTemplateName
     , relatedTemplateName
     , enrichmentTemplateName
@@ -117,6 +119,7 @@ defaultBodyFor name = fromMaybe (error "unknown template name") (lookup name bod
         , (mattermostStatusTemplateName, defaultStatusTemplateBody)
         , (mattermostFieldsTemplateName, defaultFieldsTemplateBody)
         , (mattermostColorTemplateName, defaultColorTemplateBody)
+        , (mattermostAttachmentTemplateName, "")
         , (internalAgentTemplateName, defaultAgentTemplateBody)
         , (relatedTemplateName, defaultJiraRelatedTemplateBody)
         , (enrichmentTemplateName, defaultEnrichmentTemplateBody)

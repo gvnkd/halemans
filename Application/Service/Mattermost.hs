@@ -14,7 +14,7 @@ module Application.Service.Mattermost (
 import Application.Service.ActionTokens (ensureActionToken)
 import Application.Service.Mattermost.Api (MattermostConfig)
 import qualified Application.Service.Mattermost.Api as Api
-import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostColorTemplateName, mattermostDetailsTemplateName, mattermostFieldsTemplateName, mattermostRootTemplateName, mattermostStatusTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
+import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostAttachmentTemplateName, mattermostColorTemplateName, mattermostDetailsTemplateName, mattermostFieldsTemplateName, mattermostRootTemplateName, mattermostStatusTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -112,6 +112,13 @@ renderContextFor rule alert = do
   where
     statusText' a = a.status
 
+-- | Channel config "ackAction": False suppresses the interactive Ack BUTTON
+-- (ackAction in Render renders nothing without an action URL). The one-time
+-- [Ack] markdown link is template-controlled and stays.
+respectAckFlag :: MattermostRenderContext -> MattermostConfig -> MattermostRenderContext
+respectAckFlag context config =
+    if Api.mmAckAction config then context else context{mrcActionUrl = Nothing}
+
 -- | Active template body for a mattermost_* llm_prompt_templates row; Nothing
 -- when no row is active (the renderer falls back to its built-in default).
 activeMattermostTemplate :: (?modelContext :: ModelContext) => Text -> IO (Maybe Text)
@@ -174,14 +181,16 @@ deliverNotify alert rule = do
                 case resolved of
                     Left err -> pure (Left err)
                     Right channelId -> do
-                        context <- renderContextFor (Just rule) alert
+                        rawContext <- renderContextFor (Just rule) alert
                         rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
                         detailsTemplate <- activeMattermostTemplate mattermostDetailsTemplateName
                         statusTemplate <- activeMattermostTemplate mattermostStatusTemplateName
                         fieldsTemplate <- activeMattermostTemplate mattermostFieldsTemplateName
                         colorTemplate <- activeMattermostTemplate mattermostColorTemplateName
+                        propsTemplate <- activeMattermostTemplate mattermostAttachmentTemplateName
                         let colorOverrides = Api.mmColorOverrides config
-                        root <- Api.createPost config channelId (renderRootMessage rootTemplate colorOverrides context alert) Nothing (renderRootProps statusTemplate colorTemplate fieldsTemplate colorOverrides context alert)
+                            context = respectAckFlag rawContext config
+                        root <- Api.createPost config channelId (renderRootMessage rootTemplate colorOverrides context alert) Nothing (renderRootProps statusTemplate colorTemplate fieldsTemplate propsTemplate colorOverrides context alert)
                         case root of
                             Left err -> pure (Left err)
                             Right rootPostId -> do
@@ -224,13 +233,15 @@ syncAlertPosts alert = do
                 case configOrNothing of
                     Nothing -> pure (Right ())
                     Just config -> do
-                        context <- renderContextFor Nothing alert
+                        rawContext <- renderContextFor Nothing alert
                         rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
                         statusTemplate <- activeMattermostTemplate mattermostStatusTemplateName
                         fieldsTemplate <- activeMattermostTemplate mattermostFieldsTemplateName
                         colorTemplate <- activeMattermostTemplate mattermostColorTemplateName
+                        propsTemplate <- activeMattermostTemplate mattermostAttachmentTemplateName
                         let colorOverrides = Api.mmColorOverrides config
-                        result <- Api.patchPost config post.rootPostId (renderRootMessage rootTemplate colorOverrides context alert) (renderRootProps statusTemplate colorTemplate fieldsTemplate colorOverrides context alert)
+                            context = respectAckFlag rawContext config
+                        result <- Api.patchPost config post.rootPostId (renderRootMessage rootTemplate colorOverrides context alert) (renderRootProps statusTemplate colorTemplate fieldsTemplate propsTemplate colorOverrides context alert)
                         case result of
                             Left err -> pure (Left err)
                             Right () -> do

@@ -37,13 +37,16 @@ data MattermostConfig = MattermostConfig
     { mmBaseUrl :: Text
     , mmToken :: Text
     , mmColorOverrides :: [(Text, Text)]
+    , mmAckAction :: Bool
     }
     deriving (Eq, Show)
 
 -- | Resolve a channel row to a usable config; Nothing when the row is not a
 -- usable mattermost channel (wrong type, empty base URL, unset token env).
 -- mmColorOverrides carries the config "colors" mapping (severity/status →
--- hex) that templates reference via the {{color}} slot.
+-- hex) that templates reference via the {{color}} slot; mmAckAction is the
+-- config "ackAction" flag (default True) — False hides the interactive Ack
+-- BUTTON (the markdown [Ack] link in the status line stays template-controlled).
 configForChannel :: NotificationChannel -> IO (Maybe MattermostConfig)
 configForChannel channel = do
     maybeToken <- traverse (lookupEnv . cs) tokenEnv
@@ -55,6 +58,7 @@ configForChannel channel = do
                         { mmBaseUrl = baseUrl
                         , mmToken = cs token
                         , mmColorOverrides = Render.colorMapFromJson channel.config
+                        , mmAckAction = Render.ackActionEnabledFromJson channel.config
                         }
         _ -> Nothing
   where

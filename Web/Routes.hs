@@ -35,6 +35,8 @@ POST /alerts/{alertId}/analyses/{analysisId}/feedback  LlmFeedbackAction
 GET  /admin/mattermost                         MattermostTemplatesAction
 GET  /admin/mattermost/edit                    EditMattermostTemplateAction
 POST /admin/mattermost/update                  UpdateMattermostTemplateAction
+POST /admin/mattermost/activate                ActivateMattermostTemplateAction
+POST /admin/mattermost/restore                 RestoreMattermostTemplateAction
 |]
 
 [routes|LlmAdminController

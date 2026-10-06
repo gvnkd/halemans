@@ -2,6 +2,7 @@ module Web.Controller.MattermostTemplates where
 
 import Application.Service.Mattermost.Render (
     MattermostCardPreview (..),
+    defaultTemplateBodyFor,
     mattermostTemplateNames,
     previewCard,
  )
@@ -52,10 +53,15 @@ instance Controller MattermostTemplatesController where
             else do
                 active <- activeRowFor name
                 forM_ active \row -> ensureNotProtected (name <> " v" <> tshow row.version) row.protected
+                versions <-
+                    query @LlmPromptTemplate
+                        |> filterWhere (#name, name)
+                        |> orderByDesc #version
+                        |> fetch
                 let draftBody = fmap (.body) active
                     draftNotes = active >>= (.notes)
                 preview <- draftPreviewFor name draftBody
-                render EditView{name, latest = active, draftBody, draftNotes, preview}
+                render EditView{name, latest = active, versions, draftBody, draftNotes, preview}
     action UpdateMattermostTemplateAction = do
         requirePrivilege "manage_rules"
         let name = param @Text "name"
@@ -75,7 +81,7 @@ instance Controller MattermostTemplatesController where
                 if previewing
                     then do
                         preview <- draftPreviewFor name (Just body)
-                        render EditView{name, latest, draftBody = Just body, draftNotes = notes, preview}
+                        render EditView{name, latest, versions, draftBody = Just body, draftNotes = notes, preview}
                     else do
                         let nextVersion = maybe 1 (\row -> row.version + 1) latest
                         void do
@@ -101,6 +107,81 @@ instance Controller MattermostTemplatesController where
                                 |]
                         setSuccessMessage (trp "Saved {name} v{version} (active)" [("name", name), ("version", tshow nextVersion)])
                         redirectToPath (pathTo EditMattermostTemplateAction <> "?name=" <> name)
+
+    -- Revert: flip the partial-unique active row to an EXISTING version
+    -- (transactional, like the LLM admin activate action).
+    action ActivateMattermostTemplateAction = do
+        requirePrivilege "manage_rules"
+        let name = param @Text "name"
+            version = param @Int "version"
+        if name `notElem` mattermostTemplateNames
+            then redirectTo MattermostTemplatesAction
+            else do
+                row <-
+                    query @LlmPromptTemplate
+                        |> filterWhere (#name, name)
+                        |> filterWhere (#version, version)
+                        |> fetchOneOrNothing
+                case row of
+                    Nothing -> redirectTo MattermostTemplatesAction
+                    Just template -> do
+                        ensureNotProtected (name <> " v" <> tshow version) template.protected
+                        let templateRef = get #id template
+                        withTransaction do
+                            void do
+                                sqlExecTyped
+                                    [typedSql|
+                                    UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+                                    WHERE name = ${name}
+                                |]
+                            void do
+                                sqlExecTyped
+                                    [typedSql|
+                                    UPDATE llm_prompt_templates SET active = true, updated_at = NOW()
+                                    WHERE id = ${templateRef}
+                                |]
+                        setSuccessMessage (trp "Activated {name} v{version}" [("name", name), ("version", tshow version)])
+                        redirectToPath (pathTo EditMattermostTemplateAction <> "?name=" <> name)
+
+    -- Reset a part to its built-in default body: appends v+1 with the
+    -- default body and activates it (the code fallback, made visible).
+    action RestoreMattermostTemplateAction = do
+        requirePrivilege "manage_rules"
+        let name = param @Text "name"
+        case defaultTemplateBodyFor name of
+            Nothing -> redirectTo MattermostTemplatesAction
+            Just body -> do
+                versions <-
+                    query @LlmPromptTemplate
+                        |> filterWhere (#name, name)
+                        |> orderByDesc #version
+                        |> fetch
+                let latest = listToMaybe versions
+                forM_ latest \row -> ensureNotProtected (name <> " v" <> tshow row.version) row.protected
+                let nextVersion = maybe 1 (\row -> row.version + 1) latest
+                void do
+                    newRecord @LlmPromptTemplate
+                        |> set #name name
+                        |> set #version nextVersion
+                        |> set #body body
+                        |> set #active False
+                        |> set #notes (Just "restored to built-in default")
+                        |> createRecord
+                withTransaction do
+                    void do
+                        sqlExecTyped
+                            [typedSql|
+                            UPDATE llm_prompt_templates SET active = false, updated_at = NOW()
+                            WHERE name = ${name}
+                        |]
+                    void do
+                        sqlExecTyped
+                            [typedSql|
+                            UPDATE llm_prompt_templates SET active = true, updated_at = NOW()
+                            WHERE name = ${name} AND version = ${nextVersion}
+                        |]
+                setSuccessMessage (trp "Restored {name} to the built-in default (v{version}, active)" [("name", name), ("version", tshow nextVersion)])
+                redirectToPath (pathTo EditMattermostTemplateAction <> "?name=" <> name)
 
 -- Active row (if any) for a template name.
 activeRowFor :: (?modelContext :: ModelContext) => Text -> IO (Maybe LlmPromptTemplate)
@@ -137,5 +218,6 @@ previewWith bodies =
         (pick "mattermost_status")
         (pick "mattermost_fields")
         (pick "mattermost_color")
+        (pick "mattermost_attachment")
   where
     pick n = fromMaybe Nothing (lookup n bodies)

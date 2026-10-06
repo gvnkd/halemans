@@ -223,6 +223,12 @@ INSERT INTO llm_prompt_templates (name, version, body, active, notes)
 SELECT 'mattermost_color', 1, $tpl${{color}}$tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_color' AND version = 1);
 
+-- Extra attachment properties (title/pretext/footer/thumb_url/…): empty by
+-- default = no extra props. Keep in sync with nix/scripts/seed-halemans.sh.
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_attachment', 1, '', true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_attachment' AND version = 1);
+
 -- Assets info source pointing at the mock (milestone 8 D9) + default agent
 -- role (milestone 8 D8): same as seed-halemans.
 INSERT INTO assets_configs (name, base_url, token_env, auth_mode, default_schema_name, host_query_template, attribute_names, enabled)

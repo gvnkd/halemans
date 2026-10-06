@@ -16,6 +16,7 @@ cardPreviewHtml preview =
             <table class="table table-sm mm-preview-fields">
                 {forEach preview.mcpFields fieldRow}
         </table>
+            {propsList}
             {ackButton}
         </div>
     </div>
@@ -38,3 +39,9 @@ cardPreviewHtml preview =
         if preview.mcpAckAction
             then [hsx|<button class="btn btn-sm btn-ghost" disabled>{tr "Ack"}</button>|]
             else mempty
+    propsList =
+        if null preview.mcpProps
+            then mempty
+            else [hsx|<div class="mm-preview-props small">{forEach preview.mcpProps propLine}</div>|]
+    propLine (key, value) =
+        [hsx|<div><code>{key}</code>: {value}</div>|]

@@ -92,6 +92,8 @@ data MattermostTemplatesController
     = MattermostTemplatesAction
     | EditMattermostTemplateAction
     | UpdateMattermostTemplateAction
+    | ActivateMattermostTemplateAction
+    | RestoreMattermostTemplateAction
     deriving (Eq, Show)
 
 data LlmAdminController

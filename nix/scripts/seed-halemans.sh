@@ -179,6 +179,12 @@ WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_fi
 INSERT INTO llm_prompt_templates (name, version, body, active, notes)
 SELECT 'mattermost_color', 1, $tpl${{color}}$tpl$, true, 'seeded v1'
 WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_color' AND version = 1);
+
+-- Extra attachment properties (title/pretext/footer/thumb_url/…): empty by
+-- default = no extra props. Same body as Render.defaultAttachmentPropsTemplateBody.
+INSERT INTO llm_prompt_templates (name, version, body, active, notes)
+SELECT 'mattermost_attachment', 1, '', true, 'seeded v1'
+WHERE NOT EXISTS (SELECT 1 FROM llm_prompt_templates WHERE name = 'mattermost_attachment' AND version = 1);
 SQL
 
 # Assets info source pointing at the mock (milestone 8 D9) + default agent

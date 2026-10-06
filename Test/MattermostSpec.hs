@@ -102,36 +102,36 @@ spec = describe "Application.Service.Mattermost.Render" do
         body `shouldBe` "**CPU load above 80%**\nSeverity: critical"
 
     it "colors by severity while firing" do
-        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "critical")) `shouldBe` "#E5484D"
-        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "warning")) `shouldBe` "#F7B500"
-        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "info")) `shouldBe` "#4C8DFF"
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "firing" "critical")) `shouldBe` "#E5484D"
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "firing" "warning")) `shouldBe` "#F7B500"
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "firing" "info")) `shouldBe` "#4C8DFF"
 
     it "colors terminal states gray regardless of severity" do
-        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "resolved" "critical")) `shouldBe` "#98A2AD"
-        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "closed" "critical")) `shouldBe` "#98A2AD"
-        attachmentColor (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "stalled" "high")) `shouldBe` "#98A2AD"
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "resolved" "critical")) `shouldBe` "#98A2AD"
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "closed" "critical")) `shouldBe` "#98A2AD"
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "stalled" "high")) `shouldBe` "#98A2AD"
 
     it "shows the ack actor on acked alerts" do
-        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
+        attachmentText (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
 
     it "shows the ack timestamp alongside the actor" do
         let ackedContext = renderContext{mrcAckedAt = Just (UTCTime (fromGregorian 2026 10 1) (18 * 3600 + 30 * 60))}
-        attachmentText (renderRootProps Nothing Nothing Nothing [] ackedContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1 at 2026-10-01 18:30 UTC"
+        attachmentText (renderRootProps Nothing Nothing Nothing Nothing [] ackedContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1 at 2026-10-01 18:30 UTC"
 
     it "offers the Ack action only on firing alerts with an action URL" do
-        actionNames (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high")) `shouldBe` ["Ack"]
-        actionNames (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` []
-        actionNames (renderRootProps Nothing Nothing Nothing [] renderContext{mrcActionUrl = Nothing} (mkAlert "firing" "high")) `shouldBe` []
+        actionNames (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high")) `shouldBe` ["Ack"]
+        actionNames (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` []
+        actionNames (renderRootProps Nothing Nothing Nothing Nothing [] renderContext{mrcActionUrl = Nothing} (mkAlert "firing" "high")) `shouldBe` []
 
     it "renders the one-time markdown Ack link on firing alerts only" do
-        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high"))
+        attachmentText (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high"))
             `shouldBe` "Firing · 3 occurrence(s) · [Ack](http://halemans.example/alerts/abc/ack-link?token=tok)"
-        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
-        attachmentText (renderRootProps Nothing Nothing Nothing [] renderContext{mrcAckUrl = Nothing} (mkAlert "firing" "high"))
+        attachmentText (renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "ack" "high")) `shouldBe` "Acked by sre-1"
+        attachmentText (renderRootProps Nothing Nothing Nothing Nothing [] renderContext{mrcAckUrl = Nothing} (mkAlert "firing" "high"))
             `shouldBe` "Firing · 3 occurrence(s)"
 
     it "carries the alert id in the Ack action context" do
-        let props = renderRootProps Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high")
+        let props = renderRootProps Nothing Nothing Nothing Nothing [] renderContext (mkAlert "firing" "high")
             action = fromMaybe (error "no ack action") do
                 actions <- parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..:? "actions" Aeson..!= [])) (attachment props)
                 case [a | a <- actions, actionId a == Just "ack"] of
@@ -154,7 +154,7 @@ spec = describe "Application.Service.Mattermost.Render" do
         renderRootMessage (Just "") [] renderContext (mkAlert "firing" "critical") `shouldBe` ""
 
     it "renders the admin card preview from the sample alert" do
-        let preview = previewCard Nothing Nothing Nothing Nothing
+        let preview = previewCard Nothing Nothing Nothing Nothing Nothing
         preview.mcpHeader `shouldBe` "[FIRING] Sample: CPU load above 80%"
         preview.mcpStatus `shouldSatisfy` (Text.isPrefixOf "Firing · 3 occurrence(s)")
         preview.mcpFields
@@ -168,7 +168,7 @@ spec = describe "Application.Service.Mattermost.Render" do
         preview.mcpAckAction `shouldBe` True
 
     it "preview reflects a custom header and suppressed fields" do
-        let preview = previewCard (Just "") (Just "{{alert.env}}/{{alert.host}}") (Just "|") (Just "#123456")
+        let preview = previewCard (Just "") (Just "{{alert.env}}/{{alert.host}}") (Just "|") (Just "#123456") Nothing
         preview.mcpHeader `shouldBe` ""
         preview.mcpStatus `shouldBe` "production/db-pgsql01"
         preview.mcpFields `shouldBe` []
@@ -216,8 +216,38 @@ spec = describe "Application.Service.Mattermost.Render" do
 
     it "passes channel color overrides through to the attachment color" do
         let overrides = colorMapFromJson (Aeson.object ["colors" Aeson..= Aeson.object ["high" Aeson..= Aeson.String "#0A0B0C"]])
-        attachmentColor (renderRootProps Nothing Nothing Nothing overrides renderContext (mkAlert "firing" "high"))
+        attachmentColor (renderRootProps Nothing Nothing Nothing Nothing overrides renderContext (mkAlert "firing" "high"))
             `shouldBe` "#0A0B0C"
+
+    it "maps template names to their built-in default bodies" do
+        defaultTemplateBodyFor "mattermost_root" `shouldBe` Just "[{{alert.state}}] {{alert.title}}"
+        defaultTemplateBodyFor "mattermost_color" `shouldBe` Just "{{color}}"
+        defaultTemplateBodyFor "mattermost_status" `shouldSatisfy` maybe False (Text.isInfixOf "{{line_firing}}")
+        defaultTemplateBodyFor "alert_enrichment" `shouldBe` Nothing
+
+    it "reads the ackAction flag from the channel config JSON" do
+        ackActionEnabledFromJson (Aeson.object []) `shouldBe` True
+        ackActionEnabledFromJson (Aeson.object ["ackAction" Aeson..= Aeson.Bool False]) `shouldBe` False
+        ackActionEnabledFromJson (Aeson.object ["ackAction" Aeson..= Aeson.Bool True]) `shouldBe` True
+        ackActionEnabledFromJson (Aeson.object ["ackAction" Aeson..= Aeson.String "no"]) `shouldBe` True
+
+    it "renders extra attachment properties from key|value lines with a whitelist" do
+        let props = renderAttachmentPropPairs (Just "footer|Halemans · {{alert.state}}\ntitle|{{alert.title}}\nthumb_url| https://example/t.png \nbogus|nope\nts|1730000000\nempty|") [] renderContext (mkAlert "firing" "critical")
+        props
+            `shouldBe` [ ("footer", "Halemans · FIRING")
+                       , ("title", "CPU load above 80%")
+                       , ("thumb_url", "https://example/t.png")
+                       , ("ts", "1730000000")
+                       ]
+        renderAttachmentPropPairs Nothing [] renderContext (mkAlert "firing" "critical") `shouldBe` []
+        renderAttachmentPropPairs (Just "") [] renderContext (mkAlert "firing" "critical") `shouldBe` []
+
+    it "emits ts as a JSON number and other props as strings in the attachment" do
+        let att = attachment (renderRootProps Nothing Nothing Nothing (Just "footer|f\nts|1730000000") [] renderContext (mkAlert "firing" "critical"))
+            footer = parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..:? "footer" Aeson..!= "")) att
+            ts = parseMaybe (Aeson.withObject "attachment" (\o -> o Aeson..: "ts")) att
+        footer `shouldBe` Just ("f" :: Text)
+        ts `shouldBe` Just (1730000000 :: Integer)
 
     it "syncs only state-changing event kinds" do
         syncsKind "ack" `shouldBe` True
