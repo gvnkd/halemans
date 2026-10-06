@@ -26,6 +26,8 @@ catalogRu =
         , ("API tokens", "API-токены")
         , ("API version must be 2 or 3", "Версия API должна быть 2 или 3")
         , ("Ack", "Подтвердить")
+        , ("Ack action button", "Кнопка Ack")
+        , ("Show the interactive Ack button on firing cards (mattermost). The one-time [Ack] link in the message stays either way; other config keys (e.g. \"colors\") are preserved on save.", "Показывать интерактивную кнопку Ack на активных карточках (mattermost). Одноразовая ссылка [Ack] в сообщении остаётся в любом случае; остальные ключи конфигурации (например, \"colors\") сохраняются при сохранении.")
         , ("Ack 2h", "Подтвердить на 2 ч")
         , ("Ack all firing", "Подтвердить все активные")
         , ("Activate", "Активировать")

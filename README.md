@@ -267,7 +267,7 @@ Alert notifications can be delivered to Mattermost as threaded bot posts. A **bo
 | `mattermost_details` | the **thread reply** with the full details | rendered as markdown like the other text parts |
 | `mattermost_attachment` | **extra attachment properties** — the rest of the Mattermost message-attachment spec | one `key\|value` per line (value side slot-rendered); see the list below |
 
-The interactive **Ack button** is code, not a template (its URL is functional wiring back to Halemans). Hide it per channel with `"ackAction": false` in the channel config — the one-time `[Ack]` markdown link in the status line stays (it's the reliable fallback on servers that strip action URLs).
+The interactive **Ack button** is code, not a template (its URL is functional wiring back to Halemans). Hide it per channel by unchecking **Ack action button** on Admin → Notification channels → edit (or `"ackAction": false` in the channel's `config` JSON) — the one-time `[Ack]` markdown link in the status line stays (it's the reliable fallback on servers that strip action URLs).
 
 `mattermost_attachment` supports these keys (anything else is ignored; empty values are dropped; `ts` must be epoch seconds and is sent as a number):
 

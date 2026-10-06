@@ -301,6 +301,7 @@ data NotificationChannelItem = NotificationChannelItem
     , ncItemType :: Text
     , ncItemBaseUrl :: Text
     , ncItemTokenEnv :: Text
+    , ncItemConfig :: Value
     , ncItemEnabled :: Bool
     , ncItemProtected :: Bool
     }
@@ -705,12 +706,16 @@ parseEscalationPolicyItem epName o = do
 
 parseNotificationChannelItem :: Text -> Aeson.Object -> Parser NotificationChannelItem
 parseNotificationChannelItem ncName o = do
-    rejectUnknownFields ["type", "baseUrl", "tokenEnv", "enabled", "protected"] o
+    rejectUnknownFields ["type", "baseUrl", "tokenEnv", "config", "enabled", "protected"] o
     ncItemType <- o .: "type"
     unless (ncItemType `elem` ["browser_push", "email", "mattermost"]) do
         fail ("unknown notification channel type \"" <> cs ncItemType <> "\" (valid: browser_push email mattermost)")
     ncItemBaseUrl <- o .:? "baseUrl" .!= ""
     ncItemTokenEnv <- o .:? "tokenEnv" .!= ""
+    ncItemConfig <- o .:? "config" .!= Aeson.object []
+    case ncItemConfig of
+        Aeson.Object _ -> pure ()
+        _ -> fail "notification channel config must be a JSON object"
     ncItemEnabled <- o .:? "enabled" .!= True
     ncItemProtected <- parseProtectedFlag o
     pure NotificationChannelItem{ncItemName = ncName, ..}
@@ -1780,7 +1785,7 @@ upsertNotificationChannel item = do
         validateEnvRef "notificationChannels" item.ncItemName item.ncItemTokenEnv
     maybeRow <- query @NotificationChannel |> filterWhere (#name, item.ncItemName) |> fetchOneOrNothing
     now <- getCurrentTime
-    let configJson = Aeson.object (["tokenEnv" .= item.ncItemTokenEnv | item.ncItemTokenEnv /= ""])
+    let configJson = channelProvisionConfig (maybe (Aeson.object []) (get #config) maybeRow) item
     _ <- case maybeRow of
         Nothing ->
             newRecord @NotificationChannel
@@ -1801,6 +1806,25 @@ upsertNotificationChannel item = do
                 |> set #updatedAt now
                 |> updateRecord
     pure ()
+
+-- Channel config assembly (provision): the dedicated tokenEnv field manages
+-- the credential key (empty = absent). Every OTHER key survives across
+-- re-provisions: the file's optional "config" object overrides the existing
+-- row's hand-set keys (ackAction, colors, later keys), and keys neither
+-- mentions are kept — same overlay semantics as the web form.
+channelProvisionConfig :: Value -> NotificationChannelItem -> Value
+channelProvisionConfig baseConfig item = Aeson.Object (extra <> managed)
+  where
+    managed =
+        KeyMap.fromList
+            (["tokenEnv" .= item.ncItemTokenEnv | item.ncItemTokenEnv /= ""])
+    fileExtra = case item.ncItemConfig of
+        Aeson.Object object_ -> KeyMap.filterWithKey (\key _ -> Key.toText key /= "tokenEnv") object_
+        _ -> mempty
+    rowExtra = case baseConfig of
+        Aeson.Object object_ -> KeyMap.filterWithKey (\key _ -> Key.toText key /= "tokenEnv") object_
+        _ -> mempty
+    extra = KeyMap.union fileExtra rowExtra
 
 applyNotificationRules :: (?modelContext :: ModelContext) => Bool -> Maybe [NotificationRuleItem] -> IO ()
 applyNotificationRules _ Nothing = pure ()

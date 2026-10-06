@@ -5,6 +5,7 @@ module Web.View.NotificationChannels.Form (
     valuesFromChannel,
 ) where
 
+import Application.Service.Mattermost.Render (ackActionEnabledFromJson)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
@@ -18,6 +19,7 @@ data ChannelFormValues = ChannelFormValues
     , formChannelType :: Text
     , formChannelBaseUrl :: Text
     , formChannelTokenEnv :: Text
+    , formChannelAckAction :: Bool
     , formChannelEnabled :: Bool
     }
 
@@ -28,6 +30,7 @@ defaultChannelFormValues =
         , formChannelType = "mattermost"
         , formChannelBaseUrl = ""
         , formChannelTokenEnv = ""
+        , formChannelAckAction = True
         , formChannelEnabled = True
         }
 
@@ -56,6 +59,11 @@ channelFormFields values =
         <div class="form-text">{tr "Name of the environment variable holding the bot token (mattermost)."}</div>
     </div>
     <div class="mb-3 form-check">
+        <input name="ackAction" type="checkbox" class="form-check-input" checked={values.formChannelAckAction} data-testid="channel-ack-action"/>
+        <label class="form-check-label">{tr "Ack action button"}</label>
+        <div class="form-text">{tr "Show the interactive Ack button on firing cards (mattermost). The one-time [Ack] link in the message stays either way; other config keys (e.g. \"colors\") are preserved on save."}</div>
+    </div>
+    <div class="mb-3 form-check">
         <input name="enabled" type="checkbox" class="form-check-input" checked={values.formChannelEnabled} data-testid="channel-enabled"/>
         <label class="form-check-label">{tr "Enabled"}</label>
     </div>
@@ -70,6 +78,7 @@ valuesFromChannel channel =
         , formChannelType = channel.type_
         , formChannelBaseUrl = channel.baseUrl
         , formChannelTokenEnv = tokenEnvOf channel
+        , formChannelAckAction = ackActionEnabledFromJson (get #config channel)
         , formChannelEnabled = channel.enabled
         }
   where

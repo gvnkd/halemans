@@ -4,6 +4,7 @@ import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), inges
 import Application.Job.Mattermost ()
 import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
+import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
 import Application.Service.Provision (ProvisionError (..))
 import Application.Service.TestAlert (fireTestAlert)
 import Control.Exception (finally, try)
@@ -289,6 +290,11 @@ spec = describe "Mattermost notification channel" do
                                     [ "type" Aeson..= ("mattermost" :: Text)
                                     , "baseUrl" Aeson..= base
                                     , "tokenEnv" Aeson..= ("MATTERMOST_TOKEN" :: Text)
+                                    , "config"
+                                        Aeson..= Aeson.object
+                                            [ "ackAction" Aeson..= Aeson.Bool False
+                                            , "colors" Aeson..= Aeson.object ["warning" Aeson..= ("#010203" :: Text)]
+                                            ]
                                     ]
                             ]
                     , "notificationRules"
@@ -306,6 +312,25 @@ spec = describe "Mattermost notification channel" do
             channel.type_ `shouldBe` "mattermost"
             channel.baseUrl `shouldBe` base
             channel.protected `shouldBe` True
+            ackActionEnabledFromJson channel.config `shouldBe` False
+            colorMapFromJson channel.config `shouldBe` [("warning", "#010203")]
+            -- re-provisioning with only the managed fields keeps hand-set extras
+            m7Apply
+                ( Aeson.object
+                    [ "notificationChannels"
+                        Aeson..= Aeson.object
+                            [ Key.fromText channelName
+                                Aeson..= Aeson.object
+                                    [ "type" Aeson..= ("mattermost" :: Text)
+                                    , "baseUrl" Aeson..= base
+                                    , "tokenEnv" Aeson..= ("MATTERMOST_TOKEN" :: Text)
+                                    ]
+                            ]
+                    ]
+                )
+            channelAgain <- query @NotificationChannel |> filterWhere (#name, channelName) |> fetchOne
+            ackActionEnabledFromJson channelAgain.config `shouldBe` False
+            colorMapFromJson channelAgain.config `shouldBe` [("warning", "#010203")]
             rule <- query @NotificationRule |> filterWhere (#name, "mm-prov-rule-" <> suffix) |> fetchOne
             rule.channel `shouldBe` channelName
             -- the provisioned channel delivers end to end

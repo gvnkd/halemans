@@ -111,19 +111,26 @@ channelFromForm name channel =
         |> set #name name
         |> set #type_ (param @Text "type")
         |> set #baseUrl (Text.strip (param @Text "baseUrl"))
-        |> set #config (channelConfigJson (configOf channel) (param @Text "tokenEnv"))
+        |> set #config (channelConfigJson (configOf channel) (param @Text "tokenEnv") ackEnabled)
         |> set #enabled (paramOrNothing @Text "enabled" == Just "on")
+  where
+    -- Unchecked = the key is ABSENT from config (absence means "enabled",
+    -- matching ackActionEnabledFromJson's default).
+    ackEnabled = paramOrNothing @Text "ackAction" == Just "on"
 
 -- | Form-managed keys overlay the existing config so provisioned/hand-set
--- keys survive a UI edit (sourceConfig pattern).
-channelConfigJson :: Value -> Text -> Value
-channelConfigJson base tokenEnv =
+-- keys (colors, ackAction set elsewhere, future keys) survive a UI edit
+-- (sourceConfig pattern).
+channelConfigJson :: Value -> Text -> Bool -> Value
+channelConfigJson base tokenEnv ackEnabled =
     Aeson.Object (extra <> managed)
   where
     managed =
         KeyMap.fromList
-            (["tokenEnv" .= tokenEnv | tokenEnv /= ""])
-    managedKeys = ["tokenEnv"]
+            ( ["tokenEnv" .= tokenEnv | tokenEnv /= ""]
+                <> ["ackAction" .= False | not ackEnabled]
+            )
+    managedKeys = ["tokenEnv", "ackAction"]
     extra = case base of
         Aeson.Object object_ -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) object_
         _ -> mempty
