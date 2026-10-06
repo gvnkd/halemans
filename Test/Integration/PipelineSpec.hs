@@ -391,6 +391,35 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         stillStalled <- fetch (get #id quiet)
         stillStalled.status `shouldBe` "stalled"
 
+    it "stalled zabbix alerts with a DISABLED trigger resolve with a comment" do
+        suffix <- tshow <$> nextRandom
+        baseUrl <- cs . fromMaybe "http://127.0.0.1:18087" <$> lookupEnv "MOCK_ZABBIX_URL"
+        source <- integrationSource "zabbix" ("itest-zbx-disabled-" <> suffix) baseUrl (object ["tokenEnv" .= ("ZABBIX_TOKEN" :: Text)])
+        _ <- source |> set #enabled True |> updateRecord
+        now <- getCurrentTime
+        let old = addUTCTime (-7200) now
+        alert <-
+            newRecord @Alert
+                |> set #fingerprint "zabbix:trigger:88"
+                |> set #title "disabled while in problem"
+                |> set #status "stalled"
+                |> set #sourceId (Just (get #id source))
+                |> set #env (Just ("itest-zbx-disabled-env-" <> suffix))
+                |> set #occurrences 1
+                |> set #lastSeenAt old
+                |> set #updatedAt old
+                |> createRecord
+        reconcileStalledZabbix
+        resolved <- fetch (get #id alert)
+        resolved.status `shouldBe` "resolved"
+        comments <- query @Comment |> filterWhere (#alertId, get #id alert) |> fetch
+        map (.body) comments `shouldBe` ["disabled on zabbix side"]
+        let Just comment = head comments
+        author <- fetch comment.userId
+        author.email `shouldBe` "zabbix@localhost"
+        events <- eventKinds (get #id alert)
+        events `shouldSatisfy` ("resolved" `elem`)
+
     it "ack timeout unacks via unackExpiredAcks" do
         source <- testSource
         fp <- freshFingerprint

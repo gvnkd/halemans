@@ -375,6 +375,7 @@ ackStateGet baseUrl token eventIds = do
 data ZabbixTriggerState = ZabbixTriggerState
     { triggerStateId :: Text
     , triggerStateValue :: Text -- "0" OK, "1" problem
+    , triggerStateStatus :: Text -- "0" enabled, "1" disabled
     , triggerStateLastChange :: Integer -- unix time of last state flip
     }
     deriving (Eq, Show)
@@ -383,6 +384,7 @@ instance Aeson.FromJSON ZabbixTriggerState where
     parseJSON = Aeson.withObject "ZabbixTriggerState" $ \o -> do
         triggerStateId <- o .: "triggerid"
         triggerStateValue <- o .:? "value" .!= "1"
+        triggerStateStatus <- o .:? "status" .!= "0"
         lastChangeText <- o .:? "lastchange" .!= "0"
         triggerStateLastChange <- maybe mempty pure (readMaybe lastChangeText)
         pure ZabbixTriggerState{..}
@@ -398,7 +400,7 @@ triggerStateGet baseUrl token triggerIds = do
                 , "params"
                     .= Aeson.object
                         [ "triggerids" .= triggerIds
-                        , "output" .= (["triggerid", "value", "lastchange"] :: [Text])
+                        , "output" .= (["triggerid", "value", "status", "lastchange"] :: [Text])
                         ]
                 ]
     result <- try (Http.postFollowing opts (cs (baseUrl <> "/api_jsonrpc.php")) body)

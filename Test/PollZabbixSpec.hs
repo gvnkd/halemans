@@ -198,24 +198,30 @@ spec = describe "Application.Job.PollZabbix" do
             resolveDecision now (newRecord @Source) alert (Just okTrigger) `shouldBe` Nothing
         it "leaves triggers still in problem state alone" do
             resolveDecision now (newRecord @Source) firingAlert (Just problemTrigger) `shouldBe` Nothing
+        it "resolves a disabled trigger even when its last value is problem" do
+            resolveDecision now (newRecord @Source) firingAlert (Just disabledProblemTrigger)
+                `shouldBe` Just (now, True)
+        it "resolves a disabled trigger whose last value is OK" do
+            resolveDecision now (newRecord @Source) firingAlert (Just disabledOkTrigger)
+                `shouldBe` Just (now, True)
         it "resolves at the zabbix-side state-change time" do
             resolveDecision now (newRecord @Source) firingAlert (Just okTrigger)
-                `shouldBe` Just (addUTCTime (-600) now)
+                `shouldBe` Just (addUTCTime (-600) now, False)
         it "caps a future state-change time at now" do
             let future = okTrigger{triggerStateLastChange = nowPosix + 600}
-            resolveDecision now (newRecord @Source) firingAlert (Just future) `shouldBe` Just now
+            resolveDecision now (newRecord @Source) firingAlert (Just future) `shouldBe` Just (now, False)
         it "resolves at now when the trigger carries no lastchange" do
             let noClock = okTrigger{triggerStateLastChange = 0}
-            resolveDecision now (newRecord @Source) firingAlert (Just noClock) `shouldBe` Just now
+            resolveDecision now (newRecord @Source) firingAlert (Just noClock) `shouldBe` Just (now, False)
         it "leaves a young alert whose trigger is missing alone (permission-gap guard)" do
             let young = firingAlert |> set #startedAt (Just (addUTCTime (-3600) now))
             resolveDecision now (newRecord @Source) young Nothing `shouldBe` Nothing
         it "resolves an old alert whose trigger is missing (deleted trigger)" do
-            resolveDecision now (newRecord @Source) firingAlert Nothing `shouldBe` Just now
+            resolveDecision now (newRecord @Source) firingAlert Nothing `shouldBe` Just (now, False)
         it "honors reconcileGraceSeconds overrides" do
             let source = newRecord @Source |> set #config (object ["reconcileGraceSeconds" .= (10 :: Int)])
                 alert = firingAlert |> set #lastSeenAt (addUTCTime (-30) now)
-            resolveDecision now source alert (Just okTrigger) `shouldBe` Just (addUTCTime (-600) now)
+            resolveDecision now source alert (Just okTrigger) `shouldBe` Just (addUTCTime (-600) now, False)
   where
     now = UTCTime (fromGregorian 2026 6 1) 43200
     nowPosix = floor (utcTimeToPOSIXSeconds now) :: Integer
@@ -237,6 +243,9 @@ spec = describe "Application.Job.PollZabbix" do
         ZabbixTriggerState
             { triggerStateId = "42"
             , triggerStateValue = "1"
+            , triggerStateStatus = "0"
             , triggerStateLastChange = nowPosix - 600
             }
     okTrigger = problemTrigger{triggerStateValue = "0"}
+    disabledProblemTrigger = problemTrigger{triggerStateStatus = "1"}
+    disabledOkTrigger = okTrigger{triggerStateStatus = "1"}

@@ -56,6 +56,15 @@ TRIGGERS = {
         "lastchange": "1700000100",
         "items": [],
     },
+    # disabled while in problem (stays value "1" — the disabled-resolve case)
+    "88": {
+        "triggerid": "88",
+        "expression": "last(/mock/system.cpu.load)>90",
+        "value": "1",
+        "status": "1",
+        "lastchange": "1700000200",
+        "items": [],
+    },
 }
 
 STEP_SECONDS = 60

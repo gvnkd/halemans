@@ -2,6 +2,7 @@ module Application.Job.PollZabbix where
 
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), fetchActiveBlackouts, ingestEvents, transitionAlert)
+import Application.Pipeline.Actions (addComment)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
@@ -20,7 +21,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 import Generated.Types
-import IHP.Fetch (fetch)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.FrameworkConfig (FrameworkConfig (..))
 import IHP.Job.Types
 import IHP.ModelSupport
@@ -375,10 +376,14 @@ reconcileProblemStates source token now = do
                 forM_ tracked \(triggerId, alert) ->
                     case resolveDecision now source alert (Map.lookup triggerId stateByTrigger) of
                         Nothing -> pure ()
-                        Just resolvedAt -> do
-                            updated <- resolveFromProblem alert resolvedAt
+                        Just (resolvedAt, disabled) -> do
+                            updated <-
+                                if disabled
+                                    then resolveDisabledOnZabbix alert resolvedAt
+                                    else resolveFromProblem alert resolvedAt
                             when (updated.status == "resolved") do
-                                logInfo ("zabbix source \"" <> source.name <> "\": resolved alert " <> tshow (get #id alert) <> " (trigger " <> triggerId <> " not in problem state)")
+                                let alertId = get #id alert
+                                logInfo ("zabbix source \"" <> source.name <> "\": resolved alert " <> tshow alertId <> " (trigger " <> triggerId <> (if disabled then " disabled" :: Text else " not in problem state") <> ")")
 
 -- Missing-problem scan: cursor-based event.get only sees NEW events, so a
 -- trigger that went to problem before the cursor (standing problem at attach
@@ -530,19 +535,47 @@ resolveFromProblem alert resolvedAt = do
             )
     pure updated
 
--- | Just resolvedAt when the alert should be locally resolved; Nothing when
--- the trigger is still in problem state or local activity is too fresh to
--- trust source state (grace window covers the ingest/reconcile race).
-resolveDecision :: UTCTime -> Source -> Alert -> Maybe Zabbix.ZabbixTriggerState -> Maybe UTCTime
+-- | Resolve an alert whose trigger was DISABLED on the zabbix side, with an
+-- audit comment. Disabled triggers keep their last value (often "1" =
+-- problem), so value-based checks alone would leave the alert firing (and
+-- the stalled reconcile would refire it forever).
+resolveDisabledOnZabbix :: (?modelContext :: ModelContext) => Alert -> UTCTime -> IO Alert
+resolveDisabledOnZabbix alert resolvedAt = do
+    updated <- resolveFromProblem alert resolvedAt
+    when (updated.status == "resolved") do
+        user <- zabbixServiceUser
+        void (addComment user updated "disabled on zabbix side")
+    pure updated
+
+zabbixServiceUser :: (?modelContext :: ModelContext) => IO User
+zabbixServiceUser = do
+    existing <- query @User |> filterWhere (#email, "zabbix@localhost") |> fetchOneOrNothing
+    case existing of
+        Just user -> pure user
+        Nothing ->
+            newRecord @User
+                |> set #email "zabbix@localhost"
+                |> set #displayName "Zabbix"
+                |> set #passwordHash "!"
+                |> createRecord
+
+-- | Just (resolvedAt, wasDisabled) when the alert should be locally
+-- resolved; Nothing when the trigger is still in problem state or local
+-- activity is too fresh to trust source state (grace window covers the
+-- ingest/reconcile race). A DISABLED trigger resolves even when its last
+-- value was "1" — zabbix stops evaluating it, so no recovery will ever
+-- arrive. zabbix exposes no disable timestamp, so resolvedAt = now.
+resolveDecision :: UTCTime -> Source -> Alert -> Maybe Zabbix.ZabbixTriggerState -> Maybe (UTCTime, Bool)
 resolveDecision now source alert mState
     | alert.lastSeenAt >= graceCutoff = Nothing
     | otherwise = case mState of
         Just state
+            | state.triggerStateStatus == "1" -> Just (now, True)
             | state.triggerStateValue == "1" -> Nothing
-            | state.triggerStateLastChange > 0 -> Just (min now (posixSecondsToUTCTime (fromIntegral state.triggerStateLastChange)))
-            | otherwise -> Just now
+            | state.triggerStateLastChange > 0 -> Just (min now (posixSecondsToUTCTime (fromIntegral state.triggerStateLastChange)), False)
+            | otherwise -> Just (now, False)
         Nothing
-            | addUTCTime (negate absentMinAge) now >= fromMaybe now alert.startedAt -> Just now
+            | addUTCTime (negate absentMinAge) now >= fromMaybe now alert.startedAt -> Just (now, False)
             | otherwise -> Nothing
   where
     graceCutoff = addUTCTime (negate (fromIntegral (reconcileGraceSeconds source))) now

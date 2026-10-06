@@ -2,7 +2,7 @@ module Application.Job.AutoClose where
 
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, publishAlertUpdate, transitionAlert)
-import Application.Job.PollZabbix (triggerIdOf)
+import Application.Job.PollZabbix (resolveDisabledOnZabbix, triggerIdOf)
 import Application.Pipeline.Actions (autoCloseAlert, stallAlert, unackAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.Log (logDebug, logInfo, logWarn)
@@ -152,16 +152,26 @@ reconcileStalledZabbix = do
                     Left err -> logWarn ("zabbix stalled-alert reconcile for source \"" <> source.name <> "\" failed: " <> err)
                     Right states -> do
                         let stillProblem = Set.fromList [state.triggerStateId | state <- states, state.triggerStateValue == "1"]
+                            disabled = Set.fromList [state.triggerStateId | state <- states, state.triggerStateStatus == "1"]
                         forM_ tracked \(triggerId, alert) -> do
                             now <- getCurrentTime
                             blackouts <- fetchActiveBlackouts now
                             let suppressedNow = any (blackoutApplies now (alertSubject alert)) blackouts
-                            when (Set.member triggerId stillProblem) do
-                                -- Firing => Refire trigger: (Stalled, Refire) is a
-                                -- legal transition back to firing.
-                                updated <- transitionAlert now Firing alert.env alert.environmentId alert.hostId alert.serviceId suppressedNow alert
-                                when (updated.status == "firing") do
-                                    logInfo ("zabbix stalled-alert reconcile: refired alert " <> tshow (get #id alert) <> " (trigger " <> triggerId <> " still in problem state)")
+                            if Set.member triggerId disabled
+                                then do
+                                    -- A disabled trigger never recovers by
+                                    -- itself (zabbix stops evaluating it) —
+                                    -- resolve instead of refiring, else the
+                                    -- firing<->stalled cycle repeats forever.
+                                    updated <- resolveDisabledOnZabbix alert now
+                                    when (updated.status == "resolved") do
+                                        logInfo ("zabbix stalled-alert reconcile: resolved alert " <> tshow (get #id alert) <> " (trigger " <> triggerId <> " disabled)")
+                                else when (Set.member triggerId stillProblem) do
+                                    -- Firing => Refire trigger: (Stalled, Refire) is a
+                                    -- legal transition back to firing.
+                                    updated <- transitionAlert now Firing alert.env alert.environmentId alert.hostId alert.serviceId suppressedNow alert
+                                    when (updated.status == "firing") do
+                                        logInfo ("zabbix stalled-alert reconcile: refired alert " <> tshow (get #id alert) <> " (trigger " <> triggerId <> " still in problem state)")
   where
     groupBySource candidates =
         Map.elems (Map.fromListWith (\(source, a) (_, b) -> (source, a ++ b)) [(get #id source, (source, [(triggerId, alert)])) | (source, triggerId, alert) <- candidates])
