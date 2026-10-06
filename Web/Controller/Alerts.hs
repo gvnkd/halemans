@@ -94,7 +94,11 @@ instance Controller AlertsController where
             redirectTo AlertsAction
         | FilterPrefs.hasQueryKeys alertFilterQueryKeys ?request = do
             let filters = filtersFromParams
-            FilterPrefs.saveFilterPrefs currentUser "alerts" (AlertList.alertFiltersToValue filters)
+            -- Widget submissions carry set=1 (DynTable form + sort/pager
+            -- links); a bare link like /alerts?severity=critical renders
+            -- filtered but must NOT overwrite the user's stored prefs.
+            when (isJust (paramOrNothing @Text "set")) do
+                FilterPrefs.saveFilterPrefs currentUser "alerts" (AlertList.alertFiltersToValue filters)
             renderAlertList filters
         | otherwise = case FilterPrefs.filterPrefsFor currentUser.settings "alerts" >>= AlertList.alertFiltersFromValue of
             Just stored

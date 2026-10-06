@@ -183,6 +183,17 @@ with sync_playwright() as pw:
         page.goto(f"{APP}/env/dev")
         assert "severity" not in page.url, f"env filters not cleared: {page.url}"
 
+    @check("env page: predefined link filters render but are not stored")
+    def _():
+        page.goto(f"{APP}/env/dev?severity=warning")
+        page.get_by_test_id("env-alerts-table").wait_for()
+        assert "severity=warning" in page.url, f"link filters not rendered: {page.url}"
+        page.goto(APP + "/")
+        page.get_by_test_id("env-cards").wait_for()
+        page.goto(f"{APP}/env/dev")
+        page.get_by_test_id("env-alerts-table").wait_for()
+        assert "severity" not in page.url, f"link filters leaked into stored prefs: {page.url}"
+
     @check("alerts page restores stored filters after navigating away")
     def _():
         page.goto(f"{APP}/alerts")
@@ -204,6 +215,17 @@ with sync_playwright() as pw:
         page.get_by_test_id("alerts-table").wait_for()
         page.goto(f"{APP}/alerts")
         assert "severity" not in page.url, f"alerts filters not cleared: {page.url}"
+
+    @check("alerts: predefined link filters render but are not stored")
+    def _():
+        page.goto(f"{APP}/alerts?severity=warning")
+        page.get_by_test_id("alerts-table").wait_for()
+        assert "severity=warning" in page.url, f"link filters not rendered: {page.url}"
+        page.goto(APP + "/")
+        page.get_by_test_id("env-cards").wait_for()
+        page.goto(f"{APP}/alerts")
+        page.get_by_test_id("alerts-table").wait_for()
+        assert "severity" not in page.url, f"link filters leaked into stored prefs: {page.url}"
 
     @check("alerts: repeated Last seen sort clicks keep timestamps localized")
     def _():

@@ -19,7 +19,11 @@ instance Controller EnvironmentsController where
         | FilterPrefs.hasQueryKeys envFilterQueryKeys ?request = do
             let filters = filtersFromParams
                 viewMode = fromMaybe "flat" (nonEmptyParam "view")
-            FilterPrefs.saveFilterPrefs currentUser "env" (envFiltersToValue filters viewMode)
+            -- Widget submissions carry set=1 (DynTable form/links + the view
+            -- toggle); a bare link renders filtered but must NOT overwrite
+            -- the user's stored prefs.
+            when (isJust (paramOrNothing @Text "set")) do
+                FilterPrefs.saveFilterPrefs currentUser "env" (envFiltersToValue filters viewMode)
             renderEnv environmentName filters viewMode
         | otherwise = case FilterPrefs.filterPrefsFor currentUser.settings "env" >>= envFiltersFromValue of
             Just stored

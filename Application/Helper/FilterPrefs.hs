@@ -15,8 +15,10 @@ import IHP.Prelude
 import Network.Wai (Request, queryString)
 
 -- Per-user persisted filter state lives under settings.filters.<name>
--- (name = "alerts" | "env"); written on every explicit filter submission,
--- re-applied on bare page visits, removed only via the Reset link.
+-- (name = "alerts" | "env"); written only on widget submissions (marked
+-- with set=1 by Web.View.DynTable and the env view toggle), re-applied on
+-- bare page visits, removed only via the Reset link. A link with predefined
+-- params renders filtered but never overwrites the stored prefs.
 filterPrefsFor :: Aeson.Value -> Text -> Maybe Aeson.Value
 filterPrefsFor settings name = case settings of
     Aeson.Object o -> case KeyMap.lookup "filters" o of

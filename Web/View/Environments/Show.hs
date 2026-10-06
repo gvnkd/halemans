@@ -161,7 +161,9 @@ instance View ShowView where
                 then mempty
                 else
                     calloutWarningHtml "blackout-notice" (tr "Blackout active") [hsx|{tr "Blackout active — new alerts are suppressed."}|]
-        toggleUrl mode = pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (envBaseItems filters mode))
+        -- The set=1 marker flags this as a widget request so the controller
+        -- persists the change (see Web.Controller.Environments).
+        toggleUrl mode = pathTo (ShowEnvironmentAction environmentName) <> cs (renderQuery True (("set", Just "1") : envBaseItems filters mode))
         toggleClass :: Text -> Text
         toggleClass mode = "seg-item" <> if viewMode == mode then " active" else ""
         content =

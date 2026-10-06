@@ -70,6 +70,7 @@ dynTableHtml DynTable{..} =
 
     formHiddens =
         [hsx|
+        <input type="hidden" name="set" value="1"/>
         <input type="hidden" name="sort" value={sortValue}/>
         <input type="hidden" name="dir" value={dirValue}/>
         {forEach dtExtraItems extraHidden}
@@ -80,8 +81,11 @@ dynTableHtml DynTable{..} =
         valueText = cs value :: Text
     extraHidden (_, Nothing) = mempty
 
+    -- The set=1 marker tells controllers this request came from the page's
+    -- own widgets (sort/pager links) rather than an external link with
+    -- predefined params; only the former may persist as user filter prefs.
     stateUrl :: TableState -> Text
-    stateUrl st = dtBasePath <> cs (renderQuery True (dtExtraItems ++ tableStateQueryItems cfg st))
+    stateUrl st = dtBasePath <> cs (renderQuery True (("set", Just "1") : dtExtraItems ++ tableStateQueryItems cfg st))
 
     headerCell col
         | col.colSortable =
