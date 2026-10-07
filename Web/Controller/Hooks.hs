@@ -1,4 +1,4 @@
-module Web.Controller.Hooks where
+module Web.Controller.Hooks (parseBearerAuth) where
 
 import qualified Application.Connector.Alertmanager as Alertmanager
 import qualified Application.Connector.Grafana as Grafana
@@ -11,6 +11,7 @@ import Data.Aeson.Types (parseMaybe)
 import qualified Data.ByteString.Lazy as L
 import qualified Data.Text as Text
 import Network.HTTP.Types (status400, status403, status422)
+import Network.Wai (requestHeaders)
 import Web.Controller.Prelude
 
 instance Controller HooksController where
@@ -42,18 +43,31 @@ parseClick body = do
     username <- parseMaybe (Aeson.withObject "click" (\o -> o Aeson..:? "user_name" Aeson..!= "")) payload
     pure (textToId (alertRef :: Text), username)
 
+-- | Bearer-token fallback for ingestion hooks: when the URL path token
+-- matches no webhook_tokens row, an `Authorization: Bearer <token>` header
+-- is tried as well (Jenkins and other senders often prefer header auth over
+-- embedding a secret in the URL).
+hookBearerToken :: (?request :: Request) => Maybe Text
+hookBearerToken = do
+    value <- lookup "Authorization" (requestHeaders ?request)
+    parseBearerAuth (cs value)
+
+parseBearerAuth :: Text -> Maybe Text
+parseBearerAuth value = do
+    token <- Text.stripPrefix "Bearer " value
+    let stripped = Text.strip token
+    if Text.null stripped then Nothing else Just stripped
+
 handleHook ::
     (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) =>
     Text -> (Source -> Aeson.Value -> Either Text [NormalizedEvent]) -> IO ResponseReceived
 handleHook token normalizeFor = do
-    webhookToken <-
-        query @WebhookToken
-            |> filterWhere (#token, token)
-            |> fetchOneOrNothing
-    case webhookToken of
-        Nothing ->
+    let candidates = nub ([token | not (Text.null token)] ++ maybeToList hookBearerToken)
+    webhookTokens <- catMaybes <$> mapM lookupHookToken candidates
+    case webhookTokens of
+        [] ->
             renderJsonWithStatusCode status403 (Aeson.object ["error" .= ("invalid token" :: Text)])
-        Just webhookToken -> do
+        (webhookToken : _) -> do
             source <- fetch webhookToken.sourceId
             if not source.enabled
                 then renderJsonWithStatusCode status403 (Aeson.object ["error" .= ("source disabled" :: Text)])
@@ -75,3 +89,9 @@ handleHook token normalizeFor = do
                                     ingestEvents source events
                                     recordSuccess source
                                     renderJson (Aeson.object ["status" .= ("ok" :: Text)])
+
+lookupHookToken :: (?modelContext :: ModelContext) => Text -> IO (Maybe WebhookToken)
+lookupHookToken token =
+    query @WebhookToken
+        |> filterWhere (#token, token)
+        |> fetchOneOrNothing

@@ -322,7 +322,7 @@ Env: a public base URL (`HALEMANS_BASE_URL`, falling back to `IHP_BASEURL`/`APPR
 
 - `GET /api/v1/alerts`, `GET /api/v1/alerts/:id`, `GET /api/v1/environments` — read-only JSON, bearer-token auth (`api_tokens` table, managed via the profile UI), per-token rate limits.
 - `GET /metrics` — Prometheus exporter.
-- `POST /hooks/alertmanager/:token`, `POST /hooks/generic/:token` — ingestion webhooks.
+- `POST /hooks/alertmanager/:token`, `POST /hooks/generic/:token` — ingestion webhooks. The token is a `webhook_tokens` row value, matched from the URL path; an `Authorization: Bearer <token>` header is tried as a fallback when the path token matches nothing (senders that prefer header auth, e.g. Jenkins).
 - `GET /admin/audit/export` — audit log export (CSV/JSONL, admin only).
 - `POST /agent/chat`, `GET /agent/sessions`, `GET /agent/chat/:sessionId` — agent chat backing the floating widget (session-authed; the agent acts as the logged-in user, uses the enabled LLM provider from Admin → LLM, and persists sessions server-side).
 
