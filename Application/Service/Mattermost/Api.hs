@@ -3,6 +3,7 @@ module Application.Service.Mattermost.Api (
     configForChannel,
     createPost,
     patchPost,
+    deletePost,
     resolveChannel,
     testConnection,
 ) where
@@ -38,6 +39,7 @@ data MattermostConfig = MattermostConfig
     , mmToken :: Text
     , mmColorOverrides :: [(Text, Text)]
     , mmAckAction :: Bool
+    , mmDeleteOnClose :: Bool
     }
     deriving (Eq, Show)
 
@@ -46,7 +48,10 @@ data MattermostConfig = MattermostConfig
 -- mmColorOverrides carries the config "colors" mapping (severity/status →
 -- hex) that templates reference via the {{color}} slot; mmAckAction is the
 -- config "ackAction" flag (default True) — False hides the interactive Ack
--- BUTTON (the markdown [Ack] link in the status line stays template-controlled).
+-- BUTTON (the markdown [Ack] link in the status line stays template-controlled);
+-- mmDeleteOnClose is the config "deleteOnClose" flag (default False) — True
+-- DELETEs the root post when the alert reaches resolved/closed instead of
+-- patching it to a terminal-gray card.
 configForChannel :: NotificationChannel -> IO (Maybe MattermostConfig)
 configForChannel channel = do
     maybeToken <- traverse (lookupEnv . cs) tokenEnv
@@ -59,6 +64,7 @@ configForChannel channel = do
                         , mmToken = cs token
                         , mmColorOverrides = Render.colorMapFromJson channel.config
                         , mmAckAction = Render.ackActionEnabledFromJson channel.config
+                        , mmDeleteOnClose = Render.deleteOnCloseEnabledFromJson channel.config
                         }
         _ -> Nothing
   where
@@ -146,6 +152,22 @@ testConnection config =
     fmap (fmap username) (getJson config "/api/v4/users/me")
   where
     username body = fromMaybe "" (parseMaybe (Aeson.withObject "user" (\o -> o Aeson..: "username")) body)
+
+-- | Delete a post (the deleteOnClose terminal-state path). The bot can only
+-- delete its OWN posts, which is exactly what the notification channel
+-- creates. A 404 (post already gone) is treated as success — the desired
+-- end state already holds and the sync must not retry forever.
+deletePost :: MattermostConfig -> Text -> IO (Either Text ())
+deletePost config postId = do
+    outcome <-
+        try (Http.deleteFollowing (mmOpts config) (cs (config.mmBaseUrl <> "/api/v4/posts/" <> postId))) ::
+            IO (Either SomeException (Wreq.Response L.ByteString))
+    pure case outcome of
+        Left exception -> Left (cs (displayException exception))
+        Right response -> case response ^. Wreq.responseStatus . Wreq.statusCode of
+            200 -> Right ()
+            404 -> Right ()
+            other -> Left ("mattermost: delete post failed with HTTP " <> tshow other)
 
 getJson :: MattermostConfig -> Text -> IO (Either Text Aeson.Value)
 getJson config path =

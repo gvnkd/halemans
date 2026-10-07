@@ -269,6 +269,8 @@ Alert notifications can be delivered to Mattermost as threaded bot posts. A **bo
 
 The interactive **Ack button** is code, not a template (its URL is functional wiring back to Halemans). Hide it per channel by unchecking **Ack action button** on Admin → Notification channels → edit (or `"ackAction": false` in the channel's `config` JSON) — the one-time `[Ack]` markdown link in the status line stays (it's the reliable fallback on servers that strip action URLs).
 
+By default a resolved/closed alert leaves its **terminal-gray card** in the channel as history. Set `"deleteOnClose": true` in the channel's `config` JSON to instead **delete the Mattermost post** when the alert reaches `resolved`/`closed` (the status sync issues `DELETE /api/v4/posts/{id}` and forgets the mapping, so a later refire re-delivers a fresh card). Only the root post is deleted — the details thread reply is not tracked. The flag is off by default and survives channel edits made through the web form.
+
 `mattermost_attachment` supports these keys (anything else is ignored; empty values are dropped; `ts` must be epoch seconds and is sent as a number):
 
 ```

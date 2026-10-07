@@ -153,6 +153,42 @@ spec = describe "Mattermost notification channel" do
             actionNames root `shouldBe` []
             attachmentFieldText "text" root `shouldSatisfy` (Text.isInfixOf "[Ack](")
 
+    it "channel config deleteOnClose:true deletes the root post when the alert resolves" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-del-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRuleWithConfig ("mm-del-rule-" <> suffix) ("mm-del-chan-" <> suffix) envName (Aeson.object ["deleteOnClose" Aeson..= Aeson.Bool True])
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob
+            posts <- mockPosts
+            (root, _reply) <- expectRootAndReply posts
+
+            -- an ack is NOT terminal: the sync still patches the card
+            alert <- fetch alertId
+            user <- testUser
+            _ <- ackAlert user alert Nothing Nothing
+            ackSyncJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch)
+            perform ackSyncJob
+            postsAfterAck <- mockPosts
+            (rootAfterAck, _) <- expectRootAndReply postsAfterAck
+            postMessage rootAfterAck `shouldBe` "[ACKED] integration test alert"
+            postId rootAfterAck `shouldBe` postId root
+
+            -- a resolve IS terminal: the sync deletes the root post + row
+            void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
+            syncJobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
+            resolvedSyncJob <- expectOne [job | job <- syncJobs, job.eventKind == Just "resolved"]
+            perform resolvedSyncJob
+            postsAfterResolve <- mockPosts
+            [postId p | p <- postsAfterResolve, postId p == postId root] `shouldBe` []
+            remainingRows <- query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
+            remainingRows `shouldBe` []
+
     it "a second notify for the same alert does not duplicate the channel post" do
         suffix <- tshow <$> nextRandom
         let envName = "mm-itest-env-dup-" <> suffix

@@ -231,6 +231,12 @@ spec = describe "Application.Service.Mattermost.Render" do
         ackActionEnabledFromJson (Aeson.object ["ackAction" Aeson..= Aeson.Bool True]) `shouldBe` True
         ackActionEnabledFromJson (Aeson.object ["ackAction" Aeson..= Aeson.String "no"]) `shouldBe` True
 
+    it "reads the deleteOnClose flag from the channel config JSON" do
+        deleteOnCloseEnabledFromJson (Aeson.object []) `shouldBe` False
+        deleteOnCloseEnabledFromJson (Aeson.object ["deleteOnClose" Aeson..= Aeson.Bool True]) `shouldBe` True
+        deleteOnCloseEnabledFromJson (Aeson.object ["deleteOnClose" Aeson..= Aeson.Bool False]) `shouldBe` False
+        deleteOnCloseEnabledFromJson (Aeson.object ["deleteOnClose" Aeson..= Aeson.String "yes"]) `shouldBe` False
+
     it "renders extra attachment properties from key|value lines with a whitelist" do
         let props = renderAttachmentPropPairs (Just "footer|Halemans · {{alert.state}}\ntitle|{{alert.title}}\nthumb_url| https://example/t.png \nbogus|nope\nts|1730000000\nempty|") [] renderContext (mkAlert "firing" "critical")
         props

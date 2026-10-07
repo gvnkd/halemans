@@ -24,6 +24,7 @@ module Application.Service.Mattermost.Render (
     defaultColorTemplateBody,
     defaultTemplateBodyFor,
     ackActionEnabledFromJson,
+    deleteOnCloseEnabledFromJson,
     mattermostRootTemplateName,
     mattermostDetailsTemplateName,
     mattermostStatusTemplateName,
@@ -208,6 +209,17 @@ ackActionEnabledFromJson config = case config of
         Just (Aeson.Bool flag) -> flag
         _ -> True
     _ -> True
+
+-- Whether the status sync DELETES the root post when the alert reaches a
+-- terminal state (resolved/closed) instead of patching it to gray, from the
+-- channel config "deleteOnClose" key (default False). The MattermostPost row
+-- is removed with the post, so a later refire re-delivers a fresh card.
+deleteOnCloseEnabledFromJson :: Value -> Bool
+deleteOnCloseEnabledFromJson config = case config of
+    Aeson.Object object_ -> case KeyMap.lookup "deleteOnClose" object_ of
+        Just (Aeson.Bool flag) -> flag
+        _ -> False
+    _ -> False
 
 -- Sane defaults for the channel config "colors" mapping: terminal states
 -- gray, then severity, then the fallback. resolveColor looks the alert's

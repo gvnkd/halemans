@@ -4,6 +4,7 @@
 #   GET  /api/v4/posts/{id}                 fetch post
 #   PUT  /api/v4/posts/{id}/patch           edit message/props (status sync)
 #   PUT  /api/v4/posts/{id}                 edit message/props (legacy alias)
+#   DELETE /api/v4/posts/{id}               delete post (deleteOnClose path)
 #   GET  /api/v4/users/me/teams             bot team memberships
 #   GET  /api/v4/teams/{id}/channels/name/{c}  channel by team id + name
 #   GET  /api/v4/teams/name/{team}          resolve team name -> id
@@ -139,6 +140,21 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/v4/posts/([\w-]+)", path)
         if m:
             self._patch_post(m.group(1))
+            return
+        self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        if not self._authorized():
+            return
+        m = re.fullmatch(r"/api/v4/posts/([\w-]+)", path)
+        if m:
+            post = self.server.posts.pop(m.group(1), None)
+            if post is None:
+                self._send(404, {"id": "api.context.404.app_error", "message": "post not found"})
+            else:
+                self._send(200, {"status": "OK"})
             return
         self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
 

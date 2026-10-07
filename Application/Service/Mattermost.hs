@@ -214,6 +214,10 @@ deliverNotify alert rule = do
 -- silent no-ops. A PATCH failure is RETURNED (the job layer turns it into a
 -- retry with a visible last_error — a silently skipped patch leaves the MM
 -- card stale forever, which is worse than a red job).
+-- With the channel config "deleteOnClose": true, a sync landing on a
+-- TERMINAL state (resolved/closed) DELETES the root post instead of patching
+-- it and removes the MattermostPost row — the channel keeps no gray
+-- tombstone, and a later refire re-delivers a fresh card.
 syncAlertPosts :: (?modelContext :: ModelContext) => Alert -> IO (Either Text ())
 syncAlertPosts alert = do
     posts <-
@@ -232,6 +236,9 @@ syncAlertPosts alert = do
                     Nothing -> pure fallback
                 case configOrNothing of
                     Nothing -> pure (Right ())
+                    Just config
+                        | Api.mmDeleteOnClose config && isTerminalStatus (statusSnapshot alert) ->
+                            deleteTerminalPost config post
                     Just config -> do
                         rawContext <- renderContextFor Nothing alert
                         rootTemplate <- activeMattermostTemplate mattermostRootTemplateName
@@ -264,6 +271,25 @@ syncAlertPosts alert = do
 
 statusSnapshot :: Alert -> Text
 statusSnapshot alert = alert.status
+
+isTerminalStatus :: Text -> Bool
+isTerminalStatus status = status `elem` (["resolved", "closed"] :: [Text])
+
+-- | The deleteOnClose terminal-state path: delete the ROOT post from
+-- Mattermost, then drop the MattermostPost row so no later sync touches the
+-- (now gone) post. Deliberately root-only: the bot token is not a channel
+-- admin, so posts it did not author (human thread replies) cannot be deleted
+-- anyway, and the details reply it did author stays as the audit trail. A
+-- delete failure is RETURNED like a patch failure (job retry + visible
+-- last_error); a 404 is success (post already gone).
+deleteTerminalPost :: (?modelContext :: ModelContext) => MattermostConfig -> MattermostPost -> IO (Either Text ())
+deleteTerminalPost config post = do
+    result <- Api.deletePost config post.rootPostId
+    case result of
+        Left err -> pure (Left err)
+        Right () -> do
+            _ <- deleteRecord post
+            pure (Right ())
 
 nestedConfigText :: [Text] -> Aeson.Value -> Text
 nestedConfigText [] (Aeson.String value) = value
