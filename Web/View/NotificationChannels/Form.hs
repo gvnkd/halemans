@@ -5,7 +5,7 @@ module Web.View.NotificationChannels.Form (
     valuesFromChannel,
 ) where
 
-import Application.Service.Mattermost.Render (ackActionEnabledFromJson)
+import Application.Service.Mattermost.Render (ackActionEnabledFromJson, deleteOnCloseEnabledFromJson)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
@@ -20,6 +20,7 @@ data ChannelFormValues = ChannelFormValues
     , formChannelBaseUrl :: Text
     , formChannelTokenEnv :: Text
     , formChannelAckAction :: Bool
+    , formChannelDeleteOnClose :: Bool
     , formChannelEnabled :: Bool
     }
 
@@ -31,6 +32,7 @@ defaultChannelFormValues =
         , formChannelBaseUrl = ""
         , formChannelTokenEnv = ""
         , formChannelAckAction = True
+        , formChannelDeleteOnClose = False
         , formChannelEnabled = True
         }
 
@@ -64,6 +66,11 @@ channelFormFields values =
         <div class="form-text">{tr "Show the interactive Ack button on firing cards (mattermost). The one-time [Ack] link in the message stays either way; other config keys (e.g. \"colors\") are preserved on save."}</div>
     </div>
     <div class="mb-3 form-check">
+        <input name="deleteOnClose" type="checkbox" class="form-check-input" checked={values.formChannelDeleteOnClose} data-testid="channel-delete-on-close"/>
+        <label class="form-check-label">{tr "Delete card when resolved/closed"}</label>
+        <div class="form-text">{tr "Delete the Mattermost post when the alert reaches a terminal state instead of leaving a gray card (root post only — thread replies stay)."}</div>
+    </div>
+    <div class="mb-3 form-check">
         <input name="enabled" type="checkbox" class="form-check-input" checked={values.formChannelEnabled} data-testid="channel-enabled"/>
         <label class="form-check-label">{tr "Enabled"}</label>
     </div>
@@ -79,6 +86,7 @@ valuesFromChannel channel =
         , formChannelBaseUrl = channel.baseUrl
         , formChannelTokenEnv = tokenEnvOf channel
         , formChannelAckAction = ackActionEnabledFromJson (get #config channel)
+        , formChannelDeleteOnClose = deleteOnCloseEnabledFromJson (get #config channel)
         , formChannelEnabled = channel.enabled
         }
   where

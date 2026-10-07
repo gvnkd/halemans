@@ -111,26 +111,29 @@ channelFromForm name channel =
         |> set #name name
         |> set #type_ (param @Text "type")
         |> set #baseUrl (Text.strip (param @Text "baseUrl"))
-        |> set #config (channelConfigJson (configOf channel) (param @Text "tokenEnv") ackEnabled)
+        |> set #config (channelConfigJson (configOf channel) (param @Text "tokenEnv") ackEnabled deleteOnClose)
         |> set #enabled (paramOrNothing @Text "enabled" == Just "on")
   where
     -- Unchecked = the key is ABSENT from config (absence means "enabled",
     -- matching ackActionEnabledFromJson's default).
     ackEnabled = paramOrNothing @Text "ackAction" == Just "on"
+    -- Same convention: absence means False (deleteOnCloseEnabledFromJson's
+    -- default), so the managed key is only written when checked.
+    deleteOnClose = paramOrNothing @Text "deleteOnClose" == Just "on"
 
 -- | Form-managed keys overlay the existing config so provisioned/hand-set
--- keys (colors, ackAction set elsewhere, future keys) survive a UI edit
--- (sourceConfig pattern).
-channelConfigJson :: Value -> Text -> Bool -> Value
-channelConfigJson base tokenEnv ackEnabled =
+-- keys (colors, future keys) survive a UI edit (sourceConfig pattern).
+channelConfigJson :: Value -> Text -> Bool -> Bool -> Value
+channelConfigJson base tokenEnv ackEnabled deleteOnClose =
     Aeson.Object (extra <> managed)
   where
     managed =
         KeyMap.fromList
             ( ["tokenEnv" .= tokenEnv | tokenEnv /= ""]
                 <> ["ackAction" .= False | not ackEnabled]
+                <> ["deleteOnClose" .= True | deleteOnClose]
             )
-    managedKeys = ["tokenEnv", "ackAction"]
+    managedKeys = ["tokenEnv", "ackAction", "deleteOnClose"]
     extra = case base of
         Aeson.Object object_ -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) object_
         _ -> mempty

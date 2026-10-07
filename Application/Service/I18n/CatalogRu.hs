@@ -27,6 +27,8 @@ catalogRu =
         , ("API version must be 2 or 3", "Версия API должна быть 2 или 3")
         , ("Ack", "Подтвердить")
         , ("Ack action button", "Кнопка Ack")
+        , ("Delete card when resolved/closed", "Удалять карточку при resolved/closed")
+        , ("Delete the Mattermost post when the alert reaches a terminal state instead of leaving a gray card (root post only — thread replies stay).", "Удалять сообщение Mattermost, когда алерт переходит в терминальное состояние, вместо серой карточки (только корневое сообщение — ответы в треде остаются).")
         , ("Show the interactive Ack button on firing cards (mattermost). The one-time [Ack] link in the message stays either way; other config keys (e.g. \"colors\") are preserved on save.", "Показывать интерактивную кнопку Ack на активных карточках (mattermost). Одноразовая ссылка [Ack] в сообщении остаётся в любом случае; остальные ключи конфигурации (например, \"colors\") сохраняются при сохранении.")
         , ("Ack 2h", "Подтвердить на 2 ч")
         , ("Ack all firing", "Подтвердить все активные")
