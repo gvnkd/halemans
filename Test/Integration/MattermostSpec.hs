@@ -224,11 +224,17 @@ spec = describe "Mattermost notification channel" do
             posts2 <- mockPosts
             firingRoot <- expectOne [p | p <- posts2, postRootId p == "", postId p /= postId root]
 
+            -- a target whose server is unreachable is counted + reported,
+            -- not silently skipped
+            _ <- brokenBaseUrlRule ("mm-purge-broken-rule-" <> suffix) ("mm-purge-broken-chan-" <> suffix)
+
             summary <- purgeResolvedMattermostPosts
             summary.pmsPurged `shouldSatisfy` (>= 1)
             summary.pmsFailed `shouldBe` 0
             summary.pmsUntracked `shouldBe` 0
             summary.pmsKeptActive `shouldSatisfy` (>= 1)
+            summary.pmsTargetsFailed `shouldSatisfy` (>= 1)
+            summary.pmsErrors `shouldSatisfy` any ("127.0.0.1" `Text.isInfixOf`)
             postsAfterPurge <- mockPosts
             [postId p | p <- postsAfterPurge, postId p == postId root] `shouldBe` []
             [postId p | p <- postsAfterPurge, postId p == postId firingRoot] `shouldNotBe` []
@@ -477,6 +483,30 @@ mattermostRuleWithConfig name channel envName extra = do
 
 mattermostRuleWithColors :: (?modelContext :: ModelContext) => Text -> Text -> Text -> Aeson.Value -> IO NotificationRule
 mattermostRuleWithColors = mattermostRuleWithConfig
+
+-- A mattermost rule whose channel row points at an unreachable server —
+-- the admin purge must count it as a failed target (reason in pmsErrors)
+-- instead of skipping it silently.
+brokenBaseUrlRule :: (?modelContext :: ModelContext) => Text -> Text -> IO NotificationRule
+brokenBaseUrlRule name channel = do
+    _ <-
+        newRecord @NotificationChannel
+            |> set #name channel
+            |> set #type_ ("mattermost" :: Text)
+            |> set #baseUrl ("http://127.0.0.1:1" :: Text)
+            |> set #config (Aeson.object ["tokenEnv" Aeson..= ("MATTERMOST_TOKEN" :: Text)])
+            |> set #enabled True
+            |> createRecord
+    newRecord @NotificationRule
+        |> set #name name
+        |> set #position 50
+        |> set #enabled True
+        |> set #match (Aeson.object ["fields" Aeson..= Aeson.object ["env" Aeson..= ("mm-purge-broken-env" :: Text)]])
+        |> set #severityThreshold "info"
+        |> set #channel channel
+        |> set #channelConfig (Aeson.object ["team" Aeson..= ("mock" :: Text), "channel" Aeson..= channel])
+        |> set #throttleSeconds 0
+        |> createRecord
 
 -- The root-card sub-part template rows are global config shared by every MM
 -- delivery, so the example deletes them before AND after (finally) — same

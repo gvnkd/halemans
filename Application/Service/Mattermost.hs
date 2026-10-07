@@ -301,20 +301,29 @@ firstEnabledMattermostConfig = do
     pure (listToMaybe (catMaybes configs))
 
 -- | Admin-purge result counts, flashed on the admin page after a run.
+-- pmsTargetsFailed/pmsErrors surface the SILENT skips (rule without a usable
+-- config, unresolvable target, failed channel scan) — an all-zeros summary
+-- otherwise tells nothing about where the walk short-circuited.
 data PurgeMattermostSummary = PurgeMattermostSummary
     { pmsPurged :: Int
     , pmsFailed :: Int
     , pmsUntracked :: Int
     , pmsKeptActive :: Int
+    , pmsTargetsFailed :: Int
+    , pmsErrors :: [Text]
     }
     deriving (Eq, Show)
 
 instance Semigroup PurgeMattermostSummary where
-    PurgeMattermostSummary a1 b1 c1 d1 <> PurgeMattermostSummary a2 b2 c2 d2 =
-        PurgeMattermostSummary (a1 + a2) (b1 + b2) (c1 + c2) (d1 + d2)
+    PurgeMattermostSummary a1 b1 c1 d1 e1 f1 <> PurgeMattermostSummary a2 b2 c2 d2 e2 f2 =
+        PurgeMattermostSummary (a1 + a2) (b1 + b2) (c1 + c2) (d1 + d2) (e1 + e2) (f1 <> f2)
 
 instance Monoid PurgeMattermostSummary where
-    mempty = PurgeMattermostSummary 0 0 0 0
+    mempty = PurgeMattermostSummary 0 0 0 0 0 []
+
+-- | One failed/skipped purge target with a human-readable reason.
+purgeErr :: Text -> PurgeMattermostSummary
+purgeErr err = mempty{pmsTargetsFailed = 1, pmsErrors = [err]}
 
 -- | Danger zone (admin UI): CHANNEL-FIRST retroactive cleanup. For every
 -- enabled mattermost rule's target, lists the channel's actual posts
@@ -324,8 +333,10 @@ instance Monoid PurgeMattermostSummary where
 -- means deletes are only attempted for posts that still exist; posts of
 -- still-active alerts, and bot posts with no mattermost_posts row (e.g.
 -- after a DB purge), are left in place and counted. Rules without a usable
--- config or target are skipped. A target shared by several rules is scanned
--- once per rule — harmless, the second scan finds nothing left.
+-- config or target, and targets whose scan fails, are counted in
+-- pmsTargetsFailed with the reason in pmsErrors. A target shared by several
+-- rules is scanned once per rule — harmless, the second scan finds nothing
+-- left.
 purgeResolvedMattermostPosts :: (?modelContext :: ModelContext) => IO PurgeMattermostSummary
 purgeResolvedMattermostPosts = do
     channelNames <-
@@ -335,25 +346,30 @@ purgeResolvedMattermostPosts = do
                     |> fetch
                 )
     if null channelNames
-        then pure mempty
+        then pure (purgeErr "no notification channel of type mattermost")
         else do
             rules <-
                 query @NotificationRule
                     |> filterWhereIn (#channel, channelNames)
                     |> fetch
-            fmap mconcat $ forM rules \rule -> do
-                configOrNothing <- mattermostConfigForRule rule
-                targetOrError <- mattermostTargetForRule rule
-                case (configOrNothing, targetOrError) of
-                    (Just config, Right (teamName, channelName)) ->
-                        purgeChannelTarget config teamName channelName
-                    _ -> pure mempty
+            if null rules
+                then pure (purgeErr ("no notification rules on the mattermost channels " <> Text.intercalate ", " channelNames))
+                else fmap mconcat $ forM rules \rule -> do
+                    configOrNothing <- mattermostConfigForRule rule
+                    targetOrError <- mattermostTargetForRule rule
+                    case (configOrNothing, targetOrError) of
+                        (Just config, Right (teamName, channelName)) ->
+                            purgeChannelTarget config teamName channelName
+                        (Nothing, _) ->
+                            pure (purgeErr ("rule \"" <> rule.name <> "\": no usable mattermost channel config (channel row missing/disabled, empty base URL or token env unset in the app environment)"))
+                        (_, Left err) ->
+                            pure (purgeErr ("rule \"" <> rule.name <> "\": " <> err))
 
 purgeChannelTarget :: (?modelContext :: ModelContext) => MattermostConfig -> Text -> Text -> IO PurgeMattermostSummary
 purgeChannelTarget config teamName channelName = do
     channelOrError <- Api.resolveChannel config teamName channelName
     case channelOrError of
-        Left _ -> pure mempty
+        Left err -> pure (purgeErr (targetLabel <> " channel resolution: " <> err))
         Right channelId -> do
             meOrError <- Api.getMe config
             postsOrError <- Api.channelPosts config channelId
@@ -363,8 +379,10 @@ purgeChannelTarget config teamName channelName = do
                         case postIdOf postValue of
                             Nothing -> pure mempty
                             Just postId -> purgeOnePost config postId
-                _ -> pure mempty
+                (Left err, _) -> pure (purgeErr (targetLabel <> " users/me: " <> err))
+                (_, Left err) -> pure (purgeErr (targetLabel <> " channel posts: " <> err))
   where
+    targetLabel = config.mmBaseUrl <> " " <> teamName <> "/" <> channelName
     botRootPosts botUserId posts =
         [ postValue
         | postValue <- posts

@@ -327,7 +327,7 @@ catalogRu =
         , ("MTTR", "MTTR")
         , ("Manage my dashboards", "Управление моими дашбордами")
         , ("Mattermost notifications", "Уведомления Mattermost")
-        , ("Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept", "Очистка Mattermost: удалено {purged}, ошибок {failed}, неучтённых оставлено {untracked}, активных сохранено {kept}")
+        , ("Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept, {targets} targets failed", "Очистка Mattermost: удалено {purged}, ошибок {failed}, неучтённых оставлено {untracked}, активных сохранено {kept}, целей с ошибкой {targets}")
         , ("Mattermost team (default: halemans)", "Команда Mattermost (по умолчанию: halemans)")
         , ("Max gap (s)", "Макс. интервал (с)")
         , ("Mean time from firing to resolved (mean time to resolve) across flapping episodes", "Среднее время от срабатывания до решения (MTTR) по эпизодам флаппинга")

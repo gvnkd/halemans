@@ -57,13 +57,16 @@ instance Controller AdminController where
         summary <- purgeResolvedMattermostPosts
         setSuccessMessage
             ( trp
-                "Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept"
+                "Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept, {targets} targets failed"
                 [ ("purged", tshow summary.pmsPurged)
                 , ("failed", tshow summary.pmsFailed)
                 , ("untracked", tshow summary.pmsUntracked)
                 , ("kept", tshow summary.pmsKeptActive)
+                , ("targets", tshow summary.pmsTargetsFailed)
                 ]
             )
+        -- Full skip reasons go to the app log; the flash only carries counts.
+        mapM_ (\err -> putStrLn ("mattermost purge: " <> err)) (take 10 summary.pmsErrors)
         redirectTo AdminAction
     action AdminDatabaseAction = do
         requirePrivilege "admin"
