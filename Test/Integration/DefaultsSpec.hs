@@ -2,8 +2,11 @@ module Test.Integration.DefaultsSpec (spec) where
 
 import Control.Exception (finally)
 import Control.Monad (void)
+import qualified Data.Aeson as Aeson
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as Text
+import Data.UUID.V4 (nextRandom)
 import Generated.Types
 import IHP.Fetch (fetch)
 import IHP.FrameworkConfig (FrameworkConfig)
@@ -11,10 +14,11 @@ import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder
 import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
+import System.Environment (setEnv, unsetEnv)
 import Test.Hspec
 
 import Application.Service.Agent.Core (defaultAgentTemplateBody, internalAgentTemplateName)
-import Application.Service.Defaults (ensureDefaults)
+import Application.Service.Defaults (ensureDefaults, ensureWebhookTokens)
 import Application.Service.Jira.Related (defaultJiraRelatedTemplateBody, relatedTemplateName)
 import Application.Service.Llm.Prompt (defaultEnrichmentTemplateBody, enrichmentTemplateName)
 import Application.Service.Mattermost.Render (
@@ -90,6 +94,51 @@ spec = describe "boot-time default provisioning" do
                                 else before
                 now = [tplSig t | t <- templates, t.name == name]
             now `shouldBe` expected
+
+    it "resolves config.tokenEnv into webhook_tokens for push sources only" do
+        suffix <- tshow <$> nextRandom
+        let whName = "defspec-wh-" <> suffix
+            zbxName = "defspec-zbx-" <> suffix
+            tokenValue = "defspec-hook-token-" <> suffix
+            envName = "HALEMANS_DEFSPEC_WH_TOKEN_" <> Text.map (\c -> if c == '-' then '_' else c) suffix
+        whSource <-
+            newRecord @Source
+                |> set #type_ "webhook"
+                |> set #name whName
+                |> set #baseUrl ""
+                |> set #config (Aeson.object ["tokenEnv" Aeson..= envName])
+                |> createRecord
+        zbxSource <-
+            newRecord @Source
+                |> set #type_ "zabbix"
+                |> set #name zbxName
+                |> set #baseUrl ""
+                |> set #config (Aeson.object ["tokenEnv" Aeson..= envName])
+                |> createRecord
+        setEnv (cs envName) (cs tokenValue)
+        let whSourceId :: Id Source
+            whSourceId = get #id whSource
+            zbxSourceId :: Id Source
+            zbxSourceId = get #id zbxSource
+        ( do
+                ensureWebhookTokens
+                ensureWebhookTokens -- idempotent: ON CONFLICT DO NOTHING
+                whTokens <-
+                    sqlQueryTyped
+                        [typedSql| SELECT token FROM webhook_tokens WHERE source_id = ${whSourceId} |] ::
+                        IO [Text]
+                whTokens `shouldBe` [tokenValue]
+                [zbxCount] <-
+                    sqlQueryTyped
+                        [typedSql| SELECT COUNT(*) FROM webhook_tokens WHERE source_id = ${zbxSourceId} |] ::
+                        IO [Int64]
+                zbxCount `shouldBe` 0
+            )
+            `finally` do
+                void (sqlExecTyped [typedSql| DELETE FROM webhook_tokens WHERE token = ${tokenValue} |])
+                deleteRecord whSource
+                deleteRecord zbxSource
+                unsetEnv (cs envName)
 
 customBody :: Text
 customBody = "CUSTOM TEMPLATE BODY"

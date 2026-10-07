@@ -1,7 +1,7 @@
 module Config (config) where
 
 import Application.Helper.Controller ()
-import Application.Service.Defaults (ensureDefaults)
+import Application.Service.Defaults (ensureDefaults, ensureWebhookTokens)
 import Application.Service.Log (LogLevel (..))
 import Application.Service.Provision (applyProvisionConfig)
 import Application.Service.SecurityHeaders (securityHeaders)
@@ -64,6 +64,7 @@ withDefaultsPool = do
     withModelContext databaseUrl noopLogger \modelContext -> do
         let ?modelContext = modelContext
         ensureDefaults
+        ensureWebhookTokens
 
 -- Unset/empty path = no-op.
 provisionAtBoot :: IO ()

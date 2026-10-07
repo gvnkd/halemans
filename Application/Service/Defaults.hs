@@ -1,4 +1,4 @@
-module Application.Service.Defaults (ensureDefaults) where
+module Application.Service.Defaults (ensureDefaults, ensureWebhookTokens) where
 
 import Application.Service.Agent.Core (defaultAgentTemplateBody, internalAgentTemplateName)
 import Application.Service.Jira.Related (defaultJiraRelatedTemplateBody, relatedTemplateName)
@@ -13,10 +13,15 @@ import Application.Service.Mattermost.Render (
     mattermostStatusTemplateName,
  )
 import Control.Monad (void)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
 import Generated.Types
-import IHP.ModelSupport (ModelContext, withTransaction)
+import IHP.Fetch (fetch)
+import IHP.ModelSupport (Id' (..), ModelContext, withTransaction)
 import IHP.Prelude
+import IHP.QueryBuilder (filterWhereIn, query)
 import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
+import System.Environment (lookupEnv)
 
 -- Boot-time default provisioning: INSERT-if-missing for the built-in rows
 -- that previously existed only in Application/Fixtures.sql (fresh DBs) and
@@ -118,3 +123,42 @@ ensureRole (name, privileges) = void do
         VALUES (${name}, ${privileges})
         ON CONFLICT (name) DO NOTHING
     |]
+
+-- | Push-source hook tokens: sources of type webhook/alertmanager carry the
+-- INBOUND hook token as a config.tokenEnv env reference (the "Token env var"
+-- field of the webUI source form), which previously only the provision file
+-- and seed scripts resolved into webhook_tokens rows — a source created
+-- purely via the webUI answered /hooks/* with "invalid token" until a manual
+-- INSERT. Resolve the reference at boot too.
+--
+-- Only push types: for zabbix/grafana sources the same config key names the
+-- OUTBOUND poller credential, which must never become an inbound token.
+--
+-- Policy matches ensureDefaults: insert-if-missing only. Existing rows
+-- (manually inserted or previously resolved tokens) are never touched or
+-- deleted — a rotated env var ADDS its value alongside the old one, and an
+-- unset env var is skipped silently.
+ensureWebhookTokens :: (?modelContext :: ModelContext) => IO ()
+ensureWebhookTokens = do
+    sources <-
+        query @Source
+            |> filterWhereIn (#type_, ["webhook", "alertmanager"])
+            |> fetch
+    forM_ sources \source -> do
+        let tokenEnv :: Maybe Text
+            tokenEnv = parseMaybe (Aeson.withObject "source.config" (\o -> o Aeson..: "tokenEnv")) source.config
+            sourceId :: Id Source
+            sourceId = get #id source
+        forM_ tokenEnv \envName -> do
+            token <- lookupEnv (cs envName)
+            forM_ token \tokenValue -> do
+                let tokenText = cs tokenValue :: Text
+                void
+                    ( sqlExecTyped
+                        [typedSql|
+                    INSERT INTO webhook_tokens (source_id, token)
+                    VALUES (${sourceId}, ${tokenText})
+                    ON CONFLICT (token) DO NOTHING
+                |] ::
+                        IO Int64
+                    )
