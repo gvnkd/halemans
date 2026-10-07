@@ -5,6 +5,7 @@
 #   PUT  /api/v4/posts/{id}/patch           edit message/props (status sync)
 #   PUT  /api/v4/posts/{id}                 edit message/props (legacy alias)
 #   DELETE /api/v4/posts/{id}               delete post (deleteOnClose path)
+#   GET  /api/v4/channels/{id}/posts         channel posts (per_page + before cursor)
 #   GET  /api/v4/users/me/teams             bot team memberships
 #   GET  /api/v4/teams/{id}/channels/name/{c}  channel by team id + name
 #   GET  /api/v4/teams/name/{team}          resolve team name -> id
@@ -30,7 +31,7 @@ import sys
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 DEFAULT_PORT = 18088
 DEFAULT_TOKEN = "mock-mattermost-token"
@@ -83,6 +84,10 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/v4/posts/([\w-]+)", path)
         if m:
             self._get_post(m.group(1))
+            return
+        m = re.fullmatch(r"/api/v4/channels/([\w-]+)/posts", path)
+        if m:
+            self._channel_posts(m.group(1), parsed.query)
             return
         m = re.fullmatch(r"/api/v4/teams/name/([\w-]+)", path)
         if m:
@@ -196,6 +201,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, dict(post))
 
+    def _channel_posts(self, channel_id, query):
+        # Mirrors MM: newest-first page, per_page cap, "before" (create_at ms)
+        # cursor. Channel order across the whole listing must be stable for
+        # the before-cursor walk, so ties break by post id.
+        params = parse_qs(query)
+        per_page = min(int(params.get("per_page", ["60"])[0]), 200)
+        before = int(params.get("before", ["0"])[0])
+        posts = [p for p in self.server.posts.values() if p["channel_id"] == channel_id]
+        if before:
+            posts = [p for p in posts if p["create_at"] < before]
+        posts.sort(key=lambda p: (p["create_at"], p["id"]), reverse=True)
+        page = posts[:per_page]
+        self._send(200, {"order": [p["id"] for p in page], "posts": {p["id"]: dict(p) for p in page}})
+
     def _patch_post(self, post_id):
         post = self.server.posts.get(post_id)
         if post is None:
@@ -308,6 +327,10 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     def __init__(self, addr, handler):
         super().__init__(addr, handler)
+        # Post ids are NOT reset by /debug/reset: they stay unique across
+        # epochs like a real MM server, so mattermost_posts.root_post_id
+        # lookups never collide between test examples.
+        self.next_post_id = 1
         self.reset()
 
     def reset(self):
@@ -315,7 +338,7 @@ class Server(ThreadingHTTPServer):
         self.channels = {}
         self.channel_names = {}
         self.action_calls = []
-        self.next_post_id = 1
+        # next_post_id deliberately survives: see __init__.
         # The client's resolveChannel lists bot team memberships BEFORE any
         # post exists, so the default team must survive /debug/reset.
         self.teams = {}

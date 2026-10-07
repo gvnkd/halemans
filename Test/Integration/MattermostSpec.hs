@@ -3,6 +3,7 @@ module Test.Integration.MattermostSpec (spec) where
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Job.Mattermost ()
 import Application.Pipeline.Actions (ackAlert)
+import Application.Service.Mattermost (PurgeMattermostSummary (..), purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
 import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
 import Application.Service.Provision (ProvisionError (..))
@@ -188,6 +189,53 @@ spec = describe "Mattermost notification channel" do
             [postId p | p <- postsAfterResolve, postId p == postId root] `shouldBe` []
             remainingRows <- query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
             remainingRows `shouldBe` []
+
+    it "admin purge walks the channel and deletes only resolved alerts' bot root posts" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-purge-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-purge-rule-" <> suffix) ("mm-purge-chan-" <> suffix) envName
+            source <- testSource
+            -- resolved WITHOUT deleteOnClose: the sync patches the card
+            -- terminal-gray and keeps the row — the purge deletes it
+            -- retroactively
+            fp <- freshFingerprint
+            Just resolvedAlertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor resolvedAlertId
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, resolvedAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob
+            posts <- mockPosts
+            (root, _reply) <- expectRootAndReply posts
+            void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
+            syncJobs <- query @MattermostJob |> filterWhere (#alertId, resolvedAlertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
+            resolvedSyncJob <- expectOne [job | job <- syncJobs, job.eventKind == Just "resolved"]
+            perform resolvedSyncJob
+            postsAfterResolve <- mockPosts
+            (rootAfterResolve, _) <- expectRootAndReply postsAfterResolve
+            postId rootAfterResolve `shouldBe` postId root
+
+            -- a still-firing alert's post must survive the purge
+            fp2 <- freshFingerprint
+            Just firingAlertId <- ingest source ((testEventIn envName fp2 Firing){severity = "warning"})
+            exposeFor firingAlertId
+            notifyJob2 <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, firingAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob2
+            posts2 <- mockPosts
+            firingRoot <- expectOne [p | p <- posts2, postRootId p == "", postId p /= postId root]
+
+            summary <- purgeResolvedMattermostPosts
+            summary.pmsPurged `shouldSatisfy` (>= 1)
+            summary.pmsFailed `shouldBe` 0
+            summary.pmsUntracked `shouldBe` 0
+            summary.pmsKeptActive `shouldSatisfy` (>= 1)
+            postsAfterPurge <- mockPosts
+            [postId p | p <- postsAfterPurge, postId p == postId root] `shouldBe` []
+            [postId p | p <- postsAfterPurge, postId p == postId firingRoot] `shouldNotBe` []
+            resolvedRows <- query @MattermostPost |> filterWhere (#alertId, resolvedAlertId) |> fetch
+            resolvedRows `shouldBe` []
+            firingRows <- query @MattermostPost |> filterWhere (#alertId, firingAlertId) |> fetch
+            length firingRows `shouldBe` 1
 
     it "a second notify for the same alert does not duplicate the channel post" do
         suffix <- tshow <$> nextRandom

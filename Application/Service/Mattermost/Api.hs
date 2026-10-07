@@ -5,6 +5,8 @@ module Application.Service.Mattermost.Api (
     patchPost,
     deletePost,
     resolveChannel,
+    getMe,
+    channelPosts,
     testConnection,
 ) where
 
@@ -168,6 +170,52 @@ deletePost config postId = do
             200 -> Right ()
             404 -> Right ()
             other -> Left ("mattermost: delete post failed with HTTP " <> tshow other)
+
+-- | The bot's own user id (GET /users/me). The admin purge uses it to
+-- restrict deletes to posts the bot authored.
+getMe :: MattermostConfig -> IO (Either Text Text)
+getMe config = do
+    result <- getJson config "/api/v4/users/me"
+    pure case result of
+        Left err -> Left err
+        Right body -> case parseMaybe (Aeson.withObject "user" (\o -> o Aeson..: "id")) body of
+            Nothing -> Left "mattermost: users/me response has no id"
+            Just userId -> Right userId
+
+-- | ALL posts of a channel, following the MM "before" cursor at the max page
+-- size until a short page. The admin purge walks the channel (not the DB) so
+-- deletes are only attempted for posts that still exist. A page failure
+-- returns Left — the caller counts the target as failed instead of silently
+-- purging nothing.
+channelPosts :: MattermostConfig -> Text -> IO (Either Text [Aeson.Value])
+channelPosts config channelId = go Nothing []
+  where
+    go beforeMs acc = do
+        result <- getJson config (path beforeMs)
+        case result of
+            Left err -> pure (Left err)
+            Right body -> case pageOf body of
+                Nothing -> pure (Left "mattermost: channel posts response has no posts map")
+                Just postsMap ->
+                    let posts = KeyMap.elems postsMap
+                     in if length posts < pageSize
+                            then pure (Right (acc <> posts))
+                            else case oldestCreateAtMs posts of
+                                Nothing -> pure (Right (acc <> posts))
+                                Just oldest -> go (Just oldest) (acc <> posts)
+    path Nothing = "/api/v4/channels/" <> channelId <> "/posts?per_page=" <> tshow pageSize
+    path (Just beforeMs) = "/api/v4/channels/" <> channelId <> "/posts?per_page=" <> tshow pageSize <> "&before=" <> tshow beforeMs
+    pageSize = 200 :: Int
+    pageOf body =
+        parseMaybe (Aeson.withObject "channel posts" (\o -> o Aeson..: "posts")) body ::
+            Maybe (KeyMap.KeyMap Aeson.Value)
+    oldestCreateAtMs posts =
+        case [createdAt | Just createdAt <- map createdAtMs posts] of
+            [] -> Nothing
+            times -> Just (minimum times)
+    createdAtMs value =
+        parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "create_at")) value ::
+            Maybe Integer
 
 getJson :: MattermostConfig -> Text -> IO (Either Text Aeson.Value)
 getJson config path =

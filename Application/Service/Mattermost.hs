@@ -9,6 +9,8 @@ module Application.Service.Mattermost (
     mattermostTarget,
     mattermostTargetForRule,
     activeMattermostTemplate,
+    purgeResolvedMattermostPosts,
+    PurgeMattermostSummary (..),
 ) where
 
 import Application.Service.ActionTokens (ensureActionToken)
@@ -19,6 +21,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
+import Data.Semigroup (Semigroup)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Traversable (traverse)
@@ -259,15 +262,7 @@ syncAlertPosts alert = do
                 [] -> Right ()
                 (firstErr : _) -> Left firstErr
   where
-    firstEnabledConfig = do
-        channels <-
-            query @NotificationChannel
-                |> filterWhere (#type_, "mattermost" :: Text)
-                |> filterWhere (#enabled, True)
-                |> orderByAsc #name
-                |> fetch
-        configs <- mapM Api.configForChannel channels
-        pure (listToMaybe (catMaybes configs))
+    firstEnabledConfig = firstEnabledMattermostConfig
 
 statusSnapshot :: Alert -> Text
 statusSnapshot alert = alert.status
@@ -290,6 +285,115 @@ deleteTerminalPost config post = do
         Right () -> do
             _ <- deleteRecord post
             pure (Right ())
+
+-- | The first enabled usable mattermost channel config (by channel name) —
+-- the sync/purge fallback when a post has no rule to resolve its config
+-- through.
+firstEnabledMattermostConfig :: (?modelContext :: ModelContext) => IO (Maybe MattermostConfig)
+firstEnabledMattermostConfig = do
+    channels <-
+        query @NotificationChannel
+            |> filterWhere (#type_, "mattermost" :: Text)
+            |> filterWhere (#enabled, True)
+            |> orderByAsc #name
+            |> fetch
+    configs <- mapM Api.configForChannel channels
+    pure (listToMaybe (catMaybes configs))
+
+-- | Admin-purge result counts, flashed on the admin page after a run.
+data PurgeMattermostSummary = PurgeMattermostSummary
+    { pmsPurged :: Int
+    , pmsFailed :: Int
+    , pmsUntracked :: Int
+    , pmsKeptActive :: Int
+    }
+    deriving (Eq, Show)
+
+instance Semigroup PurgeMattermostSummary where
+    PurgeMattermostSummary a1 b1 c1 d1 <> PurgeMattermostSummary a2 b2 c2 d2 =
+        PurgeMattermostSummary (a1 + a2) (b1 + b2) (c1 + c2) (d1 + d2)
+
+instance Monoid PurgeMattermostSummary where
+    mempty = PurgeMattermostSummary 0 0 0 0
+
+-- | Danger zone (admin UI): CHANNEL-FIRST retroactive cleanup. For every
+-- enabled mattermost rule's target, lists the channel's actual posts
+-- (paginated) and deletes only the BOT-AUTHORED ROOT posts whose mapped
+-- alert is in a terminal state (resolved/closed), dropping the
+-- mattermost_posts row with the post. Walking the channel (not the DB)
+-- means deletes are only attempted for posts that still exist; posts of
+-- still-active alerts, and bot posts with no mattermost_posts row (e.g.
+-- after a DB purge), are left in place and counted. Rules without a usable
+-- config or target are skipped. A target shared by several rules is scanned
+-- once per rule — harmless, the second scan finds nothing left.
+purgeResolvedMattermostPosts :: (?modelContext :: ModelContext) => IO PurgeMattermostSummary
+purgeResolvedMattermostPosts = do
+    channelNames <-
+        map (get #name)
+            <$> ( query @NotificationChannel
+                    |> filterWhere (#type_, "mattermost" :: Text)
+                    |> fetch
+                )
+    if null channelNames
+        then pure mempty
+        else do
+            rules <-
+                query @NotificationRule
+                    |> filterWhereIn (#channel, channelNames)
+                    |> fetch
+            fmap mconcat $ forM rules \rule -> do
+                configOrNothing <- mattermostConfigForRule rule
+                targetOrError <- mattermostTargetForRule rule
+                case (configOrNothing, targetOrError) of
+                    (Just config, Right (teamName, channelName)) ->
+                        purgeChannelTarget config teamName channelName
+                    _ -> pure mempty
+
+purgeChannelTarget :: (?modelContext :: ModelContext) => MattermostConfig -> Text -> Text -> IO PurgeMattermostSummary
+purgeChannelTarget config teamName channelName = do
+    channelOrError <- Api.resolveChannel config teamName channelName
+    case channelOrError of
+        Left _ -> pure mempty
+        Right channelId -> do
+            meOrError <- Api.getMe config
+            postsOrError <- Api.channelPosts config channelId
+            case (meOrError, postsOrError) of
+                (Right botUserId, Right posts) ->
+                    fmap mconcat $ forM (botRootPosts botUserId posts) \postValue ->
+                        case postIdOf postValue of
+                            Nothing -> pure mempty
+                            Just postId -> purgeOnePost config postId
+                _ -> pure mempty
+  where
+    botRootPosts botUserId posts =
+        [ postValue
+        | postValue <- posts
+        , rootIdOf postValue == Just ""
+        , userIdOf postValue == Just botUserId
+        ]
+    rootIdOf value = parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "root_id")) value :: Maybe Text
+    userIdOf value = parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "user_id")) value :: Maybe Text
+    postIdOf value = parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "id")) value :: Maybe Text
+
+purgeOnePost :: (?modelContext :: ModelContext) => MattermostConfig -> Text -> IO PurgeMattermostSummary
+purgeOnePost config postId = do
+    rows <-
+        query @MattermostPost
+            |> filterWhere (#rootPostId, postId)
+            |> fetch
+    case rows of
+        [] -> pure mempty{pmsUntracked = 1}
+        _ -> do
+            alerts <- mapM (fetch . get #alertId) rows
+            if any (isTerminalStatus . statusSnapshot) alerts
+                then do
+                    result <- Api.deletePost config postId
+                    case result of
+                        Left _ -> pure mempty{pmsFailed = 1}
+                        Right () -> do
+                            mapM_ deleteRecord rows
+                            pure mempty{pmsPurged = 1}
+                else pure mempty{pmsKeptActive = 1}
 
 nestedConfigText :: [Text] -> Aeson.Value -> Text
 nestedConfigText [] (Aeson.String value) = value

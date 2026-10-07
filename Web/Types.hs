@@ -149,6 +149,7 @@ data AdminController
     = AdminAction
     | AdminRevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     | AdminPurgeAlertsAction
+    | AdminPurgeResolvedMattermostAction
     | AdminDatabaseAction
     | AdminDbAnalyzeAction
     | AdminDbVacuumAction

@@ -2,6 +2,7 @@ module Web.Controller.Admin where
 
 import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
+import Application.Service.Mattermost (PurgeMattermostSummary (..), purgeResolvedMattermostPosts)
 import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
 import Application.Service.PurgeAlerts (purgeAllAlerts)
 import Control.Monad (void)
@@ -45,6 +46,24 @@ instance Controller AdminController where
         requirePrivilege "admin"
         purgeAllAlerts
         setSuccessMessage (tr "All alerts purged")
+        redirectTo AdminAction
+    -- Danger zone: CHANNEL-FIRST cleanup of the bot's root posts of
+    -- resolved/closed alerts — every mattermost rule's target channel is
+    -- listed and only existing bot root posts mapped to a terminal alert are
+    -- deleted (active alerts' posts are kept). Retroactive, independent of
+    -- the per-channel "deleteOnClose" flag.
+    action AdminPurgeResolvedMattermostAction = do
+        requirePrivilege "admin"
+        summary <- purgeResolvedMattermostPosts
+        setSuccessMessage
+            ( trp
+                "Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept"
+                [ ("purged", tshow summary.pmsPurged)
+                , ("failed", tshow summary.pmsFailed)
+                , ("untracked", tshow summary.pmsUntracked)
+                , ("kept", tshow summary.pmsKeptActive)
+                ]
+            )
         redirectTo AdminAction
     action AdminDatabaseAction = do
         requirePrivilege "admin"
