@@ -1,11 +1,13 @@
 module Web.Controller.NotificationChannels where
 
+import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel)
 import qualified Application.Service.Mattermost.Api as MattermostApi
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Text as Text
+import System.IO (hFlush, stdout)
 import Web.Controller.Prelude
 import Web.View.NotificationChannels.Edit
 import Web.View.NotificationChannels.Index
@@ -91,6 +93,58 @@ instance Controller NotificationChannelsController where
             Left err -> setErrorMessage (trp "Channel test failed: {error}" [("error", err)])
             Right message -> setSuccessMessage message
         redirectTo NotificationChannelsAction
+
+    -- Danger zone (channel page): per-channel retroactive purge of the bot's
+    -- root posts of resolved/closed alerts, walking only THIS channel row's
+    -- rules' MM targets. Moved here from the admin page -- the channel admin
+    -- runs it per channel, not globally.
+    action PurgeResolvedNotificationChannelAction{notificationChannelId} = do
+        requirePrivilege "manage_rules"
+        channel <- fetch notificationChannelId
+        summary <- purgeMattermostPostsForChannel PurgeResolvedPosts channel
+        flashPurgeSummary
+            summary
+            ( trp
+                "Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept, {targets} targets failed"
+                [ ("purged", tshow summary.pmsPurged)
+                , ("failed", tshow summary.pmsFailed)
+                , ("untracked", tshow summary.pmsUntracked)
+                , ("kept", tshow summary.pmsKeptActive)
+                , ("targets", tshow summary.pmsTargetsFailed)
+                ]
+            )
+        redirectTo EditNotificationChannelAction{notificationChannelId}
+    -- Danger zone (channel page): delete ALL root posts in this channel's MM
+    -- targets except the firing alerts' posts (terminal/stale cards AND
+    -- untracked leftovers go). Requires the halemans MM user to be a channel
+    -- admin -- it deletes posts of any author.
+    action PurgeUnrelatedNotificationChannelAction{notificationChannelId} = do
+        requirePrivilege "manage_rules"
+        channel <- fetch notificationChannelId
+        summary <- purgeMattermostPostsForChannel PurgeUnrelatedPosts channel
+        flashPurgeSummary
+            summary
+            ( trp
+                "Mattermost purge: {purged} deleted, {failed} failed, {kept} firing kept, {targets} targets failed"
+                [ ("purged", tshow summary.pmsPurged)
+                , ("failed", tshow summary.pmsFailed)
+                , ("kept", tshow summary.pmsKeptActive)
+                , ("targets", tshow summary.pmsTargetsFailed)
+                ]
+            )
+        redirectTo EditNotificationChannelAction{notificationChannelId}
+
+-- | Flash a purge summary; the first skip reasons ride along in the flash
+-- (operators must not need log access to see WHY a target failed), the full
+-- list also goes to the app log (stdout is block-buffered under docker,
+-- hence the explicit flush).
+flashPurgeSummary :: (?context :: ControllerContext, ?request :: Request) => PurgeMattermostSummary -> Text -> IO ()
+flashPurgeSummary summary message = do
+    let reasons = Text.intercalate " | " (take 2 summary.pmsErrors)
+        detail = if Text.null reasons then "" else " -- " <> reasons
+    setSuccessMessage (message <> detail)
+    mapM_ (\err -> putStrLn ("mattermost purge: " <> err)) (take 10 summary.pmsErrors)
+    hFlush stdout
 
 -- | Mattermost connectivity check: resolve the config (base URL + tokenEnv)
 -- and hit /api/v4/users/me. Other channel types have nothing to probe yet.

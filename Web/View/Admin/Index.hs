@@ -32,9 +32,6 @@ instance View IndexView where
             <form method="POST" action={AdminPurgeAlertsAction} data-confirm={tr "Delete ALL alerts, groups, events, comments and analyses? This cannot be undone."}>
                 <button type="submit" class="btn btn-ghost btn-ghost-critical" data-testid="purge-alerts">{tr "Purge all alerts"}</button>
             </form>
-            <form method="POST" action={AdminPurgeResolvedMattermostAction} data-confirm={tr "Delete the bot's root posts of resolved/closed alerts from the Mattermost channels? Posts of active alerts are kept."} class="mt-2">
-                <button type="submit" class="btn btn-ghost btn-ghost-critical" data-testid="purge-mattermost-resolved">{tr "Purge resolved Mattermost posts"}</button>
-            </form>
         </div></div>
     </div>
     |]

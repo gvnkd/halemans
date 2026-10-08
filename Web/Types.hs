@@ -149,7 +149,6 @@ data AdminController
     = AdminAction
     | AdminRevokeApiTokenAction {apiTokenId :: !(Id ApiToken)}
     | AdminPurgeAlertsAction
-    | AdminPurgeResolvedMattermostAction
     | AdminDatabaseAction
     | AdminDbAnalyzeAction
     | AdminDbVacuumAction
@@ -274,6 +273,8 @@ data NotificationChannelsController
     | ToggleNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     | DeleteNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     | TestNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | PurgeResolvedNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | PurgeUnrelatedNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     deriving (Eq, Show)
 
 data EscalationPoliciesController

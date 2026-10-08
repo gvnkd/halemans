@@ -3,7 +3,7 @@ module Test.Integration.MattermostSpec (spec) where
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Job.Mattermost ()
 import Application.Pipeline.Actions (ackAlert)
-import Application.Service.Mattermost (PurgeMattermostSummary (..), purgeResolvedMattermostPosts)
+import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
 import qualified Application.Service.Mattermost.Api as MM.Api
 import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
@@ -245,6 +245,75 @@ spec = describe "Mattermost notification channel" do
             firingRows <- query @MattermostPost |> filterWhere (#alertId, firingAlertId) |> fetch
             length firingRows `shouldBe` 1
 
+    it "per-channel purge walks only that channel's rules' targets" do
+        suffix <- tshow <$> nextRandom
+        let envA = "mm-pcha-env-" <> suffix
+            envB = "mm-pchb-env-" <> suffix
+            chanAName = "mm-pcha-chan-" <> suffix
+            chanBName = "mm-pchb-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-pcha-rule-" <> suffix) chanAName envA
+            _ <- mattermostRule ("mm-pchb-rule-" <> suffix) chanBName envB
+            source <- testSource
+            -- resolved alert posts on BOTH channels (default: no
+            -- deleteOnClose, so the rows survive for the retroactive purge)
+            (alertA, fpA) <- fireAndResolve source envA
+            (alertB, _fpB) <- fireAndResolve source envB
+            rowA <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, alertA) |> fetch
+            rowB <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, alertB) |> fetch
+
+            chanA <- query @NotificationChannel |> filterWhere (#name, chanAName) |> fetchOne
+            summary <- purgeMattermostPostsForChannel PurgeResolvedPosts chanA
+            summary.pmsPurged `shouldBe` 1
+            summary.pmsFailed `shouldBe` 0
+            summary.pmsUntracked `shouldBe` 0
+            summary.pmsKeptActive `shouldBe` 0
+            summary.pmsTargetsFailed `shouldBe` 0
+            posts <- mockPosts
+            [postId p | p <- posts, postId p == rowA.rootPostId] `shouldBe` []
+            [postId p | p <- posts, postId p == rowB.rootPostId] `shouldNotBe` []
+
+    it "unrelated purge deletes every non-firing root post, including untracked leftovers" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-unrel-env-" <> suffix
+            channelName = "mm-unrel-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-unrel-rule-" <> suffix) channelName envName
+            source <- testSource
+            -- a FIRING alert post: kept
+            fpFiring <- freshFingerprint
+            Just firingAlertId <- ingest source ((testEventIn envName fpFiring Firing){severity = "warning"})
+            exposeFor firingAlertId
+            notifyFiring <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, firingAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyFiring
+            firingRow <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, firingAlertId) |> fetch
+            -- a RESOLVED alert post: deleted
+            (resolvedAlertId, _fpResolved) <- fireAndResolve source envName
+            resolvedRow <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, resolvedAlertId) |> fetch
+            -- an UNTRACKED bot root post (no mattermost_posts row): deleted
+            chan <- query @NotificationChannel |> filterWhere (#name, channelName) |> fetchOne
+            config <- fromMaybe (error "expected a usable mattermost config") <$> MM.Api.configForChannel chan
+            Right channelId <- MM.Api.resolveChannel config "mock" channelName
+            Right untrackedId <- MM.Api.createPost config channelId "untracked leftover" Nothing (Aeson.object [])
+
+            summary <- purgeMattermostPostsForChannel PurgeUnrelatedPosts chan
+            summary.pmsPurged `shouldBe` 2
+            summary.pmsFailed `shouldBe` 0
+            summary.pmsUntracked `shouldBe` 0
+            summary.pmsKeptActive `shouldBe` 1
+            summary.pmsTargetsFailed `shouldBe` 0
+            posts <- mockPosts
+            [postId p | p <- posts, postId p == firingRow.rootPostId] `shouldNotBe` []
+            [postId p | p <- posts, postId p == resolvedRow.rootPostId] `shouldBe` []
+            [postId p | p <- posts, postId p == untrackedId] `shouldBe` []
+            -- the mapped rows went with the posts; the firing row stays
+            resolvedRows <- query @MattermostPost |> filterWhere (#alertId, resolvedAlertId) |> fetch
+            resolvedRows `shouldBe` []
+            firingRows <- query @MattermostPost |> filterWhere (#alertId, firingAlertId) |> fetch
+            length firingRows `shouldBe` 1
+
     it "channelPosts follows the before-post-id cursor past 200 posts" do
         suffix <- tshow <$> nextRandom
         let channelName = "mm-pages-chan-" <> suffix
@@ -480,6 +549,22 @@ mattermostRule name channel envName = do
         |> set #channelConfig (Aeson.object ["team" Aeson..= ("mock" :: Text), "channel" Aeson..= channel])
         |> set #throttleSeconds 0
         |> createRecord
+
+-- Fire an alert, deliver the MM card, then resolve it and run the resolve
+-- sync (default channel config: the card is patched terminal-gray and the
+-- mattermost_posts row SURVIVES for the retroactive purges).
+fireAndResolve :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> IO (Id Alert, Text)
+fireAndResolve source envName = do
+    fp <- freshFingerprint
+    Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+    exposeFor alertId
+    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+    perform notifyJob
+    void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
+    syncJobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
+    resolvedSyncJob <- expectOne [job | job <- syncJobs, job.eventKind == Just "resolved"]
+    perform resolvedSyncJob
+    pure (alertId, fp)
 
 expectOne :: [a] -> IO a
 expectOne [single] = pure single

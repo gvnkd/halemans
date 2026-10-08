@@ -250,6 +250,8 @@ POST /admin/notification-channels/{notificationChannelId}/update         UpdateN
 POST /admin/notification-channels/{notificationChannelId}/toggle         ToggleNotificationChannelAction
 POST /admin/notification-channels/{notificationChannelId}/delete         DeleteNotificationChannelAction
 POST /admin/notification-channels/{notificationChannelId}/test           TestNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/purge-resolved  PurgeResolvedNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/purge-unrelated PurgeUnrelatedNotificationChannelAction
 |]
 
 [routes|EscalationPoliciesController
@@ -276,7 +278,6 @@ POST /sources/{sourceId}/fire-test  FireTestAlertAction
 GET  /admin    AdminAction
 POST /admin/api-tokens/{apiTokenId}/revoke    AdminRevokeApiTokenAction
 POST /admin/purge-alerts    AdminPurgeAlertsAction
-POST /admin/purge-mattermost-resolved    AdminPurgeResolvedMattermostAction
 GET  /admin/database                            AdminDatabaseAction
 GET  /admin/provision/export                    AdminExportProvisionAction
 POST /admin/database/analyze                    AdminDbAnalyzeAction
