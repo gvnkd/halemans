@@ -5,6 +5,7 @@ import Application.Job.Mattermost ()
 import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost (PurgeMattermostSummary (..), purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
+import qualified Application.Service.Mattermost.Api as MM.Api
 import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
 import Application.Service.Provision (ProvisionError (..))
 import Application.Service.TestAlert (fireTestAlert)
@@ -14,6 +15,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
+import Data.List (nub)
 import qualified Data.Text as Text
 import Data.UUID.V4 (nextRandom)
 import Generated.Types
@@ -242,6 +244,21 @@ spec = describe "Mattermost notification channel" do
             resolvedRows `shouldBe` []
             firingRows <- query @MattermostPost |> filterWhere (#alertId, firingAlertId) |> fetch
             length firingRows `shouldBe` 1
+
+    it "channelPosts follows the before-post-id cursor past 200 posts" do
+        suffix <- tshow <$> nextRandom
+        let channelName = "mm-pages-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-pages-rule-" <> suffix) channelName ("mm-pages-env-" <> suffix)
+            chan <- query @NotificationChannel |> filterWhere (#name, channelName) |> fetchOne
+            config <- fromMaybe (error "expected a usable mattermost config") <$> MM.Api.configForChannel chan
+            Right channelId <- MM.Api.resolveChannel config "mock" channelName
+            forM_ [(1 :: Int) .. 205] \_ ->
+                void (MM.Api.createPost config channelId "bulk" Nothing (Aeson.object []))
+            postsResult <- MM.Api.channelPosts config channelId
+            fmap length postsResult `shouldBe` Right 205
+            fmap (length . nub . map postId) postsResult `shouldBe` Right 205
 
     it "a second notify for the same alert does not duplicate the channel post" do
         suffix <- tshow <$> nextRandom

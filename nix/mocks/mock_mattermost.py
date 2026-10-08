@@ -202,15 +202,21 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, dict(post))
 
     def _channel_posts(self, channel_id, query):
-        # Mirrors MM: newest-first page, per_page cap, "before" (create_at ms)
-        # cursor. Channel order across the whole listing must be stable for
-        # the before-cursor walk, so ties break by post id.
+        # Mirrors MM: newest-first page, per_page cap, "before" taking a POST
+        # ID as the anchor (a create_at timestamp is rejected with 400 — real
+        # MM semantics, hit on mm.officesvc.bz). Channel order across the
+        # whole listing must be stable for the before-cursor walk, so ties
+        # break by post id.
         params = parse_qs(query)
         per_page = min(int(params.get("per_page", ["60"])[0]), 200)
-        before = int(params.get("before", ["0"])[0])
+        before_id = params.get("before", [""])[0]
         posts = [p for p in self.server.posts.values() if p["channel_id"] == channel_id]
-        if before:
-            posts = [p for p in posts if p["create_at"] < before]
+        if before_id:
+            anchor = self.server.posts.get(before_id)
+            if anchor is None:
+                self._send(400, {"id": "api.context.400.app_error", "message": f"post {before_id} not found"})
+                return
+            posts = [p for p in posts if p["create_at"] < anchor["create_at"]]
         posts.sort(key=lambda p: (p["create_at"], p["id"]), reverse=True)
         page = posts[:per_page]
         self._send(200, {"order": [p["id"] for p in page], "posts": {p["id"]: dict(p) for p in page}})
