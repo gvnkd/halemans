@@ -11,9 +11,11 @@ module Application.Service.Mattermost.Banner (
     bannerDebounceSeconds,
     bannerEnabledChannels,
     bannerChannelEnabled,
+    bannerCandidateSeverities,
     refreshChannelBanner,
 ) where
 
+import Application.Pipeline.Grouping (severityRank)
 import Application.Service.Mattermost (mattermostConfigForRule, mattermostTargetForRule)
 import qualified Application.Service.Mattermost.Api as Api
 import Application.Service.Mattermost.Render (bannerEnabledFromJson)
@@ -184,7 +186,8 @@ bannerChannelEnabled channelName = do
             |> fetchOneOrNothing
     pure case channelOrNothing of
         Just channel ->
-            channel.type_ == "mattermost"
+            channel.type_
+                == "mattermost"
                 && channel.enabled
                 && bannerEnabledFromJson channel.config
         Nothing -> False
@@ -239,10 +242,6 @@ recentlySucceeded channelName = do
 
 refreshWithConfig :: (?modelContext :: ModelContext) => NotificationChannel -> Api.MattermostConfig -> IO (Either Text BannerOutcome)
 refreshWithConfig channel config = do
-    active <-
-        query @Alert
-            |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
-            |> fetch
     rules <-
         query @NotificationRule
             |> filterWhere (#channel, channel.name)
@@ -251,6 +250,18 @@ refreshWithConfig channel config = do
     if null rules
         then pure (Right BannerSkipped)
         else do
+            -- SQL prefilter before the Haskell matching: the old query
+            -- fetched EVERY firing/ack alert in the DB (labels/annotations
+            -- JSONB included) on each 60s tick per banner channel. A rule's
+            -- threshold accepts exactly the canonical severities at or
+            -- above it (severityRank), suppressed alerts never count for
+            -- any rule — both pushed into the query.
+            active <-
+                query @Alert
+                    |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+                    |> filterWhere (#suppressed, False)
+                    |> filterWhereIn (#severity, bannerCandidateSeverities rules)
+                    |> fetch
             matched <- bannerMatchedAlerts active rules
             let counts = bannerCountsFor matched
             items <- withTrends channel config counts
@@ -260,6 +271,17 @@ refreshWithConfig channel config = do
             if null targets
                 then pure (Right BannerSkipped)
                 else pushBanners channel counts text color targets
+
+-- | The canonical severities ANY of the channel's rules can dispatch on:
+-- a rule's threshold accepts every severity with severityRank >= its own,
+-- so the union over the rules is the severities at or above the LOWEST
+-- threshold. A non-canonical threshold (rank 0) accepts everything.
+bannerCandidateSeverities :: [NotificationRule] -> [Text]
+bannerCandidateSeverities rules =
+    [ sev
+    | sev <- bannerSeverities
+    , severityRank sev >= minimum (map (severityRank . (.severityThreshold)) rules)
+    ]
 
 -- | Active alerts matched by ANY of the channel's enabled rules (the exact
 -- dispatch predicates: severity threshold + match expression + team

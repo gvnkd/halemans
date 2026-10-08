@@ -9,8 +9,9 @@ import Application.Service.SourceHealth (recordSuccess)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.ByteString.Lazy as L
+import Data.Int (Int64)
 import qualified Data.Text as Text
-import Network.HTTP.Types (status400, status403, status422)
+import Network.HTTP.Types (status400, status403, status413, status422)
 import Network.Wai (requestHeaders)
 import Web.Controller.Prelude
 
@@ -23,17 +24,36 @@ instance Controller HooksController where
         if Text.null secret || token /= secret
             then renderJsonWithStatusCode status403 (Aeson.object ["error" .= ("invalid token" :: Text)])
             else do
-                body <- getRequestBody
-                case parseClick body of
+                bodyOrNothing <- readBodyCapped
+                case bodyOrNothing of
                     Nothing ->
-                        renderJsonWithStatusCode status400 (Aeson.object ["error" .= ("invalid action payload" :: Text)])
-                    Just (alertId, username) -> do
-                        result <- ackFromMattermost alertId username
-                        case result of
-                            Left err ->
-                                renderJsonWithStatusCode status400 (Aeson.object ["error" .= err])
-                            Right reply ->
-                                renderJson (Aeson.object ["ephemeral_text" .= reply])
+                        renderJsonWithStatusCode status413 (Aeson.object ["error" .= ("request body too large" :: Text)])
+                    Just body -> case parseClick body of
+                        Nothing ->
+                            renderJsonWithStatusCode status400 (Aeson.object ["error" .= ("invalid action payload" :: Text)])
+                        Just (alertId, username) -> do
+                            result <- ackFromMattermost alertId username
+                            case result of
+                                Left err ->
+                                    renderJsonWithStatusCode status400 (Aeson.object ["error" .= err])
+                                Right reply ->
+                                    renderJson (Aeson.object ["ephemeral_text" .= reply])
+
+-- | Hook bodies are read with a hard size cap: an unbounded ingest payload
+-- (a misconfigured sender batching huge alert sets into one POST) would
+-- otherwise be materialized whole by eitherDecode — and persisted to
+-- raw_events — in the web process. Legitimate alert webhooks are KBs. The
+-- body MUST come from getRequestBody: IHP has usually already consumed the
+-- request stream into RequestContext (JSONBody) before the controller runs,
+-- so reading ?request directly yields an empty body (and a 400 on every
+-- webhook).
+hookBodyLimit :: Int64
+hookBodyLimit = 10 * 1024 * 1024
+
+readBodyCapped :: (?request :: Request, ?context :: ControllerContext) => IO (Maybe L.ByteString)
+readBodyCapped = do
+    body <- getRequestBody
+    pure (if L.length body > hookBodyLimit then Nothing else Just body)
 
 -- Mattermost interactive-action body: {context: {alertId}, user_name}.
 parseClick :: L.ByteString -> Maybe (Id Alert, Text)
@@ -59,7 +79,7 @@ parseBearerAuth value = do
     if Text.null stripped then Nothing else Just stripped
 
 handleHook ::
-    (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext) =>
+    (?request :: Request, ?respond :: Respond, ?modelContext :: ModelContext, ?context :: ControllerContext) =>
     Text -> (Source -> Aeson.Value -> Either Text [NormalizedEvent]) -> IO ResponseReceived
 handleHook token normalizeFor = do
     let candidates = nub ([token | not (Text.null token)] ++ maybeToList hookBearerToken)
@@ -72,23 +92,26 @@ handleHook token normalizeFor = do
             if not source.enabled
                 then renderJsonWithStatusCode status403 (Aeson.object ["error" .= ("source disabled" :: Text)])
                 else do
-                    body <- getRequestBody
-                    case Aeson.eitherDecode body of
-                        Left err ->
-                            renderJsonWithStatusCode status400 (Aeson.object ["error" .= (cs err :: Text)])
-                        Right payload ->
-                            case normalizeFor source payload of
-                                Left err ->
-                                    renderJsonWithStatusCode status422 (Aeson.object ["error" .= err])
-                                Right events -> do
-                                    _ <-
-                                        newRecord @RawEvent
-                                            |> set #sourceId (Just source.id)
-                                            |> set #payload payload
-                                            |> createRecord
-                                    ingestEvents source events
-                                    recordSuccess source
-                                    renderJson (Aeson.object ["status" .= ("ok" :: Text)])
+                    bodyOrNothing <- readBodyCapped
+                    case bodyOrNothing of
+                        Nothing ->
+                            renderJsonWithStatusCode status413 (Aeson.object ["error" .= ("request body too large" :: Text)])
+                        Just body -> case Aeson.eitherDecode body of
+                            Left err ->
+                                renderJsonWithStatusCode status400 (Aeson.object ["error" .= (cs err :: Text)])
+                            Right payload ->
+                                case normalizeFor source payload of
+                                    Left err ->
+                                        renderJsonWithStatusCode status422 (Aeson.object ["error" .= err])
+                                    Right events -> do
+                                        _ <-
+                                            newRecord @RawEvent
+                                                |> set #sourceId (Just source.id)
+                                                |> set #payload payload
+                                                |> createRecord
+                                        ingestEvents source events
+                                        recordSuccess source
+                                        renderJson (Aeson.object ["status" .= ("ok" :: Text)])
 
 lookupHookToken :: (?modelContext :: ModelContext) => Text -> IO (Maybe WebhookToken)
 lookupHookToken token =

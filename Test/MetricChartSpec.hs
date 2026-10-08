@@ -3,6 +3,7 @@ module Test.MetricChartSpec (spec) where
 import Application.Connector.GrafanaMetrics (
     MetricSeries (..),
     buildExploreUrl,
+    framesFromChunks,
     ruleQueryFromRule,
     ruleUidFromSourceUrl,
     seriesFromResponse,
@@ -10,6 +11,9 @@ import Application.Connector.GrafanaMetrics (
 import qualified Application.Service.Chart as Chart
 import qualified Application.Service.MetricChart as MetricChart
 import Data.Aeson (Value, object, (.=))
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as Text
 import Data.Time (UTCTime)
 import qualified Data.Time.Format as TimeFormat
@@ -149,6 +153,42 @@ spec = do
             case seriesFromResponse 500 response of
                 Left err -> expectationFailure (Text.unpack err)
                 Right series -> map seriesName series `shouldBe` ["node_load1 host1"]
+
+    describe "framesFromChunks" do
+        it "matches seriesFromResponse when the body arrives in small chunks" do
+            let response =
+                    object
+                        [ "results"
+                            .= object
+                                [ "A"
+                                    .= object
+                                        [ "status" .= (200 :: Int)
+                                        , "frames"
+                                            .= [ responseFrame "instance-1" [1000, 2000, 3000, 4000, 5000, 6000, 7000] [1, 2, 3, 4, 5, 6, 7]
+                                               , responseFrame "instance-2" [1000, 2000] [7, 8]
+                                               ]
+                                        ]
+                                ]
+                        ]
+                expected = seriesFromResponse 3 response
+                chunks = chunkBytes 7 (LBS.toStrict (Aeson.encode response))
+            framesFromChunks 3 chunks `shouldBe` expected
+        it "returns an empty series list for an empty frames array" do
+            let response = object ["results" .= object ["A" .= object ["status" .= (200 :: Int), "frames" .= ([] :: [Value])]]]
+                chunks = chunkBytes 5 (LBS.toStrict (Aeson.encode response))
+            framesFromChunks 500 chunks `shouldBe` Right []
+        it "fails on a truncated body" do
+            let response = object ["results" .= object ["A" .= object ["frames" .= [responseFrame "i" [1000] [1]]]]]
+                chunks = chunkBytes 9 (BS.take 20 (LBS.toStrict (Aeson.encode response)))
+            case framesFromChunks 500 chunks of
+                Left _ -> pure ()
+                Right series -> expectationFailure ("expected Left, got " <> cs (show (map seriesName series)))
+        it "fails when the frames key is missing" do
+            let response = object ["results" .= object ["A" .= object ["status" .= (200 :: Int)]]]
+                chunks = chunkBytes 11 (LBS.toStrict (Aeson.encode response))
+            case framesFromChunks 500 chunks of
+                Left _ -> pure ()
+                Right series -> expectationFailure ("expected Left, got " <> cs (show (map seriesName series)))
 
     describe "metricWindowFor" do
         it "defaults to 60m lead and runs to now for firing alerts" do
@@ -372,6 +412,10 @@ spec = do
             MetricChart.missingRanges 120 from farTo cached
                 `shouldBe` [(addUTCTime 1740 from, farTo)]
   where
+    chunkBytes :: Int -> BS.ByteString -> [BS.ByteString]
+    chunkBytes size bytes
+        | BS.null bytes = []
+        | otherwise = BS.take size bytes : chunkBytes size (BS.drop size bytes)
     -- scientific notation can only appear inside <text> labels; the
     -- attribute soup ("stroke-linejoin", "fill-opacity") contains "e-"
     -- substrings and would false-positive a raw "e-" search

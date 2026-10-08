@@ -441,32 +441,30 @@ purgeChannelTarget mode config teamName channelName = do
     case channelOrError of
         Left err -> pure (purgeErr (targetLabel <> " channel resolution: " <> err))
         Right channelId -> do
-            postsOrError <- Api.channelPosts config channelId
-            case postsOrError of
-                Left err -> pure (purgeErr (targetLabel <> " channel posts: " <> err))
-                Right posts -> case mode of
-                    PurgeResolvedPosts -> do
-                        meOrError <- Api.getMe config
-                        case meOrError of
-                            Left err -> pure (purgeErr (targetLabel <> " users/me: " <> err))
-                            Right botUserId ->
-                                fmap mconcat $ forM (rootPosts (Just botUserId) posts) \postValue ->
-                                    case postIdOf postValue of
-                                        Nothing -> pure mempty
-                                        Just postId -> purgeOnePost config postId
-                    PurgeUnrelatedPosts ->
-                        fmap mconcat $ forM (rootPosts Nothing posts) \postValue ->
-                            case postIdOf postValue of
-                                Nothing -> pure mempty
-                                Just postId -> purgeOneUnrelatedPost config postId
+            botOrError <- case mode of
+                PurgeResolvedPosts -> Api.getMe config
+                PurgeUnrelatedPosts -> pure (Right "")
+            case botOrError of
+                Left err -> pure (purgeErr (targetLabel <> " users/me: " <> err))
+                Right botUserId -> do
+                    outcome <- Api.channelPostsFold config channelId (purgeStep botUserId) mempty
+                    case outcome of
+                        Left err -> pure (purgeErr (targetLabel <> " channel posts: " <> err))
+                        Right summary -> pure summary
   where
     targetLabel = config.mmBaseUrl <> " " <> teamName <> "/" <> channelName
-    rootPosts mBotUserId posts =
-        [ postValue
-        | postValue <- posts
-        , rootIdOf postValue == Just ""
-        , maybe True (\botUserId -> userIdOf postValue == Just botUserId) mBotUserId
-        ]
+    purgeStep botUserId summary postValue
+        | rootIdOf postValue /= Just "" = pure summary
+        | PurgeResolvedPosts <- mode
+        , userIdOf postValue /= Just botUserId =
+            pure summary
+        | otherwise = case postIdOf postValue of
+            Nothing -> pure summary
+            Just postId -> do
+                pageSummary <- case mode of
+                    PurgeResolvedPosts -> purgeOnePost config postId
+                    PurgeUnrelatedPosts -> purgeOneUnrelatedPost config postId
+                pure (summary <> pageSummary)
     rootIdOf value = parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "root_id")) value :: Maybe Text
     userIdOf value = parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "user_id")) value :: Maybe Text
     postIdOf value = parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "id")) value :: Maybe Text

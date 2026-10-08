@@ -4,6 +4,7 @@ module Application.Service.Http (
     statusCodeOfError,
     getFollowing,
     getFollowingStream,
+    postFollowingStream,
     postFollowing,
     putFollowing,
     deleteFollowing,
@@ -57,11 +58,32 @@ deleteFollowing = follow Wreq.deleteWith
 -- still throw HttpStatusError, like getFollowing without a custom
 -- checkResponse.
 getFollowingStream :: HTTP.Manager -> String -> [Header] -> (HTTP.Response HTTP.BodyReader -> IO a) -> IO a
-getFollowingStream manager url headers consume = go url maxRedirectHops
+getFollowingStream manager url headers consume =
+    streamWith manager (addHeaders headers) url consume
+  where
+    addHeaders headers request = request{HTTP.requestHeaders = headers}
+
+-- | POST with a JSON body and a streaming response consumer: the
+-- getFollowingStream contract for endpoints that take a request body
+-- (grafana's /api/ds/query). The body is encoded once and re-sent on every
+-- redirect hop, mirroring postFollowing.
+postFollowingStream :: HTTP.Manager -> String -> [Header] -> Aeson.Value -> (HTTP.Response HTTP.BodyReader -> IO a) -> IO a
+postFollowingStream manager url headers payload consume =
+    streamWith manager addBody url consume
+  where
+    addBody request =
+        request
+            { HTTP.requestHeaders = ("Content-Type", "application/json") : headers
+            , HTTP.method = "POST"
+            , HTTP.requestBody = HTTP.RequestBodyLBS (Aeson.encode payload)
+            }
+
+streamWith :: HTTP.Manager -> (HTTP.Request -> HTTP.Request) -> String -> (HTTP.Response HTTP.BodyReader -> IO a) -> IO a
+streamWith manager customize url consume = go url maxRedirectHops
   where
     go current hopsLeft = do
         request0 <- HTTP.parseRequest current
-        let request = request0{HTTP.requestHeaders = headers, HTTP.redirectCount = 0}
+        let request = (customize request0){HTTP.redirectCount = 0}
         HTTP.withResponse request manager \response -> do
             let code = statusCode (HTTP.responseStatus response)
             case lookup "Location" (HTTP.responseHeaders response) of

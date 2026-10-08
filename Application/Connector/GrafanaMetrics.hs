@@ -5,23 +5,29 @@ module Application.Connector.GrafanaMetrics (
     ruleQueryFromRule,
     dsQueryRange,
     seriesFromResponse,
+    framesFromChunks,
     datasourceTypeGet,
     buildExploreUrl,
 ) where
 
-import Application.Service.Http (getFollowing, postFollowing)
-import Control.Exception (SomeException, try)
+import Application.Connector.Grafana (elementStep, manager, runStep)
+import Application.Service.Http (getFollowing, postFollowingStream)
+import Control.Exception (SomeException, displayException, try)
 import Control.Lens ((&), (.~), (^.))
 import Data.Aeson
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Aeson.Parser as AesonParser
+import qualified Data.Attoparsec.ByteString.Char8 as Atto
+import qualified Data.ByteString as BS
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Text as Text
 import Data.Time (UTCTime, diffUTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import qualified Data.Vector as Vector
 import IHP.Prelude
+import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types.URI (urlEncode)
 import qualified Network.Wreq as Wreq
 
@@ -73,11 +79,14 @@ ruleQueryFromRule rule = do
 
 -- | Run a range query through grafana's datasource proxy and decode the
 -- frame response into time series. maxPoints caps the sample count and
--- drives intervalMs.
+-- drives intervalMs. The response is parsed incrementally, one data frame
+-- at a time (framesFromChunks over a streaming body): a datasource that
+-- ignores maxDataPoints can return a huge frame array, and the old
+-- full-response decode OOMed the worker on such sources — the same failure
+-- class as the alertmanager listing fix (alertsFold).
 dsQueryRange :: Text -> Text -> Text -> Text -> UTCTime -> UTCTime -> Int -> IO (Either Text [MetricSeries])
 dsQueryRange baseUrl token datasourceUid expr from to maxPoints = do
-    let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
-        windowMs = max 1000 (utcToMs to - utcToMs from)
+    let windowMs = max 1000 (utcToMs to - utcToMs from)
         intervalMs = max 1000 (fromIntegral windowMs `div` max 1 maxPoints :: Int)
         body =
             object
@@ -94,10 +103,123 @@ dsQueryRange baseUrl token datasourceUid expr from to maxPoints = do
                 , "from" .= show (utcToMs from)
                 , "to" .= show (utcToMs to)
                 ]
-    response <- postFollowing opts (cs (baseUrl <> "/api/ds/query")) body
-    case eitherDecode (response ^. Wreq.responseBody) of
-        Left err -> pure (Left (cs err))
-        Right value -> pure (seriesFromResponse maxPoints value)
+    outcome <-
+        try
+            ( postFollowingStream
+                manager
+                (cs (baseUrl <> "/api/ds/query"))
+                [("Authorization", "Bearer " <> cs token)]
+                body
+                \response -> do
+                    let bodyReader = HTTP.responseBody response
+                    opened <- runStep bodyReader openFrames BS.empty
+                    case opened of
+                        Left err -> pure (Left err)
+                        Right ((), leftover) -> foldStream bodyReader leftover []
+            ) ::
+            IO (Either SomeException (Either Text [MetricSeries]))
+    pure case outcome of
+        Left err -> Left (cs (displayException err))
+        Right (Left err) -> Left err
+        Right (Right series)
+            | null series -> Left "ds/query: no data frames"
+            | otherwise -> Right series
+  where
+    foldStream bodyReader leftover acc = do
+        stepped <- runStep bodyReader elementStep leftover
+        case stepped of
+            Left err -> pure (Left err)
+            Right (Nothing, _) -> pure (Right (reverse acc))
+            Right (Just (value, more), rest) -> do
+                let acc' = case frameToSeries maxPoints value of
+                        Just series -> series : acc
+                        Nothing -> acc
+                if more
+                    then foldStream bodyReader rest acc'
+                    else pure (Right (reverse acc'))
+
+-- | Incremental parser entry: consume {"results": {"<refId>": ... up to the
+-- frames array's opening '['. Object keys are located generically (the key
+-- order of grafana's response is not contractual), everything before
+-- "frames" is skipped one value at a time.
+openFrames :: Atto.Parser ()
+openFrames = do
+    Atto.skipSpace
+    _ <- Atto.char '{'
+    foundResults <- objectFind "results"
+    case foundResults of
+        Nothing -> fail "ds/query: missing results"
+        Just () -> do
+            Atto.skipSpace
+            _ <- Atto.char '{'
+            _ <- AesonParser.value -- the refId key ("A")
+            Atto.skipSpace
+            _ <- Atto.char ':'
+            Atto.skipSpace
+            _ <- Atto.char '{' -- the result object's opening brace
+            foundFrames <- objectFind "frames"
+            case foundFrames of
+                Nothing -> fail "ds/query: missing frames"
+                Just () -> Atto.skipSpace >> Atto.char '[' >> pure ()
+
+-- | Loop over one JSON object's keys: consume the value of every key other
+-- than `wanted` (returning Nothing when the object ends first).
+objectFind :: Text -> Atto.Parser (Maybe ())
+objectFind wanted = go
+  where
+    go = do
+        Atto.skipSpace
+        closer <- Atto.peekChar'
+        if closer == '}'
+            then Atto.char '}' >> pure Nothing
+            else do
+                key <- AesonParser.value
+                Atto.skipSpace
+                _ <- Atto.char ':'
+                case key of
+                    String k | k == wanted -> pure (Just ())
+                    _ -> do
+                        _ <- AesonParser.value
+                        Atto.skipSpace
+                        separator <- Atto.satisfy (\word -> word == ',' || word == '}')
+                        if separator == '}'
+                            then pure Nothing
+                            else go
+
+-- | Pure chunk-driver over the same incremental parser the socket path
+-- uses: feeds the parser one chunk at a time without ever materializing
+-- the whole response as one aeson value. Test entry point.
+framesFromChunks :: Int -> [BS.ByteString] -> Either Text [MetricSeries]
+framesFromChunks maxPoints chunks = do
+    ((), rest) <- runParserChunks chunks openFrames
+    go rest []
+  where
+    go input acc = do
+        (stepped, rest) <- runParserChunks input elementStep
+        case stepped of
+            Nothing -> Right (reverse acc)
+            Just (value, more) -> do
+                let acc' = case frameToSeries maxPoints value of
+                        Just series -> series : acc
+                        Nothing -> acc
+                if more
+                    then go rest acc'
+                    else Right (reverse acc')
+
+-- | Runs one parser step against an in-memory chunk list; returns the
+-- result with the unconsumed chunks.
+runParserChunks :: [BS.ByteString] -> Atto.Parser step -> Either Text (step, [BS.ByteString])
+runParserChunks chunks parser = go chunks (Atto.parse parser BS.empty)
+  where
+    go [] (Atto.Done leftover result) = Right (result, nonNull leftover)
+    go [] (Atto.Partial continue) = finish (continue BS.empty) []
+    go (chunk : rest) (Atto.Partial continue) = go rest (continue chunk)
+    go _ (Atto.Fail _ _ err) = Left (cs err)
+    go (chunk : rest) (Atto.Done leftover result) = Right (result, nonNull leftover ++ (chunk : rest))
+    finish (Atto.Done leftover result) rest = Right (result, nonNull leftover ++ rest)
+    finish (Atto.Partial _) _ = Left "ds/query: unexpected end of input"
+    finish (Atto.Fail _ _ err) _ = Left (cs err)
+    nonNull leftover = [leftover | not (BS.null leftover)]
 
 utcToMs :: UTCTime -> Integer
 utcToMs t = floor (realToFrac (t `diffUTCTime` posixEpoch) * 1000 :: Double)
@@ -174,18 +296,8 @@ frameToSeries maxPoints frame = do
     values <- lookupKey "values" data_ >>= asArray
     times <- values Vector.!? 0 >>= asArray
     numbers <- values Vector.!? 1 >>= asArray
-    let points =
-            thinPoints
-                maxPoints
-                [ (posixSecondsToUTCTime (realToFrac ms / 1000), v)
-                | (Just ms, Just v) <- zip (map asMs (Vector.toList times)) (map asDouble (Vector.toList numbers))
-                ]
+    let points = sampleFramePoints maxPoints times numbers
     pure (MetricSeries name points)
-  where
-    asMs (Number n) = either (const Nothing) (Just . fromInteger) (floatingOrInteger n :: Either Double Integer)
-    asMs _ = Nothing
-    asDouble (Number n) = Just (realToFrac n)
-    asDouble _ = Nothing
 
 -- Series title for the legend: real grafana range frames name the value
 -- field "Value" and carry the identity in labels ({"__name__": "up",
@@ -223,18 +335,34 @@ frameDisplayName valueField = case configName of
     orElse Nothing b = b
 
 -- | Stride-thin a series to at most maxPoints samples (first sample kept,
--- then every stride-th). Defense against datasources ignoring maxDataPoints.
-thinPoints :: Int -> [(UTCTime, Double)] -> [(UTCTime, Double)]
-thinPoints maxPoints points
-    | maxPoints <= 0 = points
-    | length points <= maxPoints = points
-    | otherwise = go 0 points
+-- then every stride-th), computed INDEX-WISE over the parallel vectors so a
+-- dense frame never materializes its full sample list — only the surviving
+-- samples are built. Defense against datasources ignoring maxDataPoints.
+-- Same selection as the old list-based thinPoints.
+sampleFramePoints :: Int -> Vector.Vector Value -> Vector.Vector Value -> [(UTCTime, Double)]
+sampleFramePoints maxPoints times numbers
+    | maxPoints <= 0 = allPoints
+    | n <= maxPoints = allPoints
+    | otherwise = mapMaybe pointAt [0, stride .. n - 1]
   where
-    stride = (length points + maxPoints - 1) `div` maxPoints
-    go _ [] = []
-    go i (p : rest)
-        | i `mod` stride == 0 = p : go (i + 1) rest
-        | otherwise = go (i + 1) rest
+    pairs = Vector.zip times numbers
+    n = Vector.length pairs
+    stride = (n + maxPoints - 1) `div` maxPoints
+    allPoints = mapMaybe pointAt [0 .. n - 1]
+    pointAt index =
+        let (msValue, numberValue) = pairs Vector.! index
+         in case (asMs msValue, asDouble numberValue) of
+                (Just ms, Just value) ->
+                    Just (posixSecondsToUTCTime (realToFrac ms / 1000), value)
+                _ -> Nothing
+
+asMs :: Value -> Maybe Integer
+asMs (Number numberValue) = either (const Nothing) Just (floatingOrInteger numberValue :: Either Double Integer)
+asMs _ = Nothing
+
+asDouble :: Value -> Maybe Double
+asDouble (Number numberValue) = Just (realToFrac numberValue)
+asDouble _ = Nothing
 
 lookupKey :: Text -> Value -> Maybe Value
 lookupKey k (Object o) = KeyMap.lookup (Key.fromText k) o

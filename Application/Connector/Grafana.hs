@@ -1,4 +1,4 @@
-module Application.Connector.Grafana (normalize, normalizeAlertnameFirst, GrafanaAmAlert (..), alertsFold, amAlertToNormalized) where
+module Application.Connector.Grafana (normalize, normalizeAlertnameFirst, GrafanaAmAlert (..), alertsFold, amAlertToNormalized, runStep, elementStep, manager) where
 
 import Application.Connector.Alertmanager (normalizeSeverity)
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..))

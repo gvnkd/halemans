@@ -227,8 +227,12 @@ class Handler(BaseHTTPRequestHandler):
             "props": body.get("props", {}),
             "type": body.get("type", ""),
             "user_id": "bot-mock-mattermost",
-            "create_at": now_ms(),
-            "update_at": now_ms(),
+            # Monotonic per post: two posts created in the same millisecond
+            # must not share a create_at, or the before-cursor walk drops the
+            # ms-mates of a page boundary (create_at-only comparison, as real
+            # MM) — a 205-bulk-post test flaked ~50% on this.
+            "create_at": self.server.next_create_at(),
+            "update_at": self.server.next_create_at(),
         }
         self.server.next_post_id += 1
         self.server.posts[post["id"]] = post
@@ -393,7 +397,15 @@ class Server(ThreadingHTTPServer):
         # epochs like a real MM server, so mattermost_posts.root_post_id
         # lookups never collide between test examples.
         self.next_post_id = 1
+        self._last_create_at = 0
         self.reset()
+
+    def next_create_at(self):
+        now = now_ms()
+        if now <= self._last_create_at:
+            now = self._last_create_at + 1
+        self._last_create_at = now
+        return now
 
     def reset(self):
         self.posts = {}

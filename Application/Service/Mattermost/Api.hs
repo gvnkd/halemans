@@ -9,6 +9,7 @@ module Application.Service.Mattermost.Api (
     resolveChannel,
     getMe,
     channelPosts,
+    channelPostsFold,
     testConnection,
 ) where
 
@@ -16,7 +17,7 @@ import qualified Application.Service.Http as Http
 import qualified Application.Service.Mattermost.Render as Render
 import Control.Exception (SomeException, displayException, fromException, try)
 import Control.Lens ((&), (.~), (^.))
-import Control.Monad (void)
+import Control.Monad (foldM, void)
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -233,8 +234,13 @@ getMe config = do
 -- admin purge walks the channel (not the DB) so deletes are only attempted
 -- for posts that still exist. A page failure returns Left — the caller
 -- counts the target as failed instead of silently purging nothing.
-channelPosts :: MattermostConfig -> Text -> IO (Either Text [Aeson.Value])
-channelPosts config channelId = go Nothing []
+--
+-- The pages are folded into the caller's accumulator as they arrive (one
+-- page in memory at a time): the purge used to retain every page in a
+-- growing list (acc <> posts — O(n²) appends), so a busy channel's full
+-- post history was materialized for the whole walk.
+channelPostsFold :: MattermostConfig -> Text -> (acc -> Aeson.Value -> IO acc) -> acc -> IO (Either Text acc)
+channelPostsFold config channelId step acc0 = go Nothing acc0
   where
     go beforePostId acc = do
         result <- getJson config (path beforePostId)
@@ -242,13 +248,14 @@ channelPosts config channelId = go Nothing []
             Left err -> pure (Left err)
             Right body -> case pageOf body of
                 Nothing -> pure (Left "mattermost: channel posts response has no posts map")
-                Just postsMap ->
+                Just postsMap -> do
                     let posts = KeyMap.elems postsMap
-                     in if length posts < pageSize
-                            then pure (Right (acc <> posts))
-                            else case oldestPostId posts of
-                                Nothing -> pure (Right (acc <> posts))
-                                Just anchorId -> go (Just anchorId) (acc <> posts)
+                    acc' <- foldM step acc posts
+                    if length posts < pageSize
+                        then pure (Right acc')
+                        else case oldestPostId posts of
+                            Nothing -> pure (Right acc')
+                            Just anchorId -> go (Just anchorId) acc'
     path Nothing = "/api/v4/channels/" <> channelId <> "/posts?per_page=" <> tshow pageSize
     path (Just anchorId) = "/api/v4/channels/" <> channelId <> "/posts?per_page=" <> tshow pageSize <> "&before=" <> anchorId
     pageSize = 200 :: Int
@@ -263,6 +270,12 @@ channelPosts config channelId = go Nothing []
     postIdAndCreated value = parseMaybe parser value
       where
         parser = Aeson.withObject "post" \o -> (,) <$> o Aeson..: "create_at" <*> o Aeson..: "id"
+
+-- | The materialized variant (tests, small channels) — same pagination,
+-- built on the fold.
+channelPosts :: MattermostConfig -> Text -> IO (Either Text [Aeson.Value])
+channelPosts config channelId =
+    fmap (fmap reverse) (channelPostsFold config channelId (\acc post -> pure (post : acc)) [])
 
 getJson :: MattermostConfig -> Text -> IO (Either Text Aeson.Value)
 getJson config path =

@@ -1,7 +1,7 @@
 module Test.MattermostSpec where
 
 import Application.Service.Mattermost (mattermostTarget, mattermostUsernameFromSettings)
-import Application.Service.Mattermost.Banner (BannerCounts (..), Trend (..), bannerBarColor, bannerSeverities, countsJson, parseCounts, renderBannerText, trendOf)
+import Application.Service.Mattermost.Banner (BannerCounts (..), Trend (..), bannerBarColor, bannerCandidateSeverities, bannerSeverities, countsJson, parseCounts, renderBannerText, trendOf)
 import Application.Service.Mattermost.Render
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -333,6 +333,17 @@ bannerSpec = describe "Application.Service.Mattermost.Banner" do
     it "round-trips the snapshot counts JSON" do
         let counts = [("critical", BannerCounts 5 3), ("warning", BannerCounts 0 0)]
         parseCounts (countsJson counts) `shouldBe` counts
+
+    it "scopes the candidate severities to the lowest rule threshold" do
+        let mk threshold = newRecord @NotificationRule |> set #severityThreshold threshold
+        bannerCandidateSeverities [mk "critical", mk "high"]
+            `shouldBe` ["critical", "high"]
+        bannerCandidateSeverities [mk "warning"] `shouldBe` ["critical", "high", "warning"]
+        bannerCandidateSeverities [mk "info"] `shouldBe` bannerSeverities
+
+    it "a non-canonical threshold accepts every severity" do
+        let rule = newRecord @NotificationRule |> set #severityThreshold "urgent"
+        bannerCandidateSeverities [rule] `shouldBe` bannerSeverities
 
 channelFormSpec :: Spec
 channelFormSpec = describe "Web.Controller.NotificationChannels.channelConfigJson" do
