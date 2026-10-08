@@ -1,6 +1,6 @@
 module Test.HttpSpec where
 
-import Application.Service.Http (HttpStatusError (..), getFollowing, getFollowingStream, isDeterministicClientError, postFollowing)
+import Application.Service.Http (HttpStatusError (..), getFollowing, getFollowingStream, isDeterministicClientError, postFollowing, statusCodeOfError)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Lens ((&), (.~), (^.))
 import qualified Data.Aeson as Aeson
@@ -82,6 +82,15 @@ spec = describe "Application.Service.Http" do
             isDeterministicClientError (tshow (HttpStatusError "http://x/" 429)) `shouldBe` False
             isDeterministicClientError (tshow (HttpStatusError "http://x/" 502)) `shouldBe` False
             isDeterministicClientError "Connection refused" `shouldBe` False
+
+    describe "statusCodeOfError" do
+        it "extracts the code from a rendered HttpStatusError" do
+            statusCodeOfError (tshow (HttpStatusError "http://x/channels/c/patch" 404)) `shouldBe` Just 404
+            statusCodeOfError (tshow (HttpStatusError "http://x/" 500)) `shouldBe` Just 500
+        it "extracts the code when a HasCallStack backtrace rides along" do
+            statusCodeOfError (tshow (HttpStatusError "http://x/" 404) <> "\nHasCallStack backtrace:\n  throwIO, called at ./Application/Service/Http.hs:100:21 in main:Application.Service.Http") `shouldBe` Just 404
+        it "returns Nothing for non-HTTP failures" do
+            statusCodeOfError "Connection refused" `shouldBe` Nothing
 
 statusCodeOf :: Wreq.Response body -> Int
 statusCodeOf response = statusCode (response ^. Wreq.responseStatus)

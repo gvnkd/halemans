@@ -16,6 +16,7 @@ module Application.Service.Mattermost (
 ) where
 
 import Application.Service.ActionTokens (ensureActionToken)
+import Application.Service.Http (statusCodeOfError)
 import Application.Service.Mattermost.Api (MattermostConfig)
 import qualified Application.Service.Mattermost.Api as Api
 import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostAttachmentTemplateName, mattermostColorTemplateName, mattermostDetailsTemplateName, mattermostFieldsTemplateName, mattermostRootTemplateName, mattermostStatusTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
@@ -256,15 +257,25 @@ syncAlertPosts alert = do
                         fieldsTemplate <- activeMattermostTemplate mattermostFieldsTemplateName
                         colorTemplate <- activeMattermostTemplate mattermostColorTemplateName
                         propsTemplate <- activeMattermostTemplate mattermostAttachmentTemplateName
+                        detailsTemplate <- activeMattermostTemplate mattermostDetailsTemplateName
                         let colorOverrides = Api.mmColorOverrides config
                             context = respectAckFlag rawContext config
-                        result <- Api.patchPost config post.rootPostId (renderRootMessage rootTemplate colorOverrides context alert) (renderRootProps statusTemplate colorTemplate fieldsTemplate propsTemplate colorOverrides context alert)
+                            rootMessage = renderRootMessage rootTemplate colorOverrides context alert
+                            rootProps = renderRootProps statusTemplate colorTemplate fieldsTemplate propsTemplate colorOverrides context alert
+                            detailsMessage = renderDetailsMessage detailsTemplate colorOverrides context alert
+                        result <- Api.patchPost config post.rootPostId rootMessage rootProps
                         case result of
-                            Left err -> pure (Left err)
-                            Right () -> do
-                                now <- getCurrentTime
-                                _ <- post |> set #renderedStatus (statusSnapshot alert) |> set #updatedAt now |> updateRecord
-                                pure (Right ())
+                            Right () -> touchPostRow post (statusSnapshot alert)
+                            Left err
+                                | statusCodeOfError err == Just 404 ->
+                                    -- The root post is GONE (deleted in
+                                    -- Mattermost by hand or an external
+                                    -- cleanup) while the alert is still
+                                    -- active: re-deliver a fresh card
+                                    -- (root + details thread) instead of
+                                    -- retrying a patch that can never land.
+                                    recreateCard config post rootMessage rootProps detailsMessage (statusSnapshot alert)
+                                | otherwise -> pure (Left err)
             pure case [err | Left err <- results] of
                 [] -> Right ()
                 (firstErr : _) -> Left firstErr
@@ -277,8 +288,30 @@ statusSnapshot alert = alert.status
 isTerminalStatus :: Text -> Bool
 isTerminalStatus status = status `elem` (["resolved", "closed"] :: [Text])
 
--- | The deleteOnClose terminal-state path: delete the ROOT post from
--- Mattermost, then drop the MattermostPost row so no later sync touches the
+-- | Patch-landed bookkeeping: stamp the rendered status on the row.
+touchPostRow :: (?modelContext :: ModelContext) => MattermostPost -> Text -> IO (Either Text ())
+touchPostRow post renderedStatus = do
+    now <- getCurrentTime
+    _ <- post |> set #renderedStatus renderedStatus |> set #updatedAt now |> updateRecord
+    pure (Right ())
+
+-- | The tracked root post no longer exists in Mattermost (404 on patch —
+-- deleted by hand or an external cleanup) while the alert is still active:
+-- re-deliver a fresh card (root + details thread) and point the row at it.
+-- A create failure is RETURNED like a patch failure (job retry + visible
+-- last_error).
+recreateCard :: (?modelContext :: ModelContext) => MattermostConfig -> MattermostPost -> Text -> Aeson.Value -> Text -> Text -> IO (Either Text ())
+recreateCard config post rootMessage rootProps detailsMessage renderedStatus = do
+    root <- Api.createPost config post.channelId rootMessage Nothing rootProps
+    case root of
+        Left err -> pure (Left err)
+        Right rootPostId -> do
+            _ <- Api.createPost config post.channelId detailsMessage (Just rootPostId) (Aeson.object [])
+            now <- getCurrentTime
+            _ <- post |> set #rootPostId rootPostId |> set #renderedStatus renderedStatus |> set #updatedAt now |> updateRecord
+            pure (Right ())
+
+-- | The deleteOnClose terminal-state path: delete the ROOT post from-- Mattermost, then drop the MattermostPost row so no later sync touches the
 -- (now gone) post. Deliberately root-only: the bot token is not a channel
 -- admin, so posts it did not author (human thread replies) cannot be deleted
 -- anyway, and the details reply it did author stays as the audit trail. A

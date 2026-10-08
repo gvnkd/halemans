@@ -14,7 +14,7 @@ module Application.Service.Mattermost.Api (
 
 import qualified Application.Service.Http as Http
 import qualified Application.Service.Mattermost.Render as Render
-import Control.Exception (SomeException, displayException, try)
+import Control.Exception (SomeException, displayException, fromException, try)
 import Control.Lens ((&), (.~), (^.))
 import Control.Monad (void)
 import Data.Aeson ((.!=), (.:), (.:?), (.=))
@@ -179,13 +179,16 @@ data BannerPutResult
 
 putBanner :: MattermostConfig -> Text -> Text -> Text -> IO BannerPutResult
 putBanner config channelId text color = do
-    outcome <- try (Http.putFollowing (mmOpts config) (cs url) payload)
+    outcome <-
+        try (Http.putFollowing (mmOpts config) (cs url) payload) ::
+            IO (Either SomeException (Wreq.Response L.ByteString))
     pure case outcome of
         Right _ -> BannerPutOk
-        Left (Http.HttpStatusError _ code)
-            | code == 403 || code == 404 -> BannerPutDenied
-            | otherwise -> BannerPutError ("mattermost: set banner failed with HTTP " <> tshow code)
-        Left exception -> BannerPutError (cs (displayException exception))
+        Left exception -> case fromException exception of
+            Just (Http.HttpStatusError _ code)
+                | code == 403 || code == 404 -> BannerPutDenied
+                | otherwise -> BannerPutError ("mattermost: set banner failed with HTTP " <> tshow code)
+            Nothing -> BannerPutError (cs (displayException exception))
   where
     url = config.mmBaseUrl <> "/api/v4/channels/" <> channelId <> "/patch"
     payload =

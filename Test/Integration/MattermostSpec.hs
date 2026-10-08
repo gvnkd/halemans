@@ -10,7 +10,7 @@ import Application.Service.Mattermost.Banner (BannerOutcome (..), refreshChannel
 import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
 import Application.Service.Provision (ProvisionError (..))
 import Application.Service.TestAlert (fireTestAlert)
-import Control.Exception (finally, try)
+import Control.Exception (IOException, finally, try)
 import Control.Monad (forM_, void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -529,6 +529,37 @@ spec = describe "Mattermost notification channel" do
             Left (ProvisionError err) -> err `shouldSatisfy` ("does not resolve to any notification channel" `Text.isInfixOf`)
             Right _ -> expectationFailure "expected ProvisionError"
 
+    it "recreates the channel card when the tracked root post was deleted in Mattermost" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-recreate-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-recreate-rule-" <> suffix) ("mm-recreate-chan-" <> suffix) envName
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob
+            (root, _reply) <- expectRootAndReply =<< mockPosts
+            let rootId = postId root
+            -- someone deletes the card in Mattermost while the alert is active
+            mockDeletePost rootId
+            user <- testUser
+            alert <- fetch alertId
+            _ <- ackAlert user alert Nothing Nothing
+            syncJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch)
+            perform syncJob
+            -- a fresh root + details pair replaces the deleted one, row re-pointed
+            -- (the orphaned original details reply stays in the channel by design)
+            posts <- mockPosts
+            root' <- expectOne [p | p <- posts, postRootId p == "", postId p /= rootId]
+            reply' <- expectOne [p | p <- posts, postRootId p == postId root']
+            postMessage root' `shouldBe` "[ACKED] integration test alert"
+            postRootId reply' `shouldBe` postId root'
+            row <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
+            row.rootPostId `shouldBe` postId root'
+
     it "a notify job landing after a fast source resolve posts no orphan card" do
         suffix <- tshow <$> nextRandom
         let envName = "mm-late-env-" <> suffix
@@ -636,6 +667,35 @@ spec = describe "Mattermost notification channel" do
             banner <- expectOne =<< mockBanners
             bannerText banner `shouldBe` "✅ no active alerts"
             bannerColor banner `shouldBe` "#3FB950"
+
+    it "banner counts exclude blackout-suppressed (muted) alerts" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-banner-mute-env-" <> suffix
+            channelName = "mm-banner-mute-chan-" <> suffix
+            critTitle = "mm-banner-muted-crit " <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRuleWithConfig ("mm-banner-mute-rule-" <> suffix) channelName envName (Aeson.object ["banner" Aeson..= Aeson.Bool True])
+            now <- getCurrentTime
+            _ <-
+                newRecord @Blackout
+                    |> set #titleGlob (Just critTitle)
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "itest banner mute"
+                    |> createRecord
+            source <- testSource
+            fp1 <- freshFingerprint
+            Just critAlertId <- ingest source ((testEventIn envName fp1 Firing){severity = "critical", title = critTitle})
+            exposeFor critAlertId
+            crit <- fetch critAlertId
+            crit.suppressed `shouldBe` True
+            fp2 <- freshFingerprint
+            Just warnAlertId <- ingest source ((testEventIn envName fp2 Firing){severity = "warning"})
+            exposeFor warnAlertId
+            refreshChannelBanner channelName `shouldReturn` Right BannerRefreshed
+            banner <- expectOne =<< mockBanners
+            bannerText banner `shouldBe` "🔴 crit 0 (0)➖ · 🟠 high 0 (0)➖ · 🟡 warn 1 (0)➖ · 🔵 info 0 (0)➖"
 
     it "a denied banner PUT (403) soft-skips without a snapshot, and recovers when allowed" do
         suffix <- tshow <$> nextRandom
@@ -829,6 +889,18 @@ mockBannerAllow channelId = do
     base <- mockUrl
     _ <- readProcess "curl" ["-sf", "-X", "POST", cs (base <> "/debug/banner-allow"), "-H", "Content-Type: application/json", "-d", cs (Aeson.encode (Aeson.object ["channel_id" Aeson..= channelId]))] ""
     pure ()
+
+mockDeletePost :: Text -> IO ()
+mockDeletePost postId = do
+    base <- mockUrl
+    outcome <- try (readProcess "curl" ["-sf", "-X", "DELETE", cs (base <> "/api/v4/posts/" <> postId), "-H", "Authorization: Bearer test-mattermost-token"] "") :: IO (Either IOException String)
+    case outcome of
+        Right _ -> pure ()
+        Left exception -> do
+            listing <- mockJson "/debug/posts"
+            let ids :: [Text]
+                ids = [idText | Just idText <- map (parseMaybe (Aeson.withObject "post" (\o -> o Aeson..: "id"))) (fromMaybe [] (parseMaybe (Aeson.withObject "posts" (\o -> o Aeson..: "posts")) listing))]
+            error (show exception <> " — mock posts now: " <> show ids)
 
 bannerField :: Text -> Aeson.Value -> Text
 bannerField key banner =

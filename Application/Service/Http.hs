@@ -1,6 +1,7 @@
 module Application.Service.Http (
     HttpStatusError (..),
     isDeterministicClientError,
+    statusCodeOfError,
     getFollowing,
     getFollowingStream,
     postFollowing,
@@ -106,14 +107,19 @@ isRedirect code = code `elem` [301, 302, 303, 307, 308]
 -- callers use this on rendered HttpStatusError texts to stop re-enqueue
 -- loops on deterministic client errors; 5xx/timeouts stay retryable.
 isDeterministicClientError :: Text -> Bool
-isDeterministicClientError err = case statusCodeOf err of
+isDeterministicClientError err = case statusCodeOfError err of
     Just code -> code >= 400 && code < 500 && code `notElem` [408, 429]
     Nothing -> False
-  where
-    statusCodeOf text = do
-        rest <- Text.stripPrefix "HttpStatusError " text
-        code <- last (Text.words rest)
-        readMaybe (Text.unpack code)
+
+-- | The status code out of a rendered HttpStatusError text (Nothing for
+-- non-HTTP failures like connection errors) — callers classify individual
+-- codes (e.g. 404 = resource gone). The rendered text can carry a
+-- HasCallStack backtrace after the code, so take the FIRST parseable
+-- number (the quoted URL word never parses: it starts with a quote).
+statusCodeOfError :: Text -> Maybe Int
+statusCodeOfError text = do
+    rest <- Text.stripPrefix "HttpStatusError " text
+    listToMaybe [code | word <- Text.words rest, Just code <- [readMaybe (Text.unpack word)]]
 
 resolveRedirect :: String -> String -> Maybe String
 resolveRedirect current location = do

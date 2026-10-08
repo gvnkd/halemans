@@ -263,7 +263,9 @@ refreshWithConfig channel config = do
 
 -- | Active alerts matched by ANY of the channel's enabled rules (the exact
 -- dispatch predicates: severity threshold + match expression + team
--- host-group scope), deduplicated by alert id.
+-- host-group scope) and NOT suppressed (blackout-covered or source-muted
+-- alerts stay out of the statistics — the banner shows what is actually
+-- notifying), deduplicated by alert id.
 bannerMatchedAlerts :: (?modelContext :: ModelContext) => [Alert] -> [NotificationRule] -> IO [Alert]
 bannerMatchedAlerts active rules = do
     idSets <- forM rules \rule -> do
@@ -271,7 +273,7 @@ bannerMatchedAlerts active rules = do
         scoped <- filterM (\alert -> ruleInScope alert rule) candidates
         pure (Set.fromList (map (get #id) scoped))
     let matchedIds = Set.unions idSets
-    pure (filter (\alert -> Set.member (get #id alert) matchedIds) active)
+    pure (filter (\alert -> not alert.suppressed && Set.member (get #id alert) matchedIds) active)
 
 -- | Per canonical severity: total active + how many of them are acked.
 -- Non-canonical severities bucket into info (there is no fifth banner slot).
