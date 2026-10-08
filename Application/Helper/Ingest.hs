@@ -10,7 +10,7 @@ module Application.Helper.Ingest (
     publishAlertUpdate,
 ) where
 
-import Application.Job.Mattermost (enqueueSyncIfPosted)
+import Application.Job.Mattermost (enqueueBannerRefreshes, enqueueSyncIfPosted)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
@@ -25,6 +25,7 @@ import Application.Service.Notify (dispatchNotification)
 import Control.Monad (void)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as Text
 import Generated.Types
@@ -158,10 +159,15 @@ ingest source event = do
             -- The source's current text is the truth: a refired alert follows
             -- title changes (e.g. grafana rule rename); an empty event
             -- description keeps whatever we have (older sources send none).
+            -- Annotations MERGE on every dedupe hit (event wins per key):
+            -- senders override e.g. "stallSeconds" for their existing alerts
+            -- as the value changes on the sending side, while keys the event
+            -- doesn't carry keep their stored value.
             let refreshed =
                     alert
                         |> set #title event.title
                         |> (if Text.null event.description then (\x -> x) else set #description event.description)
+                        |> set #annotations (mergeAnnotations alert.annotations event.annotations)
                         |> set #hostGroups (Aeson.toJSON (nub (event.hostGroups ++ hostGroupNamesOf alert)))
             -- Coverage from the row's EFFECTIVE names (facets win over the raw
             -- ingest names) — see alertSubject.
@@ -169,6 +175,17 @@ ingest source event = do
             let suppressedNow = any (blackoutApplies now (alertSubject refreshed)) blackouts
             updated <- transitionAlert now sourceStatus event.env environmentRef hostRef serviceRef suppressedNow refreshed
             pure (Just (get #id updated))
+
+-- | Merge event annotations over the stored ones (event wins per key, so a
+-- sender can override e.g. "stallSeconds" for its existing alerts; keys the
+-- event doesn't carry are kept). Non-object shapes never clobber: a stored
+-- object survives a missing/malformed event annotation set.
+mergeAnnotations :: Value -> Value -> Value
+mergeAnnotations stored incoming = case (stored, incoming) of
+    (Aeson.Object storedMap, Aeson.Object incomingMap) ->
+        Aeson.Object (KeyMap.union incomingMap storedMap)
+    (_, Aeson.Object _) -> incoming
+    _ -> stored
 
 -- | State-machine transition + side effects (escalation cancel, notification,
 -- WS fan-out) for a source status applied to a KNOWN alert row. Split from
@@ -405,4 +422,7 @@ publishAlertUpdate alert kind = do
     -- Mattermost root-post sync rides the same fan-out: state-changing kinds
     -- patch the alert's root posts (the service no-ops when unconfigured).
     enqueueSyncIfPosted alert kind
+    -- Channel banners follow within a debounce window for every
+    -- banner-enabled channel (no-op when none are configured).
+    enqueueBannerRefreshes
     pure ()

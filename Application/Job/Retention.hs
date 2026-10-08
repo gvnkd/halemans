@@ -31,6 +31,8 @@ instance Job RetentionJob where
                 | not config.enabled -> putStrLn ("retention: disabled in retention_configs, skipping" :: Text)
                 | otherwise -> pruneRawEvents config
 
+        pruneBannerSnapshots
+
         now <- getCurrentTime
         next <-
             newRecord @RetentionJob
@@ -154,6 +156,22 @@ prunePushNotificationJobs cutoff =
         AND status::text IN ('job_status_succeeded', 'job_status_failed', 'job_status_timed_out')
         LIMIT 1000)
 |]
+
+-- | Banner trend history: alert_stats_snapshots only feed the trend
+-- comparison (window of bannerTrendMinutes), so a week of rows is plenty.
+pruneBannerSnapshots :: (?modelContext :: ModelContext) => IO ()
+pruneBannerSnapshots = do
+    cutoff <- addUTCTime (-7 * 86400) <$> getCurrentTime
+    deleted <-
+        sqlExecTyped
+            [typedSql|
+            DELETE FROM alert_stats_snapshots
+            WHERE id IN (SELECT id FROM alert_stats_snapshots
+                WHERE created_at < ${cutoff}
+                LIMIT 1000)
+        |]
+    when (deleted > 0) do
+        putStrLn ("retention: pruned " <> tshow deleted <> " banner stat snapshots" :: Text)
 
 pruneMattermostJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
 pruneMattermostJobs cutoff =

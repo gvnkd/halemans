@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                halemans
-version:             2.31.0
+version:             2.32.0
 synopsis:            Alert aggregation and enrichment dashboard for Zabbix, Grafana, Alertmanager and generic webhooks
 description:         Halemans collects alerts from Zabbix, Grafana, Alertmanager and
                      generic webhooks into a single dashboard, enriches them with CMDB
@@ -114,10 +114,10 @@ library
         Application.Script.GenPassword
         Application.Script.HalemansMcp
         Application.Script.Prelude
+        Application.Service.ActionTokens
         Application.Service.Agent.Core
         Application.Service.Agent.Mcp
         Application.Service.Agent.Tools
-        Application.Service.ActionTokens
         Application.Service.AlertList
         Application.Service.AlertScope
         Application.Service.Api.Alerts
@@ -173,6 +173,7 @@ library
         Application.Service.Mattermost
         Application.Service.Mattermost.Actions
         Application.Service.Mattermost.Api
+        Application.Service.Mattermost.Banner
         Application.Service.Mattermost.Render
         Application.Service.MetricCache
         Application.Service.MetricChart
@@ -184,6 +185,7 @@ library
         Application.Service.Push
         Application.Service.Reconcile
         Application.Service.Reports
+        Application.Service.RuleMatch
         Application.Service.SecurityHeaders
         Application.Service.SourceHealth
         Application.Service.TestAlert
@@ -310,12 +312,15 @@ library
         Web.View.Users.Index
         Web.View.Users.New
         WorkerMain
+        Generated.ActionToken
         Generated.ActualTypes
+        Generated.ActualTypes.ActionToken
         Generated.ActualTypes.AgentMessage
         Generated.ActualTypes.AgentSession
         Generated.ActualTypes.Alert
         Generated.ActualTypes.AlertEvent
         Generated.ActualTypes.AlertGroup
+        Generated.ActualTypes.AlertStatsSnapshot
         Generated.ActualTypes.ApiToken
         Generated.ActualTypes.AssetAlertLink
         Generated.ActualTypes.AssetsConfig
@@ -385,6 +390,7 @@ library
         Generated.Alert
         Generated.AlertEvent
         Generated.AlertGroup
+        Generated.AlertStatsSnapshot
         Generated.ApiToken
         Generated.AssetAlertLink
         Generated.AssetsConfig
@@ -442,11 +448,13 @@ library
         Generated.Source
         Generated.SourceHealthJob
         Generated.Statements
+        Generated.Statements.CreateActionToken
         Generated.Statements.CreateAgentMessage
         Generated.Statements.CreateAgentSession
         Generated.Statements.CreateAlert
         Generated.Statements.CreateAlertEvent
         Generated.Statements.CreateAlertGroup
+        Generated.Statements.CreateAlertStatsSnapshot
         Generated.Statements.CreateApiToken
         Generated.Statements.CreateAssetAlertLink
         Generated.Statements.CreateAssetsConfig
@@ -460,11 +468,11 @@ library
         Generated.Statements.CreateComment
         Generated.Statements.CreateDashboard
         Generated.Statements.CreateEnrichAlertJob
-        Generated.Statements.CreateExposeAlertJob
         Generated.Statements.CreateEnvironment
         Generated.Statements.CreateEscalationJob
         Generated.Statements.CreateEscalationPolicy
         Generated.Statements.CreateEscalationTracker
+        Generated.Statements.CreateExposeAlertJob
         Generated.Statements.CreateFacetBackfillJob
         Generated.Statements.CreateFieldMapping
         Generated.Statements.CreateGroupingRule
@@ -485,11 +493,13 @@ library
         Generated.Statements.CreateLlmPromptTemplate
         Generated.Statements.CreateLlmToolCache
         Generated.Statements.CreateLlmToolCacheConfig
+        Generated.Statements.CreateManyActionToken
         Generated.Statements.CreateManyAgentMessage
         Generated.Statements.CreateManyAgentSession
         Generated.Statements.CreateManyAlert
         Generated.Statements.CreateManyAlertEvent
         Generated.Statements.CreateManyAlertGroup
+        Generated.Statements.CreateManyAlertStatsSnapshot
         Generated.Statements.CreateManyApiToken
         Generated.Statements.CreateManyAssetAlertLink
         Generated.Statements.CreateManyAssetsConfig
@@ -578,11 +588,13 @@ library
         Generated.Statements.CreateWriteBackAttempt
         Generated.Statements.CreateWriteBackJob
         Generated.Statements.CreateZabbixHostGroup
+        Generated.Statements.FetchActionToken
         Generated.Statements.FetchAgentMessage
         Generated.Statements.FetchAgentSession
         Generated.Statements.FetchAlert
         Generated.Statements.FetchAlertEvent
         Generated.Statements.FetchAlertGroup
+        Generated.Statements.FetchAlertStatsSnapshot
         Generated.Statements.FetchApiToken
         Generated.Statements.FetchAssetAlertLink
         Generated.Statements.FetchAssetsConfig
@@ -596,11 +608,11 @@ library
         Generated.Statements.FetchComment
         Generated.Statements.FetchDashboard
         Generated.Statements.FetchEnrichAlertJob
-        Generated.Statements.FetchExposeAlertJob
         Generated.Statements.FetchEnvironment
         Generated.Statements.FetchEscalationJob
         Generated.Statements.FetchEscalationPolicy
         Generated.Statements.FetchEscalationTracker
+        Generated.Statements.FetchExposeAlertJob
         Generated.Statements.FetchFacetBackfillJob
         Generated.Statements.FetchFieldMapping
         Generated.Statements.FetchGroupingRule
@@ -646,11 +658,13 @@ library
         Generated.Statements.FetchWriteBackAttempt
         Generated.Statements.FetchWriteBackJob
         Generated.Statements.FetchZabbixHostGroup
+        Generated.Statements.RowDecoderActionToken
         Generated.Statements.RowDecoderAgentMessage
         Generated.Statements.RowDecoderAgentSession
         Generated.Statements.RowDecoderAlert
         Generated.Statements.RowDecoderAlertEvent
         Generated.Statements.RowDecoderAlertGroup
+        Generated.Statements.RowDecoderAlertStatsSnapshot
         Generated.Statements.RowDecoderApiToken
         Generated.Statements.RowDecoderAssetAlertLink
         Generated.Statements.RowDecoderAssetsConfig
@@ -664,11 +678,11 @@ library
         Generated.Statements.RowDecoderComment
         Generated.Statements.RowDecoderDashboard
         Generated.Statements.RowDecoderEnrichAlertJob
-        Generated.Statements.RowDecoderExposeAlertJob
         Generated.Statements.RowDecoderEnvironment
         Generated.Statements.RowDecoderEscalationJob
         Generated.Statements.RowDecoderEscalationPolicy
         Generated.Statements.RowDecoderEscalationTracker
+        Generated.Statements.RowDecoderExposeAlertJob
         Generated.Statements.RowDecoderFacetBackfillJob
         Generated.Statements.RowDecoderFieldMapping
         Generated.Statements.RowDecoderGroupingRule
@@ -714,11 +728,13 @@ library
         Generated.Statements.RowDecoderWriteBackAttempt
         Generated.Statements.RowDecoderWriteBackJob
         Generated.Statements.RowDecoderZabbixHostGroup
+        Generated.Statements.UpdateActionToken
         Generated.Statements.UpdateAgentMessage
         Generated.Statements.UpdateAgentSession
         Generated.Statements.UpdateAlert
         Generated.Statements.UpdateAlertEvent
         Generated.Statements.UpdateAlertGroup
+        Generated.Statements.UpdateAlertStatsSnapshot
         Generated.Statements.UpdateApiToken
         Generated.Statements.UpdateAssetAlertLink
         Generated.Statements.UpdateAssetsConfig
@@ -732,11 +748,11 @@ library
         Generated.Statements.UpdateComment
         Generated.Statements.UpdateDashboard
         Generated.Statements.UpdateEnrichAlertJob
-        Generated.Statements.UpdateExposeAlertJob
         Generated.Statements.UpdateEnvironment
         Generated.Statements.UpdateEscalationJob
         Generated.Statements.UpdateEscalationPolicy
         Generated.Statements.UpdateEscalationTracker
+        Generated.Statements.UpdateExposeAlertJob
         Generated.Statements.UpdateFacetBackfillJob
         Generated.Statements.UpdateFieldMapping
         Generated.Statements.UpdateGroupingRule

@@ -161,7 +161,10 @@ mattermostTargetForRule rule = do
 -- | Initial delivery: resolve the channel, post the root message, post the
 -- details into its thread, remember the mapping. When the (alert, rule)
 -- already has a root post, falls through to a sync instead of duplicating
--- the channel post.
+-- the channel post. A TERMINAL alert never gets a fresh card: the notify
+-- job can outrun a fast source resolve (queued at expose, resolved before
+-- the worker ran it) — posting then would leave an undeletable orphan card
+-- (the resolve's sync already no-op'd on the not-yet-existing post).
 deliverNotify :: (?modelContext :: ModelContext) => Alert -> NotificationRule -> IO (Either Text ())
 deliverNotify alert rule = do
     existing <-
@@ -171,11 +174,13 @@ deliverNotify alert rule = do
             |> fetchOneOrNothing
     case existing of
         Just _ -> syncAlertPosts alert
-        Nothing -> do
-            configOrNothing <- mattermostConfigForRule rule
-            case configOrNothing of
-                Nothing -> pure (Right ())
-                Just config -> deliver config
+        Nothing
+            | isTerminalStatus (statusSnapshot alert) -> pure (Right ())
+            | otherwise -> do
+                configOrNothing <- mattermostConfigForRule rule
+                case configOrNothing of
+                    Nothing -> pure (Right ())
+                    Just config -> deliver config
   where
     deliver config = do
         target <- mattermostTargetForRule rule

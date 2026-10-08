@@ -6,11 +6,12 @@ import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
 import qualified Application.Service.Mattermost.Api as MM.Api
+import Application.Service.Mattermost.Banner (refreshChannelBanner)
 import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
 import Application.Service.Provision (ProvisionError (..))
 import Application.Service.TestAlert (fireTestAlert)
 import Control.Exception (finally, try)
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -25,7 +26,7 @@ import IHP.Job.Types (Job (..))
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder
-import IHP.TypedSql (sqlExecTyped, typedSql)
+import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv, setEnv)
 import System.Process (readProcess)
 import Test.Hspec
@@ -53,7 +54,7 @@ spec = describe "Mattermost notification channel" do
 
             notifyJobs <-
                 query @MattermostJob
-                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#alertId, Just alertId)
                     |> filterWhere (#kind, "notify" :: Text)
                     |> fetch
             notifyJob <- expectOne notifyJobs
@@ -74,7 +75,7 @@ spec = describe "Mattermost notification channel" do
             _ <- ackAlert user alert Nothing Nothing
             syncJobs <-
                 query @MattermostJob
-                    |> filterWhere (#alertId, alertId)
+                    |> filterWhere (#alertId, Just alertId)
                     |> filterWhere (#kind, "sync" :: Text)
                     |> fetch
             syncJob <- expectOne syncJobs
@@ -103,7 +104,7 @@ spec = describe "Mattermost notification channel" do
                     fp <- freshFingerprint
                     Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
                     exposeFor alertId
-                    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+                    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
                     perform notifyJob
 
                     posts <- mockPosts
@@ -127,7 +128,7 @@ spec = describe "Mattermost notification channel" do
                     fp <- freshFingerprint
                     Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
                     exposeFor alertId
-                    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+                    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
                     perform notifyJob
 
                     posts <- mockPosts
@@ -148,7 +149,7 @@ spec = describe "Mattermost notification channel" do
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
             exposeFor alertId
-            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
             perform notifyJob
 
             posts <- mockPosts
@@ -166,7 +167,7 @@ spec = describe "Mattermost notification channel" do
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
             exposeFor alertId
-            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
             perform notifyJob
             posts <- mockPosts
             (root, _reply) <- expectRootAndReply posts
@@ -175,7 +176,7 @@ spec = describe "Mattermost notification channel" do
             alert <- fetch alertId
             user <- testUser
             _ <- ackAlert user alert Nothing Nothing
-            ackSyncJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch)
+            ackSyncJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch)
             perform ackSyncJob
             postsAfterAck <- mockPosts
             (rootAfterAck, _) <- expectRootAndReply postsAfterAck
@@ -184,7 +185,7 @@ spec = describe "Mattermost notification channel" do
 
             -- a resolve IS terminal: the sync deletes the root post + row
             void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
-            syncJobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
+            syncJobs <- query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
             resolvedSyncJob <- expectOne [job | job <- syncJobs, job.eventKind == Just "resolved"]
             perform resolvedSyncJob
             postsAfterResolve <- mockPosts
@@ -205,12 +206,12 @@ spec = describe "Mattermost notification channel" do
             fp <- freshFingerprint
             Just resolvedAlertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
             exposeFor resolvedAlertId
-            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, resolvedAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just resolvedAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
             perform notifyJob
             posts <- mockPosts
             (root, _reply) <- expectRootAndReply posts
             void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
-            syncJobs <- query @MattermostJob |> filterWhere (#alertId, resolvedAlertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
+            syncJobs <- query @MattermostJob |> filterWhere (#alertId, Just resolvedAlertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
             resolvedSyncJob <- expectOne [job | job <- syncJobs, job.eventKind == Just "resolved"]
             perform resolvedSyncJob
             postsAfterResolve <- mockPosts
@@ -221,7 +222,7 @@ spec = describe "Mattermost notification channel" do
             fp2 <- freshFingerprint
             Just firingAlertId <- ingest source ((testEventIn envName fp2 Firing){severity = "warning"})
             exposeFor firingAlertId
-            notifyJob2 <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, firingAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            notifyJob2 <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just firingAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
             perform notifyJob2
             posts2 <- mockPosts
             firingRoot <- expectOne [p | p <- posts2, postRootId p == "", postId p /= postId root]
@@ -286,7 +287,7 @@ spec = describe "Mattermost notification channel" do
             fpFiring <- freshFingerprint
             Just firingAlertId <- ingest source ((testEventIn envName fpFiring Firing){severity = "warning"})
             exposeFor firingAlertId
-            notifyFiring <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, firingAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            notifyFiring <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just firingAlertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
             perform notifyFiring
             firingRow <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, firingAlertId) |> fetch
             -- a RESOLVED alert post: deleted
@@ -339,11 +340,11 @@ spec = describe "Mattermost notification channel" do
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
             exposeFor alertId
-            jobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
+            jobs <- query @MattermostJob |> filterWhere (#alertId, Just alertId) |> fetch
             notifyJob <- expectOne jobs
             perform notifyJob
             void (ingest source ((testEventIn envName fp Firing){severity = "warning"}))
-            jobsAgain <- query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
+            jobsAgain <- query @MattermostJob |> filterWhere (#alertId, Just alertId) |> fetch
             case reverse jobsAgain of
                 (newest : _) -> perform newest
                 [] -> expectationFailure "expected a mattermost job"
@@ -377,7 +378,7 @@ spec = describe "Mattermost notification channel" do
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
             exposeFor alertId
-            notifyJob <- expectOne =<< query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
+            notifyJob <- expectOne =<< query @MattermostJob |> filterWhere (#alertId, Just alertId) |> fetch
             perform notifyJob
             posts <- mockPosts
             (root, _reply) <- expectRootAndReply posts
@@ -445,7 +446,7 @@ spec = describe "Mattermost notification channel" do
             alert.fingerprint `shouldSatisfy` ("test:" `Text.isPrefixOf`)
             alert.status `shouldBe` "firing"
 
-            notifyJob <- expectOne =<< query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
+            notifyJob <- expectOne =<< query @MattermostJob |> filterWhere (#alertId, Just alertId) |> fetch
             perform notifyJob
             _ <- expectRootAndReply =<< mockPosts
             trackers <- query @EscalationTracker |> filterWhere (#alertId, alertId) |> fetch
@@ -514,7 +515,7 @@ spec = describe "Mattermost notification channel" do
             fp <- freshFingerprint
             Just alertId <- ingest source ((testEventIn ("mm-prov-env-" <> suffix) fp Firing){severity = "warning"})
             exposeFor alertId
-            notifyJobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> fetch
+            notifyJobs <- query @MattermostJob |> filterWhere (#alertId, Just alertId) |> fetch
             notifyJob <- expectOne notifyJobs
             perform notifyJob
             posts <- mockPosts
@@ -527,6 +528,114 @@ spec = describe "Mattermost notification channel" do
         case outcome of
             Left (ProvisionError err) -> err `shouldSatisfy` ("does not resolve to any notification channel" `Text.isInfixOf`)
             Right _ -> expectationFailure "expected ProvisionError"
+
+    it "a notify job landing after a fast source resolve posts no orphan card" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-late-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-late-rule-" <> suffix) ("mm-late-chan-" <> suffix) envName
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
+            -- resolve BEFORE the queued notify job runs: the resolve's sync
+            -- no-ops (no posts yet), then the notify must not post a fresh
+            -- card for the terminal alert either
+            void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
+            -- both the expose-time notify and the resolve-dispatch notify
+            -- must skip posting (the alert is terminal by the time they run)
+            notifyJobs <- query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch
+            length notifyJobs `shouldBe` 2
+            forM_ notifyJobs perform
+            posts <- mockPosts
+            posts `shouldBe` []
+            rows <- query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
+            rows `shouldBe` []
+
+    it "refreshes the channel banner with rule-scoped counts and trend arrows" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-banner-env-" <> suffix
+            channelName = "mm-banner-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <-
+                mattermostRuleWithConfig
+                    ("mm-banner-rule-" <> suffix)
+                    channelName
+                    envName
+                    ( Aeson.object
+                        [ "banner" Aeson..= Aeson.Bool True
+                        , "bannerTrendMinutes" Aeson..= (1 :: Int)
+                        ]
+                    )
+            source <- testSource
+            fp1 <- freshFingerprint
+            Just critAlertId <- ingest source ((testEventIn envName fp1 Firing){severity = "critical"})
+            exposeFor critAlertId
+            fp2 <- freshFingerprint
+            Just warnAlertId <- ingest source ((testEventIn envName fp2 Firing){severity = "warning"})
+            exposeFor warnAlertId
+            user <- testUser
+            warnAlert <- fetch warnAlertId
+            _ <- ackAlert user warnAlert Nothing Nothing
+
+            -- the alert-event fan-out enqueued exactly one pending banner job
+            -- for this channel (debounced pile-up guard)
+            pendingCounts <-
+                sqlQueryTyped
+                    [typedSql|
+                        SELECT count(*)::int FROM mattermost_jobs
+                        WHERE kind = 'banner' AND channel = ${channelName}
+                          AND status::text = 'job_status_not_started'
+                    |] ::
+                    IO [Int]
+            pendingCounts `shouldBe` [1]
+
+            -- history two minutes back (outside the 1-minute trend window
+            -- anchor: zero critical, four warning) drives the arrows
+            past <- addUTCTime (-120) <$> getCurrentTime
+            _ <-
+                newRecord @AlertStatsSnapshot
+                    |> set #channel channelName
+                    |> set #counts (snapshotCounts [("critical", 0, 0), ("warning", 4, 0)])
+                    |> set #createdAt past
+                    |> createRecord
+
+            refreshChannelBanner channelName `shouldReturn` Right ()
+
+            banners <- mockBanners
+            banner <- expectOne banners
+            bannerText banner `shouldBe` "🔴 crit 1 (0)🔺 · 🟠 high 0 (0)➖ · 🟡 warn 1 (1)🔻 · 🔵 info 0 (0)➖"
+            bannerColor banner `shouldBe` "#98A2AD"
+
+            -- a snapshot of the CURRENT counts was written for the next trend
+            snapshots <-
+                query @AlertStatsSnapshot
+                    |> filterWhere (#channel, channelName)
+                    |> fetch
+            let newest = maximum (map (.createdAt) snapshots)
+                current = [s | s <- snapshots, s.createdAt == newest]
+            snapshot <- expectOne current
+            countsField "critical" snapshot.counts `shouldBe` (1, 0)
+            countsField "warning" snapshot.counts `shouldBe` (1, 1)
+
+    it "shows the all-clear banner when the channel's rules match no active alerts" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-banner-clear-env-" <> suffix
+            channelName = "mm-banner-clear-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <-
+                mattermostRuleWithConfig
+                    ("mm-banner-clear-rule-" <> suffix)
+                    channelName
+                    envName
+                    (Aeson.object ["banner" Aeson..= Aeson.Bool True])
+            refreshChannelBanner channelName `shouldReturn` Right ()
+            banner <- expectOne =<< mockBanners
+            bannerText banner `shouldBe` "✅ no active alerts"
+            bannerColor banner `shouldBe` "#3FB950"
 
 mattermostRule :: (?modelContext :: ModelContext) => Text -> Text -> Text -> IO NotificationRule
 mattermostRule name channel envName = do
@@ -558,10 +667,10 @@ fireAndResolve source envName = do
     fp <- freshFingerprint
     Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
     exposeFor alertId
-    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+    notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
     perform notifyJob
     void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
-    syncJobs <- query @MattermostJob |> filterWhere (#alertId, alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
+    syncJobs <- query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "sync" :: Text) |> fetch
     resolvedSyncJob <- expectOne [job | job <- syncJobs, job.eventKind == Just "resolved"]
     perform resolvedSyncJob
     pure (alertId, fp)
@@ -685,6 +794,44 @@ mockPosts :: IO [Aeson.Value]
 mockPosts = do
     payload <- mockJson "/debug/posts"
     pure (fromMaybe [] (parseMaybe (Aeson.withObject "posts" (\o -> o Aeson..: "posts")) payload))
+
+mockBanners :: IO [Aeson.Value]
+mockBanners = do
+    payload <- mockJson "/debug/banners"
+    pure (fromMaybe [] (parseMaybe (Aeson.withObject "banners" (\o -> o Aeson..: "banners")) payload))
+
+bannerField :: Text -> Aeson.Value -> Text
+bannerField key banner =
+    fromMaybe "" (parseMaybe (Aeson.withObject "banner" (\o -> o Aeson..:? Key.fromText key Aeson..!= "")) banner)
+
+bannerText :: Aeson.Value -> Text
+bannerText = bannerField "text"
+
+bannerColor :: Aeson.Value -> Text
+bannerColor = bannerField "color"
+
+snapshotCounts :: [(Text, Int, Int)] -> Aeson.Value
+snapshotCounts entries =
+    Aeson.object
+        [ Key.fromText sev
+            Aeson..= Aeson.object
+                [ "total" Aeson..= total
+                , "acked" Aeson..= acked
+                ]
+        | (sev, total, acked) <- entries
+        ]
+
+countsField :: Text -> Aeson.Value -> (Int, Int)
+countsField sev value = fromMaybe (0, 0) do
+    object_ <- case value of
+        Aeson.Object o -> Just o
+        _ -> Nothing
+    raw <- KeyMap.lookup (Key.fromText sev) object_
+    parseMaybe
+        ( Aeson.withObject "severity counts" \o ->
+            (,) <$> o Aeson..: "total" <*> o Aeson..: "acked"
+        )
+        raw
 
 postField :: Text -> Aeson.Value -> Text
 postField key post =

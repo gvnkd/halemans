@@ -25,6 +25,8 @@ module Application.Service.Mattermost.Render (
     defaultTemplateBodyFor,
     ackActionEnabledFromJson,
     deleteOnCloseEnabledFromJson,
+    bannerEnabledFromJson,
+    bannerTrendMinutesFromJson,
     mattermostRootTemplateName,
     mattermostDetailsTemplateName,
     mattermostStatusTemplateName,
@@ -48,7 +50,7 @@ import Generated.Types
 import IHP.HaskellSupport ((|>))
 import IHP.ModelSupport (newRecord)
 import IHP.Prelude
-import Text.Read (read)
+import Text.Read (read, readMaybe)
 
 -- Pure Mattermost message rendering. The root post carries the templated
 -- alert summary as a message attachment (color = severity/state, fields,
@@ -220,6 +222,30 @@ deleteOnCloseEnabledFromJson config = case config of
         Just (Aeson.Bool flag) -> flag
         _ -> False
     _ -> False
+
+-- Whether the channel banner statistics refresh runs at all, from the
+-- channel config "banner" key (default False). Opt-in per channel row; the
+-- banner text/colors are NOT template-controlled (Application.Service.
+-- Mattermost.Banner owns the format).
+bannerEnabledFromJson :: Value -> Bool
+bannerEnabledFromJson config = case config of
+    Aeson.Object object_ -> case KeyMap.lookup "banner" object_ of
+        Just (Aeson.Bool flag) -> flag
+        _ -> False
+    _ -> False
+
+-- Trend comparison window in minutes, from the channel config
+-- "bannerTrendMinutes" key (default 30, clamped to >= 1). JSON number or
+-- numeric string, like the zabbix source config ints.
+bannerTrendMinutesFromJson :: Value -> Int
+bannerTrendMinutesFromJson config = case config of
+    Aeson.Object object_ -> case KeyMap.lookup "bannerTrendMinutes" object_ of
+        Just (Aeson.Number number) -> clamp (floor number)
+        Just (Aeson.String text) -> clamp (fromMaybe 30 (readMaybe (cs text)))
+        _ -> 30
+    _ -> 30
+  where
+    clamp value = max 1 value
 
 -- Sane defaults for the channel config "colors" mapping: terminal states
 -- gray, then severity, then the fallback. resolveColor looks the alert's

@@ -80,6 +80,7 @@ main = hspec do
     Test.MattermostSpec.spec
     Test.MattermostSpec.targetSpec
     Test.MattermostSpec.usernameSpec
+    Test.MattermostSpec.bannerSpec
     Test.MetricChartSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec

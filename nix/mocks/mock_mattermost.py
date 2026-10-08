@@ -6,6 +6,9 @@
 #   PUT  /api/v4/posts/{id}                 edit message/props (legacy alias)
 #   DELETE /api/v4/posts/{id}               delete post (deleteOnClose path)
 #   GET  /api/v4/channels/{id}/posts         channel posts (per_page + before cursor)
+#   PUT  /api/v4/channels/{id}/banner        set channel banner {text, color}
+#   GET  /api/v4/channels/{id}/banner        current channel banner
+#   DELETE /api/v4/channels/{id}/banner      clear channel banner
 #   GET  /api/v4/users/me/teams             bot team memberships
 #   GET  /api/v4/teams/{id}/channels/name/{c}  channel by team id + name
 #   GET  /api/v4/teams/name/{team}          resolve team name -> id
@@ -17,6 +20,7 @@
 #   GET  /debug/posts                       all posts, creation order
 #   GET  /debug/posts/{id}                  one post
 #   GET  /debug/action-calls                recorded integration callbacks
+#   GET  /debug/banners                     all channel banners, by channel id
 #   POST /debug/click {post_id, action, user_name, ...}
 #       simulates a user clicking an interactive message button: finds the
 #       action in the post's props.attachments and POSTs to its
@@ -89,6 +93,14 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             self._channel_posts(m.group(1), parsed.query)
             return
+        m = re.fullmatch(r"/api/v4/channels/([\w-]+)/banner", path)
+        if m:
+            banner = self.server.banners.get(m.group(1))
+            if banner is None:
+                self._send(404, {"id": "api.context.404.app_error", "message": "banner not found"})
+            else:
+                self._send(200, dict(banner))
+            return
         m = re.fullmatch(r"/api/v4/teams/name/([\w-]+)", path)
         if m:
             self._send(200, self.server.team(m.group(1)))
@@ -146,6 +158,19 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             self._patch_post(m.group(1))
             return
+        m = re.fullmatch(r"/api/v4/channels/([\w-]+)/banner", path)
+        if m:
+            body = self._body()
+            if body is None:
+                self._send(400, {"id": "api.context.invalid_body_param.app_error", "message": "invalid json"})
+                return
+            self.server.banners[m.group(1)] = {
+                "channel_id": m.group(1),
+                "text": body.get("text", ""),
+                "color": body.get("color", ""),
+            }
+            self._send(200, dict(self.server.banners[m.group(1)]))
+            return
         self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
 
     def do_DELETE(self):
@@ -160,6 +185,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"id": "api.context.404.app_error", "message": "post not found"})
             else:
                 self._send(200, {"status": "OK"})
+            return
+        m = re.fullmatch(r"/api/v4/channels/([\w-]+)/banner", path)
+        if m:
+            self.server.banners.pop(m.group(1), None)
+            self._send(200, {"status": "OK"})
             return
         self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
 
@@ -250,6 +280,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/debug/action-calls":
             self._send(200, {"calls": self.server.action_calls})
+            return
+        if path == "/debug/banners":
+            self._send(200, {"banners": list(self.server.banners.values())})
             return
         self._send(404, {"message": "not found"})
 
@@ -344,6 +377,7 @@ class Server(ThreadingHTTPServer):
         self.channels = {}
         self.channel_names = {}
         self.action_calls = []
+        self.banners = {}
         # next_post_id deliberately survives: see __init__.
         # The client's resolveChannel lists bot team memberships BEFORE any
         # post exists, so the default team must survive /debug/reset.

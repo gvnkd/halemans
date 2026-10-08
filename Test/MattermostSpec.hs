@@ -1,6 +1,7 @@
 module Test.MattermostSpec where
 
 import Application.Service.Mattermost (mattermostTarget, mattermostUsernameFromSettings)
+import Application.Service.Mattermost.Banner (BannerCounts (..), Trend (..), bannerBarColor, bannerSeverities, countsJson, parseCounts, renderBannerText, trendOf)
 import Application.Service.Mattermost.Render
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
@@ -299,3 +300,34 @@ targetSpec = describe "Application.Service.Mattermost.mattermostTarget" do
         case result of
             Left err -> err `shouldSatisfy` Text.isInfixOf "has no channel"
             Right _ -> expectationFailure "expected Left"
+
+bannerSpec :: Spec
+bannerSpec = describe "Application.Service.Mattermost.Banner" do
+    it "renders one labeled counter per severity with the trend arrow" do
+        let items =
+                [ ("critical", BannerCounts 5 3, TrendUp)
+                , ("high", BannerCounts 2 1, TrendFlat)
+                , ("warning", BannerCounts 0 0, TrendDown)
+                , ("info", BannerCounts 1 1, TrendFlat)
+                ]
+        renderBannerText items
+            `shouldBe` "🔴 crit 5 (3)🔺 · 🟠 high 2 (1)➖ · 🟡 warn 0 (0)🔻 · 🔵 info 1 (1)➖"
+
+    it "collapses to the all-clear line when nothing is active" do
+        let items = [(sev, BannerCounts 0 0, TrendFlat) | sev <- bannerSeverities]
+        renderBannerText items `shouldBe` "✅ no active alerts"
+
+    it "keeps the bar neutral while anything is active, green when clear" do
+        bannerBarColor [("critical", BannerCounts 0 0), ("info", BannerCounts 1 0)]
+            `shouldBe` "#98A2AD"
+        bannerBarColor [(sev, BannerCounts 0 0) | sev <- bannerSeverities]
+            `shouldBe` "#3FB950"
+
+    it "compares totals for the trend direction" do
+        trendOf 3 5 `shouldBe` TrendUp
+        trendOf 5 3 `shouldBe` TrendDown
+        trendOf 4 4 `shouldBe` TrendFlat
+
+    it "round-trips the snapshot counts JSON" do
+        let counts = [("critical", BannerCounts 5 3), ("warning", BannerCounts 0 0)]
+        parseCounts (countsJson counts) `shouldBe` counts

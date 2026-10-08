@@ -2,6 +2,7 @@ module Application.Job.AutoClose where
 
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, publishAlertUpdate, transitionAlert)
+import Application.Job.Mattermost (enqueueBannerRefreshes)
 import Application.Job.PollZabbix (configInt, resolveDisabledOnZabbix, triggerIdOf)
 import Application.Pipeline.Actions (autoCloseAlert, stallAlert, unackAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
@@ -36,6 +37,7 @@ instance Job AutoCloseJob where
         stallStaleAlerts
         reconcileStalledZabbix
         closeStalledAlerts
+        refreshMattermostBanners
 
         now <- getCurrentTime
         next <-
@@ -197,6 +199,13 @@ reconcileStalledZabbix = do
   where
     groupBySource candidates =
         Map.elems (Map.fromListWith (\(source, a) (_, b) -> (source, a ++ b)) [(get #id source, (source, [(triggerId, alert)])) | (source, triggerId, alert) <- candidates])
+
+-- | Mattermost channel banner backstop: every tick reseeds a banner job for
+-- each banner-enabled channel that has no live chain (the banner job
+-- reschedules itself every minute; this only restarts chains that died to
+-- job exhaustion).
+refreshMattermostBanners :: (?modelContext :: ModelContext) => IO ()
+refreshMattermostBanners = enqueueBannerRefreshes
 
 closeStalledAlerts :: (?modelContext :: ModelContext) => IO ()
 closeStalledAlerts = do

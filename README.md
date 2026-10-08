@@ -281,6 +281,14 @@ The interactive **Ack button** is code, not a template (its URL is functional wi
 
 By default a resolved/closed alert leaves its **terminal-gray card** in the channel as history. Enable **Delete card when resolved/closed** on the channel form (or `"deleteOnClose": true` in the channel's `config` JSON) to instead **delete the Mattermost post** when the alert reaches `resolved`/`closed` (the status sync issues `DELETE /api/v4/posts/{id}` and forgets the mapping, so a later refire re-delivers a fresh card). Only the root post is deleted — a bot token is not a channel admin, so human thread replies couldn't be deleted anyway, and the bot-authored details reply stays as the audit trail.
 
+**Channel banner.** A Mattermost channel can show a one-line statistics banner above its post list (MM 10.9+; the bot needs channel-management permission — a 403 is skip-reasoned like the other channel ops). Opt in per channel row with `"banner": true` in the channel's `config` JSON. The banner refreshes every 60s (each refresh reschedules the next; every alert transition can trigger an earlier one, debounced to at most one PUT per 30s) and shows the counts of **active (firing + acked)** alerts matched by the channel's rules — the exact dispatch predicates (severity threshold + match + team host-group scope), deduplicated by alert — as `total (acked)` per severity, with per-severity trend arrows comparing against the snapshot nearest to `"bannerTrendMinutes"` ago (default 30):
+
+```
+🔴 crit 5 (3)🔺 · 🟠 high 2 (1)➖ · 🟡 warn 0 (0)🔻 · 🔵 info 1 (1)🔺
+```
+
+The counters carry the severity colors; the banner bar itself stays a neutral gray (green only for the all-clear `✅ no active alerts`). Trend history lives in `alert_stats_snapshots` (retention prunes after 7 days).
+
 `mattermost_attachment` supports these keys (anything else is ignored; empty values are dropped; `ts` must be epoch seconds and is sent as a number):
 
 ```

@@ -3,6 +3,7 @@ module Test.Integration.PipelineSpec (spec, grafanaMappingSpec) where
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (replicateM_, void)
 import Data.Aeson (object)
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import Data.Int (Int64)
@@ -185,6 +186,17 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         void (ingest source ((testEvent fp Firing){description = ""}))
         kept <- fetch alertId
         kept.description `shouldBe` ("new body" :: Text)
+
+    it "a refire merges event annotations over the stored ones (stallSeconds follows the sender)" do
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source ((testEvent fp Firing){annotations = object ["stallSeconds" .= (3600 :: Int), "runbook" .= ("http://runbook" :: Text)]})
+        void (ingest source ((testEvent fp Firing){annotations = object ["stallSeconds" .= (8600 :: Int)]}))
+        alert <- fetch alertId
+        let stallSeconds = parseMaybe (Aeson.withObject "annotations" (\o -> o Aeson..: "stallSeconds")) alert.annotations :: Maybe Int
+            runbook = parseMaybe (Aeson.withObject "annotations" (\o -> o Aeson..: "runbook")) alert.annotations :: Maybe Text
+        stallSeconds `shouldBe` Just 8600
+        runbook `shouldBe` Just "http://runbook"
 
     it "resolved event resolves; refire re-fires the same alert" do
         source <- testSource

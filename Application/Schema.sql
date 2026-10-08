@@ -962,13 +962,16 @@ ALTER TABLE mattermost_posts ADD CONSTRAINT mattermost_posts_notification_rule_i
 CREATE INDEX mattermost_posts_alert_id_idx ON mattermost_posts(alert_id);
 
 -- Outbound Mattermost delivery queue: kind 'notify' creates the root post
--- plus details reply; kind 'sync' patches existing root posts.
+-- plus details reply; kind 'sync' patches existing root posts; kind 'banner'
+-- refreshes the channel banner statistics (alert_id is NULL for banner jobs
+-- — they have no alert; channel carries the notification_channels row NAME).
 CREATE TABLE mattermost_jobs (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
-    alert_id UUID NOT NULL,
+    alert_id UUID DEFAULT NULL,
     rule_id UUID DEFAULT NULL,
     kind TEXT NOT NULL DEFAULT 'sync',
     event_kind TEXT DEFAULT NULL,
+    channel TEXT DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     status JOB_STATUS DEFAULT 'job_status_not_started' NOT NULL,
@@ -1030,4 +1033,16 @@ CREATE TABLE expose_alert_jobs (
     run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 ALTER TABLE expose_alert_jobs ADD CONSTRAINT expose_alert_jobs_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES alerts (id);
+
+-- Mattermost channel banner statistics (migration 1791454382): one row per
+-- banner refresh per notification channel — the history the per-severity
+-- trend arrows compare against (current counts vs the snapshot nearest
+-- now - bannerTrendMinutes).
+CREATE TABLE alert_stats_snapshots (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    channel TEXT NOT NULL,
+    counts JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX alert_stats_snapshots_channel_created_idx ON alert_stats_snapshots(channel, created_at);
 
