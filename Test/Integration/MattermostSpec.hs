@@ -6,7 +6,7 @@ import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
 import qualified Application.Service.Mattermost.Api as MM.Api
-import Application.Service.Mattermost.Banner (refreshChannelBanner)
+import Application.Service.Mattermost.Banner (BannerOutcome (..), refreshChannelBanner)
 import Application.Service.Mattermost.Render (ackActionEnabledFromJson, colorMapFromJson)
 import Application.Service.Provision (ProvisionError (..))
 import Application.Service.TestAlert (fireTestAlert)
@@ -602,7 +602,7 @@ spec = describe "Mattermost notification channel" do
                     |> set #createdAt past
                     |> createRecord
 
-            refreshChannelBanner channelName `shouldReturn` Right ()
+            refreshChannelBanner channelName `shouldReturn` Right BannerRefreshed
 
             banners <- mockBanners
             banner <- expectOne banners
@@ -632,10 +632,28 @@ spec = describe "Mattermost notification channel" do
                     channelName
                     envName
                     (Aeson.object ["banner" Aeson..= Aeson.Bool True])
-            refreshChannelBanner channelName `shouldReturn` Right ()
+            refreshChannelBanner channelName `shouldReturn` Right BannerRefreshed
             banner <- expectOne =<< mockBanners
             bannerText banner `shouldBe` "✅ no active alerts"
             bannerColor banner `shouldBe` "#3FB950"
+
+    it "a denied banner PUT (403) soft-skips without a snapshot, and recovers when allowed" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-banner-deny-env-" <> suffix
+            channelName = "mm-banner-deny-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRuleWithConfig ("mm-banner-deny-rule-" <> suffix) channelName envName (Aeson.object ["banner" Aeson..= Aeson.Bool True])
+            -- the first resolved MM channel after a reset is always chan-1
+            mockBannerDeny "chan-1"
+            refreshChannelBanner channelName `shouldReturn` Right BannerDenied
+            mockBanners `shouldReturn` []
+            rows <- query @AlertStatsSnapshot |> filterWhere (#channel, channelName) |> fetch
+            rows `shouldBe` []
+            mockBannerAllow "chan-1"
+            refreshChannelBanner channelName `shouldReturn` Right BannerRefreshed
+            banner <- expectOne =<< mockBanners
+            bannerText banner `shouldBe` "✅ no active alerts"
 
 mattermostRule :: (?modelContext :: ModelContext) => Text -> Text -> Text -> IO NotificationRule
 mattermostRule name channel envName = do
@@ -799,6 +817,18 @@ mockBanners :: IO [Aeson.Value]
 mockBanners = do
     payload <- mockJson "/debug/banners"
     pure (fromMaybe [] (parseMaybe (Aeson.withObject "banners" (\o -> o Aeson..: "banners")) payload))
+
+mockBannerDeny :: Text -> IO ()
+mockBannerDeny channelId = do
+    base <- mockUrl
+    _ <- readProcess "curl" ["-sf", "-X", "POST", cs (base <> "/debug/banner-deny"), "-H", "Content-Type: application/json", "-d", cs (Aeson.encode (Aeson.object ["channel_id" Aeson..= channelId]))] ""
+    pure ()
+
+mockBannerAllow :: Text -> IO ()
+mockBannerAllow channelId = do
+    base <- mockUrl
+    _ <- readProcess "curl" ["-sf", "-X", "POST", cs (base <> "/debug/banner-allow"), "-H", "Content-Type: application/json", "-d", cs (Aeson.encode (Aeson.object ["channel_id" Aeson..= channelId]))] ""
+    pure ()
 
 bannerField :: Text -> Aeson.Value -> Text
 bannerField key banner =

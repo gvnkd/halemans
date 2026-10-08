@@ -1,6 +1,7 @@
 module Application.Service.Mattermost.Banner (
     BannerCounts (..),
     Trend (..),
+    BannerOutcome (..),
     bannerSeverities,
     renderBannerText,
     bannerBarColor,
@@ -32,6 +33,7 @@ import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder
 import IHP.TypedSql (sqlQueryTyped, typedSql)
+import System.IO (hFlush, stdout)
 
 -- Mattermost channel banner statistics. For every notification channel row
 -- with config "banner": true, the worker refreshes the MM channel banner
@@ -52,6 +54,14 @@ data BannerCounts = BannerCounts
     deriving (Eq, Show)
 
 data Trend = TrendUp | TrendDown | TrendFlat
+    deriving (Eq, Show)
+
+-- | What a refresh achieved: the banner went up; the server DENIED it
+-- (403/404 — missing permission or no banner feature) and nothing was
+-- updated; or nothing was attempted (soft skip: debounced, no rules/targets,
+-- missing config). The worker schedules by it: denied re-attempts quietly
+-- after a long backoff, skipped/refreshed keep the normal 60s chain.
+data BannerOutcome = BannerRefreshed | BannerDenied | BannerSkipped
     deriving (Eq, Show)
 
 bannerSeverities :: [Text]
@@ -181,10 +191,10 @@ bannerChannelEnabled channelName = do
 
 -- | Recompute and PUT the banner for one notification channel. Soft skips
 -- (missing/disabled channel, flag off, unset token, no rules, debounced)
--- return Right; only failed banner PUTs return Left so the job retries with
--- a visible last_error. On success a snapshot row is written for the trend
--- comparison.
-refreshChannelBanner :: (?modelContext :: ModelContext) => Text -> IO (Either Text ())
+-- and a server DENIAL (403/404) return Right; only retryable failures
+-- (network, 5xx) return Left so the job retries with a visible last_error.
+-- On success a snapshot row is written for the trend comparison.
+refreshChannelBanner :: (?modelContext :: ModelContext) => Text -> IO (Either Text BannerOutcome)
 refreshChannelBanner channelName = do
     channelOrNothing <-
         query @NotificationChannel
@@ -196,17 +206,17 @@ refreshChannelBanner channelName = do
             , channel.enabled
             , bannerEnabledFromJson channel.config ->
                 runRefresh channel
-        _ -> pure (Right ())
+        _ -> pure (Right BannerSkipped)
 
-runRefresh :: (?modelContext :: ModelContext) => NotificationChannel -> IO (Either Text ())
+runRefresh :: (?modelContext :: ModelContext) => NotificationChannel -> IO (Either Text BannerOutcome)
 runRefresh channel = do
     debounced <- recentlySucceeded (channel.name)
     if debounced
-        then pure (Right ())
+        then pure (Right BannerSkipped)
         else do
             configOrNothing <- Api.configForChannel channel
             case configOrNothing of
-                Nothing -> pure (Right ())
+                Nothing -> pure (Right BannerSkipped)
                 Just config -> refreshWithConfig channel config
 
 -- | Skip when a banner job for this channel SUCCEEDED within the debounce
@@ -227,7 +237,7 @@ recentlySucceeded channelName = do
         (n : _) -> n > 0
         [] -> False
 
-refreshWithConfig :: (?modelContext :: ModelContext) => NotificationChannel -> Api.MattermostConfig -> IO (Either Text ())
+refreshWithConfig :: (?modelContext :: ModelContext) => NotificationChannel -> Api.MattermostConfig -> IO (Either Text BannerOutcome)
 refreshWithConfig channel config = do
     active <-
         query @Alert
@@ -239,7 +249,7 @@ refreshWithConfig channel config = do
             |> filterWhere (#enabled, True)
             |> fetch
     if null rules
-        then pure (Right ())
+        then pure (Right BannerSkipped)
         else do
             matched <- bannerMatchedAlerts active rules
             let counts = bannerCountsFor matched
@@ -248,7 +258,7 @@ refreshWithConfig channel config = do
                 color = bannerBarColor counts
             targets <- bannerTargets rules
             if null targets
-                then pure (Right ())
+                then pure (Right BannerSkipped)
                 else pushBanners channel counts text color targets
 
 -- | Active alerts matched by ANY of the channel's enabled rules (the exact
@@ -315,22 +325,52 @@ bannerTargets rules = do
             _ -> Nothing
     pure (nubBy (\a b -> snd a == snd b) (catMaybes perRule))
 
-pushBanners :: (?modelContext :: ModelContext) => NotificationChannel -> [(Text, BannerCounts)] -> Text -> Text -> [(Api.MattermostConfig, (Text, Text))] -> IO (Either Text ())
+-- | PUT the banner to every resolved target. Any success → snapshot +
+-- BannerRefreshed. No success but at least one target answered 403/404 →
+-- BannerDenied (logged once per run: permission or missing feature, an
+-- admin must act) with NO retry storm. Only genuine failures (network/5xx)
+-- come back Left so the job retries.
+pushBanners :: (?modelContext :: ModelContext) => NotificationChannel -> [(Text, BannerCounts)] -> Text -> Text -> [(Api.MattermostConfig, (Text, Text))] -> IO (Either Text BannerOutcome)
 pushBanners channel counts text color targets = do
     results <- forM targets \(targetConfig, (teamName, mmChannel)) -> do
         resolved <- Api.resolveChannel targetConfig teamName mmChannel
         case resolved of
             Left err -> pure (Left err)
-            Right channelId -> Api.putBanner targetConfig channelId text color
-    let failures = [err | Left err <- results]
-    if not (null failures) && length failures == length results
-        then case failures of
-            (firstErr : _) -> pure (Left firstErr)
-            [] -> pure (Right ())
-        else do
-            _ <-
-                newRecord @AlertStatsSnapshot
-                    |> set #channel channel.name
-                    |> set #counts (countsJson counts)
-                    |> createRecord
-            pure (Right ())
+            Right channelId -> do
+                result <- Api.putBanner targetConfig channelId text color
+                pure case result of
+                    Api.BannerPutOk -> Right ()
+                    Api.BannerPutDenied -> Left (deniedLabel teamName mmChannel)
+                    Api.BannerPutError err -> Left err
+    let oks = [() | Right () <- results]
+        failures = [err | Left err <- results]
+        denied = filter isDenied failures
+        retryable = filter (not . isDenied) failures
+    if not (null oks)
+        then snapshotAndReturn BannerRefreshed
+        else case retryable of
+            (retryErr : _) -> pure (Left retryErr)
+            [] -> do
+                -- Every target denied the PUT (403/404 — the bot lacks
+                -- channel-management permission or the server has no
+                -- channel-banner feature): soft-skip with one log line, no
+                -- retry storm, no snapshot.
+                putStrLn
+                    ( "mattermost banner: channel \""
+                        <> channel.name
+                        <> "\" targets ("
+                        <> Text.intercalate "; " denied
+                        <> "): server denied the banner PUT (403/404) — grant the bot channel-management permission, or disable \"banner\" in the channel config (requires MM 10.9+ with channel banners)"
+                    )
+                hFlush stdout
+                pure (Right BannerDenied)
+  where
+    deniedLabel teamName mmChannel = "mattermost banner: denied " <> teamName <> "/" <> mmChannel
+    isDenied err = "mattermost banner: denied " `Text.isPrefixOf` err
+    snapshotAndReturn outcome = do
+        _ <-
+            newRecord @AlertStatsSnapshot
+                |> set #channel channel.name
+                |> set #counts (countsJson counts)
+                |> createRecord
+        pure (Right outcome)

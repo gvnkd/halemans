@@ -6,7 +6,7 @@ module Application.Job.Mattermost (
 ) where
 
 import Application.Service.Mattermost (deliverNotify, syncAlertPosts)
-import Application.Service.Mattermost.Banner (bannerChannelEnabled, bannerEnabledChannels, refreshChannelBanner)
+import Application.Service.Mattermost.Banner (BannerOutcome (..), bannerChannelEnabled, bannerEnabledChannels, refreshChannelBanner)
 import qualified Application.Service.Mattermost.Render as Render
 import Control.Monad (void, when)
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
@@ -48,15 +48,21 @@ instance Job MattermostJob where
                 result <- refreshChannelBanner channelName
                 case result of
                     Left err -> error (cs err) -- job retry/backoff + visible last_error
-                    Right () -> do
+                    Right outcome -> do
                         stillEnabled <- bannerChannelEnabled channelName
                         when stillEnabled do
                             now <- getCurrentTime
+                            -- A denied PUT (403/404 — permission/feature
+                            -- missing) re-attempts quietly after a long
+                            -- backoff; the chain stays at 60s otherwise.
+                            let delay = case outcome of
+                                    BannerDenied -> bannerDeniedRetrySeconds
+                                    _ -> bannerIntervalSeconds
                             _ <-
                                 newRecord @MattermostJob
                                     |> set #kind ("banner" :: Text)
                                     |> set #channel (Just channelName)
-                                    |> set #runAt (addUTCTime bannerIntervalSeconds now)
+                                    |> set #runAt (addUTCTime delay now)
                                     |> createRecord
                             pure ()
             Nothing -> pure ()
@@ -74,6 +80,12 @@ instance Job MattermostJob where
 -- | Banner self-reschedule interval: the effective "periodic refresh".
 bannerIntervalSeconds :: NominalDiffTime
 bannerIntervalSeconds = 60
+
+-- | A denied PUT (403/404) never fixes itself by retrying fast — re-attempt
+-- quietly after this backoff (an admin may grant the permission or the
+-- server may get the feature).
+bannerDeniedRetrySeconds :: NominalDiffTime
+bannerDeniedRetrySeconds = 900
 
 -- | Fired by Notify.fireRule for rules whose channel is mattermost.
 enqueueNotify :: (?modelContext :: ModelContext) => Alert -> NotificationRule -> IO ()
@@ -105,15 +117,16 @@ enqueueSyncIfPosted alert eventKind =
             pure ()
 
 -- | Banner refresh trigger for every banner-enabled channel: the AutoClose
--- sweep (chain backstop) and the alert-event fan-out (near-real-time). One
--- pending banner row per channel at most — the worker debounces actual PUTs
--- within bannerDebounceSeconds on top.
+-- sweep (chain backstop) and the alert-event fan-out (near-real-time). No
+-- enqueue when the chain is alive: a pending row OR any banner job touched
+-- within the last 5 minutes (a denied channel retries on its own 15-minute
+-- backoff — the backstop must not pile attempts on top).
 enqueueBannerRefreshes :: (?modelContext :: ModelContext) => IO ()
 enqueueBannerRefreshes = do
     channels <- bannerEnabledChannels
     forM_ channels \channel -> do
-        pending <- pendingBanners (channel.name)
-        when (pending == 0) do
+        alive <- chainAlive (channel.name)
+        unless alive do
             _ <-
                 newRecord @MattermostJob
                     |> set #kind ("banner" :: Text)
@@ -121,14 +134,16 @@ enqueueBannerRefreshes = do
                     |> createRecord
             pure ()
   where
-    pendingBanners channelName = do
+    chainAlive channelName = do
         rows <-
             sqlQueryTyped
                 [typedSql|
                     SELECT count(*)::int FROM mattermost_jobs
                     WHERE kind = 'banner' AND channel = ${channelName}
-                      AND status::text IN ('job_status_not_started', 'job_status_running', 'job_status_retry')
+                      AND ( status::text IN ('job_status_not_started', 'job_status_running', 'job_status_retry')
+                            OR updated_at > now() - make_interval(secs => ${windowSeconds}) )
                 |]
         pure case rows of
-            (n : _) -> n
-            [] -> 0
+            (n : _) -> n > 0
+            [] -> False
+    windowSeconds = 300 :: Double

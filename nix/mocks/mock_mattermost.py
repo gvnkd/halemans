@@ -6,8 +6,8 @@
 #   PUT  /api/v4/posts/{id}                 edit message/props (legacy alias)
 #   DELETE /api/v4/posts/{id}               delete post (deleteOnClose path)
 #   GET  /api/v4/channels/{id}/posts         channel posts (per_page + before cursor)
-#   PUT  /api/v4/channels/{id}/banner        set channel banner {text, color}
-#   GET  /api/v4/channels/{id}/banner        current channel banner
+#   PUT  /api/v4/channels/{id}/patch        channel patch: sets banner_info (channel banner)
+#   GET  /api/v4/channels/{id}/banner        current channel banner (debug-shaped)
 #   DELETE /api/v4/channels/{id}/banner      clear channel banner
 #   GET  /api/v4/users/me/teams             bot team memberships
 #   GET  /api/v4/teams/{id}/channels/name/{c}  channel by team id + name
@@ -158,18 +158,28 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             self._patch_post(m.group(1))
             return
-        m = re.fullmatch(r"/api/v4/channels/([\w-]+)/banner", path)
+        m = re.fullmatch(r"/api/v4/channels/([\w-]+)/patch", path)
         if m:
+            # Channel banner rides the CHANNEL patch endpoint as
+            # {"banner_info": {...}} — real MM has no /channels/{id}/banner
+            # route (verified mm.officesvc.bz 2026-10-08).
+            if m.group(1) in self.server.banner_denied:
+                self._send(403, {"id": "api.context.permissions.app_error", "message": "no channel-management permission"})
+                return
             body = self._body()
             if body is None:
                 self._send(400, {"id": "api.context.invalid_body_param.app_error", "message": "invalid json"})
                 return
-            self.server.banners[m.group(1)] = {
-                "channel_id": m.group(1),
-                "text": body.get("text", ""),
-                "color": body.get("color", ""),
-            }
-            self._send(200, dict(self.server.banners[m.group(1)]))
+            info = body.get("banner_info")
+            if isinstance(info, dict):
+                self.server.banners[m.group(1)] = {
+                    "channel_id": m.group(1),
+                    "text": info.get("text", ""),
+                    "color": info.get("color", ""),
+                }
+                self._send(200, {"id": m.group(1), "banner_info": dict(info)})
+            else:
+                self._send(200, {"id": m.group(1)})
             return
         self._send(404, {"id": "api.context.404.app_error", "message": "not found"})
 
@@ -291,6 +301,19 @@ class Handler(BaseHTTPRequestHandler):
             self.server.reset()
             self._send(200, {"status": "reset"})
             return
+        if path == "/debug/banner-deny":
+            body = self._body() or {}
+            channel_id = body.get("channel_id", "")
+            if channel_id:
+                self.server.banner_denied.add(channel_id)
+            self._send(200, {"denied": sorted(self.server.banner_denied)})
+            return
+        if path == "/debug/banner-allow":
+            body = self._body() or {}
+            channel_id = body.get("channel_id", "")
+            self.server.banner_denied.discard(channel_id)
+            self._send(200, {"denied": sorted(self.server.banner_denied)})
+            return
         if path == "/debug/click":
             self._click()
             return
@@ -378,6 +401,7 @@ class Server(ThreadingHTTPServer):
         self.channel_names = {}
         self.action_calls = []
         self.banners = {}
+        self.banner_denied = set()
         # next_post_id deliberately survives: see __init__.
         # The client's resolveChannel lists bot team memberships BEFORE any
         # post exists, so the default team must survive /debug/reset.

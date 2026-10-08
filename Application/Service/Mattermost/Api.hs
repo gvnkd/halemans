@@ -5,6 +5,7 @@ module Application.Service.Mattermost.Api (
     patchPost,
     deletePost,
     putBanner,
+    BannerPutResult (..),
     resolveChannel,
     getMe,
     channelPosts,
@@ -160,15 +161,42 @@ testConnection config =
   where
     username body = fromMaybe "" (parseMaybe (Aeson.withObject "user" (\o -> o Aeson..: "username")) body)
 
--- | Set the channel banner (MM 10.9+): a single text line + bar color shown
--- above the channel post list. The bot needs channel-management permission;
--- a 403 comes back as Left so the caller surfaces/skip-reasons it like the
--- other banner refresh failures.
-putBanner :: MattermostConfig -> Text -> Text -> Text -> IO (Either Text ())
-putBanner config channelId text color =
-    fmap void (putJson config ("/api/v4/channels/" <> channelId <> "/banner") payload)
+-- | Set the channel banner via the CHANNEL patch endpoint (verified against
+-- mm.officesvc.bz 2026-10-08: there is NO dedicated /channels/{id}/banner
+-- route — it 404s; the banner is a channel field updated through
+-- /channels/{id}/patch as {"banner_info": {...}}). The banner shows a
+-- single markdown text line + bar color above the channel post list. The
+-- result distinguishes a DENIED response (403 = the bot lacks
+-- channel-management permission, 404 = the server has no banner
+-- support/feature) from retryable failures: a denial never fixes itself by
+-- retrying, so the caller soft-skips it instead of burning the job's
+-- attempts.
+data BannerPutResult
+    = BannerPutOk
+    | BannerPutDenied
+    | BannerPutError Text
+    deriving (Eq, Show)
+
+putBanner :: MattermostConfig -> Text -> Text -> Text -> IO BannerPutResult
+putBanner config channelId text color = do
+    outcome <- try (Http.putFollowing (mmOpts config) (cs url) payload)
+    pure case outcome of
+        Right _ -> BannerPutOk
+        Left (Http.HttpStatusError _ code)
+            | code == 403 || code == 404 -> BannerPutDenied
+            | otherwise -> BannerPutError ("mattermost: set banner failed with HTTP " <> tshow code)
+        Left exception -> BannerPutError (cs (displayException exception))
   where
-    payload = Aeson.object ["text" .= text, "color" .= color]
+    url = config.mmBaseUrl <> "/api/v4/channels/" <> channelId <> "/patch"
+    payload =
+        Aeson.object
+            [ "banner_info"
+                .= Aeson.object
+                    [ "text" .= text
+                    , "color" .= color
+                    , "dismissible" .= False
+                    ]
+            ]
 
 -- | Delete a post (the deleteOnClose terminal-state path). The bot can only-- delete its OWN posts, which is exactly what the notification channel
 -- creates. A 404 (post already gone) is treated as success — the desired
