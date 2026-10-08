@@ -7,10 +7,12 @@ import Application.Service.ProvisionExport (buildProvisionExport, renderProvisio
 import Application.Service.PurgeAlerts (purgeAllAlerts)
 import Control.Monad (void)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Text as Text
 import Data.Time.Clock (getCurrentTime)
 import IHP.ControllerSupport (respondAndExit)
 import Network.HTTP.Types (status200)
 import Network.Wai (responseLBS)
+import System.IO (hFlush, stdout)
 import Web.Controller.Prelude
 import Web.View.Admin.Database
 import Web.View.Admin.Index
@@ -55,18 +57,26 @@ instance Controller AdminController where
     action AdminPurgeResolvedMattermostAction = do
         requirePrivilege "admin"
         summary <- purgeResolvedMattermostPosts
+        -- The first reasons go straight into the flash — operators must not
+        -- need log access to see WHY a target was skipped.
+        let reasons = Text.intercalate " | " (take 2 summary.pmsErrors)
+            detail = if Text.null reasons then "" else " — " <> reasons
         setSuccessMessage
-            ( trp
-                "Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept, {targets} targets failed"
-                [ ("purged", tshow summary.pmsPurged)
-                , ("failed", tshow summary.pmsFailed)
-                , ("untracked", tshow summary.pmsUntracked)
-                , ("kept", tshow summary.pmsKeptActive)
-                , ("targets", tshow summary.pmsTargetsFailed)
-                ]
+            ( ( trp
+                    "Mattermost purge: {purged} deleted, {failed} failed, {untracked} untracked left, {kept} active kept, {targets} targets failed"
+                    [ ("purged", tshow summary.pmsPurged)
+                    , ("failed", tshow summary.pmsFailed)
+                    , ("untracked", tshow summary.pmsUntracked)
+                    , ("kept", tshow summary.pmsKeptActive)
+                    , ("targets", tshow summary.pmsTargetsFailed)
+                    ]
+              )
+                <> detail
             )
-        -- Full skip reasons go to the app log; the flash only carries counts.
+        -- Full skip reasons also go to the app log (stdout is block-buffered
+        -- under docker, hence the explicit flush).
         mapM_ (\err -> putStrLn ("mattermost purge: " <> err)) (take 10 summary.pmsErrors)
+        hFlush stdout
         redirectTo AdminAction
     action AdminDatabaseAction = do
         requirePrivilege "admin"
