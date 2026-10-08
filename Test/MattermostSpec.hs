@@ -12,6 +12,8 @@ import Generated.Types
 import IHP.ModelSupport (newRecord, textToId)
 import IHP.Prelude
 import Test.Hspec
+import Web.Controller.NotificationChannels (channelConfigJson)
+import Web.View.NotificationChannels.Form (knownColorKeys)
 
 mkAlert :: Text -> Text -> Alert
 mkAlert status severity =
@@ -331,3 +333,38 @@ bannerSpec = describe "Application.Service.Mattermost.Banner" do
     it "round-trips the snapshot counts JSON" do
         let counts = [("critical", BannerCounts 5 3), ("warning", BannerCounts 0 0)]
         parseCounts (countsJson counts) `shouldBe` counts
+
+channelFormSpec :: Spec
+channelFormSpec = describe "Web.Controller.NotificationChannels.channelConfigJson" do
+    let base = Aeson.object ["custom" Aeson..= Aeson.String "kept", "colors" Aeson..= Aeson.object ["night" Aeson..= Aeson.String "#000000", "critical" Aeson..= Aeson.String "#111111"]]
+        configKey key value = parseMaybe (Aeson.withObject "config" (\o -> o Aeson..: key)) value :: Maybe Aeson.Value
+
+    it "writes banner + trend minutes and preserves unknown config keys" do
+        let result = channelConfigJson base "MATTERMOST_TOKEN" True False True (Just 60) [(key, "") | key <- knownColorKeys]
+        configKey "banner" result `shouldBe` Just (Aeson.Bool True)
+        configKey "bannerTrendMinutes" result `shouldBe` Just (Aeson.Number 60)
+        configKey "custom" result `shouldBe` Just (Aeson.String "kept")
+        configKey "tokenEnv" result `shouldBe` Just (Aeson.String "MATTERMOST_TOKEN")
+
+    it "turning banner off writes banner:false and drops a stored trend window" do
+        let withWindow = channelConfigJson base "MATTERMOST_TOKEN" True False True (Just 60) [(key, "") | key <- knownColorKeys]
+            result = channelConfigJson withWindow "MATTERMOST_TOKEN" True False False Nothing [(key, "") | key <- knownColorKeys]
+        configKey "banner" result `shouldBe` Just (Aeson.Bool False)
+        configKey "bannerTrendMinutes" result `shouldBe` Nothing
+
+    it "omits an explicit default trend window" do
+        let result = channelConfigJson (Aeson.object []) "MATTERMOST_TOKEN" True False True (Just 30) [(key, "") | key <- knownColorKeys]
+        configKey "bannerTrendMinutes" result `shouldBe` Nothing
+
+    it "merges form colors over stored ones, dropping empties and keeping unknown keys" do
+        let result = channelConfigJson base "MATTERMOST_TOKEN" True False False Nothing [("critical", "#E5484D"), ("high", ""), ("warning", "#F7B500")]
+            colors = configKey "colors" result
+        (parseMaybe (Aeson.withObject "colors" (\o -> o Aeson..: "critical")) =<< colors) `shouldBe` (Just "#E5484D" :: Maybe Text)
+        (parseMaybe (Aeson.withObject "colors" (\o -> o Aeson..: "warning")) =<< colors) `shouldBe` (Just "#F7B500" :: Maybe Text)
+        (parseMaybe (Aeson.withObject "colors" (\o -> o Aeson..: "night")) =<< colors) `shouldBe` (Just "#000000" :: Maybe Text)
+        (parseMaybe (Aeson.withObject "colors" (\o -> o Aeson..:? "high" Aeson..!= "")) =<< colors) `shouldBe` Just ("" :: Text)
+
+    it "drops the colors object entirely when every form input is empty and nothing unknown remains" do
+        let plain = Aeson.object ["colors" Aeson..= Aeson.object ["critical" Aeson..= Aeson.String "#111111"]]
+            result = channelConfigJson plain "MATTERMOST_TOKEN" True False False Nothing [(key, "") | key <- knownColorKeys]
+        configKey "colors" result `shouldBe` Nothing

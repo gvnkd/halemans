@@ -8,8 +8,10 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Text as Text
 import System.IO (hFlush, stdout)
+import Text.Read (readMaybe)
 import Web.Controller.Prelude
 import Web.View.NotificationChannels.Edit
+import Web.View.NotificationChannels.Form (knownColorKeys)
 import Web.View.NotificationChannels.Index
 import Web.View.NotificationChannels.New
 
@@ -165,20 +167,30 @@ channelFromForm name channel =
         |> set #name name
         |> set #type_ (param @Text "type")
         |> set #baseUrl (Text.strip (param @Text "baseUrl"))
-        |> set #config (channelConfigJson (configOf channel) (param @Text "tokenEnv") ackEnabled deleteOnClose)
+        |> set #config (channelConfigJson (configOf channel) (param @Text "tokenEnv") ackEnabled deleteOnClose bannerEnabled bannerTrendMinutes colorInputs)
         |> set #enabled (paramOrNothing @Text "enabled" == Just "on")
   where
-    -- Unchecked = the key is ABSENT from config (absence means "enabled",
-    -- matching ackActionEnabledFromJson's default).
+    -- Unchecked = the key is ABSENT in config for ackAction (absence means
+    -- "enabled"); banner/deleteOnClose are written explicitly so a UI save
+    -- can turn off a provisioned/hand-set true.
     ackEnabled = paramOrNothing @Text "ackAction" == Just "on"
-    -- Same convention: absence means False (deleteOnCloseEnabledFromJson's
-    -- default), so the managed key is only written when checked.
     deleteOnClose = paramOrNothing @Text "deleteOnClose" == Just "on"
+    bannerEnabled = paramOrNothing @Text "banner" == Just "on"
+    -- Absent/invalid/min < 1 falls back to the built-in default; an explicit
+    -- default (30) is not stored.
+    bannerTrendMinutes = case readMaybe (cs (param @Text "bannerTrendMinutes")) of
+        Just minutes | minutes >= (1 :: Int) -> Just minutes
+        _ -> Nothing
+    colorInputs = [(key, Text.strip (param @Text (cs ("color_" <> key)))) | key <- knownColorKeys]
 
 -- | Form-managed keys overlay the existing config so provisioned/hand-set
--- keys (colors, future keys) survive a UI edit (sourceConfig pattern).
-channelConfigJson :: Value -> Text -> Bool -> Bool -> Value
-channelConfigJson base tokenEnv ackEnabled deleteOnClose =
+-- UNKNOWN keys survive a UI edit (sourceConfig pattern). The managed set:
+-- tokenEnv, ackAction, deleteOnClose, banner, bannerTrendMinutes, colors.
+-- Colors: known keys take the form values (empty = drop the override),
+-- unknown extra color keys are preserved; an all-empty result drops the
+-- "colors" object entirely.
+channelConfigJson :: Value -> Text -> Bool -> Bool -> Bool -> Maybe Int -> [(Text, Text)] -> Value
+channelConfigJson base tokenEnv ackEnabled deleteOnClose bannerEnabled bannerTrendMinutes colorInputs =
     Aeson.Object (extra <> managed)
   where
     managed =
@@ -186,11 +198,22 @@ channelConfigJson base tokenEnv ackEnabled deleteOnClose =
             ( ["tokenEnv" .= tokenEnv | tokenEnv /= ""]
                 <> ["ackAction" .= False | not ackEnabled]
                 <> ["deleteOnClose" .= True | deleteOnClose]
+                <> ["banner" .= bannerEnabled]
+                <> ["bannerTrendMinutes" .= minutes | bannerEnabled, Just minutes <- [bannerTrendMinutes], minutes /= 30]
+                <> ["colors" .= Aeson.Object newColors | not (KeyMap.null newColors)]
             )
-    managedKeys = ["tokenEnv", "ackAction", "deleteOnClose"]
+    managedKeys = ["tokenEnv", "ackAction", "deleteOnClose", "banner", "bannerTrendMinutes", "colors"]
     extra = case base of
         Aeson.Object object_ -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) object_
         _ -> mempty
+    oldColors = case base of
+        Aeson.Object object_ -> case KeyMap.lookup "colors" object_ of
+            Just (Aeson.Object colors) -> colors
+            _ -> mempty
+        _ -> mempty
+    newColors =
+        KeyMap.fromList [Key.fromText key .= value | (key, value) <- colorInputs, value /= ""]
+            <> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` map fst colorInputs) oldColors
 
 configOf :: NotificationChannel -> Value
 configOf = get #config

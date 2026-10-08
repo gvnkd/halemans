@@ -81,6 +81,7 @@ main = hspec do
     Test.MattermostSpec.targetSpec
     Test.MattermostSpec.usernameSpec
     Test.MattermostSpec.bannerSpec
+    Test.MattermostSpec.channelFormSpec
     Test.MetricChartSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec
