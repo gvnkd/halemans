@@ -2,7 +2,7 @@ module Application.Job.AutoClose where
 
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, publishAlertUpdate, transitionAlert)
-import Application.Job.PollZabbix (resolveDisabledOnZabbix, triggerIdOf)
+import Application.Job.PollZabbix (configInt, resolveDisabledOnZabbix, triggerIdOf)
 import Application.Pipeline.Actions (autoCloseAlert, stallAlert, unackAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.Log (logDebug, logInfo, logWarn)
@@ -91,22 +91,44 @@ autoCloseResolved = do
 -- removed grafana rule, dead webhook). Alerts of a source with consecutive
 -- poll failures are SKIPPED — a dead source must not mass-stall its alerts;
 -- the source-health alert already covers that outage.
+--
+-- The effective TTL is per alert: a positive "stallSeconds" annotation on
+-- the alert row wins, then the source's config "stallSeconds", then the
+-- HALEMANS_STALL_SECONDS default — so a source whose checks only fire every
+-- few hours is not aged out between runs.
 stallStaleAlerts :: (?modelContext :: ModelContext) => IO ()
 stallStaleAlerts = do
-    ttlSeconds <- stallTtlSeconds
+    fallbackTtl <- stallTtlSeconds
     now <- getCurrentTime
-    let cutoff = addUTCTime (fromIntegral (-ttlSeconds)) now
     stale <-
         query @Alert
             |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
             |> fetch
     sources <- query @Source |> fetch
     let failing = Set.fromList [get #id source | source <- sources, source.consecutiveFailures > 0]
+        sourceById = Map.fromList [(get #id source, source) | source <- sources]
         overdue alert =
-            alert.lastSeenAt < cutoff
-                && maybe True (\sourceId -> Set.notMember sourceId failing) alert.sourceId
+            let cutoff = addUTCTime (fromIntegral (negate (alertStallSeconds fallbackTtl sourceById alert))) now
+             in alert.lastSeenAt < cutoff
+                    && maybe True (\sourceId -> Set.notMember sourceId failing) alert.sourceId
     forM_ (filter overdue stale) \alert ->
         void (stallAlert alert "no update from source within stall TTL")
+
+-- | alert.annotations "stallSeconds" (int) > source.config "stallSeconds" >
+-- env default.
+alertStallSeconds :: Int -> Map (Id Source) Source -> Alert -> Int
+alertStallSeconds fallback sourceById alert =
+    case annotationStallSeconds alert of
+        Just secs | secs > 0 -> secs
+        _ -> maybe fallback (configInt fallback "stallSeconds") (alert.sourceId >>= (`Map.lookup` sourceById))
+
+annotationStallSeconds :: Alert -> Maybe Int
+annotationStallSeconds alert = asNumber <|> asText
+  where
+    asNumber = parseMaybe (Aeson.withObject "alert.annotations" (\o -> o Aeson..: "stallSeconds")) alert.annotations
+    asText = do
+        txt <- parseMaybe (Aeson.withObject "alert.annotations" (\o -> o Aeson..: "stallSeconds")) alert.annotations :: Maybe Text
+        readMaybe (cs txt)
 
 -- | Stalled zabbix alerts whose trigger is STILL in problem state are
 -- refired back to firing. A standing problem produces no new events for

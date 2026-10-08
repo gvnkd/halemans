@@ -209,6 +209,16 @@ Cursor-based polling only ever returns *new* events, so an OK event missed while
 - `absentResolveMinAgeSeconds` — a trigger *missing* from `trigger.get` (deleted, or invisible to the token) resolves the local alert only when the alert is older than this; guards against token permission gaps hiding triggers.
 - `eventPageLimit` — `event.get` page size; catch-up after an outage pages until a short page, so no events are skipped.
 
+## Stall timeout tuning
+
+A firing/ack alert whose `last_seen_at` ages past the stall TTL is marked `stalled` (AutoClose job, every 300s). The effective TTL is resolved per alert, most specific wins:
+
+1. **`stallSeconds` annotation on the alert** (sent by the source with the alert payload, e.g. in the webhook/Alertmanager `annotations` object) — for one-off overrides.
+2. **`stallSeconds` in the source's `config` JSON** — for sources whose checks only fire every few hours (`{"stallSeconds": 10800}` for a 3-hour check cycle).
+3. `HALEMANS_STALL_SECONDS` env (default 6h).
+
+Non-positive or unparsable values fall through to the next level. Stalled alerts auto-close after `HALEMANS_STALLED_CLOSE_SECONDS` (default 3 days, unchanged by this override).
+
 ## Integrations (Jira / Confluence)
 
 Jira and Confluence are context integrations, not alert sources. Connections are managed in **Admin → Integrations** (`jira_configs` / `cmdb_configs` tables) or provisioned via the `jiraConfigs` / `cmdbConfigs` sections of `provision.json`:

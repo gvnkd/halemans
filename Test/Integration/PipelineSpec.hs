@@ -468,6 +468,29 @@ m1Spec = describe "alert pipeline (milestone 1)" do
         alert <- fetch alertId
         alert.status `shouldBe` "firing"
 
+    it "source config stallSeconds overrides the default stall TTL" do
+        suffix <- tshow <$> nextRandom
+        slow <- integrationSource "webhook" ("stall-slow-" <> suffix) "" (object ["stallSeconds" .= (100000 :: Int)])
+        fp <- freshFingerprint
+        Just alertId <- ingest slow (testEvent fp Firing)
+        let alertUuid = unpackId alertId
+        void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = NOW() - INTERVAL '7 hours' WHERE id = ${alertUuid} |])
+        stallStaleAlerts
+        alert <- fetch alertId
+        alert.status `shouldBe` "firing"
+
+    it "alert annotation stallSeconds overrides the default TTL" do
+        source <- testSource
+        fp <- freshFingerprint
+        Just alertId <- ingest source ((testEvent fp Firing){annotations = object ["stallSeconds" .= (60 :: Int)]})
+        let alertUuid = unpackId alertId
+        void (sqlExecTyped [typedSql| UPDATE alerts SET last_seen_at = NOW() - INTERVAL '2 minutes' WHERE id = ${alertUuid} |])
+        stallStaleAlerts
+        alert <- fetch alertId
+        alert.status `shouldBe` "stalled"
+        events <- eventKinds alertId
+        events `shouldSatisfy` ("stalled" `elem`)
+
     it "resolved alerts auto-close after the resolved TTL" do
         source <- testSource
         fp <- freshFingerprint

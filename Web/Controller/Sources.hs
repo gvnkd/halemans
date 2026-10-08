@@ -122,8 +122,8 @@ instance Controller SourcesController where
 -- Form-managed keys are overlaid on the EXISTING config: keys the form
 -- doesn't know (provisioned or hand-set, e.g. reconcileGraceSeconds /
 -- reconcileIntervalSeconds / absentResolveMinAgeSeconds / eventPageLimit /
--- reconcileResolved / expectedIntervalSeconds / hostGroupsFile) survive a
--- UI edit.
+-- reconcileResolved / expectedIntervalSeconds / stallSeconds /
+-- hostGroupsFile) survive a UI edit.
 sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> [Text] -> [Text] -> Maybe Int -> Text -> Aeson.Value
 sourceConfig base tokenEnv writeBack jiraWritable cmdbSpaces jiraProjects historyDays scope =
     Aeson.Object (extra <> managed)
