@@ -2,7 +2,7 @@ module Application.Job.AutoClose where
 
 import qualified Application.Connector.Zabbix as Zabbix
 import Application.Helper.Ingest (SourceStatus (..), fetchActiveBlackouts, publishAlertUpdate, transitionAlert)
-import Application.Job.Mattermost (enqueueBannerRefreshes)
+import Application.Job.Mattermost (enqueueBannerRefreshes, enqueueRefireCards)
 import Application.Job.PollZabbix (configInt, resolveDisabledOnZabbix, triggerIdOf)
 import Application.Pipeline.Actions (autoCloseAlert, stallAlert, unackAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
@@ -266,4 +266,9 @@ unsuppressExpired = do
                     |> set #userId Nothing
                     |> set #kind "unsuppressed"
                     |> createRecord
+            -- The alert stayed suppressed through its Expose (dispatch
+            -- skipped), so it may never have gotten a channel card — now
+            -- that it is visible again, restore it (dedupes onto sync
+            -- when a card already exists).
+            enqueueRefireCards updated
             publishAlertUpdate updated "unsuppressed"

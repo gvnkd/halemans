@@ -1,6 +1,7 @@
 module Test.Integration.MattermostSpec (spec) where
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
+import Application.Job.AutoClose (unsuppressExpired)
 import Application.Job.Mattermost (enqueueMissingCards)
 import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
@@ -305,6 +306,57 @@ spec = describe "Mattermost notification channel" do
             cardPost <- expectOne [p | p <- posts, postId p == rootPostId card]
             postMessage cardPost `shouldBe` "[FIRING] integration test alert"
             query @MattermostPost |> filterWhere (#alertId, unmatchedId) |> fetch >>= shouldBe []
+
+    it "a blackout-suppressed alert gets no mattermost card, and is carded when the blackout lifts" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-blackout-card-env-" <> suffix
+            channelName = "mm-blackout-card-chan-" <> suffix
+            alertTitle = "mm-blackout-card-alert " <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-blackout-card-rule-" <> suffix) channelName envName
+            now <- getCurrentTime
+            blackout <-
+                newRecord @Blackout
+                    |> set #titleGlob (Just alertTitle)
+                    |> set #startsAt (addUTCTime (-60) now)
+                    |> set #endsAt (addUTCTime 3600 now)
+                    |> set #reason "itest blackout card gate"
+                    |> createRecord
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning", title = alertTitle})
+            alert <- fetch alertId
+            alert.suppressed `shouldBe` True
+            let notifyJobsFor = query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch
+            -- expose: dispatch is skipped for suppressed alerts
+            exposeFor alertId
+            null <$> notifyJobsFor `shouldReturn` True
+            -- refire while still blacked out: no card restoration either
+            void (ingest source ((testEventIn envName fp Resolved){severity = "warning", title = alertTitle}))
+            void (ingest source ((testEventIn envName fp Firing){severity = "warning", title = alertTitle}))
+            null <$> notifyJobsFor `shouldReturn` True
+            null <$> mockPosts `shouldReturn` True
+            -- belt and braces: a notify job landing while suppressed posts nothing
+            void do
+                newRecord @MattermostJob
+                    |> set #alertId (Just alertId)
+                    |> set #kind ("notify" :: Text)
+                    |> createRecord
+            staleJob <- expectOne =<< notifyJobsFor
+            perform staleJob
+            null <$> mockPosts `shouldReturn` True
+            -- the blackout lifts: the unsuppress sweep cards the now-visible
+            -- alert (id-diff: the stale suppressed-time job sits beside it)
+            deleteRecord blackout
+            unsuppressExpired
+            afterUnsuppress <- notifyJobsFor
+            refireJob <- expectOne [job | job <- afterUnsuppress, get #id job /= get #id staleJob]
+            perform refireJob
+            card <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
+            posts <- mockPosts
+            cardPost <- expectOne [p | p <- posts, postId p == rootPostId card]
+            postMessage cardPost `shouldBe` "[FIRING] " <> alertTitle
 
     it "admin purge walks the channel and deletes only resolved alerts' bot root posts" do
         suffix <- tshow <$> nextRandom

@@ -108,10 +108,14 @@ enqueueNotify alert rule =
 -- resolving and refiring. Re-enqueue the initial delivery for the alert's
 -- matching mattermost rules; deliverNotify dedupes onto a plain sync when
 -- a post still exists, so repeated refires are harmless.
+-- SUPPRESSED alerts are skipped entirely: a blackout/source-muted alert
+-- must never get a fresh card (the expose path gates on the same flag);
+-- an existing card still receives its refire patch through the regular
+-- publishAlertUpdate sync fan-out.
 -- The dispatch predicates are the leaf RuleMatch ones (Notify itself
 -- cannot be imported here — it imports this module).
 enqueueRefireCards :: (?modelContext :: ModelContext) => Alert -> IO ()
-enqueueRefireCards alert = do
+enqueueRefireCards alert = unless alert.suppressed do
     rules <-
         query @NotificationRule
             |> filterWhere (#enabled, True)

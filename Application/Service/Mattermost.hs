@@ -177,6 +177,7 @@ deliverNotify alert rule = do
         Just _ -> syncAlertPosts alert
         Nothing
             | isTerminalStatus (statusSnapshot alert) -> pure (Right ())
+            | alert.suppressed -> pure (Right ())
             | otherwise -> do
                 configOrNothing <- mattermostConfigForRule rule
                 case configOrNothing of
