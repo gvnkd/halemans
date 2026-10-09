@@ -193,6 +193,49 @@ spec = describe "Mattermost notification channel" do
             remainingRows <- query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
             remainingRows `shouldBe` []
 
+    it "a refire after deleteOnClose removed the card re-delivers a fresh card" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-refire-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRuleWithConfig ("mm-refire-rule-" <> suffix) ("mm-refire-chan-" <> suffix) envName (Aeson.object ["deleteOnClose" Aeson..= Aeson.Bool True])
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            exposeFor alertId
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob
+            posts <- mockPosts
+            (root, _reply) <- expectRootAndReply posts
+
+            -- resolve: deleteOnClose deletes the root post + drops the row
+            -- (the resolve dispatch also enqueues a notify job; it syncs
+            -- through deliverNotify and performs the same delete)
+            let notifyJobsFor = query @MattermostJob |> filterWhere (#alertId, Just alertId) |> filterWhere (#kind, "notify" :: Text) |> fetch
+            before <- notifyJobsFor
+            void (ingest source ((testEventIn envName fp Resolved){severity = "warning"}))
+            mid <- notifyJobsFor
+            forM_ [job | job <- mid, get #id job `notElem` map (get #id) before] perform
+            postsAfterResolve <- mockPosts
+            [postId p | p <- postsAfterResolve, postId p == postId root] `shouldBe` []
+            query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch >>= shouldBe []
+
+            -- refire: the row is gone, so a sync would no-op — the
+            -- transition must enqueue a fresh notify instead
+            void (ingest source ((testEventIn envName fp Firing){severity = "warning"}))
+            after <- notifyJobsFor
+            refireNotifyJob <- expectOne [job | job <- after, get #id job `notElem` map (get #id) mid]
+            perform refireNotifyJob
+            postsAfterRefire <- mockPosts
+            -- /debug/posts is insertion order: the original details reply
+            -- (orphaned when the root was deleted) comes before the fresh
+            -- root — pick the root by predicate, not position
+            freshRoot <- expectOne [p | p <- postsAfterRefire, postRootId p == ""]
+            postId freshRoot `shouldNotBe` postId root
+            postMessage freshRoot `shouldBe` "[FIRING] integration test alert"
+            row <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
+            row.rootPostId `shouldBe` postId freshRoot
+
     it "admin purge walks the channel and deletes only resolved alerts' bot root posts" do
         suffix <- tshow <$> nextRandom
         let envName = "mm-purge-env-" <> suffix
@@ -693,6 +736,22 @@ spec = describe "Mattermost notification channel" do
             fp2 <- freshFingerprint
             Just warnAlertId <- ingest source ((testEventIn envName fp2 Firing){severity = "warning"})
             exposeFor warnAlertId
+            refreshChannelBanner channelName `shouldReturn` Right BannerRefreshed
+            banner <- expectOne =<< mockBanners
+            bannerText banner `shouldBe` "🔴 crit 0 (0)➖ · 🟠 high 0 (0)➖ · 🟡 warn 1 (0)➖ · 🔵 info 0 (0)➖"
+
+    it "banner counts stalled alerts as active" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-banner-stall-env-" <> suffix
+            channelName = "mm-banner-stall-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRuleWithConfig ("mm-banner-stall-rule-" <> suffix) channelName envName (Aeson.object ["banner" Aeson..= Aeson.Bool True])
+            source <- testSource
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            alert <- fetch alertId
+            _ <- alert |> set #status "stalled" |> updateRecord
             refreshChannelBanner channelName `shouldReturn` Right BannerRefreshed
             banner <- expectOne =<< mockBanners
             bannerText banner `shouldBe` "🔴 crit 0 (0)➖ · 🟠 high 0 (0)➖ · 🟡 warn 1 (0)➖ · 🔵 info 0 (0)➖"

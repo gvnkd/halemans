@@ -140,7 +140,12 @@ instance Controller AlertsController where
             -- page would be confusing.
             let effFilters = filters{alfPage = min filters.alfPage (pageCountFor total filters.alfPageSize)}
             alerts <- AlertList.listAlerts effFilters scope
-            counts <- AlertList.countBySeverity effFilters scope
+            -- Severity badges: per-severity totals under the current
+            -- filter EXCLUDING the severity selection itself — a clicked
+            -- severity narrows the list, but every badge keeps showing its
+            -- own would-be count (a badge zeroing out because its severity
+            -- is not selected reads as "nothing there").
+            counts <- AlertList.countBySeverity effFilters{alfSeverities = []} scope
             -- Filter options: inventory names plus override-only names
             -- that exist solely as materialized env facets.
             inventoryNames <- map (.name) <$> (query @Environment |> orderByAsc #name |> fetch)

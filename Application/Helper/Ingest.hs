@@ -10,7 +10,7 @@ module Application.Helper.Ingest (
     publishAlertUpdate,
 ) where
 
-import Application.Job.Mattermost (enqueueBannerRefreshes, enqueueSyncIfPosted)
+import Application.Job.Mattermost (enqueueBannerRefreshes, enqueueRefireCards, enqueueSyncIfPosted)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText)
 import Application.Pipeline.StateMachine (AlertState, Transition (..), Trigger (..))
@@ -214,6 +214,16 @@ transitionAlert now sourceStatus eventEnv environmentRef hostRef serviceRef supp
         cancelTrackersFor (get #id alert)
         unless suppressedNow do
             void (dispatchNotification updated)
+    -- Refire after a terminal/idle period: the card may have been deleted
+    -- while resolved (deleteOnClose) or purged while stalled, and refires
+    -- never dispatch — restore the mattermost cards (deduped in
+    -- deliverNotify when a post still exists).
+    when
+        ( transition.applied
+            && transition.to == SM.Firing
+            && transition.from `elem` [SM.Resolved, SM.Stalled]
+        )
+        (enqueueRefireCards updated)
     publishAlertUpdate updated transition.eventKind
     pure updated
 

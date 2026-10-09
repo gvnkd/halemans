@@ -39,7 +39,8 @@ import System.IO (hFlush, stdout)
 
 -- Mattermost channel banner statistics. For every notification channel row
 -- with config "banner": true, the worker refreshes the MM channel banner
--- with the counts of ACTIVE (firing/ack) alerts matched by the channel's
+-- with the counts of ACTIVE (firing/ack/stalled — the statuses whose cards
+-- live in the channel; stalled alerts are still open problems) matched by the channel's
 -- rules (severity threshold + match expression + team host-group scope — the
 -- exact dispatch predicates, via Application.Service.RuleMatch), firing and
 -- acked shown as total (acked). Per-severity trend arrows compare against
@@ -258,7 +259,7 @@ refreshWithConfig channel config = do
             -- any rule — both pushed into the query.
             active <-
                 query @Alert
-                    |> filterWhereIn (#status, ["firing", "ack"] :: [Text])
+                    |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
                     |> filterWhere (#suppressed, False)
                     |> filterWhereIn (#severity, bannerCandidateSeverities rules)
                     |> fetch

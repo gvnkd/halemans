@@ -1,6 +1,7 @@
 module Application.Job.Mattermost (
     enqueueNotify,
     enqueueSyncIfPosted,
+    enqueueRefireCards,
     enqueueBannerRefreshes,
     bannerIntervalSeconds,
 ) where
@@ -8,10 +9,11 @@ module Application.Job.Mattermost (
 import Application.Service.Mattermost (deliverNotify, syncAlertPosts)
 import Application.Service.Mattermost.Banner (BannerOutcome (..), bannerChannelEnabled, bannerEnabledChannels, refreshChannelBanner)
 import qualified Application.Service.Mattermost.Render as Render
+import Application.Service.RuleMatch (ruleInScope, ruleMatches)
 import Control.Monad (void, when)
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Generated.Types
-import IHP.Fetch (fetch)
+import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.Job.Types
 import IHP.ModelSupport
 import IHP.Prelude
@@ -96,6 +98,35 @@ enqueueNotify alert rule =
             |> set #ruleId (Just (get #id rule))
             |> set #kind ("notify" :: Text)
             |> createRecord
+
+-- | Card restoration on refire. Refires deliberately do not dispatch
+-- notifications (a refire is not a new alert), and enqueueSyncIfPosted
+-- no-ops when the alert has no posts — so an alert whose mattermost_posts
+-- rows were dropped while it was terminal (deleteOnClose deleting the
+-- post on resolve, or an admin purge) would stay cardless forever after
+-- resolving and refiring. Re-enqueue the initial delivery for the alert's
+-- matching mattermost rules; deliverNotify dedupes onto a plain sync when
+-- a post still exists, so repeated refires are harmless.
+-- The dispatch predicates are the leaf RuleMatch ones (Notify itself
+-- cannot be imported here — it imports this module).
+enqueueRefireCards :: (?modelContext :: ModelContext) => Alert -> IO ()
+enqueueRefireCards alert = do
+    rules <-
+        query @NotificationRule
+            |> filterWhere (#enabled, True)
+            |> fetch
+    forM_ rules \rule -> do
+        channelOrNothing <-
+            query @NotificationChannel
+                |> filterWhere (#name, rule.channel)
+                |> fetchOneOrNothing
+        case channelOrNothing of
+            Just channel
+                | channel.enabled
+                , channel.type_ == "mattermost"
+                , ruleMatches alert rule ->
+                    ruleInScope alert rule >>= \inScope -> when inScope (enqueueNotify alert rule)
+            _ -> pure ()
 
 -- | Called from the ingest fan-out (publishAlertUpdate) on every alert
 -- transition: only state-changing kinds sync, and only when the alert
