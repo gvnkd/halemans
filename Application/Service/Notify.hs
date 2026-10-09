@@ -28,7 +28,10 @@ import Text.Read (readMaybe)
 -- the milestone-1 simplified dispatch. All matching enabled rules fire (union
 -- of targets), each throttled per (rule, fingerprint) for standalone alerts
 -- and per (rule, group_key) for grouped ones (group notifications replace
--- per-alert ones, §6).
+-- per-alert ones, §6) — EXCEPT rules delivering to mattermost: the channel
+-- card is per alert (Sergey, 2026-10-09: no sane grouping policy yet), so a
+-- grouped member throttled out of the human notification still gets its own
+-- card. The throttle stays for browser_push/email.
 
 -- | Dev override for rule throttles (HALEMANS_NOTIFY_MIN_INTERVAL_SECONDS).
 -- When unset, each rule's own throttle_seconds applies.
@@ -48,9 +51,25 @@ dispatchNotification alert = do
             |> fetch
     let matching = filter (ruleMatches alert) rules
     inScope <- filterM (ruleInScope alert) matching
-    fired <- filterM (fmap not . throttled alert) inScope
+    fired <- filterM (firesDespiteThrottle alert) inScope
     forM_ fired (fireRule alert)
     pure (not (null fired))
+
+-- | The group throttle paces re-paging humans; a mattermost rule always
+-- fires so every alert owns a channel card (the banner and /alerts count
+-- per alert, a card per group notification was the 14-cards-vs-8 gap).
+-- A disabled/absent mattermost channel is dropped here too — fireRule would
+-- no-op anyway, and skipping keeps the phantom 'notified' event away.
+firesDespiteThrottle :: (?modelContext :: ModelContext) => Alert -> NotificationRule -> IO Bool
+firesDespiteThrottle alert rule = do
+    channel <-
+        query @NotificationChannel
+            |> filterWhere (#name, rule.channel)
+            |> fetchOneOrNothing
+    case channel of
+        Just c
+            | c.type_ == ("mattermost" :: Text) -> pure c.enabled
+        _ -> fmap not (throttled alert rule)
 
 -- | The rule predicates (ruleMatches/ruleInScope) live in
 -- Application.Service.RuleMatch — shared with the Mattermost channel banner,

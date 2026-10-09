@@ -2,6 +2,7 @@ module Application.Job.Mattermost (
     enqueueNotify,
     enqueueSyncIfPosted,
     enqueueRefireCards,
+    enqueueMissingCards,
     enqueueBannerRefreshes,
     bannerIntervalSeconds,
 ) where
@@ -10,7 +11,7 @@ import Application.Service.Mattermost (deliverNotify, syncAlertPosts)
 import Application.Service.Mattermost.Banner (BannerOutcome (..), bannerChannelEnabled, bannerEnabledChannels, refreshChannelBanner)
 import qualified Application.Service.Mattermost.Render as Render
 import Application.Service.RuleMatch (ruleInScope, ruleMatches)
-import Control.Monad (void, when)
+import Control.Monad (filterM, void, when)
 import Data.Time.Clock (NominalDiffTime, addUTCTime)
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
@@ -127,6 +128,47 @@ enqueueRefireCards alert = do
                 , ruleMatches alert rule ->
                     ruleInScope alert rule >>= \inScope -> when inScope (enqueueNotify alert rule)
             _ -> pure ()
+
+-- | One-shot backfill (per-channel admin action): enqueue the initial card
+-- delivery for every active, NOT suppressed alert matched by one of the
+-- channel's enabled rules whose (alert, rule) pair has no posts row —
+-- deliverNotify dedupes on exactly that pair, so this is the precise
+-- "banner counts it, the channel has no card" set. deliverNotify further
+-- dedupes onto sync when a row exists by run time, so a repeat run only
+-- costs no-op jobs. Returns the number of enqueued notify jobs.
+enqueueMissingCards :: (?modelContext :: ModelContext) => Text -> IO Int
+enqueueMissingCards channelRowName = do
+    rules <-
+        query @NotificationRule
+            |> filterWhere (#channel, channelRowName)
+            |> filterWhere (#enabled, True)
+            |> fetch
+    active <-
+        query @Alert
+            |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
+            |> filterWhere (#suppressed, False)
+            |> fetch
+    counts <- forM rules \rule -> do
+        let matched = filter (\alert -> ruleMatches alert rule) active
+        inScope <- filterM (\alert -> ruleInScope alert rule) matched
+        withoutPosts <- filterM (pairMissing rule) inScope
+        forM_ withoutPosts \alert ->
+            void do
+                newRecord @MattermostJob
+                    |> set #alertId (Just (get #id alert))
+                    |> set #ruleId (Just (get #id rule))
+                    |> set #kind ("notify" :: Text)
+                    |> createRecord
+        pure (length withoutPosts)
+    pure (sum counts)
+  where
+    pairMissing rule alert = do
+        posted <-
+            query @MattermostPost
+                |> filterWhere (#alertId, get #id alert)
+                |> filterWhere (#notificationRuleId, Just (get #id rule))
+                |> fetch
+        pure (null posted)
 
 -- | Called from the ingest fan-out (publishAlertUpdate) on every alert
 -- transition: only state-changing kinds sync, and only when the alert

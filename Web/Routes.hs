@@ -252,6 +252,7 @@ POST /admin/notification-channels/{notificationChannelId}/delete         DeleteN
 POST /admin/notification-channels/{notificationChannelId}/test           TestNotificationChannelAction
 POST /admin/notification-channels/{notificationChannelId}/purge-resolved  PurgeResolvedNotificationChannelAction
 POST /admin/notification-channels/{notificationChannelId}/purge-unrelated PurgeUnrelatedNotificationChannelAction
+POST /admin/notification-channels/{notificationChannelId}/redeliver-cards  RedeliverCardsNotificationChannelAction
 |]
 
 [routes|EscalationPoliciesController

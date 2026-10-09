@@ -1,5 +1,6 @@
 module Web.Controller.NotificationChannels where
 
+import Application.Job.Mattermost (enqueueMissingCards)
 import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel)
 import qualified Application.Service.Mattermost.Api as MattermostApi
 import Data.Aeson ((.=))
@@ -115,6 +116,16 @@ instance Controller NotificationChannelsController where
                 , ("targets", tshow summary.pmsTargetsFailed)
                 ]
             )
+        redirectTo EditNotificationChannelAction{notificationChannelId}
+    -- Danger zone (channel page): re-deliver the initial MM card for every
+    -- active unsuppressed alert matched by this channel's rules that has no
+    -- (alert, rule) posts row — the group throttle used to drop those at
+    -- expose, leaving banner-counted alerts cardless.
+    action RedeliverCardsNotificationChannelAction{notificationChannelId} = do
+        requirePrivilege "manage_rules"
+        channel <- fetch notificationChannelId
+        enqueued <- enqueueMissingCards channel.name
+        setSuccessMessage (trp "Mattermost: {count} missing card(s) re-delivered" [("count", tshow enqueued)])
         redirectTo EditNotificationChannelAction{notificationChannelId}
     -- Danger zone (channel page): delete ALL root posts in this channel's MM
     -- targets except the firing alerts' posts (terminal/stale cards AND

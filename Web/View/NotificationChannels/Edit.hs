@@ -34,5 +34,8 @@ instance View EditView where
                         <form method="POST" action={PurgeUnrelatedNotificationChannelAction channel.id} data-confirm={tr "Delete ALL root posts in this channel's Mattermost targets except the firing alerts' posts? This cannot be undone."} class="mt-2">
                             <button type="submit" class="btn btn-ghost btn-ghost-critical" data-testid="purge-mattermost-unrelated">{tr "Purge all unrelated posts"}</button>
                         </form>
+                        <form method="POST" action={RedeliverCardsNotificationChannelAction channel.id} data-confirm={tr "Post a Mattermost card for every active alert matched by this channel's rules that has none? Alerts that already have a card are untouched."} class="mt-2">
+                            <button type="submit" class="btn btn-ghost" data-testid="redeliver-mattermost-cards">{tr "Re-deliver missing Mattermost cards"}</button>
+                        </form>
                     </div></div>|]
                 else mempty

@@ -1,7 +1,7 @@
 module Test.Integration.MattermostSpec (spec) where
 
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
-import Application.Job.Mattermost ()
+import Application.Job.Mattermost (enqueueMissingCards)
 import Application.Pipeline.Actions (ackAlert)
 import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
@@ -30,7 +30,7 @@ import IHP.TypedSql (sqlExecTyped, sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv, setEnv)
 import System.Process (readProcess)
 import Test.Hspec
-import Test.Integration.Setup (exposeFor, freshFingerprint, integrationSource, m7Apply, restoreEnv, testEventIn, testSource, testUser)
+import Test.Integration.Setup (exposeFor, freshFingerprint, groupingRule, integrationSource, m7Apply, notifiedEvents, restoreEnv, testEventIn, testSource, testUser)
 
 -- Mattermost channel end-to-end against the mock (nix/mocks/mock_mattermost.py,
 -- started by checks.nix on 18088; focused local runs start it manually with
@@ -235,6 +235,76 @@ spec = describe "Mattermost notification channel" do
             postMessage freshRoot `shouldBe` "[FIRING] integration test alert"
             row <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
             row.rootPostId `shouldBe` postId freshRoot
+
+    it "a grouped member inside the throttle window still gets its own mattermost card" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-grp-card-env-" <> suffix
+            channelName = "mm-grp-card-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- groupingRule ("mm-grp-card-grp-" <> suffix) "{env}/{host}"
+            rule <- mattermostRule ("mm-grp-card-rule-" <> suffix) channelName envName
+            -- the default 300s group throttle: without the mattermost
+            -- bypass the second member's dispatch would be dropped (the
+            -- banner counts it, the channel never gets its card)
+            void (rule |> set #throttleSeconds 300 |> updateRecord)
+            source <- testSource
+            fp1 <- freshFingerprint
+            fp2 <- freshFingerprint
+            Just alertId1 <- ingest source ((testEventIn envName fp1 Firing){severity = "warning"})
+            Just alertId2 <- ingest source ((testEventIn envName fp2 Firing){severity = "warning"})
+            exposeFor alertId1
+            exposeFor alertId2
+            notified2 <- notifiedEvents alertId2
+            length notified2 `shouldBe` 1
+            notifyJobs <-
+                query @MattermostJob
+                    |> filterWhere (#kind, "notify" :: Text)
+                    |> fetch
+            let memberJobs = [job | job <- notifyJobs, job.alertId == Just alertId1 || job.alertId == Just alertId2]
+            length memberJobs `shouldBe` 2
+    -- the human-notification throttle is untouched: a push rule on
+    -- the same group still notifies once (covered in PipelineSpec)
+
+    it "redeliver backfill enqueues cards only for matched alerts without a posts row" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-redeliver-env-" <> suffix
+            otherEnvName = "mm-redeliver-other-env-" <> suffix
+            channelName = "mm-redeliver-chan-" <> suffix
+        withMattermostEnv do
+            mockReset
+            _ <- mattermostRule ("mm-redeliver-rule-" <> suffix) channelName envName
+            source <- testSource
+            -- cardless matched alert
+            fp1 <- freshFingerprint
+            Just cardlessId <- ingest source ((testEventIn envName fp1 Firing){severity = "warning"})
+            exposeFor cardlessId
+            -- cardless UNMATCHED alert (different env): must stay untouched
+            fp2 <- freshFingerprint
+            Just unmatchedId <- ingest source ((testEventIn otherEnvName fp2 Firing){severity = "warning"})
+            exposeFor unmatchedId
+            -- alert with an existing card: backfill must not duplicate it
+            fp3 <- freshFingerprint
+            Just postedId <- ingest source ((testEventIn envName fp3 Firing){severity = "warning"})
+            exposeFor postedId
+            notifyJob <- expectOne =<< (query @MattermostJob |> filterWhere (#alertId, Just postedId) |> filterWhere (#kind, "notify" :: Text) |> fetch)
+            perform notifyJob
+
+            -- the expose-time dispatch already enqueued a notify for the
+            -- cardless alert (the throttle bypass) — diff job ids to grab
+            -- the backfill's own row
+            let notifyJobsFor aid = query @MattermostJob |> filterWhere (#alertId, Just aid) |> filterWhere (#kind, "notify" :: Text) |> fetch
+            before <- notifyJobsFor cardlessId
+            enqueued <- enqueueMissingCards channelName
+            enqueued `shouldBe` 1
+            after <- notifyJobsFor cardlessId
+            backfillJob <- expectOne [job | job <- after, get #id job `notElem` map (get #id) before]
+            perform backfillJob
+            card <- expectOne =<< query @MattermostPost |> filterWhere (#alertId, cardlessId) |> fetch
+            posts <- mockPosts
+            cardPost <- expectOne [p | p <- posts, postId p == rootPostId card]
+            postMessage cardPost `shouldBe` "[FIRING] integration test alert"
+            query @MattermostPost |> filterWhere (#alertId, unmatchedId) |> fetch >>= shouldBe []
 
     it "admin purge walks the channel and deletes only resolved alerts' bot root posts" do
         suffix <- tshow <$> nextRandom

@@ -275,6 +275,7 @@ data NotificationChannelsController
     | TestNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     | PurgeResolvedNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     | PurgeUnrelatedNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
+    | RedeliverCardsNotificationChannelAction {notificationChannelId :: !(Id NotificationChannel)}
     deriving (Eq, Show)
 
 data EscalationPoliciesController
