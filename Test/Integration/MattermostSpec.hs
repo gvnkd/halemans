@@ -4,7 +4,7 @@ import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), inges
 import Application.Job.AutoClose (unsuppressExpired)
 import Application.Job.Mattermost (enqueueMissingCards)
 import Application.Pipeline.Actions (ackAlert)
-import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
+import Application.Service.Mattermost (PurgeMattermostMode (..), PurgeMattermostSummary (..), deliverNotify, purgeMattermostPostsForChannel, purgeResolvedMattermostPosts)
 import Application.Service.Mattermost.Actions (ackFromMattermost)
 import qualified Application.Service.Mattermost.Api as MM.Api
 import Application.Service.Mattermost.Banner (BannerOutcome (..), refreshChannelBanner)
@@ -86,6 +86,35 @@ spec = describe "Mattermost notification channel" do
             (rootAfterAck, _) <- expectRootAndReply postsAfterAck
             postMessage rootAfterAck `shouldBe` "[ACKED] integration test alert"
             actionNames rootAfterAck `shouldBe` []
+
+    it "concurrent same-pair notify deliveries create a single root card" do
+        suffix <- tshow <$> nextRandom
+        let envName = "mm-race-env-" <> suffix
+        withMattermostEnv do
+            mockReset
+            source <- testSource
+            rule <- mattermostRule ("mm-race-rule-" <> suffix) ("alerts-race-" <> suffix) envName
+            fp <- freshFingerprint
+            Just alertId <- ingest source ((testEventIn envName fp Firing){severity = "warning"})
+            alert <- fetch alertId
+
+            -- The worker runs up to 16 mattermost jobs concurrently and
+            -- refires enqueue a fresh notify per matching rule, so two
+            -- deliveries for the same (alert, rule) pair can race the
+            -- "no posts row yet" check and both post a root. The pair lock
+            -- makes the loser fall through to a sync: one card, one row.
+            (firstResult, secondResult) <- concurrently (deliverNotify alert rule) (deliverNotify alert rule)
+            firstResult `shouldBe` Right ()
+            secondResult `shouldBe` Right ()
+
+            posts <- mockPosts
+            (root, reply) <- expectRootAndReply posts
+            postMessage root `shouldBe` "[FIRING] integration test alert"
+            postRootId reply `shouldBe` postId root
+
+            rows <- query @MattermostPost |> filterWhere (#alertId, alertId) |> fetch
+            posted <- expectOne rows
+            posted.rootPostId `shouldBe` postId root
 
     it "renders the root card sub-parts from the status/fields/color templates and the channel colors config" do
         suffix <- tshow <$> nextRandom

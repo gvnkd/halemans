@@ -20,6 +20,7 @@ import Application.Service.Http (statusCodeOfError)
 import Application.Service.Mattermost.Api (MattermostConfig)
 import qualified Application.Service.Mattermost.Api as Api
 import Application.Service.Mattermost.Render (MattermostRenderContext (..), mattermostAttachmentTemplateName, mattermostColorTemplateName, mattermostDetailsTemplateName, mattermostFieldsTemplateName, mattermostRootTemplateName, mattermostStatusTemplateName, renderDetailsMessage, renderRootMessage, renderRootProps)
+import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -33,6 +34,7 @@ import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
 import IHP.QueryBuilder
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv)
 
 -- Orchestration for the Mattermost notification channel: builds the render
@@ -166,8 +168,17 @@ mattermostTargetForRule rule = do
 -- job can outrun a fast source resolve (queued at expose, resolved before
 -- the worker ran it) — posting then would leave an undeletable orphan card
 -- (the resolve's sync already no-op'd on the not-yet-existing post).
+-- The dedupe check and the delivery run in ONE transaction holding a
+-- transaction-scoped advisory lock on the (alert, rule) pair: the worker
+-- runs up to 16 mattermost jobs concurrently (the IHP maxConcurrency
+-- default), and refires enqueue a fresh notify per matching rule — without
+-- the lock two same-pair jobs both pass the "no posts row yet" check and
+-- both post a root, and the duplicate cards are never reconciled afterwards.
+-- The loser waits for the lock, then sees the winner's committed row and
+-- falls through to a sync.
 deliverNotify :: (?modelContext :: ModelContext) => Alert -> NotificationRule -> IO (Either Text ())
-deliverNotify alert rule = do
+deliverNotify alert rule = withTransaction do
+    lockDeliverPair (get #id alert) (get #id rule)
     existing <-
         query @MattermostPost
             |> filterWhere (#alertId, get #id alert)
@@ -219,6 +230,22 @@ deliverNotify alert rule = do
                                         |> set #updatedAt now
                                         |> createRecord
                                 pure (Right ())
+
+-- | Transaction-scoped advisory lock serializing the initial card delivery
+-- for one (alert, rule) pair across concurrent job workers. Must be called
+-- inside the transaction whose posts-row check + insert it protects (an
+-- xact lock releases at commit, so the lock and the protected writes must
+-- share the transaction).
+lockDeliverPair :: (?modelContext :: ModelContext) => Id Alert -> Id NotificationRule -> IO ()
+lockDeliverPair alertId ruleId = do
+    let lockKey = "halemans:mm-deliver:" <> tshow alertId <> ":" <> tshow ruleId :: Text
+    void
+        ( sqlQueryTyped
+            [typedSql|
+        SELECT 1 WHERE pg_advisory_xact_lock(hashtextextended(${lockKey}, 0)) IS NULL
+    |] ::
+            IO [Int]
+        )
 
 -- | Status sync: re-render and patch every root post the alert has. Each
 -- post resolves its server config through the rule that created it (falling
