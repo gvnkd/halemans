@@ -1,6 +1,8 @@
 module Web.Controller.Flapping where
 
 import Application.Service.Flapping
+import Application.Service.HostGroups (teamHostGroupNames)
+import qualified Application.Service.Reports as Reports
 import Data.List (groupBy, maximumBy)
 import Data.Ord (comparing)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
@@ -22,6 +24,29 @@ instance Controller FlappingController where
             -- Look back one max-gap past the window so a loud edge just
             -- before the window still pairs with an in-window resolve.
             from = addUTCTime (negate (fromIntegral (windowHours * 3600 + maxGapSeconds))) now
+            severities = paramList @Text "severity"
+            selectedTeams = paramList @Text "teams"
+        -- Selector options: every severity/team ever seen (unbounded by window)
+        severityOptionRows <-
+            sqlQueryTyped
+                [typedSql|
+            SELECT DISTINCT a.severity
+            FROM alerts a
+            ORDER BY 1 |]
+        -- Team visibility filter: same semantics as /reports — selected team
+        -- names resolve to the union of their host groups; nothing selected
+        -- = no restriction.
+        teamRows <- query @Team |> fetch
+        let
+            teamScopeNames =
+                if null selectedTeams
+                    then Nothing
+                    else Just (teamHostGroupNames [team | team <- teamRows, team.name `elem` selectedTeams])
+            teamUnrestricted = isNothing teamScopeNames
+            teamScope = fromMaybe [] teamScopeNames
+            severityOptions = sortOn Reports.severityRank (nub (severityOptionRows <> severities))
+            -- keep manually-typed/unknown team selections visible in the dropdown
+            teamOptions = sort (nub ([team.name | team <- teamRows] <> selectedTeams))
         rows <-
             sqlQueryTyped
                 [typedSql|
@@ -55,6 +80,8 @@ instance Controller FlappingController where
                 coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env, a.host, s.name AS source_name
             FROM edges e JOIN alerts a ON a.id = e.alert_id
             LEFT JOIN sources s ON s.id = a.source_id
+            WHERE (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR s.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
             ORDER BY e.fingerprint, e.edge_at |]
         let grouped = groupBy (\a b -> get #fingerprint a == get #fingerprint b) rows
             subjects = map (\group -> (subjectOf group, mapMaybe edgeOf group)) grouped

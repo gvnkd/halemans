@@ -2,7 +2,7 @@ module Web.View.Flapping.Index where
 
 import Application.Service.Flapping (FlapReport (..), FlapSubject (..))
 import Network.Wai (Request)
-import Web.View.Fragments (emptyStateHtml, pageHeaderHtml, severityBadgeHtml)
+import Web.View.Fragments (emptyStateHtml, filterMultiSelect, pageHeaderHtml, severityBadgeHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView
@@ -10,6 +10,10 @@ data IndexView = IndexView
     , windowHours :: Int
     , minFlaps :: Int
     , maxGapSeconds :: Int
+    , severities :: [Text]
+    , severityOptions :: [Text]
+    , teamOptions :: [Text]
+    , selectedTeams :: [Text]
     }
 
 instance View IndexView where
@@ -32,6 +36,14 @@ instance View IndexView where
             <div class="col-auto">
                 <label class="form-label">{tr "Max gap (s)"}</label>
                 <input type="number" name="maxGapSeconds" class="form-control maxw-400" min="60" value={show maxGapSeconds :: Text} data-testid="flapping-max-gap"/>
+            </div>
+            <div class="col-auto">
+                <label class="form-label">{tr "severity"}</label>
+                {filterMultiSelect "severity" (tr "severity") severityOptions severities}
+            </div>
+            <div class="col-auto">
+                <label class="form-label">{tr "team"}</label>
+                {filterMultiSelect "teams" (tr "team") teamOptions selectedTeams}
             </div>
             <div class="col-auto">
                 <button type="submit" class="btn btn-brand" data-testid="flapping-submit">{tr "Analyze"}</button>
