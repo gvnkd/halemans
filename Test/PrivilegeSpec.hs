@@ -234,6 +234,7 @@ deniedCases =
     , ("UpdateGroupingRuleAction", mkDenied (UpdateGroupingRuleAction nil))
     , ("DeleteGroupingRuleAction", mkDenied (DeleteGroupingRuleAction nil))
     , ("PreviewGroupingRuleAction", mkDenied (PreviewGroupingRuleAction nil))
+    , ("ApplyGroupingRulesAction", mkDenied ApplyGroupingRulesAction)
     , -- notification rules
       ("NewNotificationRuleAction", mkDenied NewNotificationRuleAction)
     , ("CreateNotificationRuleAction", mkDenied CreateNotificationRuleAction)

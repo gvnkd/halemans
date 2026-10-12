@@ -2,6 +2,7 @@ module Web.Controller.GroupingRules where
 
 import Application.Helper.RuleForm (parseMatchFormFacets)
 import Application.Pipeline.Grouping (matchAlert, matchExprFromJSON, renderTemplate)
+import Application.Service.Groups (ApplyGroupingSummary (..), applyGroupingRules)
 import Web.Controller.Prelude
 import Web.View.GroupingRules.Edit
 import Web.View.GroupingRules.Index
@@ -60,6 +61,21 @@ instance Controller GroupingRulesController where
         ensureNotProtected rule.name (get #protected rule)
         deleteRecord rule
         setSuccessMessage (tr "Grouping rule deleted")
+        redirectTo GroupingRulesAction
+
+    -- Manual replay: re-evaluate EVERY alert against the enabled rules
+    -- (full re-apply — unmatched alerts are ungrouped). Counts land in the
+    -- flash. Can be slow on large alert tables; it is an admin action.
+    action ApplyGroupingRulesAction = do
+        requirePrivilege "manage_rules"
+        ApplyGroupingSummary{agsRegrouped, agsUngrouped} <- applyGroupingRules
+        setSuccessMessage
+            ( trp
+                "Grouping rules applied: {regrouped} regrouped, {ungrouped} ungrouped"
+                [ ("regrouped", tshow agsRegrouped)
+                , ("ungrouped", tshow agsUngrouped)
+                ]
+            )
         redirectTo GroupingRulesAction
 
     -- Test-against-recent-alerts preview (§9): shows which of the last 100

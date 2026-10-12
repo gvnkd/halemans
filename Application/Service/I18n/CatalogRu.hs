@@ -273,6 +273,8 @@ catalogRu =
         , ("Grouping rule deleted", "Правило группировки удалено")
         , ("Grouping rule updated (version bumped)", "Правило группировки обновлено (версия увеличена)")
         , ("Grouping rules", "Правила группировки")
+        , ("Apply rules", "Применить правила")
+        , ("Grouping rules applied: {regrouped} regrouped, {ungrouped} ungrouped", "Правила группировки применены: перегруппировано {regrouped}, разгруппировано {ungrouped}")
         , ("Halemans — sign in", "Halemans — вход")
         , ("Home Alert Management System", "Home Alert Management System")
         , ("Health", "Состояние")

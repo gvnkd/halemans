@@ -2,7 +2,7 @@ module Web.View.GroupingRules.Index where
 
 import IHP.LoginSupport.Helper.Controller (CurrentUserRecord)
 import Network.Wai (Request)
-import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, enabledBadgeHtml, pageHeaderHtml)
+import Web.View.Fragments (editDeleteActionsHtml, emptyStateHtml, enabledBadgeHtml, inlinePostFormHtml, pageHeaderHtml)
 import Web.View.Prelude
 
 data IndexView = IndexView {rules :: [GroupingRule]}
@@ -36,7 +36,11 @@ instance View IndexView where
             </tbody>
         </table>
                     |]
-        newButton = [hsx|<a href={NewGroupingRuleAction} class="btn btn-brand" data-testid="new-grouping-rule">{tr "New rule"}</a>|]
+        newButton =
+            [hsx|
+                {inlinePostFormHtml (pathTo ApplyGroupingRulesAction) (tr "Apply rules") "btn btn-ghost me-2" (Just "apply-grouping-rules") False}
+                <a href={NewGroupingRuleAction} class="btn btn-brand" data-testid="new-grouping-rule">{tr "New rule"}</a>
+            |]
 
 renderRule :: (CurrentUserRecord ~ User, ?request :: Request) => GroupingRule -> Html
 renderRule rule =

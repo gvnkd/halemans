@@ -229,6 +229,7 @@ POST /admin/grouping-rules                            CreateGroupingRuleAction
 GET  /admin/grouping-rules/{groupingRuleId}/edit      EditGroupingRuleAction
 POST /admin/grouping-rules/{groupingRuleId}/update    UpdateGroupingRuleAction
 POST /admin/grouping-rules/{groupingRuleId}/delete    DeleteGroupingRuleAction
+POST /admin/grouping-rules/apply                      ApplyGroupingRulesAction
 GET  /admin/grouping-rules/{groupingRuleId}/preview   PreviewGroupingRuleAction
 |]
 

@@ -6,6 +6,7 @@ import qualified Test.Integration.ApiSpec
 import qualified Test.Integration.DashboardsSpec
 import qualified Test.Integration.DefaultsSpec
 import qualified Test.Integration.EnrichmentSpec
+import qualified Test.Integration.GroupsSpec
 import qualified Test.Integration.LlmSpec
 import qualified Test.Integration.MattermostSpec
 import qualified Test.Integration.MetricChartSpec
@@ -26,5 +27,6 @@ main =
         Test.Integration.MetricChartSpec.spec
         Test.Integration.MattermostSpec.spec
         Test.Integration.DashboardsSpec.spec
+        Test.Integration.GroupsSpec.spec
         Test.Integration.AgentSpec.spec
         Test.Integration.DefaultsSpec.spec

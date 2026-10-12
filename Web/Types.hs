@@ -253,6 +253,7 @@ data GroupingRulesController
     | UpdateGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
     | DeleteGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
     | PreviewGroupingRuleAction {groupingRuleId :: !(Id GroupingRule)}
+    | ApplyGroupingRulesAction
     deriving (Eq, Show)
 
 data NotificationRulesController

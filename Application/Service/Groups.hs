@@ -1,12 +1,14 @@
 module Application.Service.Groups (
     assignGroup,
     regroupAlert,
+    applyGroupingRules,
+    ApplyGroupingSummary (..),
     recomputeGroupRollup,
     publishGroupUpdate,
 ) where
 
 import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText, matchAlert, matchExprFromJSON, renderTemplate, ruleReferencesFacets, severityRank)
-import Control.Monad (void)
+import Control.Monad (foldM, void)
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
 import Generated.Types
@@ -45,42 +47,58 @@ effectiveEnvironmentRef alert = forM (effectiveFieldText FieldEnv alert) \name -
 -- rendered key would be all dashes and collapse unrelated alerts together.
 assignGroup :: (?modelContext :: ModelContext) => Alert -> IO Alert
 assignGroup alert
-    | isNothing (effectiveFieldText FieldEnv alert)
-        && isNothing (effectiveFieldText FieldHost alert)
-        && isNothing (effectiveFieldText FieldService alert) =
-        pure alert
+    | not (groupable alert) = pure alert
 assignGroup alert = do
-    rules <-
-        query @GroupingRule
-            |> filterWhere (#enabled, True)
-            |> orderByAsc #position
-            |> fetch
+    rules <- enabledGroupingRules
     case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
         Nothing -> pure alert
-        Just rule -> do
-            let key = renderTemplate rule.groupKeyTemplate alert
-            group <-
-                query @AlertGroup
-                    |> filterWhere (#groupKey, key)
-                    |> fetchOneOrNothing
-            groupRef <- case group of
-                Just group -> pure (get #id group)
-                Nothing -> do
-                    environmentRef <- effectiveEnvironmentRef alert
-                    created <-
-                        newRecord @AlertGroup
-                            |> set #groupKey key
-                            |> set #title key
-                            |> set #environmentId environmentRef
-                            |> createRecord
-                    pure (get #id created)
-            updated <-
-                alert
-                    |> set #groupId (Just groupRef)
-                    |> set #groupedByVersion (Just rule.version)
-                    |> updateRecord
-            void (recomputeGroupRollup groupRef)
-            pure updated
+        Just rule -> moveToGroup alert rule
+
+-- | Alerts with no env/host/service subject are never grouped: their
+-- rendered key would be all dashes and collapse unrelated alerts together.
+groupable :: Alert -> Bool
+groupable alert =
+    isJust (effectiveFieldText FieldEnv alert)
+        || isJust (effectiveFieldText FieldHost alert)
+        || isJust (effectiveFieldText FieldService alert)
+
+enabledGroupingRules :: (?modelContext :: ModelContext) => IO [GroupingRule]
+enabledGroupingRules =
+    query @GroupingRule
+        |> filterWhere (#enabled, True)
+        |> orderByAsc #position
+        |> fetch
+
+-- | Move an alert into the group for the key rendered by the rule (created
+-- on demand), setting group_id/grouped_by_version and recomputing the old
+-- and new groups' rollups. Shared by assignGroup, regroupAlert and
+-- applyGroupingRules.
+moveToGroup :: (?modelContext :: ModelContext) => Alert -> GroupingRule -> IO Alert
+moveToGroup alert rule = do
+    let key = renderTemplate rule.groupKeyTemplate alert
+    group <-
+        query @AlertGroup
+            |> filterWhere (#groupKey, key)
+            |> fetchOneOrNothing
+    groupRef <- case group of
+        Just group -> pure (get #id group)
+        Nothing -> do
+            environmentRef <- effectiveEnvironmentRef alert
+            created <-
+                newRecord @AlertGroup
+                    |> set #groupKey key
+                    |> set #title key
+                    |> set #environmentId environmentRef
+                    |> createRecord
+            pure (get #id created)
+    updated <-
+        alert
+            |> set #groupId (Just groupRef)
+            |> set #groupedByVersion (Just rule.version)
+            |> updateRecord
+    forM_ alert.groupId \oldGroupId -> void (recomputeGroupRollup oldGroupId)
+    void (recomputeGroupRollup groupRef)
+    pure updated
 
 -- | Regroup replay after enrichment (milestone_9.md §7): assignGroup runs at
 -- ingest when attr facets are still absent. Once EnrichAlertJob materializes
@@ -89,11 +107,7 @@ assignGroup alert = do
 -- group (same "rule edits don't ungroup" semantics as version bumps).
 regroupAlert :: (?modelContext :: ModelContext) => Alert -> IO Alert
 regroupAlert alert = do
-    rules <-
-        query @GroupingRule
-            |> filterWhere (#enabled, True)
-            |> orderByAsc #position
-            |> fetch
+    rules <- enabledGroupingRules
     if not (any ruleReferencesFacets rules)
         then pure alert
         else case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
@@ -106,30 +120,51 @@ regroupAlert alert = do
                         Nothing -> False
                 if unchanged
                     then pure alert
+                    else moveToGroup alert rule
+
+data ApplyGroupingSummary = ApplyGroupingSummary
+    { agsRegrouped :: Int
+    -- ^ Alerts moved into a (new or existing) group.
+    , agsUngrouped :: Int
+    -- ^ Alerts whose group was cleared (no enabled rule matched).
+    }
+
+-- | Manual "apply rules" replay behind the admin button: re-evaluate EVERY
+-- alert against the enabled rules. Full re-apply semantics — an alert
+-- matching no rule is UNGROUPED (unlike ingest/regroupAlert, which never
+-- ungroup): the admin explicitly asked for the current rule set to become
+-- the membership truth. Grouped-but-unchanged alerts (same key, same rule
+-- version) are not touched. Empty groups are left in place (the admin alert
+-- purge drops them); every touched group's rollup is recomputed.
+applyGroupingRules :: (?modelContext :: ModelContext) => IO ApplyGroupingSummary
+applyGroupingRules = do
+    rules <- enabledGroupingRules
+    alerts <- query @Alert |> fetch
+    foldM (step rules) (ApplyGroupingSummary 0 0) alerts
+  where
+    step rules acc alert =
+        case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
+            Just rule | groupable alert -> do
+                let key = renderTemplate rule.groupKeyTemplate alert
+                currentGroup <- mapM fetch alert.groupId
+                let unchanged = case currentGroup of
+                        Just group -> group.groupKey == key && alert.groupedByVersion == Just rule.version
+                        Nothing -> False
+                if unchanged
+                    then pure acc
                     else do
-                        group <-
-                            query @AlertGroup
-                                |> filterWhere (#groupKey, key)
-                                |> fetchOneOrNothing
-                        groupRef <- case group of
-                            Just group -> pure (get #id group)
-                            Nothing -> do
-                                environmentRef <- effectiveEnvironmentRef alert
-                                created <-
-                                    newRecord @AlertGroup
-                                        |> set #groupKey key
-                                        |> set #title key
-                                        |> set #environmentId environmentRef
-                                        |> createRecord
-                                pure (get #id created)
-                        updated <-
-                            alert
-                                |> set #groupId (Just groupRef)
-                                |> set #groupedByVersion (Just rule.version)
-                                |> updateRecord
-                        forM_ alert.groupId \oldGroupId -> void (recomputeGroupRollup oldGroupId)
-                        void (recomputeGroupRollup groupRef)
-                        pure updated
+                        _ <- moveToGroup alert rule
+                        pure acc{agsRegrouped = acc.agsRegrouped + 1}
+            _ -> case alert.groupId of
+                Nothing -> pure acc
+                Just oldGroupId -> do
+                    _ <-
+                        alert
+                            |> set #groupId Nothing
+                            |> set #groupedByVersion Nothing
+                            |> updateRecord
+                    void (recomputeGroupRollup oldGroupId)
+                    pure acc{agsUngrouped = acc.agsUngrouped + 1}
 
 -- | Recompute worst severity / member count / rollup status from the current
 -- members. Group resolves when every member is resolved or closed (§3).
