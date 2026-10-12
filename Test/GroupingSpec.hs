@@ -45,26 +45,73 @@ spec = describe "Application.Pipeline.Grouping" do
                             , "labels" .= object ["component" .= ("db-*" :: Text)]
                             ]
                         )
-            expr `shouldBe` MatchExpr [(FieldEnv, "dev")] [("component", "db-*")] []
+            expr `shouldBe` MatchExpr [(FieldEnv, "dev")] [] [] [("component", "db-*")] []
         it "parses empty object as empty match" do
             matchExprFromJSON (object []) `shouldBe` emptyMatch
+        it "parses in / not-in field clauses" do
+            let expr =
+                    matchExprFromJSON
+                        ( object
+                            [ "fields"
+                                .= object
+                                    [ "status" .= object ["in" .= (["firing", "closed"] :: [Text])]
+                                    , "severity" .= object ["not-in" .= (["info"] :: [Text])]
+                                    , "env" .= ("dev" :: Text)
+                                    ]
+                            ]
+                        )
+            expr
+                `shouldBe` MatchExpr
+                    [(FieldEnv, "dev")]
+                    [(FieldStatus, ["firing", "closed"])]
+                    [(FieldSeverity, ["info"])]
+                    []
+                    []
+        it "handles malformed in / not-in shapes conservatively" do
+            let expr =
+                    matchExprFromJSON
+                        ( object
+                            [ "fields"
+                                .= object
+                                    [ "status" .= object ["in" .= ("firing" :: Text)]
+                                    , "env" .= object ["in" .= (["a"] :: [Text]), "weird" .= (1 :: Int)]
+                                    , "severity" .= object ["in" .= ([1, 2] :: [Int])]
+                                    ]
+                            ]
+                        )
+            -- a non-array in-clause is dropped; unknown keys inside the
+            -- object are ignored; an in-array without strings becomes an
+            -- EMPTY list, which matches nothing (never widens).
+            expr `shouldBe` MatchExpr [] [(FieldEnv, ["a"]), (FieldSeverity, [])] [] [] []
+
+    describe "matchAlert" do
+        it "field in matches members only" do
+            matchAlert (MatchExpr [] [(FieldStatus, ["firing", "closed"])] [] [] []) alert `shouldBe` True
+            matchAlert (MatchExpr [] [(FieldStatus, ["ack", "closed"])] [] [] []) alert `shouldBe` False
+        it "field not-in rejects members, passes others" do
+            matchAlert (MatchExpr [] [] [(FieldStatus, ["ack", "resolved"])] [] []) alert `shouldBe` True
+            matchAlert (MatchExpr [] [] [(FieldStatus, ["ack", "firing"])] [] []) alert `shouldBe` False
+        it "not-in on a missing value never matches" do
+            matchAlert (MatchExpr [] [] [(FieldService, ["api", "web"])] [] []) alert `shouldBe` False
+        it "empty in list matches nothing" do
+            matchAlert (MatchExpr [] [(FieldStatus, [])] [] [] []) alert `shouldBe` False
 
     describe "matchAlert" do
         it "empty match matches everything" do
             matchAlert emptyMatch alert `shouldBe` True
         it "field equals on present subject" do
-            matchAlert (MatchExpr [(FieldEnv, "dev"), (FieldHost, "dev-host-01")] [] []) alert `shouldBe` True
-            matchAlert (MatchExpr [(FieldEnv, "prod")] [] []) alert `shouldBe` False
+            matchAlert (MatchExpr [(FieldEnv, "dev"), (FieldHost, "dev-host-01")] [] [] [] []) alert `shouldBe` True
+            matchAlert (MatchExpr [(FieldEnv, "prod")] [] [] [] []) alert `shouldBe` False
         it "missing subject never equals" do
-            matchAlert (MatchExpr [(FieldService, "api")] [] []) alert `shouldBe` False
+            matchAlert (MatchExpr [(FieldService, "api")] [] [] [] []) alert `shouldBe` False
         it "severity/status are fields too" do
-            matchAlert (MatchExpr [(FieldSeverity, "critical"), (FieldStatus, "firing")] [] []) alert `shouldBe` True
+            matchAlert (MatchExpr [(FieldSeverity, "critical"), (FieldStatus, "firing")] [] [] [] []) alert `shouldBe` True
         it "label globs" do
-            matchAlert (MatchExpr [] [("component", "db-*")] []) alert `shouldBe` True
-            matchAlert (MatchExpr [] [("component", "web-*")] []) alert `shouldBe` False
-            matchAlert (MatchExpr [] [("absent", "*")] []) alert `shouldBe` False
+            matchAlert (MatchExpr [] [] [] [("component", "db-*")] []) alert `shouldBe` True
+            matchAlert (MatchExpr [] [] [] [("component", "web-*")] []) alert `shouldBe` False
+            matchAlert (MatchExpr [] [] [] [("absent", "*")] []) alert `shouldBe` False
         it "conjunction: one failing clause fails all" do
-            matchAlert (MatchExpr [(FieldEnv, "dev")] [("component", "web-*")] []) alert `shouldBe` False
+            matchAlert (MatchExpr [(FieldEnv, "dev")] [] [] [("component", "web-*")] []) alert `shouldBe` False
 
     describe "renderTemplate" do
         it "renders subject placeholders" do
@@ -117,19 +164,19 @@ spec = describe "Application.Pipeline.Grouping" do
     describe "facets (milestone 9)" do
         let faceted = alert |> set #facets (object ["DB Cluster" .= ("ibstaffcopdb01" :: Text), "env" .= ("PROD" :: Text)])
         it "facet globs read the materialized facets map" do
-            matchAlert (MatchExpr [] [] [("DB Cluster", "ib*")]) faceted `shouldBe` True
-            matchAlert (MatchExpr [] [] [("DB Cluster", "pg*")]) faceted `shouldBe` False
-            matchAlert (MatchExpr [] [] [("absent", "*")]) faceted `shouldBe` False
+            matchAlert (MatchExpr [] [] [] [] [("DB Cluster", "ib*")]) faceted `shouldBe` True
+            matchAlert (MatchExpr [] [] [] [] [("DB Cluster", "pg*")]) faceted `shouldBe` False
+            matchAlert (MatchExpr [] [] [] [] [("absent", "*")]) faceted `shouldBe` False
         it "matchExprFromJSON parses the facets key, ignoring unknowns" do
             let expr = matchExprFromJSON (object ["facets" .= object ["DB Cluster" .= ("ib*" :: Text)]])
-            expr `shouldBe` MatchExpr [] [] [("DB Cluster", "ib*")]
+            expr `shouldBe` MatchExpr [] [] [] [] [("DB Cluster", "ib*")]
         it "{facet:name} placeholder renders from the facets map" do
             renderTemplate "{facet:DB Cluster}/{check}" faceted `shouldBe` "ibstaffcopdb01/cpu"
             renderTemplate "{facet:absent}" faceted `shouldBe` "-"
         it "field placeholders and field-equals use the effective (facet-overridden) value" do
             renderTemplate "{env}/{host}" faceted `shouldBe` "PROD/dev-host-01"
-            matchAlert (MatchExpr [(FieldEnv, "PROD")] [] []) faceted `shouldBe` True
-            matchAlert (MatchExpr [(FieldEnv, "dev")] [] []) faceted `shouldBe` False
+            matchAlert (MatchExpr [(FieldEnv, "PROD")] [] [] [] []) faceted `shouldBe` True
+            matchAlert (MatchExpr [(FieldEnv, "dev")] [] [] [] []) faceted `shouldBe` False
         it "ruleReferencesFacets detects facet globs and facet placeholders" do
             let ruleWithGlob =
                     newRecord @GroupingRule

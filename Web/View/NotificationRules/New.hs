@@ -45,7 +45,7 @@ notificationRuleFormFields teams users policies channels name position enabled m
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Field equals (env, host, service, check, severity, status)"}</label>
-        <input name="matchFields" type="text" class="form-control" value={matchFields} placeholder="env=dev" data-testid="rule-match-fields"/>
+        <input name="matchFields" type="text" class="form-control" value={matchFields} placeholder={"env=dev, status not in (resolved, closed)" :: Text} data-testid="rule-match-fields"/>
     </div>
     <div class="mb-3">
         <label class="form-label">{tr "Label globs"}</label>

@@ -26,6 +26,7 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
 import Generated.Types
 import IHP.Prelude
 
@@ -37,34 +38,41 @@ data AlertField = FieldEnv | FieldHost | FieldService | FieldCheck | FieldSeveri
 
 data MatchExpr = MatchExpr
     { meFieldEquals :: [(AlertField, Text)]
+    , meFieldIn :: [(AlertField, [Text])]
+    , meFieldNotIn :: [(AlertField, [Text])]
     , meLabelGlobs :: [(Text, Text)]
     , meFacetGlobs :: [(Text, Text)]
     }
     deriving (Eq, Show)
 
 emptyMatch :: MatchExpr
-emptyMatch = MatchExpr [] [] []
+emptyMatch = MatchExpr [] [] [] [] []
 
--- | Rule `match` jsonb shape: {"fields": {"env": "dev", ...},
+-- | Rule `match` jsonb shape: {"fields": {"env": "dev", "status":
+-- {"in": ["firing", "closed"]}, "severity": {"not-in": ["info"]}, ...},
 -- "labels": {"component": "db-*", ...}, "facets": {"DB Cluster": "ib*",
--- ...}}. Unknown fields/keys are ignored so old rows keep parsing after new
--- match kinds land. Facet globs read the materialized alerts.facets map
--- (milestone_9.md §7).
+-- ...}}. A fields value is either a plain string (=) or an object with an
+-- "in"/"not-in" array of strings. Unknown fields/keys/shapes are ignored so
+-- old rows keep parsing after new match kinds land. Facet globs read the
+-- materialized alerts.facets map (milestone_9.md §7).
 matchExprFromJSON :: Value -> MatchExpr
 matchExprFromJSON value =
     MatchExpr
-        { meFieldEquals = fields
+        { meFieldEquals = [(field, v) | (field, String v) <- rawFields]
+        , meFieldIn = [(field, values) | (field, o) <- rawFields, Just values <- [listOp "in" o]]
+        , meFieldNotIn = [(field, values) | (field, o) <- rawFields, Just values <- [listOp "not-in" o]]
         , meLabelGlobs = labels
         , meFacetGlobs = facets
         }
   where
-    fields = case lookupKey "fields" value of
-        Just (Object o) -> foldr collectField [] (KeyMap.toList o)
+    rawFields = case lookupKey "fields" value of
+        Just (Object o) -> [(field, v) | (key, v) <- KeyMap.toList o, Just field <- [parseAlertField (Key.toText key)]]
         _ -> []
-    collectField (key, String v) acc = case parseAlertField (Key.toText key) of
-        Just field -> (field, v) : acc
-        Nothing -> acc
-    collectField _ acc = acc
+    listOp :: Text -> Value -> Maybe [Text]
+    listOp op (Object o) = case KeyMap.lookup (Key.fromText op) o of
+        Just (Array vals) -> Just [v | String v <- Vector.toList vals]
+        _ -> Nothing
+    listOp _ _ = Nothing
     labels = case lookupKey "labels" value of
         Just (Object o) -> foldr collectLabel [] (KeyMap.toList o)
         _ -> []
@@ -154,12 +162,18 @@ effectiveFieldSql alias field
         FieldMuted -> "suppressed"
         FieldTitle -> "title"
 
--- | Conjunction only (§13 decision): every field-equals, every label glob
--- and every facet glob must hold. An empty MatchExpr matches everything.
+-- | Conjunction only (§13 decision): every field clause, every label glob
+-- and every facet glob must hold. An empty MatchExpr matches everything. A
+-- field with no effective value (absent column and facet) never satisfies
+-- any clause — including not-in, mirroring the dashboard-card matcher
+-- (DashboardConfig.matchClauseAlert).
 matchAlert :: MatchExpr -> Alert -> Bool
 matchAlert expr alert = fieldsHold && labelsHold && facetsHold
   where
-    fieldsHold = all (\(field, expected) -> effectiveFieldText field alert == Just expected) expr.meFieldEquals
+    fieldsHold =
+        all (\(field, expected) -> effectiveFieldText field alert == Just expected) expr.meFieldEquals
+            && all (\(field, values) -> maybe False (`elem` values) (effectiveFieldText field alert)) expr.meFieldIn
+            && all (\(field, values) -> maybe False (`notElem` values) (effectiveFieldText field alert)) expr.meFieldNotIn
     labelsHold = all (labelHolds alert) expr.meLabelGlobs
     facetsHold = all (\(name, glob) -> maybe False (globMatch glob) (facetValue alert name)) expr.meFacetGlobs
 

@@ -36,6 +36,7 @@ import qualified Test.ProvisionSpec
 import qualified Test.PushSpec
 import qualified Test.ReconcileSpec
 import qualified Test.ReportsSpec
+import qualified Test.RuleFormSpec
 import qualified Test.SourceHealthSpec
 import qualified Test.StateMachineSpec
 import qualified Test.ThemeSpec
@@ -86,6 +87,7 @@ main = hspec do
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec
     Test.ReportsSpec.spec
+    Test.RuleFormSpec.spec
     Test.TimeRangeSpec.spec
     Test.PrivilegeSpec.spec
     Test.LiveSpec.spec
