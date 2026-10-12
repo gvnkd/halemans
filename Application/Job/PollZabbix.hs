@@ -404,12 +404,20 @@ reconcileProblemStates source token alerts now = do
 -- resolved-state reconcile on a later cycle. Triggers with only
 -- resolved/closed local rows are rescanned on purpose: a refire we never saw
 -- (skipped tail) looks exactly like that.
+--
+-- Replay watermark: the scan fetches the candidate's whole window history,
+-- and ingest re-executes every firing/resolved transition in it — replaying
+-- an already-processed alternating history produces flap bursts (each refire
+-- a fresh MM card, each resolve a deleteOnClose delete; prod 2026-10-12:
+-- 90-event replays of one trigger every poll cycle). Events at or before the
+-- newest local row's last_seen_at for the fingerprint are dropped before
+-- ingest; only genuinely unseen events (the tail the cursor missed) replay.
 scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> [Alert] -> [Text] -> UTCTime -> IO ()
 scanMissingProblems source token alerts groupIds now = do
     result <- Zabbix.problemTriggersGet source.baseUrl token groupIds
     case result of
         Left err -> do
-            logWarn ("zabbix source \"" <> source.name <> "\" missing-problem scan failed: " <> err)
+            logWarn ("zabbix source \"" <> source.name <> "\": missing-problem scan failed: " <> err)
             recordReconcileFailure source err
         Right triggers -> do
             let tracked = Set.fromList (map (.fingerprint) alerts)
@@ -417,7 +425,8 @@ scanMissingProblems source token alerts groupIds now = do
             unless (null candidates) do
                 let triggerIds = map (.triggerStateId) candidates
                     windowStart = floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral (scanWindowSeconds source))) now))
-                eventsResult <- Zabbix.eventsByTriggersFold source.baseUrl token windowStart triggerIds groupIds (eventPageLimit source) (ingestPage source token) emptyPageAcc
+                watermarks <- scanReplayWatermarks triggerIds
+                eventsResult <- Zabbix.eventsByTriggersFold source.baseUrl token windowStart triggerIds groupIds (eventPageLimit source) (ingestPageUnseen source token watermarks) emptyPageAcc
                 case eventsResult of
                     Left err ->
                         logWarn ("zabbix source \"" <> source.name <> "\" missed-problem event fetch failed: " <> err)
@@ -429,6 +438,40 @@ scanMissingProblems source token alerts groupIds now = do
                         -- problem state so the next due cycle rescans it.
                         alertsAfterScan <- activeSourceAlerts source
                         syncUngroupedHostAlerts source alertsAfterScan (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
+
+-- | Per-trigger replay watermarks for the missing-problem scan: the newest
+-- local row's last_seen_at per fingerprint, as event-clock seconds. Sibling
+-- rows of the same fingerprint (closed history) fold via max — the most
+-- recently active row's watermark wins. Triggers with no local row get no
+-- entry, so their whole window stays unseen.
+scanReplayWatermarks :: (?modelContext :: ModelContext) => [Text] -> IO (Map.Map Text Integer)
+scanReplayWatermarks triggerIds = do
+    rows <-
+        query @Alert
+            |> filterWhereIn (#fingerprint, ["zabbix:trigger:" <> triggerId | triggerId <- triggerIds])
+            |> fetch
+    pure (watermarksFromRows rows)
+
+-- | Pure core of scanReplayWatermarks (unit-testable).
+watermarksFromRows :: [Alert] -> Map.Map Text Integer
+watermarksFromRows rows =
+    Map.fromListWith max [(row.fingerprint, floor (utcTimeToPOSIXSeconds row.lastSeenAt)) | row <- rows]
+
+-- | ingestPage wrapper for the missing-problem scan: drops replayed events
+-- (at or before their trigger's watermark) before the normal page
+-- processing, so only events newer than anything the local row has seen are
+-- re-executed through the pipeline.
+ingestPageUnseen :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> Map.Map Text Integer -> PageAcc -> [Zabbix.ZabbixEvent] -> IO (Either Text PageAcc)
+ingestPageUnseen source token watermarks acc page =
+    ingestPage source token acc (dropReplayedEvents watermarks page)
+
+-- | Pure filter behind ingestPageUnseen (unit-testable): an event is replayed
+-- when its trigger has a local watermark and its clock is at or before it.
+dropReplayedEvents :: Map.Map Text Integer -> [Zabbix.ZabbixEvent] -> [Zabbix.ZabbixEvent]
+dropReplayedEvents watermarks page =
+    [event | event <- page, unseen event]
+  where
+    unseen event = maybe True (event.clock >) (Map.lookup ("zabbix:trigger:" <> event.triggerId) watermarks)
 
 -- | Problem-state triggers worth fetching events for: lastchange inside the
 -- window and no tracked local alert with the trigger's fingerprint.

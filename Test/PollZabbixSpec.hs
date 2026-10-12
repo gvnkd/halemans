@@ -4,6 +4,7 @@ import Application.Connector.Zabbix (ZabbixEvent (..), ZabbixTriggerState (..), 
 import Application.Helper.Ingest (NormalizedEvent (..))
 import Application.Job.PollZabbix (
     absentResolveMinAgeSeconds,
+    dropReplayedEvents,
     eventPageLimit,
     initialCursor,
     initialHistoryDays,
@@ -17,6 +18,7 @@ import Application.Job.PollZabbix (
     scanMissingProblemsEnabled,
     scanWindowSeconds,
     ungroupedHostFingerprint,
+    watermarksFromRows,
  )
 import Data.Aeson (eitherDecode, object, (.=))
 import qualified Data.Aeson
@@ -165,6 +167,30 @@ spec = describe "Application.Job.PollZabbix" do
             missingProblemCandidates now 3600 Set.empty [recent] `shouldBe` []
             missingProblemCandidates now 3600 Set.empty [problemTrigger] `shouldBe` [problemTrigger]
 
+    describe "watermarksFromRows" do
+        it "takes the newest last_seen_at per fingerprint as clock seconds" do
+            let older = resolvedAlert "zabbix:trigger:42" (addUTCTime (-7200) now)
+                newer = resolvedAlert "zabbix:trigger:42" (addUTCTime (-3600) now)
+                other = resolvedAlert "zabbix:trigger:7" (addUTCTime (-600) now)
+            watermarksFromRows [older, newer, other]
+                `shouldBe` Map.fromList
+                    [ ("zabbix:trigger:42" :: Text, nowPosix - 3600)
+                    , ("zabbix:trigger:7", nowPosix - 600)
+                    ]
+
+    describe "dropReplayedEvents" do
+        let watermarks = Map.fromList [("zabbix:trigger:42" :: Text, 1750000100 :: Integer)]
+            eventAt clock triggerId = ZabbixEvent{eventId = "9001", triggerId, name = "CPU", description = "", clock, value = "1", severity = "4", host = Nothing}
+        it "drops events at or before the trigger's watermark" do
+            dropReplayedEvents watermarks [eventAt 1750000100 "42", eventAt 1750000099 "42"] `shouldBe` []
+        it "keeps events newer than the watermark" do
+            dropReplayedEvents watermarks [eventAt 1750000101 "42"]
+                `shouldBe` [eventAt 1750000101 "42"]
+        it "keeps events for triggers with no local watermark" do
+            dropReplayedEvents watermarks [eventAt 100 "7"] `shouldBe` [eventAt 100 "7"]
+        it "keeps everything when no watermarks exist" do
+            dropReplayedEvents Map.empty [eventAt 100 "42"] `shouldBe` [eventAt 100 "42"]
+
     describe "reconcileDue" do
         it "is due when the source never reconciled" do
             reconcileDue now (newRecord @Source) `shouldBe` True
@@ -246,6 +272,11 @@ spec = describe "Application.Job.PollZabbix" do
             , triggerStateStatus = "0"
             , triggerStateLastChange = nowPosix - 600
             }
+    resolvedAlert fingerprint seenAt =
+        newRecord @Alert
+            |> set #fingerprint fingerprint
+            |> set #status "resolved"
+            |> set #lastSeenAt seenAt
     okTrigger = problemTrigger{triggerStateValue = "0"}
     disabledProblemTrigger = problemTrigger{triggerStateStatus = "1"}
     disabledOkTrigger = okTrigger{triggerStateStatus = "1"}
