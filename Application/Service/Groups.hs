@@ -11,6 +11,7 @@ import Application.Pipeline.Grouping (AlertField (..), effectiveFieldText, match
 import Control.Monad (foldM, void)
 import Data.Aeson (object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Set as Set
 import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
@@ -69,18 +70,16 @@ enabledGroupingRules =
         |> orderByAsc #position
         |> fetch
 
--- | Move an alert into the group for the key rendered by the rule (created
--- on demand), setting group_id/grouped_by_version and recomputing the old
--- and new groups' rollups. Shared by assignGroup, regroupAlert and
--- applyGroupingRules.
-moveToGroup :: (?modelContext :: ModelContext) => Alert -> GroupingRule -> IO Alert
-moveToGroup alert rule = do
-    let key = renderTemplate rule.groupKeyTemplate alert
+-- | Group row for the rendered key, created on demand. Does NOT recompute
+-- rollups — batch callers (applyGroupingRules) collect the groups they touch
+-- and recompute each ONCE at the end instead of once per member.
+ensureGroupForKey :: (?modelContext :: ModelContext) => Alert -> Text -> IO (Id AlertGroup)
+ensureGroupForKey alert key = do
     group <-
         query @AlertGroup
             |> filterWhere (#groupKey, key)
             |> fetchOneOrNothing
-    groupRef <- case group of
+    case group of
         Just group -> pure (get #id group)
         Nothing -> do
             environmentRef <- effectiveEnvironmentRef alert
@@ -91,6 +90,13 @@ moveToGroup alert rule = do
                     |> set #environmentId environmentRef
                     |> createRecord
             pure (get #id created)
+
+-- | Move an alert into the group for the key rendered by the rule (created
+-- on demand), setting group_id/grouped_by_version and recomputing the old
+-- and new groups' rollups. Shared by assignGroup and regroupAlert.
+moveToGroup :: (?modelContext :: ModelContext) => Alert -> GroupingRule -> IO Alert
+moveToGroup alert rule = do
+    groupRef <- ensureGroupForKey alert (renderTemplate rule.groupKeyTemplate alert)
     updated <-
         alert
             |> set #groupId (Just groupRef)
@@ -135,14 +141,23 @@ data ApplyGroupingSummary = ApplyGroupingSummary
 -- ungroup): the admin explicitly asked for the current rule set to become
 -- the membership truth. Grouped-but-unchanged alerts (same key, same rule
 -- version) are not touched. Empty groups are left in place (the admin alert
--- purge drops them); every touched group's rollup is recomputed.
+-- purge drops them).
+--
+-- PERFORMANCE (prod 504 fix): one transaction, and rollups are BATCHED —
+-- recomputeGroupRollup scans a group's members, so running it per moved
+-- alert is quadratic on busy groups (first apply on a big table blew the
+-- nginx proxy timeout; the second was instant because everything was
+-- already unchanged). Step only updates alert rows and collects the touched
+-- group ids; each group's rollup is recomputed ONCE at the end.
 applyGroupingRules :: (?modelContext :: ModelContext) => IO ApplyGroupingSummary
-applyGroupingRules = do
+applyGroupingRules = withTransaction do
     rules <- enabledGroupingRules
     alerts <- query @Alert |> fetch
-    foldM (step rules) (ApplyGroupingSummary 0 0) alerts
+    (summary, touched) <- foldM (step rules) (ApplyGroupingSummary 0 0, Set.empty) alerts
+    mapM_ (void . recomputeGroupRollup) touched
+    pure summary
   where
-    step rules acc alert =
+    step rules (acc, touched) alert =
         case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
             Just rule | groupable alert -> do
                 let key = renderTemplate rule.groupKeyTemplate alert
@@ -151,20 +166,27 @@ applyGroupingRules = do
                         Just group -> group.groupKey == key && alert.groupedByVersion == Just rule.version
                         Nothing -> False
                 if unchanged
-                    then pure acc
+                    then pure (acc, touched)
                     else do
-                        _ <- moveToGroup alert rule
-                        pure acc{agsRegrouped = acc.agsRegrouped + 1}
+                        groupRef <- ensureGroupForKey alert key
+                        _ <-
+                            alert
+                                |> set #groupId (Just groupRef)
+                                |> set #groupedByVersion (Just rule.version)
+                                |> updateRecord
+                        pure
+                            ( acc{agsRegrouped = acc.agsRegrouped + 1}
+                            , touched <> Set.fromList (maybe [] pure alert.groupId) <> Set.singleton groupRef
+                            )
             _ -> case alert.groupId of
-                Nothing -> pure acc
+                Nothing -> pure (acc, touched)
                 Just oldGroupId -> do
                     _ <-
                         alert
                             |> set #groupId Nothing
                             |> set #groupedByVersion Nothing
                             |> updateRecord
-                    void (recomputeGroupRollup oldGroupId)
-                    pure acc{agsUngrouped = acc.agsUngrouped + 1}
+                    pure (acc{agsUngrouped = acc.agsUngrouped + 1}, Set.insert oldGroupId touched)
 
 -- | Recompute worst severity / member count / rollup status from the current
 -- members. Group resolves when every member is resolved or closed (§3).
