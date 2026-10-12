@@ -103,6 +103,17 @@ reschedule = do
         |]
         [] -> logInfo "another PollZabbixJob is already pending; stopping this loop"
 
+-- The poll cycle's shared active cohort (firing/ack/stalled for this
+-- source). Fetched ONCE per cycle and threaded through the reconcilers —
+-- each used to refetch (and fully decode) the same rows itself, up to four
+-- fat decodes per cycle.
+activeSourceAlerts :: (?modelContext :: ModelContext) => Source -> IO [Alert]
+activeSourceAlerts source =
+    query @Alert
+        |> filterWhere (#sourceId, Just (get #id source))
+        |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
+        |> fetch
+
 pollSource :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> IO ()
 pollSource source = do
     let tokenEnv :: Maybe Text
@@ -141,13 +152,14 @@ pollSource source = do
                         Right acc -> do
                             logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (paCount acc) <> " events")
                             recordSuccess source
-                            syncUngroupedHostAlerts source (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
-                            reconcileAcks source token
+                            alerts <- activeSourceAlerts source
+                            syncUngroupedHostAlerts source alerts (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
+                            reconcileAcks source token alerts
                             when (reconcileDue now source) do
                                 when (reconcileResolvedEnabled source) do
-                                    reconcileProblemStates source token now
+                                    reconcileProblemStates source token alerts now
                                 when (scanMissingProblemsEnabled source) do
-                                    scanMissingProblems source token groupIds now
+                                    scanMissingProblems source token alerts groupIds now
                                 void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                             -- +1s: event.get's time_from is INCLUSIVE, so a
                             -- cursor at maxClock re-ingests the boundary event
@@ -263,17 +275,12 @@ initialHistoryDays source =
 -- Zabbix suppress/unsuppress (ack action bits 32/64) mirrors into the
 -- suppressed overlay as suppressed_by = 'source'; the newest of the two
 -- actions wins.
-reconcileAcks :: (?modelContext :: ModelContext) => Source -> Text -> IO ()
-reconcileAcks source token = do
+reconcileAcks :: (?modelContext :: ModelContext) => Source -> Text -> [Alert] -> IO ()
+reconcileAcks source token alerts = do
     -- Stalled alerts are included: a stalled alert can still be
     -- suppressed/unsuppressed on the zabbix side, and the mirror is the only
     -- path that learns about it (the event cursor already passed). The cost
     -- is a few more ids in the single batched event.get, no extra calls.
-    alerts <-
-        query @Alert
-            |> filterWhere (#sourceId, Just (get #id source))
-            |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
-            |> fetch
     let eventIds = mapMaybe (.externalId) alerts
     unless (null eventIds) do
         result <- Zabbix.ackStateGet source.baseUrl token eventIds
@@ -286,11 +293,14 @@ reconcileAcks source token = do
                         then pure (Right [])
                         else Zabbix.usersGet source.baseUrl token userIds
                 let userNames = fromRight [] usersResult
-                forM_ states (mirrorState alerts userNames)
+                    -- O(1) lookup per state instead of `find` over the
+                    -- cohort per state.
+                    alertsByEventId = Map.fromList [(externalId, alert) | alert <- alerts, Just externalId <- [alert.externalId]]
+                forM_ states (mirrorState alertsByEventId userNames)
 
-mirrorState :: (?modelContext :: ModelContext) => [Alert] -> [(Text, Text)] -> Zabbix.ZabbixEventAck -> IO ()
-mirrorState alerts userNames state =
-    case find (\alert -> alert.externalId == Just state.ackEventId) alerts of
+mirrorState :: (?modelContext :: ModelContext) => Map.Map Text Alert -> [(Text, Text)] -> Zabbix.ZabbixEventAck -> IO ()
+mirrorState alertsByEventId userNames state =
+    case Map.lookup state.ackEventId alertsByEventId of
         Nothing -> pure ()
         Just alert -> do
             let rows = sortOn (.ackClock) state.ackRows
@@ -356,13 +366,8 @@ lastMaybe = last
 --   scanWindowSeconds           int   how far back lastchange may be for an
 --                                     untracked problem to be scanned (default
 --                                     86400)
-reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> UTCTime -> IO ()
-reconcileProblemStates source token now = do
-    alerts <-
-        query @Alert
-            |> filterWhere (#sourceId, Just (get #id source))
-            |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
-            |> fetch
+reconcileProblemStates :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> [Alert] -> UTCTime -> IO ()
+reconcileProblemStates source token alerts now = do
     let tracked = [(triggerId, alert) | alert <- alerts, Just triggerId <- [triggerIdOf alert]]
     unless (null tracked) do
         result <- Zabbix.triggerStateGet source.baseUrl token (nub (map fst tracked))
@@ -399,19 +404,14 @@ reconcileProblemStates source token now = do
 -- resolved-state reconcile on a later cycle. Triggers with only
 -- resolved/closed local rows are rescanned on purpose: a refire we never saw
 -- (skipped tail) looks exactly like that.
-scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> [Text] -> UTCTime -> IO ()
-scanMissingProblems source token groupIds now = do
+scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> [Alert] -> [Text] -> UTCTime -> IO ()
+scanMissingProblems source token alerts groupIds now = do
     result <- Zabbix.problemTriggersGet source.baseUrl token groupIds
     case result of
         Left err -> do
             logWarn ("zabbix source \"" <> source.name <> "\" missing-problem scan failed: " <> err)
             recordReconcileFailure source err
         Right triggers -> do
-            alerts <-
-                query @Alert
-                    |> filterWhere (#sourceId, Just (get #id source))
-                    |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
-                    |> fetch
             let tracked = Set.fromList (map (.fingerprint) alerts)
                 candidates = missingProblemCandidates now (scanWindowSeconds source) tracked triggers
             unless (null candidates) do
@@ -427,7 +427,8 @@ scanMissingProblems source token groupIds now = do
                         -- Unlike the cursor path there is nothing to retry
                         -- (the cursor doesn't move), but the trigger stays in
                         -- problem state so the next due cycle rescans it.
-                        syncUngroupedHostAlerts source (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
+                        alertsAfterScan <- activeSourceAlerts source
+                        syncUngroupedHostAlerts source alertsAfterScan (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
 
 -- | Problem-state triggers worth fetching events for: lastchange inside the
 -- window and no tracked local alert with the trigger's fingerprint.
@@ -476,18 +477,13 @@ normalizeWithGroups source hostGroups event =
 ungroupedHostFingerprint :: Text -> Text
 ungroupedHostFingerprint host = "halemans:ungrouped-host:" <> host
 
-syncUngroupedHostAlerts :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> [Text] -> [Text] -> IO ()
-syncUngroupedHostAlerts source ungroupedHosts groupedHosts = do
+syncUngroupedHostAlerts :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> [Alert] -> [Text] -> [Text] -> IO ()
+syncUngroupedHostAlerts source alerts ungroupedHosts groupedHosts = do
     now <- getCurrentTime
     ingestEvents source [ungroupedEvent now host | host <- ungroupedHosts]
     unless (null groupedHosts) do
-        rows <-
-            query @Alert
-                |> filterWhere (#sourceId, Just (get #id source))
-                |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
-                |> fetch
         blackouts <- fetchActiveBlackouts now
-        forM_ rows \alert -> case alert.host of
+        forM_ alerts \alert -> case alert.host of
             Just host
                 | host `elem` groupedHosts
                 , isJust (Text.stripPrefix "halemans:ungrouped-host:" alert.fingerprint) -> do

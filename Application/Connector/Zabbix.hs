@@ -559,9 +559,9 @@ historyGet baseUrl token itemId historyType timeFrom timeTill pageLimit = do
     result <- go timeFrom []
     pure (map toUtcPoint . dedupPoints <$> result)
   where
-    -- acc is the accumulated points in reverse: prepending the reversed page
-    -- keeps each step O(pageLen) instead of the O(total) of acc ++ rows on
-    -- long histories.
+    -- Hard cap on the accumulated window: without it a wide range on a fast
+    -- item (7d @ 1 Hz ≈ 600k points) was fully resident before
+    -- downsampling, tens of MB per request.
     go cursor acc = do
         page <- historyPage cursor
         case page of
@@ -569,9 +569,12 @@ historyGet baseUrl token itemId historyType timeFrom timeTill pageLimit = do
             Right rows ->
                 let acc' = reverse (map toPair rows) ++ acc
                     nextCursor = maximum (map (fst . toPair) rows)
-                 in if length rows < pageLimit || nextCursor <= cursor
-                        then pure (Right (reverse acc'))
-                        else go nextCursor acc'
+                 in if length acc' > historyPointCap
+                        then pure (Left ("history window exceeds " <> tshow historyPointCap <> " points; narrow the chart range"))
+                        else
+                            if length rows < pageLimit || nextCursor <= cursor
+                                then pure (Right (reverse acc'))
+                                else go nextCursor acc'
     historyPage cursor = do
         let opts = Wreq.defaults & Wreq.header "Authorization" .~ ["Bearer " <> cs token]
             body =
@@ -607,3 +610,7 @@ historyGet baseUrl token itemId historyType timeFrom timeTill pageLimit = do
     -- The pages overlap at the cursor second (time_from is inclusive);
     -- first occurrence wins. nubBy is quadratic on week-range histories.
     dedupPoints = Map.toAscList . Map.fromListWith (\new old -> old)
+
+-- | Total history points accepted per historyGet window (across pages).
+historyPointCap :: Int
+historyPointCap = 300000

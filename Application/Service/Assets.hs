@@ -186,10 +186,12 @@ searchAll client aql resultPerPage = go 1 []
         case result of
             Left err -> pure (Left err)
             Right pageResult -> do
-                let acc' = acc ++ pageResult.listEntries
+                -- reverse-accumulate: `acc ++ page` was quadratic and pinned
+                -- every page until the end.
+                let acc' = reverse pageResult.listEntries ++ acc
                 if hasMorePages pageResult && page < 20
                     then go (page + 1) acc'
-                    else pure (Right acc')
+                    else pure (Right (reverse acc'))
 
 objectDetail :: AssetsClient -> Int64 -> IO (Either AssetsError AssetObject)
 objectDetail client objectId =

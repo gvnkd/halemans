@@ -409,16 +409,27 @@ userLanguageCode user =
         Nothing
         (parseMaybe (Aeson.withObject "settings" (\o -> o Aeson..:? "language")) user.settings)
 
+-- | Session-history window loaded as prompt context per turn
+-- (loadHistory). Bounds memory and request growth on long sessions.
+agentHistoryLimit :: Int64
+agentHistoryLimit = 100
+
 -- History rebuild. Assistant rows with tool_calls regenerate the assistant
 -- message plus one tool result message per persisted call, with ids matching
 -- persistToolRound's numbering.
 loadHistory :: (?modelContext :: ModelContext) => Id AgentSession -> IO [LlmMessage]
 loadHistory sessionId = do
+    -- History is CAPPED: a long session otherwise reloads its entire
+    -- message list as prompt context on every turn, growing memory and
+    -- request size monotonically. The newest agentHistoryLimit rows are
+    -- kept (desc + limit, then reversed back to chronological order).
     rows <-
         query @AgentMessage
             |> filterWhere (#sessionId, sessionId)
-            |> orderByAsc #createdAt
+            |> orderByDesc #createdAt
+            |> limit agentHistoryLimit
             |> fetch
+            |> fmap reverse
     pure (concatMap rowMessages (zip [0 ..] rows))
   where
     rowMessages (index, row) = case row.role_ of

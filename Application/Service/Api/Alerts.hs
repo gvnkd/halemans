@@ -11,6 +11,7 @@ import Application.Helper.DashboardConfig (globToLike)
 import Application.Service.AlertScope (alertVisibleWith)
 import Application.Service.Api.Cursor (Cursor (..), encodeCursor)
 import Data.Int (Int64)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Data.Time.Calendar (fromGregorian)
 import Data.UUID (UUID)
@@ -19,7 +20,7 @@ import Generated.Types
 import IHP.Fetch (fetch, fetchOneOrNothing)
 import IHP.ModelSupport
 import IHP.Prelude
-import IHP.QueryBuilder (filterWhere, limit, orderByAsc, orderByDesc, query)
+import IHP.QueryBuilder (filterWhere, filterWhereIn, limit, orderByAsc, orderByDesc, query)
 import IHP.TypedSql (sqlQueryTyped, typedSql)
 
 -- Filter set for GET /api/v1/alerts (design_docs/milestone_6.md §3): empty
@@ -209,12 +210,25 @@ alertDetail alertId scopeNames = do
                 |> orderByDesc #createdAt
                 |> limit 1
                 |> fetchOneOrNothing
+        -- Capped like the web show page: alert_events grows unbounded and
+        -- the whole history was decoded per API call, plus a user fetch per
+        -- event (N+1). Newest apiEventHistoryLimit events, chronological.
+        -- id is the tiebreaker: rows created in one transaction share
+        -- created_at (transaction NOW()).
         events <-
             query @AlertEvent
                 |> filterWhere (#alertId, alertId)
-                |> orderByAsc #createdAt
+                |> orderByDesc #createdAt
+                |> orderByDesc #id
+                |> limit apiEventHistoryLimit
                 |> fetch
-        emails <- mapM (\event -> fmap (fmap (get #email)) (mapM fetch event.userId)) events
+                |> fmap reverse
+        let actorIds = nub (mapMaybe (.userId) events)
+        actors <- query @User |> filterWhereIn (#id, actorIds) |> fetch
+        -- ONE email slot per event (zip aligns with events); userId-less
+        -- events get Nothing instead of being dropped.
+        let emailsById = Map.fromList [(get #id user, get #email user) | user <- actors]
+            emails = map (\event -> event.userId >>= \userId -> Map.lookup userId emailsById) events
         pure $
             Just
                 AlertDetail
@@ -228,3 +242,8 @@ alertDetail alertId scopeNames = do
                     , adAnalysis = analysis
                     , adTimeline = zip events emails
                     }
+
+-- | Event-history cap for the alert detail endpoint (see
+-- Web.Controller.Alerts.alertEventHistoryLimit).
+apiEventHistoryLimit :: Int64
+apiEventHistoryLimit = 500

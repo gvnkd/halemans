@@ -80,13 +80,13 @@ autoCloseResolved = do
     stale <-
         query @Alert
             |> filterWhere (#status, "resolved" :: Text)
+            -- TTL predicate IN SQL: the previous code decoded the whole
+            -- resolved cohort (every resolved row within retention) and
+            -- filtered in Haskell on every 300s tick.
+            |> filterWhereLessThan (#resolvedAt, Just cutoff)
             |> fetch
-    forM_ (filter (resolvedBefore cutoff) stale) \alert ->
+    forM_ stale \alert ->
         void (autoCloseAlert alert "auto-closed: resolved TTL expired")
-  where
-    resolvedBefore cutoff alert = case alert.resolvedAt of
-        Just resolvedAt -> resolvedAt < cutoff
-        Nothing -> False
 
 -- | Stall detection: firing/ack alerts whose last_seen_at is older than the
 -- stall TTL never got a refire/resolve from their source (deleted trigger,
@@ -215,11 +215,11 @@ closeStalledAlerts = do
     stalled <-
         query @Alert
             |> filterWhere (#status, "stalled" :: Text)
+            |> filterWhereLessThan (#updatedAt, cutoff)
+            |> filterWhereLessThan (#lastSeenAt, cutoff)
             |> fetch
-    forM_ (filter (expired cutoff) stalled) \alert ->
+    forM_ stalled \alert ->
         void (autoCloseAlert alert "auto-closed: stalled TTL expired")
-  where
-    expired cutoff alert = alert.updatedAt < cutoff && alert.lastSeenAt < cutoff
 
 unackExpiredAcks :: (?modelContext :: ModelContext) => IO ()
 unackExpiredAcks = do
@@ -227,13 +227,10 @@ unackExpiredAcks = do
     acked <-
         query @Alert
             |> filterWhere (#status, "ack" :: Text)
+            |> filterWhereLessThanOrEqualTo (#ackExpiresAt, Just now)
             |> fetch
-    forM_ (filter (expired now) acked) \alert ->
+    forM_ acked \alert ->
         void (unackAlert Nothing alert "ack timeout expired")
-  where
-    expired now alert = case alert.ackExpiresAt of
-        Just expiresAt -> expiresAt <= now
-        Nothing -> False
 
 unsuppressExpired :: (?modelContext :: ModelContext) => IO ()
 unsuppressExpired = do
@@ -241,6 +238,9 @@ unsuppressExpired = do
     suppressed <-
         query @Alert
             |> filterWhere (#suppressed, True)
+            -- Source-owned muting never expires here (IS DISTINCT FROM keeps
+            -- the legacy NULL rows, which count as blackout-owned).
+            |> filterWhereSql (#suppressedBy, "IS DISTINCT FROM 'source'")
             |> fetch
     activeBlackouts <-
         query @Blackout

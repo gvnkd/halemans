@@ -24,6 +24,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.List as List
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import IHP.ControllerSupport (respondAndExit)
 import IHP.HSX.Markup (renderMarkupText)
@@ -161,18 +162,33 @@ instance Controller AlertsController where
     action ShowAlertAction{alertId} = do
         alert <- fetch alertId
         assertAlertVisible alert
+        -- Event history is CAPPED: a long-lived flapping alert accumulates
+        -- alert_events rows indefinitely (no retention prune on the table);
+        -- decoding them all per page view pinned the whole history. Newest
+        -- alertEventHistoryLimit events, back in chronological order. id is
+        -- the tiebreaker: rows created in one transaction share created_at
+        -- (transaction NOW()).
         events <-
             query @AlertEvent
                 |> filterWhere (#alertId, alertId)
-                |> orderByAsc #createdAt
+                |> orderByDesc #createdAt
+                |> orderByDesc #id
+                |> limit alertEventHistoryLimit
                 |> fetch
+                |> fmap reverse
         comments <-
             query @Comment
                 |> filterWhere (#alertId, alertId)
                 |> orderByAsc #createdAt
                 |> fetch
-        commentAuthors <- forM comments \comment -> fetch comment.userId
-        eventActors <- forM (mapMaybe (.userId) events) \userId -> fetch userId
+        let authorIds = List.nub (map (.userId) comments)
+            actorIds = List.nub (mapMaybe (.userId) events)
+        authors <- query @User |> filterWhereIn (#id, authorIds) |> fetch
+        actors <- query @User |> filterWhereIn (#id, actorIds) |> fetch
+        let commentAuthors = [user | comment <- comments, Just user <- [Map.lookup comment.userId authorsById]]
+            eventActors = [user | event <- events, userId <- maybeToList event.userId, Just user <- [Map.lookup userId actorsById]]
+            authorsById = Map.fromList [(get #id user, user) | user <- authors]
+            actorsById = Map.fromList [(get #id user, user) | user <- actors]
         cmdbEntry <- case (alert.hostId, alert.serviceId) of
             (Just hostId, _) ->
                 query @CmdbEntry
@@ -452,3 +468,8 @@ metricChartHtml scale chartData =
     linkHtml (label, url) =
         [hsx|<a href={url} target="_blank" rel="noopener noreferrer" class="me-3">{tr label}</a>|]
     (scaleText, (tLo, tHi), (yLo, yHi), (plotLeft, plotRight)) = chartRenderMeta scale chartData
+
+-- | Event-history cap for the alert show page: alert_events has no
+-- retention prune, and a flapping alert accumulates rows indefinitely.
+alertEventHistoryLimit :: Int64
+alertEventHistoryLimit = 500

@@ -222,19 +222,26 @@ applyGroupingRulesWith pageSize = withTransaction do
 
 -- | Recompute worst severity / member count / rollup status from the current
 -- members. Group resolves when every member is resolved or closed (§3).
+-- Only (severity, status) is SELECTed — the full member rows (description,
+-- labels, facets jsonb) were decoded per group per touched group, which on
+-- the admin apply-rules replay dwarfed the paged walk itself.
 recomputeGroupRollup :: (?modelContext :: ModelContext) => Id AlertGroup -> IO AlertGroup
 recomputeGroupRollup groupId = do
     group <- fetch groupId
-    members <-
-        query @Alert
-            |> filterWhere (#groupId, Just groupId)
-            |> fetch
-    let count = length members
-        worst = fromMaybe "warning" (maximumByMay (\a b -> compare (severityRank a) (severityRank b)) (map (.severity) members))
-        live = filter (\alert -> alert.status `notElem` ["resolved", "closed"]) members
+    memberRows <-
+        sqlQueryTyped
+            [typedSql|
+        SELECT a.severity, a.status
+        FROM alerts a
+        WHERE a.group_id = ${groupId} |]
+    let severities = map (get #severity) memberRows
+        statuses = map (get #status) memberRows
+        count = length memberRows
+        worst = fromMaybe "warning" (maximumByMay (\a b -> compare (severityRank a) (severityRank b)) severities)
+        live = filter (`notElem` ["resolved", "closed"]) statuses
         rollupStatus
-            | any (\alert -> alert.status == "firing") live = "firing"
-            | any (\alert -> alert.status == "stalled") live = "stalled"
+            | "firing" `elem` live = "firing"
+            | "stalled" `elem` live = "stalled"
             | not (null live) = "ack"
             | otherwise = "resolved"
     now <- getCurrentTime

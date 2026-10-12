@@ -103,6 +103,9 @@ confluenceSearch config cql = do
             Wreq.defaults
                 & Wreq.header "Authorization" .~ ["Bearer " <> cs config.token]
                 & Wreq.param "cql" .~ [cql]
+                -- Pin the page size: every hit carries its full
+                -- body.view HTML in the response.
+                & Wreq.param "limit" .~ ["25"]
     result <- try (Http.getFollowing opts (cs (apiUrl config "/rest/api/content/search")))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))

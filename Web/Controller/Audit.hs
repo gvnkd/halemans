@@ -52,7 +52,8 @@ instance Controller AuditController where
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                             AND coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${env}
-                        ORDER BY e.created_at |]
+                        ORDER BY e.created_at
+                        LIMIT ${exportRowCap} |]
                     (Nothing, Just alertId) ->
                         sqlQueryTyped
                             [typedSql|
@@ -60,14 +61,16 @@ instance Controller AuditController where
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
                             AND e.alert_id = ${alertId}
-                        ORDER BY e.created_at |]
+                        ORDER BY e.created_at
+                        LIMIT ${exportRowCap} |]
                     _ ->
                         sqlQueryTyped
                             [typedSql|
                         SELECT e.id, e.created_at, e.kind, e.user_id, e.payload, e.alert_id, a.title, coalesce(nullif(a.facets ->> 'env', ''), a.env) AS env
                         FROM alert_events e JOIN alerts a ON a.id = e.alert_id
                         WHERE e.created_at >= ${from}::timestamptz AND e.created_at < ${to}::timestamptz
-                        ORDER BY e.created_at |]
+                        ORDER BY e.created_at
+                        LIMIT ${exportRowCap} |]
                 let exportRows = map toExportRow rows
                 let scope =
                         object
@@ -75,6 +78,8 @@ instance Controller AuditController where
                             , "to" .= toText
                             , "environment" .= envParam
                             , "alert" .= alertParam
+                            , "rowCap" .= exportRowCap
+                            , "truncated" .= (length rows == fromIntegral exportRowCap)
                             ]
                 export <-
                     newRecord @AuditExport
@@ -123,3 +128,10 @@ parseTimestamp value =
         <|> tryFormat "%Y-%m-%d"
   where
     tryFormat fmt = parseTimeM True defaultTimeLocale fmt (cs value)
+
+-- | Audit export row cap: alert_events is never retention-pruned, so a wide
+-- window could decode an unbounded result (plus the whole CSV/JSONL body)
+-- into the admin request thread. A hit cap silently truncates; narrow the
+-- window to export more.
+exportRowCap :: Int64
+exportRowCap = 50000

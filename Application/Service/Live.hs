@@ -26,6 +26,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, parseMaybe)
 import qualified Data.ByteString.Lazy as BL
 import Data.IORef
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -224,9 +225,14 @@ broadcast modelContext notification = do
                 (True, Just alertId) -> fetchOneOrNothing (Id alertId :: Id Alert)
                 _ -> pure Nothing
             connections <- readIORef registry
+            -- Per-broadcast memo for the USER-INDEPENDENT branches: without
+            -- it, every dashboard/env-scoped connection re-ran the same card
+            -- evaluation (each op a full non-closed fat-row decode) for the
+            -- same event — O(connections × cards) decodes per alert event.
+            cacheRef <- newIORef mempty
             forM_ connections \(_, userUuid, scopeRef, send) -> do
                 scopes <- readIORef scopeRef
-                updates <- concat <$> forM scopes \scope -> updatesFor userUuid scope event
+                updates <- concat <$> forM scopes \scope -> updatesFor cacheRef userUuid scope event
                 banner <- bannerForConnection userUuid event bannerAlert
                 unless (null updates && isNothing banner) do
                     send (cs (Aeson.encode (object ["updates" .= updates, "banner" .= banner])))
@@ -269,16 +275,29 @@ scopeVisible (Just names) alert = do
         Just sourceId -> maybe False (\source -> source.type_ == "zabbix") <$> fetchOneOrNothing sourceId
     pure (alertVisibleWith names isZabbix alert)
 
+-- | Compute (once per broadcast) a user-independent branch's updates and
+-- reuse them for every connection with the same scope target.
+memoized :: IORef (Map Text [Aeson.Value]) -> Text -> IO [Aeson.Value] -> IO [Aeson.Value]
+memoized cacheRef key compute = do
+    cached <- Map.lookup key <$> readIORef cacheRef
+    case cached of
+        Just updates -> pure updates
+        Nothing -> do
+            updates <- compute
+            modifyIORef' cacheRef (Map.insert key updates)
+            pure updates
+
 -- | Compute the fragment updates relevant for a connection scope. userUuid is
 -- the connection's logged-in user: the alert-list scopes apply the SAME
 -- server-side per-user host group visibility as the list query (AlertScope).
-updatesFor :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => Maybe UUID -> Scope -> LiveEvent -> IO [Aeson.Value]
-updatesFor userUuid scope event = case (scope, event.leAlertId, event.leGroupId) of
+updatesFor :: (?modelContext :: ModelContext, ?request :: Request, ?context :: Request) => IORef (Map Text [Aeson.Value]) -> Maybe UUID -> Scope -> LiveEvent -> IO [Aeson.Value]
+updatesFor cacheRef userUuid scope event = case (scope, event.leAlertId, event.leGroupId) of
     (ScopeDashboard, Just alertId, _) -> do
-        (cards, unassigned) <- computeEnvCards
-        let allCards = cards ++ maybeToList unassigned
-        relevant <- pure $ filter (cardMatches event) allCards
-        pure [fragment (cardDomId card) (renderCard card) "replace" "" | card <- relevant]
+        memoized cacheRef "env-cards" do
+            (cards, unassigned) <- computeEnvCards
+            let allCards = cards ++ maybeToList unassigned
+            relevant <- pure $ filter (cardMatches event) allCards
+            pure [fragment (cardDomId card) (renderCard card) "replace" "" | card <- relevant]
     -- User dashboard pages (milestone_9.md §6): server-side card evaluation;
     -- any alert event (incl. "enriched", so facet changes re-evaluate) whose
     -- alert matches a card re-renders that card's whole section.
@@ -289,30 +308,33 @@ updatesFor userUuid scope event = case (scope, event.leAlertId, event.leGroupId)
             Just dash -> case decodeDashboardConfig dash.config of
                 Left _ -> pure []
                 Right cards -> do
-                    alert <- fetch (Id alertId)
-                    -- Expand the FULL config first: filtering templates before
-                    -- expansion would shift ecIndex and re-render the wrong
-                    -- sections. No status pre-filter on the alert: a closed
-                    -- alert still matches its template's match clauses, and
-                    -- counts/summaries/hideWhen re-evaluate against the
-                    -- non-closed base query, so resolve/close updates cards.
-                    expanded <- expandDashboardCards cards
-                    let matching = [ec | ec <- expanded, matchCardAlert ec.ecCard alert]
-                    updates <- forM matching \expandedCard -> do
-                        result <- fetchCardData expandedCard
-                        pure (fragment expandedCard.ecDomId (renderCardSection (Id dashUuid) (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
-                    -- A forEach value vanishes when its last non-closed alert
-                    -- leaves: no expanded card matches the alert anymore, so
-                    -- remove the now-stale section explicitly.
-                    let removals =
-                            [ object ["id" .= expandedDomId index card value, "mode" .= ("remove" :: Text)]
-                            | (index, card) <- zip [0 ..] cards
-                            , matchCardAlert card alert
-                            , Just facetRef <- [card.cardForEach]
-                            , value <- [clauseValue facetRef alert]
-                            , not (any (\ec -> ec.ecIndex == index && ec.ecValue == value) expanded)
-                            ]
-                    pure (updates ++ removals)
+                    -- User-independent per event (matchCardAlert applies no
+                    -- team scope), so memoize across connections.
+                    memoized cacheRef ("user-dash:" <> UUID.toText dashUuid) do
+                        alert <- fetch (Id alertId)
+                        -- Expand the FULL config first: filtering templates before
+                        -- expansion would shift ecIndex and re-render the wrong
+                        -- sections. No status pre-filter on the alert: a closed
+                        -- alert still matches its template's match clauses, and
+                        -- counts/summaries/hideWhen re-evaluate against the
+                        -- non-closed base query, so resolve/close updates cards.
+                        expanded <- expandDashboardCards cards
+                        let matching = [ec | ec <- expanded, matchCardAlert ec.ecCard alert]
+                        updates <- forM matching \expandedCard -> do
+                            result <- fetchCardData expandedCard
+                            pure (fragment expandedCard.ecDomId (renderCardSection (Id dashUuid) (expandedCard, result)) "replaceOrPrepend" "dashboard-cards")
+                        -- A forEach value vanishes when its last non-closed alert
+                        -- leaves: no expanded card matches the alert anymore, so
+                        -- remove the now-stale section explicitly.
+                        let removals =
+                                [ object ["id" .= expandedDomId index card value, "mode" .= ("remove" :: Text)]
+                                | (index, card) <- zip [0 ..] cards
+                                , matchCardAlert card alert
+                                , Just facetRef <- [card.cardForEach]
+                                , value <- [clauseValue facetRef alert]
+                                , not (any (\ec -> ec.ecIndex == index && ec.ecValue == value) expanded)
+                                ]
+                        pure (updates ++ removals)
     (ScopeAlerts scopeFilters, Just alertId, _) -> do
         alert <- fetch (Id alertId)
         scope <- scopeNamesForConnection userUuid
@@ -392,14 +414,15 @@ updatesFor userUuid scope event = case (scope, event.leAlertId, event.leGroupId)
             pure [fragment (groupHeaderDomId group) (groupHeaderHtml group) "replace" ""]
         | otherwise -> pure []
     (ScopeEnv name _, _, Just groupId)
-        | event.leEnv == Just name -> do
-            group <- fetch (Id groupId)
-            members <-
-                query @Alert
-                    |> filterWhere (#groupId, Just (Id groupId))
-                    |> orderByDesc #lastSeenAt
-                    |> fetch
-            pure [fragment (groupRowDomId group) (groupRowHtml (group, members)) "replace" ""]
+        | event.leEnv == Just name ->
+            memoized cacheRef ("env-group:" <> UUID.toText groupId) do
+                group <- fetch (Id groupId)
+                members <-
+                    query @Alert
+                        |> filterWhere (#groupId, Just (Id groupId))
+                        |> orderByDesc #lastSeenAt
+                        |> fetch
+                pure [fragment (groupRowDomId group) (groupRowHtml (group, members)) "replace" ""]
         | otherwise -> pure []
     -- Alert events also refresh the member row on an open group card.
     (ScopeGroup groupUuid, Just alertId, Nothing) -> do

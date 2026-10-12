@@ -17,6 +17,7 @@ import IHP.HaskellSupport (get, set)
 import IHP.ModelSupport (Id' (..), ModelContext, createRecord, newRecord, updateRecord)
 import IHP.Prelude
 import IHP.QueryBuilder (filterWhere, filterWhereIn, filterWhereNot, orderByAsc, query)
+import IHP.TypedSql (sqlQueryTyped, typedSql)
 import System.Environment (lookupEnv)
 
 -- DB-only Jira config resolution (milestone 10; env fallback removed in
@@ -107,15 +108,20 @@ createTicketForAlert source alert issueType summary body = do
 -- (milestone 10: links may live in different Jira projects/instances).
 syncOpenLinks :: (?modelContext :: ModelContext) => IO Int
 syncOpenLinks = do
-    openAlerts <-
-        query @Alert
-            |> filterWhereNot (#status, "closed" :: Text)
-            |> fetch
-    links <- case openAlerts of
+    -- IDs only: the previous `query @Alert |> fetch` decoded EVERY non-closed
+    -- fat row (description, labels, facets jsonb) on every 300s tick just to
+    -- map ids for the links query.
+    alertIds <-
+        sqlQueryTyped
+            [typedSql|
+        SELECT a.id
+        FROM alerts a
+        WHERE a.status <> 'closed' |]
+    links <- case alertIds of
         [] -> pure []
-        alerts ->
+        ids ->
             query @JiraLink
-                |> filterWhereIn (#alertId, map (get #id) alerts)
+                |> filterWhereIn (#alertId, ids)
                 |> fetch
     configs <- currentJiraConfigs
     if null configs

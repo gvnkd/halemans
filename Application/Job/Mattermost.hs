@@ -147,6 +147,10 @@ enqueueMissingCards channelRowName = do
             |> filterWhere (#channel, channelRowName)
             |> filterWhere (#enabled, True)
             |> fetch
+    -- NOTE: a thin projection (id + the columns ruleMatches/ruleInScope
+    -- read) would skip the fat decode, but typedSql's TupleGet inference
+    -- doesn't cooperate with 14-column ad-hoc rows; the active set is small
+    -- and the per-(rule, alert) N+1 below was the actual blowup.
     active <-
         query @Alert
             |> filterWhereIn (#status, ["firing", "ack", "stalled"] :: [Text])
@@ -155,24 +159,35 @@ enqueueMissingCards channelRowName = do
     counts <- forM rules \rule -> do
         let matched = filter (\alert -> ruleMatches alert rule) active
         inScope <- filterM (\alert -> ruleInScope alert rule) matched
-        withoutPosts <- filterM (pairMissing rule) inScope
-        forM_ withoutPosts \alert ->
+        -- ONE NOT EXISTS query per rule instead of a mattermost_posts fetch
+        -- per (rule, alert) pair.
+        let inScopeIds = map (get #id) inScope
+            ruleId = get #id rule
+        missingIds <-
+            if null inScopeIds
+                then pure []
+                else
+                    ( sqlQueryTyped
+                        [typedSql|
+                    SELECT a.id
+                    FROM alerts a
+                    WHERE a.id = ANY(${inScopeIds})
+                        AND NOT EXISTS (
+                            SELECT 1 FROM mattermost_posts p
+                            WHERE p.alert_id = a.id
+                                AND p.notification_rule_id = ${ruleId}
+                        ) |] ::
+                        IO [Id Alert]
+                    )
+        forM_ missingIds \alertId ->
             void do
                 newRecord @MattermostJob
-                    |> set #alertId (Just (get #id alert))
-                    |> set #ruleId (Just (get #id rule))
+                    |> set #alertId (Just alertId)
+                    |> set #ruleId (Just ruleId)
                     |> set #kind ("notify" :: Text)
                     |> createRecord
-        pure (length withoutPosts)
+        pure (length missingIds)
     pure (sum counts)
-  where
-    pairMissing rule alert = do
-        posted <-
-            query @MattermostPost
-                |> filterWhere (#alertId, get #id alert)
-                |> filterWhere (#notificationRuleId, Just (get #id rule))
-                |> fetch
-        pure (null posted)
 
 -- | Called from the ingest fan-out (publishAlertUpdate) on every alert
 -- transition: only state-changing kinds sync, and only when the alert

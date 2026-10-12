@@ -194,7 +194,11 @@ getIssue config key = do
 
 getIssueComments :: JiraConfig -> Text -> IO (Either Text [JiraComment])
 getIssueComments config key = do
-    result <- try (Http.getFollowing (authOpts config) (cs (apiUrl config ("/issue/" <> key <> "/comment"))))
+    -- maxResults bounds the buffer: an ancient ticket can carry thousands
+    -- of comments and the whole list was decoded per call. Callers take at
+    -- most 5, well inside this cap.
+    let opts = authOpts config & Wreq.param "maxResults" .~ ["100"]
+    result <- try (Http.getFollowing opts (cs (apiUrl config ("/issue/" <> key <> "/comment"))))
     case result of
         Left err -> pure (Left (tshow (err :: SomeException)))
         Right response -> case Aeson.eitherDecode (response ^. Wreq.responseBody) of

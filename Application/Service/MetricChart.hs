@@ -330,9 +330,9 @@ missingRanges maxGap from to cached = go from (map runRange (toRuns (filter inRa
 sequenceEither :: [Either a b] -> Either a [b]
 sequenceEither = go []
   where
-    go acc (Right x : rest) = go (acc ++ [x]) rest
+    go acc (Right x : rest) = go (x : acc) rest
     go _ (Left e : _) = Left e
-    go acc [] = Right acc
+    go acc [] = Right (reverse acc)
 
 limitPoints :: MetricWindow -> [(UTCTime, Double)] -> [(UTCTime, Double)]
 limitPoints window = downsample window.mwMaxPoints

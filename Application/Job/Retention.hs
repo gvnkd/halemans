@@ -29,7 +29,9 @@ instance Job RetentionJob where
             Nothing -> putStrLn ("retention: no retention_configs row, skipping" :: Text)
             Just config
                 | not config.enabled -> putStrLn ("retention: disabled in retention_configs, skipping" :: Text)
-                | otherwise -> pruneRawEvents config
+                | otherwise -> do
+                    pruneRawEvents config
+                    pruneAlertEvents config
 
         pruneBannerSnapshots
 
@@ -68,6 +70,39 @@ pruneRawEvents config = do
         if deleted == 0
             then pure (batches :: Int, rows)
             else deleteBatches cutoff (batches + 1) (rows + deleted)
+
+-- | alert_events grow monotonically otherwise (every state transition of
+-- every alert, no prune anywhere) — the audit export, alert timeline, and
+-- flapping analysis all decode ever-larger slices. Events of TERMINAL
+-- alerts (resolved/closed) older than the raw_events horizon are dead
+-- weight: nothing re-renders them, and an alert that refires after the
+-- horizon only loses its >horizon-old history. Active alerts (firing/ack/
+-- stalled) keep ALL their events. Same batching discipline as raw_events.
+pruneAlertEvents :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => RetentionConfig -> IO ()
+pruneAlertEvents config = do
+    startedAt <- getCurrentTime
+    let cutoff = addUTCTime (fromIntegral (-config.rawEventsDays) * 86400) startedAt
+    (batches, rows) <- deleteBatches cutoff 0 0
+    when (rows > 0) do
+        now <- getCurrentTime
+        putStrLn ("retention: pruned " <> tshow rows <> " alert_events (terminal alerts) in " <> tshow batches <> " batches (" <> tshow (diffUTCTime now startedAt) <> ")" :: Text)
+  where
+    deleteBatches cutoff batches rows = do
+        deleted <- deleteBatch cutoff
+        if deleted == 0
+            then pure (batches :: Int, rows)
+            else deleteBatches cutoff (batches + 1) (rows + deleted)
+    deleteBatch cutoff =
+        sqlExecTyped
+            [typedSql|
+        DELETE FROM alert_events
+        WHERE id IN (
+            SELECT e.id FROM alert_events e
+            JOIN alerts a ON a.id = e.alert_id
+            WHERE e.created_at < ${cutoff}
+                AND a.status IN ('resolved', 'closed')
+            LIMIT 1000)
+    |]
 
 -- | One committed batch. The inner SELECT keeps the giant first-run prune
 -- from holding one transaction (milestone_5.md §13).

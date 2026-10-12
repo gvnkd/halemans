@@ -75,6 +75,5 @@ subscriptionsForViewers = do
     forM rows fetch
 
 subscriptionsForUsers :: (?modelContext :: ModelContext) => [Id User] -> IO [PushSubscription]
-subscriptionsForUsers userIds = do
-    subscriptions <- query @PushSubscription |> fetch
-    pure (filter (\subscription -> subscription.userId `elem` userIds) subscriptions)
+subscriptionsForUsers userIds =
+    query @PushSubscription |> filterWhereIn (#userId, userIds) |> fetch

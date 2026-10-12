@@ -1244,10 +1244,10 @@ dispatchRest context name arguments = case name of
     "get_llm_config" -> getLlmConfig
     "list_alert_groups" -> do
         limitRaw <- argInt "limit" 20
-        let limit = max 1 (min 100 limitRaw)
+        let cap = max 1 (min 100 limitRaw)
         scope <- scopeForUser context.acUser
-        groups <- query @AlertGroup |> orderByDesc #createdAt |> fetch
-        let limited = take limit groups
+        groups <- query @AlertGroup |> orderByDesc #createdAt |> limit (fromIntegral cap :: Int64) |> fetch
+        let limited = groups
             ids = map (get #id) limited
             unrestricted = isNothing scope
             scopeNames = fromMaybe [] scope

@@ -138,7 +138,18 @@ pollSource source = do
                     logDebug ("grafana source \"" <> source.name <> "\": alertmanager listing returned " <> tshow count <> " alerts")
                     recordSuccess source
                     reconcileAbsences source now listedFingerprints
-                    reconcileSilences source token now
+                    -- The silence reconcile fetches the source's whole
+                    -- active cohort (and the full /silences listing) —
+                    -- running it every ~5s poll cycle was constant decode
+                    -- churn. At most once a minute per source; the first
+                    -- cycle after start (or after a 60s gap) always
+                    -- reconciles. Absences stay per-cycle: they are the
+                    -- resolve path for alerts that vanished from the
+                    -- listing, and their grace prefilter already keeps the
+                    -- cohort small.
+                    when (grafanaReconcileDue now source) do
+                        reconcileSilences source token now
+                        void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                     _ <-
                         source
                             |> set #lastSyncCursor (Just now)
@@ -148,6 +159,14 @@ pollSource source = do
 -- | The listing can lag a webhook resolve by a few seconds (alertmanager
 -- keeps the alert listed until its endsAt passes); don't let the poller
 -- refire an alert the fast path just resolved.
+-- | The reconciles run at most once a minute per source (see the poll
+-- cycle). lastReconcileAt is only stamped by this job, so grafana sources
+-- keep their own cadence independent of zabbix sources.
+grafanaReconcileDue :: UTCTime -> Source -> Bool
+grafanaReconcileDue now source = case source.lastReconcileAt of
+    Nothing -> True
+    Just lastAt -> addUTCTime 60 lastAt <= now
+
 refireGuard :: (?modelContext :: ModelContext) => UTCTime -> NormalizedEvent -> IO Bool
 refireGuard now event = case event.status of
     Resolved -> pure False
@@ -170,13 +189,18 @@ refireGuard now event = case event.status of
 -- fingerprint Set accumulated during the streaming fold, not the alerts.
 reconcileAbsences :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> UTCTime -> Set.Set Text -> IO ()
 reconcileAbsences source now listedFingerprints = do
+    let graceCutoff = addUTCTime (-60) now
     firing <-
         query @Alert
             |> filterWhere (#sourceId, Just (get #id source))
             |> filterWhereIn (#status, ["firing", "stalled"] :: [Text])
+            -- Grace predicate IN SQL: candidates must be unseen for a
+            -- minute anyway, and the previous code decoded the source's
+            -- whole active cohort on every ~5s cycle to apply this filter
+            -- in Haskell.
+            |> filterWhereLessThan (#lastSeenAt, graceCutoff)
             |> fetch
-    let graceCutoff = addUTCTime (-60) now
-        vanished =
+    let vanished =
             filter
                 ( \alert ->
                     "grafana:" `Text.isPrefixOf` alert.fingerprint
