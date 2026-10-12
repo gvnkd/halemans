@@ -11,6 +11,8 @@ data IndexView = IndexView
     , selectedEnv :: Maybe Text
     , severities :: [Text]
     , severityOptions :: [Text]
+    , teamOptions :: [Text]
+    , selectedTeams :: [Text]
     , volumeSvg :: Text
     , volumeTitle :: Text
     , volumeBucket :: Text
@@ -99,6 +101,10 @@ instance View IndexView where
             <div class="fld">
                 <label>{tr "severity"}</label>
                 {filterMultiSelect "severity" (tr "severity") severityOptions severities}
+            </div>
+            <div class="fld">
+                <label>{tr "team"}</label>
+                {filterMultiSelect "teams" (tr "team") teamOptions selectedTeams}
             </div>
             <div class="fld">
                 <button type="submit" class="btn btn-brand" data-testid="reports-submit">{tr "Render"}</button>

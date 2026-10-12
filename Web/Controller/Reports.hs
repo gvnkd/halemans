@@ -1,5 +1,6 @@
 module Web.Controller.Reports where
 
+import Application.Service.HostGroups (teamHostGroupNames)
 import qualified Application.Service.Reports as Reports
 import Application.Service.TimeRange (resolveTimeExpr)
 import Data.Int (Int64)
@@ -34,6 +35,7 @@ instance Controller ReportsController where
                 _ -> ""
             bucketKind = if volumeBucket == "" then (if diffUTCTime to from <= 86400 then "hour" else "day") else volumeBucket
             severities = paramList @Text "severity"
+            selectedTeams = paramList @Text "teams"
         -- Selector options: every effective env ever seen (unbounded by window)
         envRows <-
             sqlQueryTyped
@@ -49,15 +51,31 @@ instance Controller ReportsController where
             SELECT DISTINCT a.severity
             FROM alerts a
             ORDER BY 1 |]
+        -- Team visibility filter: selected team names resolve to the union of
+        -- their host groups; a zabbix alert passes when its host groups
+        -- intersect that union. Mirrors the /alerts scope predicate —
+        -- halemans:-fingerprint and non-zabbix alerts stay visible to every
+        -- team. Nothing selected = no restriction (reports do NOT auto-apply
+        -- the viewer's own team scope by design).
+        teamRows <- query @Team |> fetch
+        let
+            teamScopeNames =
+                if null selectedTeams
+                    then Nothing
+                    else Just (teamHostGroupNames [team | team <- teamRows, team.name `elem` selectedTeams])
+            teamUnrestricted = isNothing teamScopeNames
+            teamScope = fromMaybe [] teamScopeNames
         severityRows <-
             sqlQueryTyped
                 [typedSql|
             SELECT a.severity, count(*) AS n
             FROM alerts a
+            LEFT JOIN sources sc ON sc.id = a.source_id
             WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
             GROUP BY a.severity
             ORDER BY n DESC |]
         -- No env selected: breakdown by environment. One env selected:
@@ -68,10 +86,12 @@ instance Controller ReportsController where
                     [typedSql|
                 SELECT coalesce(nullif(a.facets ->> 'env', ''), a.env) AS label, count(*) AS n
                 FROM alerts a
+                LEFT JOIN sources sc ON sc.id = a.source_id
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND coalesce(nullif(a.facets ->> 'env', ''), a.env) IS NOT NULL
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                    AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
                 GROUP BY 1
                 ORDER BY n DESC
                 LIMIT 12 |]
@@ -80,11 +100,13 @@ instance Controller ReportsController where
                     [typedSql|
                 SELECT a.host AS label, count(*) AS n
                 FROM alerts a
+                LEFT JOIN sources sc ON sc.id = a.source_id
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND a.host IS NOT NULL
                     AND coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter}
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                    AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
                 GROUP BY a.host
                 ORDER BY n DESC
                 LIMIT 12 |]
@@ -99,6 +121,7 @@ instance Controller ReportsController where
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR s.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
             GROUP BY 1
             ORDER BY n DESC
             LIMIT 8 |]
@@ -113,10 +136,12 @@ instance Controller ReportsController where
                         [typedSql|
                 SELECT extract(hour from coalesce(a.started_at, a.first_seen_at))::int AS hour_of_day, a.severity, count(*) AS n
                 FROM alerts a
+                LEFT JOIN sources sc ON sc.id = a.source_id
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                    AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
                 GROUP BY 1, 2
                 ORDER BY 1 |]
                 else pure []
@@ -127,10 +152,12 @@ instance Controller ReportsController where
                         [typedSql|
                 SELECT date_trunc('day', coalesce(a.started_at, a.first_seen_at)) AS bucket, a.severity, count(*) AS n
                 FROM alerts a
+                LEFT JOIN sources sc ON sc.id = a.source_id
                 WHERE coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                     AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                     AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                    AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
                 GROUP BY 1, 2
                 ORDER BY 1 |]
                 else pure []
@@ -139,12 +166,14 @@ instance Controller ReportsController where
                 [typedSql|
             SELECT a.severity, avg(extract(epoch from (a.resolved_at - a.started_at)))::float8 AS avg_seconds
             FROM alerts a
+            LEFT JOIN sources sc ON sc.id = a.source_id
             WHERE a.resolved_at IS NOT NULL AND a.started_at IS NOT NULL
                 AND a.resolved_at >= a.started_at
                 AND coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
                 AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope})
             GROUP BY a.severity
             ORDER BY avg_seconds DESC |]
         -- KPI tile: mean resolution across ALL resolved alerts in the window
@@ -153,12 +182,14 @@ instance Controller ReportsController where
                 [typedSql|
             SELECT avg(extract(epoch from (a.resolved_at - a.started_at)))::float8 AS avg_seconds
             FROM alerts a
+            LEFT JOIN sources sc ON sc.id = a.source_id
             WHERE a.resolved_at IS NOT NULL AND a.started_at IS NOT NULL
                 AND a.resolved_at >= a.started_at
                 AND coalesce(a.started_at, a.first_seen_at) >= ${from}::timestamptz
                 AND coalesce(a.started_at, a.first_seen_at) < ${to}::timestamptz
                 AND (${envFilter} = '' OR coalesce(nullif(a.facets ->> 'env', ''), a.env) = ${envFilter})
-                AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities})) |]
+                AND (cardinality(${severities}::text[]) = 0 OR a.severity = ANY(${severities}))
+                AND (${teamUnrestricted} OR a.fingerprint LIKE 'halemans:%' OR sc.type IS DISTINCT FROM 'zabbix' OR a.host_groups ?| ${teamScope}) |]
         let envs = case selectedEnv of
                 -- keep a manually-typed/unknown selection visible in the dropdown
                 Just env | env `notElem` knownEnvs -> env : knownEnvs
@@ -166,6 +197,8 @@ instance Controller ReportsController where
             knownEnvs = [env | Just env <- envRows]
             -- keep manually-typed/unknown selections visible in the dropdown
             severityOptions = sortOn Reports.severityRank (nub (severityOptionRows <> severities))
+            -- keep manually-typed/unknown team selections visible in the dropdown
+            teamOptions = sort (nub ([team.name | team <- teamRows] <> selectedTeams))
             envPanelTitle = if isJust selectedEnv then tr "Alerts by host" else tr "Alerts by environment"
             hourCounts = Map.fromListWith (<>) (mapMaybe (\row -> (,[(get #severity row, get #n row)]) <$> get #hour_of_day row) hourRows)
             hourLabel :: Int -> Text
