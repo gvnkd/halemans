@@ -1,6 +1,6 @@
 module Test.Integration.GroupsSpec (spec) where
 
-import Application.Service.Groups (ApplyGroupingSummary (..), applyGroupingRules)
+import Application.Service.Groups (ApplyGroupingSummary (..), applyGroupingRulesWith)
 import Control.Exception (finally)
 import Control.Monad (void)
 import Data.Aeson (object, (.=))
@@ -64,7 +64,10 @@ spec = describe "applyGroupingRules" do
                     |> set #env (Just envName)
                     |> set #host (Just "db-02")
                     |> createRecord
-            summary1 <- applyGroupingRules
+            -- Page size 2 forces the keyset walk across multiple pages
+            -- (3+ alerts in the shared suite DB), covering the cursor
+            -- advance and per-page folds, not just the single-page path.
+            summary1 <- applyGroupingRulesWith 2
             summary1.agsRegrouped `shouldSatisfy` (\n -> n >= (3 :: Int))
             a1' <- fetch (get #id a1)
             a2' <- fetch (get #id a2)
@@ -84,11 +87,11 @@ spec = describe "applyGroupingRules" do
                     group <- fetch groupId
                     group.groupKey `shouldBe` "CPU high on db-02"
             -- unchanged alerts are not touched on a second run
-            summary2 <- applyGroupingRules
+            summary2 <- applyGroupingRulesWith 2
             summary2.agsRegrouped `shouldBe` 0
             -- full re-apply: with no enabled rule matching, groups are cleared
             _ <- rule |> set #enabled False |> updateRecord
-            summary3 <- applyGroupingRules
+            summary3 <- applyGroupingRulesWith 2
             summary3.agsUngrouped `shouldSatisfy` (\n -> n >= (3 :: Int))
             a1'' <- fetch (get #id a1)
             a1''.groupId `shouldBe` Nothing

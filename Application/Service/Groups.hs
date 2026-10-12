@@ -2,6 +2,7 @@ module Application.Service.Groups (
     assignGroup,
     regroupAlert,
     applyGroupingRules,
+    applyGroupingRulesWith,
     ApplyGroupingSummary (..),
     recomputeGroupRollup,
     publishGroupUpdate,
@@ -128,6 +129,11 @@ regroupAlert alert = do
                     then pure alert
                     else moveToGroup alert rule
 
+-- | Keyset page size for the applyGroupingRules walk: bounds how many fat
+-- alert rows are decoded at once.
+groupingApplyPageSize :: Int64
+groupingApplyPageSize = 500
+
 data ApplyGroupingSummary = ApplyGroupingSummary
     { agsRegrouped :: Int
     -- ^ Alerts moved into a (new or existing) group.
@@ -143,20 +149,46 @@ data ApplyGroupingSummary = ApplyGroupingSummary
 -- version) are not touched. Empty groups are left in place (the admin alert
 -- purge drops them).
 --
--- PERFORMANCE (prod 504 fix): one transaction, and rollups are BATCHED —
--- recomputeGroupRollup scans a group's members, so running it per moved
--- alert is quadratic on busy groups (first apply on a big table blew the
--- nginx proxy timeout; the second was instant because everything was
--- already unchanged). Step only updates alert rows and collects the touched
--- group ids; each group's rollup is recomputed ONCE at the end.
+-- PERFORMANCE (prod OOM fix): the alert table is walked in keyset pages of
+-- IDs, each page fetched and stepped separately. The previous
+-- `query @Alert |> fetch` decoded EVERY fat row (description, labels,
+-- facets, host_groups) into one list that the fold pinned for the whole
+-- replay — on a busy prod table that alone OOM-killed the app (and the
+-- admin retry then succeeded only because most alerts were already
+-- grouped, so far fewer rows were updated). Pages keep at most pageSize
+-- rows live at a time; rollups stay batched as before, all in the same
+-- single transaction.
 applyGroupingRules :: (?modelContext :: ModelContext) => IO ApplyGroupingSummary
-applyGroupingRules = withTransaction do
+applyGroupingRules = applyGroupingRulesWith groupingApplyPageSize
+
+-- | Page size is a parameter so the integration suite can drive the keyset
+-- walk across multiple pages with a tiny page.
+applyGroupingRulesWith :: (?modelContext :: ModelContext) => Int64 -> IO ApplyGroupingSummary
+applyGroupingRulesWith pageSize = withTransaction do
     rules <- enabledGroupingRules
-    alerts <- query @Alert |> fetch
-    (summary, touched) <- foldM (step rules) (ApplyGroupingSummary 0 0, Set.empty) alerts
-    mapM_ (void . recomputeGroupRollup) touched
-    pure summary
+    result <- walkPages rules (ApplyGroupingSummary 0 0, Set.empty) Nothing
+    mapM_ (void . recomputeGroupRollup) (snd result)
+    pure (fst result)
   where
+    walkPages ::
+        [GroupingRule] ->
+        (ApplyGroupingSummary, Set.Set (Id AlertGroup)) ->
+        Maybe (Id Alert) ->
+        IO (ApplyGroupingSummary, Set.Set (Id AlertGroup))
+    walkPages rules acc afterId = do
+        let baseQuery = case afterId of
+                Nothing -> query @Alert
+                Just lastId -> query @Alert |> filterWhereGreaterThan (#id, lastId)
+        page <- baseQuery |> orderByAsc #id |> limit pageSize |> fetch
+        case page of
+            [] -> pure acc
+            _ -> do
+                acc' <- foldM (step rules) acc page
+                -- IHP.Prelude's last is the safe Maybe variant; the page is
+                -- non-empty here, so this is the next keyset cursor.
+                if fromIntegral (length page) == pageSize
+                    then walkPages rules acc' (fmap (get #id) (last page))
+                    else pure acc'
     step rules (acc, touched) alert =
         case find (\rule -> matchAlert (matchExprFromJSON rule.match) alert) rules of
             Just rule | groupable alert -> do
