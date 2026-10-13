@@ -6,6 +6,7 @@ import Application.Pipeline.Actions (addComment)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.HostGroups (HostGroupScope (..), hostGroupScope, teamHostGroupNames)
 import Application.Service.Log (logDebug, logInfo, logWarn)
+import Application.Service.MemStats (logMemStats)
 import Application.Service.Reconcile (mirrorExternalAck, mirrorExternalSuppress, mirrorExternalUnack, mirrorExternalUnsuppress, shouldMirror)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordReconcileFailure, recordReconcileSuccess, recordSuccess)
 import Control.Exception (SomeException, try)
@@ -61,7 +62,9 @@ instance Job PollZabbixJob where
                         |> filterWhere (#type_, "zabbix" :: Text)
                         |> filterWhere (#enabled, True)
                         |> fetch
-                forM_ (filter (pollDue now) sources) pollSource
+                let due = filter (pollDue now) sources
+                forM_ due pollSource
+                unless (null due) (logMemStats "poll-zabbix")
 
                 if null sources
                     then do

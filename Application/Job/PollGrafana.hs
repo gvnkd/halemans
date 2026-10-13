@@ -4,6 +4,7 @@ import qualified Application.Connector.Alertmanager as Am
 import qualified Application.Connector.Grafana as Grafana
 import Application.Helper.Ingest (NormalizedEvent (..), SourceStatus (..), ingest)
 import Application.Service.Log (logDebug, logInfo, logWarn)
+import Application.Service.MemStats (logMemStats)
 import Application.Service.Reconcile (lastAckWasExternal, mirrorExternalAck, mirrorExternalUnack, shouldMirror)
 import Application.Service.SourceHealth (pollDue, recordFailure, recordSuccess)
 import Control.Exception (SomeException, try)
@@ -57,7 +58,9 @@ instance Job PollGrafanaJob where
                         |> filterWhere (#type_, "grafana" :: Text)
                         |> filterWhere (#enabled, True)
                         |> fetch
-                forM_ (filter (pollDue now) sources) pollSource
+                let due = filter (pollDue now) sources
+                forM_ due pollSource
+                unless (null due) (logMemStats "poll-grafana")
 
                 if null sources
                     then do

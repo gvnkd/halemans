@@ -190,7 +190,11 @@
 
                     # Production build tuning
                     # optimizationLevel = "2"; # Default: "1", use "2" for more optimized production binaries
-                    # rtsFlags = "-A96m -N"; # GHC runtime flags for compiled binaries
+                    # RTS flags compiled into the prod binaries (the prod build
+                    # has no -rtsopts, so runtime flags cannot be passed):
+                    # IHP defaults plus -T so Application.Service.MemStats can
+                    # read GHC.Stats in the deployed worker.
+                    rtsFlags = "-A96m -N -T";
 
                     # Mount additional directories under /static/ in production builds
                     # static.extraDirs = {

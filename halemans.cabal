@@ -170,6 +170,7 @@ library
         Application.Service.Llm.ToolCache
         Application.Service.Llm.Tools
         Application.Service.Log
+        Application.Service.MemStats
         Application.Service.Mattermost
         Application.Service.Mattermost.Actions
         Application.Service.Mattermost.Api
@@ -361,6 +362,7 @@ library
         Generated.ActualTypes.LlmToolCacheConfig
         Generated.ActualTypes.MattermostJob
         Generated.ActualTypes.MattermostPost
+        Generated.ActualTypes.MemStatsSnapshot
         Generated.ActualTypes.MetricCache
         Generated.ActualTypes.NotificationChannel
         Generated.ActualTypes.NotificationRule
@@ -432,6 +434,7 @@ library
         Generated.LlmToolCacheConfig
         Generated.MattermostJob
         Generated.MattermostPost
+        Generated.MemStatsSnapshot
         Generated.MetricCache
         Generated.NotificationChannel
         Generated.NotificationRule
@@ -540,6 +543,7 @@ library
         Generated.Statements.CreateManyLlmToolCacheConfig
         Generated.Statements.CreateManyMattermostJob
         Generated.Statements.CreateManyMattermostPost
+        Generated.Statements.CreateManyMemStatsSnapshot
         Generated.Statements.CreateManyMetricCache
         Generated.Statements.CreateManyNotificationChannel
         Generated.Statements.CreateManyNotificationRule
@@ -565,6 +569,7 @@ library
         Generated.Statements.CreateManyZabbixHostGroup
         Generated.Statements.CreateMattermostJob
         Generated.Statements.CreateMattermostPost
+        Generated.Statements.CreateMemStatsSnapshot
         Generated.Statements.CreateMetricCache
         Generated.Statements.CreateNotificationChannel
         Generated.Statements.CreateNotificationRule
@@ -635,6 +640,7 @@ library
         Generated.Statements.FetchLlmToolCacheConfig
         Generated.Statements.FetchMattermostJob
         Generated.Statements.FetchMattermostPost
+        Generated.Statements.FetchMemStatsSnapshot
         Generated.Statements.FetchMetricCache
         Generated.Statements.FetchNotificationChannel
         Generated.Statements.FetchNotificationRule
@@ -705,6 +711,7 @@ library
         Generated.Statements.RowDecoderLlmToolCacheConfig
         Generated.Statements.RowDecoderMattermostJob
         Generated.Statements.RowDecoderMattermostPost
+        Generated.Statements.RowDecoderMemStatsSnapshot
         Generated.Statements.RowDecoderMetricCache
         Generated.Statements.RowDecoderNotificationChannel
         Generated.Statements.RowDecoderNotificationRule
@@ -775,6 +782,7 @@ library
         Generated.Statements.UpdateLlmToolCacheConfig
         Generated.Statements.UpdateMattermostJob
         Generated.Statements.UpdateMattermostPost
+        Generated.Statements.UpdateMemStatsSnapshot
         Generated.Statements.UpdateMetricCache
         Generated.Statements.UpdateNotificationChannel
         Generated.Statements.UpdateNotificationRule

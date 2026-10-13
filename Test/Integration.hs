@@ -9,6 +9,7 @@ import qualified Test.Integration.EnrichmentSpec
 import qualified Test.Integration.GroupsSpec
 import qualified Test.Integration.LlmSpec
 import qualified Test.Integration.MattermostSpec
+import qualified Test.Integration.MemStatsSpec
 import qualified Test.Integration.MetricChartSpec
 import qualified Test.Integration.PipelineSpec
 import qualified Test.Integration.ProvisioningSpec
@@ -26,6 +27,7 @@ main =
         Test.Integration.EnrichmentSpec.spec
         Test.Integration.MetricChartSpec.spec
         Test.Integration.MattermostSpec.spec
+        Test.Integration.MemStatsSpec.spec
         Test.Integration.DashboardsSpec.spec
         Test.Integration.GroupsSpec.spec
         Test.Integration.AgentSpec.spec

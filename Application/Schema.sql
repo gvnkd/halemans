@@ -1046,3 +1046,21 @@ CREATE TABLE alert_stats_snapshots (
 );
 CREATE INDEX alert_stats_snapshots_channel_created_idx ON alert_stats_snapshots(channel, created_at);
 
+-- Worker memory telemetry (migration 1791879306): one GHC RTS snapshot per
+-- mem-stats hook call (autoclose tick, zabbix/grafana poll cycles) — the
+-- history behind the admin "Worker memory" panel and the leak-vs-retention
+-- diagnosis. Written by Application.Service.MemStats, pruned by the
+-- Retention job after a week.
+CREATE TABLE mem_stats_snapshots (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    label TEXT NOT NULL,
+    live_bytes BIGINT NOT NULL DEFAULT 0,
+    max_live_bytes BIGINT NOT NULL DEFAULT 0,
+    in_use_bytes BIGINT NOT NULL DEFAULT 0,
+    allocated_bytes BIGINT NOT NULL DEFAULT 0,
+    gcs BIGINT NOT NULL DEFAULT 0,
+    major_gcs BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX mem_stats_snapshots_label_created_idx ON mem_stats_snapshots(label, created_at);
+

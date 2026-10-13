@@ -29,6 +29,7 @@ import qualified Test.LlmSpec
 import qualified Test.LogSpec
 import qualified Test.MarkdownSpec
 import qualified Test.MattermostSpec
+import qualified Test.MemStatsSpec
 import qualified Test.MetricChartSpec
 import qualified Test.PollZabbixSpec
 import qualified Test.PrivilegeSpec
@@ -83,6 +84,7 @@ main = hspec do
     Test.MattermostSpec.usernameSpec
     Test.MattermostSpec.bannerSpec
     Test.MattermostSpec.channelFormSpec
+    Test.MemStatsSpec.spec
     Test.MetricChartSpec.spec
     Test.TimelineSpec.spec
     Test.FlappingSpec.spec

@@ -7,6 +7,7 @@ import Application.Job.PollZabbix (configInt, resolveDisabledOnZabbix, triggerId
 import Application.Pipeline.Actions (autoCloseAlert, stallAlert, unackAlert)
 import Application.Pipeline.Blackouts (alertSubject, blackoutApplies)
 import Application.Service.Log (logDebug, logInfo, logWarn)
+import Application.Service.MemStats (logMemStats)
 import Control.Monad (void)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (parseMaybe)
@@ -38,6 +39,7 @@ instance Job AutoCloseJob where
         reconcileStalledZabbix
         closeStalledAlerts
         refreshMattermostBanners
+        logMemStats "autoclose"
 
         now <- getCurrentTime
         next <-

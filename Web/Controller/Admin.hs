@@ -2,6 +2,7 @@ module Web.Controller.Admin where
 
 import Application.Service.DatabaseStats (analyzeDatabase, analyzeTable, fetchDatabaseStats, vacuumAnalyzeDatabase)
 import Application.Service.JobMetrics (jobTypeMetrics, recentFailedJobs)
+import Application.Service.MemStats (latestMemStats, memStatsSeries)
 import Application.Service.ProvisionExport (buildProvisionExport, renderProvisionJson, renderProvisionYaml)
 import Application.Service.PurgeAlerts (purgeAllAlerts)
 import Control.Monad (void)
@@ -22,6 +23,8 @@ instance Controller AdminController where
         requirePrivilege "admin"
         metrics <- jobTypeMetrics
         failures <- recentFailedJobs
+        memLatest <- latestMemStats
+        memSeries <- memStatsSeries 600 (6 * 3600)
         tokens <-
             query @ApiToken
                 |> orderByDesc #createdAt

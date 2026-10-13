@@ -1,7 +1,10 @@
 module Web.View.Admin.Index where
 
+import Application.Service.Chart (LineSeries, lineChartSvg)
 import Application.Service.JobMetrics (FailedJobRow (..), JobTypeMetrics (..))
+import Application.Service.MemStats (MemStatLatest (..), formatBytes)
 import qualified Data.Text as Text
+import IHP.ViewPrelude (preEscapedToHtml)
 import Web.View.Fragments (emptyStateHtml, inlinePostFormHtml, pageHeaderHtml, sectionHeaderHtml)
 import Web.View.Prelude
 
@@ -9,6 +12,8 @@ data IndexView = IndexView
     { metrics :: [JobTypeMetrics]
     , failures :: [FailedJobRow]
     , apiTokens :: [(ApiToken, Text)]
+    , memLatest :: [MemStatLatest]
+    , memSeries :: [LineSeries]
     }
 
 instance View IndexView where
@@ -17,6 +22,8 @@ instance View IndexView where
         [hsx|
     <div>
         {pageHeaderHtml (tr "Admin") mempty}
+        {sectionHeaderHtml (tr "Worker memory (last 6h)") mempty}
+        {memPanel}
         {sectionHeaderHtml (tr "Job metrics (last 24h)") mempty}
         {metricsTable}
         {sectionHeaderHtml (tr "Recent job failures") mempty}
@@ -36,6 +43,39 @@ instance View IndexView where
     </div>
     |]
       where
+        memPanel =
+            if null memLatest
+                then emptyStateHtml "mem-stats-empty" (tr "No memory snapshots recorded yet. Worker telemetry needs the -T RTS flag (compiled into the nix binaries).")
+                else
+                    [hsx|
+                    <div class="card" data-testid="mem-stats-panel"><div class="card-body">
+                        {memChart}
+                        {memTable}
+                    </div></div>
+                    |]
+        memChart =
+            if null memSeries
+                then mempty
+                else [hsx|<div class="mb-3">{preEscapedToHtml (lineChartSvg memSeries)}</div>|]
+        memTable =
+            [hsx|
+            <table class="table" data-testid="mem-stats-table">
+                <thead>
+                    <tr>
+                        <th>{tr "Label"}</th>
+                        <th>{tr "Live heap"}</th>
+                        <th>{tr "Max live"}</th>
+                        <th>{tr "In use (OS)"}</th>
+                        <th>{tr "Allocated total"}</th>
+                        <th>{tr "GCs (minor/major)"}</th>
+                        <th>{tr "Taken at"}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {forEach memLatest renderMemStatRow}
+                </tbody>
+            </table>
+            |]
         metricsTable =
             if null metrics
                 then emptyStateHtml "job-metrics-empty" (tr "No jobs recorded in the last 24 hours.")
@@ -104,6 +144,22 @@ instance View IndexView where
         exportYamlUrl = pathTo AdminExportProvisionAction <> "?format=yaml"
         exportJsonUrl :: Text
         exportJsonUrl = pathTo AdminExportProvisionAction <> "?format=json"
+
+renderMemStatRow :: MemStatLatest -> Html
+renderMemStatRow row =
+    [hsx|
+    <tr data-testid="mem-stats-row">
+        <td>{row.mstLabel}</td>
+        <td>{formatBytes row.mstLiveBytes}</td>
+        <td>{formatBytes row.mstMaxLiveBytes}</td>
+        <td>{formatBytes row.mstInUseBytes}</td>
+        <td>{formatBytes row.mstAllocatedBytes}</td>
+        <td>{gcs}</td>
+        <td>{utcTimeHtml row.mstCreatedAt}</td>
+    </tr>
+|]
+  where
+    gcs = tshow row.mstGcs <> "/" <> tshow row.mstMajorGcs
 
 renderMetricsRow :: JobTypeMetrics -> Html
 renderMetricsRow row =

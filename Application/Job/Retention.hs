@@ -34,6 +34,7 @@ instance Job RetentionJob where
                     pruneAlertEvents config
 
         pruneBannerSnapshots
+        pruneMemSnapshots
 
         now <- getCurrentTime
         next <-
@@ -207,6 +208,23 @@ pruneBannerSnapshots = do
         |]
     when (deleted > 0) do
         putStrLn ("retention: pruned " <> tshow deleted <> " banner stat snapshots" :: Text)
+
+-- | Worker memory telemetry: mem_stats_snapshots only feed the admin
+-- "Worker memory" panel and the leak-vs-retention diagnosis, so a week of
+-- rows is plenty (same horizon as the banner snapshots).
+pruneMemSnapshots :: (?modelContext :: ModelContext) => IO ()
+pruneMemSnapshots = do
+    cutoff <- addUTCTime (-7 * 86400) <$> getCurrentTime
+    deleted <-
+        sqlExecTyped
+            [typedSql|
+            DELETE FROM mem_stats_snapshots
+            WHERE id IN (SELECT id FROM mem_stats_snapshots
+                WHERE created_at < ${cutoff}
+                LIMIT 1000)
+        |]
+    when (deleted > 0) do
+        putStrLn ("retention: pruned " <> tshow deleted <> " mem stat snapshots" :: Text)
 
 pruneMattermostJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
 pruneMattermostJobs cutoff =
