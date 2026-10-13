@@ -29,12 +29,12 @@ import System.Log.FastLogger (FastLogger)
 -- One-line RTS memory snapshot at the end of a heavy job window, for
 -- correlating worker memory growth with the job that ran while it grew.
 -- Writes a mem_stats_snapshots row (history behind the admin "Worker memory"
--- panel) and logs the same counters. Requires the -T RTS flag: compiled into
--- the nix prod binaries via ihp.rtsFlags in flake.nix (the prod build has no
--- -rtsopts, so runtime flags cannot be passed any other way); local runs can
--- pass +RTS -T. With -T missing (or HALEMANS_MEMSTATS=0) the call is a
--- silent no-op. The INSERT is failure-isolated on purpose: telemetry must
--- never kill the poll loop.
+-- panel) and logs the same counters. Requires the -T RTS flag, compiled
+-- into BOTH prod build paths: ihp.rtsFlags in flake.nix (nix image) and
+-- -with-rtsopts=-T on the executables in halemans.cabal (Dockerfile/cabal
+-- build). With -T missing (runghc/ghci one-offs) or HALEMANS_MEMSTATS=0 the
+-- call is a silent no-op. The INSERT is failure-isolated on purpose:
+-- telemetry must never kill the poll loop.
 logMemStats :: (?modelContext :: ModelContext, ?context :: context, HasField "logger" context FastLogger) => Text -> IO ()
 logMemStats label = do
     enabled <- parseMemStatsFlag . fmap cs <$> lookupEnv "HALEMANS_MEMSTATS"

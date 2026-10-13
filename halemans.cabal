@@ -873,32 +873,32 @@ executable RunProdServer
     main-is: RunProdServer.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
-    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N -with-rtsopts=-T
 
 executable RunJobs
     default-language: GHC2021
     main-is: RunJobs.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
-    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N -with-rtsopts=-T
 
 executable EnqueuePollers
     default-language: GHC2021
     main-is: EnqueuePollers.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
-    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N -with-rtsopts=-T
 
 executable GenPassword
     default-language: GHC2021
     main-is: GenPassword.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
-    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N -with-rtsopts=-T
 
 executable HalemansMcp
     default-language: GHC2021
     main-is: HalemansMcp.hs
     hs-source-dirs: build/exe
     build-depends: base, halemans, ihp
-    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N
+    ghc-options: -threaded -rtsopts=all -O1 -split-sections -funbox-strict-fields -fconstraint-solver-iterations=100 -fdicts-strict -with-rtsopts=-A96m -with-rtsopts=-N -with-rtsopts=-T
