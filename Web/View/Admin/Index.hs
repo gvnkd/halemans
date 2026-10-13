@@ -56,7 +56,7 @@ instance View IndexView where
         memChart =
             if null memSeries
                 then mempty
-                else [hsx|<div class="mb-3">{preEscapedToHtml (lineChartSvg memSeries)}</div>|]
+                else [hsx|<div class="metric-chart mb-3">{preEscapedToHtml (lineChartSvg memSeries)}</div>|]
         memTable =
             [hsx|
             <table class="table" data-testid="mem-stats-table">
