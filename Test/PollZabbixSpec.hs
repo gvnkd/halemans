@@ -16,7 +16,9 @@ import Application.Job.PollZabbix (
     reconcileResolvedEnabled,
     resolveDecision,
     scanMissingProblemsEnabled,
+    scanTimeFrom,
     scanWindowSeconds,
+    triggerClocksFromPage,
     ungroupedHostFingerprint,
     watermarksFromRows,
  )
@@ -190,6 +192,22 @@ spec = describe "Application.Job.PollZabbix" do
             dropReplayedEvents watermarks [eventAt 100 "7"] `shouldBe` [eventAt 100 "7"]
         it "keeps everything when no watermarks exist" do
             dropReplayedEvents Map.empty [eventAt 100 "42"] `shouldBe` [eventAt 100 "42"]
+
+    describe "scanTimeFrom" do
+        let windowStart = 1750000000 :: Integer
+            watermarks = Map.fromList [("zabbix:trigger:42" :: Text, 1750000600 :: Integer), ("zabbix:trigger:7", 1750000300)]
+        it "uses the full window when no trigger has a watermark" do
+            scanTimeFrom windowStart Map.empty ["42", "7"] `shouldBe` windowStart
+        it "starts at the minimum watermark when every trigger has one" do
+            scanTimeFrom windowStart watermarks ["42", "7"] `shouldBe` 1750000300
+        it "falls back to the full window when any trigger lacks a watermark" do
+            scanTimeFrom windowStart watermarks ["42", "99"] `shouldBe` windowStart
+
+    describe "triggerClocksFromPage" do
+        it "takes the max clock per trigger" do
+            let eventAt clock triggerId = ZabbixEvent{eventId = "9001", triggerId, name = "CPU", description = "", clock, value = "1", severity = "4", host = Nothing}
+            triggerClocksFromPage [eventAt 100 "42", eventAt 300 "42", eventAt 200 "7"]
+                `shouldBe` Map.fromList [("42" :: Text, 300 :: Integer), ("7", 200)]
 
     describe "reconcileDue" do
         it "is due when the source never reconciled" do

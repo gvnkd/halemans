@@ -22,6 +22,8 @@ data SourceFormValues = SourceFormValues
     , formJiraProjects :: Text
     , formInitialHistoryDays :: Text
     , formHostGroupScope :: Text
+    , formReconcileIntervalSeconds :: Text
+    , formScanWindowSeconds :: Text
     }
 
 defaultSourceFormValues :: SourceFormValues
@@ -39,6 +41,8 @@ defaultSourceFormValues =
         , formJiraProjects = ""
         , formInitialHistoryDays = ""
         , formHostGroupScope = "all"
+        , formReconcileIntervalSeconds = ""
+        , formScanWindowSeconds = ""
         }
 
 sourceFormFields :: (CurrentUserRecord ~ User, ?request :: Request) => SourceFormValues -> Html
@@ -96,6 +100,14 @@ sourceFormFields values =
             <option value="all" selected={values.formHostGroupScope /= "teams"}>{tr "all — fetch every alert"}</option>
             <option value="teams" selected={values.formHostGroupScope == "teams"}>{tr "teams — only host groups configured on teams"}</option>
         </select>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">{tr "Reconcile interval (seconds, zabbix; empty = every poll cycle)"}</label>
+        <input name="reconcileIntervalSeconds" type="number" class="form-control" value={values.formReconcileIntervalSeconds} data-testid="source-reconcile-interval" placeholder="0"/>
+    </div>
+    <div class="mb-3">
+        <label class="form-label">{tr "Missing-problem scan window (seconds, zabbix; empty = 86400)"}</label>
+        <input name="scanWindowSeconds" type="number" class="form-control" value={values.formScanWindowSeconds} data-testid="source-scan-window" placeholder="86400"/>
     </div>
 |]
   where

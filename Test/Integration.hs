@@ -13,6 +13,7 @@ import qualified Test.Integration.MemStatsSpec
 import qualified Test.Integration.MetricChartSpec
 import qualified Test.Integration.PipelineSpec
 import qualified Test.Integration.ProvisioningSpec
+import qualified Test.Integration.ScanWatermarkSpec
 import Test.Integration.Setup (integrationMain)
 
 -- Thin runner: suites live in Test/Integration/*Spec.hs (milestone 12 §7),
@@ -31,4 +32,5 @@ main =
         Test.Integration.DashboardsSpec.spec
         Test.Integration.GroupsSpec.spec
         Test.Integration.AgentSpec.spec
+        Test.Integration.ScanWatermarkSpec.spec
         Test.Integration.DefaultsSpec.spec

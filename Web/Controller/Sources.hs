@@ -41,7 +41,7 @@ instance Controller SourcesController where
                 |> set #env (param @Text "env")
                 |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
                 |> set #enabled True
-                |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
+                |> set #config (sourceConfig (Aeson.object []) (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope") reconcileIntervalParam scanWindowParam)
                 |> createRecord
         ensurePollerForSourceType (param @Text "type")
         setSuccessMessage (tr "Source created")
@@ -60,6 +60,8 @@ instance Controller SourcesController where
                 , jiraProjects = configScope "jiraProjects" "jiraProject" source
                 , initialHistoryDays = maybe "" tshow (configInt "initialHistoryDays" source)
                 , hostGroupScope = configValue "hostGroupScope" source
+                , reconcileIntervalSeconds = maybe "" tshow (configInt "reconcileIntervalSeconds" source)
+                , scanWindowSeconds = maybe "" tshow (configInt "scanWindowSeconds" source)
                 }
     action UpdateSourceAction{sourceId} = do
         requirePrivilege "manage_sources"
@@ -72,7 +74,7 @@ instance Controller SourcesController where
                 |> set #baseUrl (param @Text "baseUrl")
                 |> set #env (param @Text "env")
                 |> set #pollIntervalSeconds (param @Int "pollIntervalSeconds")
-                |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope"))
+                |> set #config (sourceConfig source.config (param @Text "tokenEnv") (checkbox "writeBack") (checkbox "jiraWritable") (csvParam "cmdbSpaces") (csvParam "jiraProjects") historyDaysParam (param @Text "hostGroupScope") reconcileIntervalParam scanWindowParam)
                 |> updateRecord
         when source.enabled (ensurePollerForSourceType (param @Text "type"))
         setSuccessMessage (tr "Source updated")
@@ -121,11 +123,11 @@ instance Controller SourcesController where
 -- cmdbSpace/jiraProject keys are managed too, so an edit drops them).
 -- Form-managed keys are overlaid on the EXISTING config: keys the form
 -- doesn't know (provisioned or hand-set, e.g. reconcileGraceSeconds /
--- reconcileIntervalSeconds / absentResolveMinAgeSeconds / eventPageLimit /
+-- absentResolveMinAgeSeconds / eventPageLimit /
 -- reconcileResolved / expectedIntervalSeconds / stallSeconds /
 -- hostGroupsFile) survive a UI edit.
-sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> [Text] -> [Text] -> Maybe Int -> Text -> Aeson.Value
-sourceConfig base tokenEnv writeBack jiraWritable cmdbSpaces jiraProjects historyDays scope =
+sourceConfig :: Aeson.Value -> Text -> Bool -> Bool -> [Text] -> [Text] -> Maybe Int -> Text -> Maybe Int -> Maybe Int -> Aeson.Value
+sourceConfig base tokenEnv writeBack jiraWritable cmdbSpaces jiraProjects historyDays scope reconcileInterval scanWindow =
     Aeson.Object (extra <> managed)
   where
     managed =
@@ -138,7 +140,9 @@ sourceConfig base tokenEnv writeBack jiraWritable cmdbSpaces jiraProjects histor
                 ++ ["jiraProjects" .= jiraProjects | not (null jiraProjects)]
                 ++ ["initialHistoryDays" .= days | Just days <- [historyDays]]
                 ++ ["hostGroupScope" .= scope | scope == "teams"]
-    managedKeys = ["writeBack", "jiraWritable", "tokenEnv", "cmdbSpaces", "cmdbSpace", "jiraProjects", "jiraProject", "initialHistoryDays", "hostGroupScope"]
+                ++ ["reconcileIntervalSeconds" .= seconds | Just seconds <- [reconcileInterval]]
+                ++ ["scanWindowSeconds" .= seconds | Just seconds <- [scanWindow]]
+    managedKeys = ["writeBack", "jiraWritable", "tokenEnv", "cmdbSpaces", "cmdbSpace", "jiraProjects", "jiraProject", "initialHistoryDays", "hostGroupScope", "reconcileIntervalSeconds", "scanWindowSeconds"]
     extra = case base of
         Aeson.Object o -> KeyMap.filterWithKey (\key _ -> Key.toText key `notElem` managedKeys) o
         _ -> mempty
@@ -161,6 +165,12 @@ configList key source = fromMaybe [] (parseMaybe (Aeson.withObject "config" (\o 
 -- | Empty/unparseable input omits the key (poller default applies).
 historyDaysParam :: (?request :: Request, ?respond :: Respond) => Maybe Int
 historyDaysParam = paramOrNothing @Text "initialHistoryDays" >>= (readMaybe . cs)
+
+reconcileIntervalParam :: (?request :: Request, ?respond :: Respond) => Maybe Int
+reconcileIntervalParam = paramOrNothing @Text "reconcileIntervalSeconds" >>= (readMaybe . cs)
+
+scanWindowParam :: (?request :: Request, ?respond :: Respond) => Maybe Int
+scanWindowParam = paramOrNothing @Text "scanWindowSeconds" >>= (readMaybe . cs)
 
 checkbox :: (?request :: Request, ?respond :: Respond) => ByteString -> Bool
 checkbox name = isJust (paramOrNothing @Text name)

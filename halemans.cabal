@@ -376,6 +376,7 @@ library
         Generated.ActualTypes.RetentionConfig
         Generated.ActualTypes.RetentionJob
         Generated.ActualTypes.Role
+        Generated.ActualTypes.ScanWatermark
         Generated.ActualTypes.Service
         Generated.ActualTypes.Source
         Generated.ActualTypes.SourceHealthJob
@@ -447,6 +448,7 @@ library
         Generated.RetentionConfig
         Generated.RetentionJob
         Generated.Role
+        Generated.ScanWatermark
         Generated.Service
         Generated.Source
         Generated.SourceHealthJob
@@ -556,6 +558,7 @@ library
         Generated.Statements.CreateManyRetentionConfig
         Generated.Statements.CreateManyRetentionJob
         Generated.Statements.CreateManyRole
+        Generated.Statements.CreateManyScanWatermark
         Generated.Statements.CreateManyService
         Generated.Statements.CreateManySource
         Generated.Statements.CreateManySourceHealthJob
@@ -582,6 +585,7 @@ library
         Generated.Statements.CreateRetentionConfig
         Generated.Statements.CreateRetentionJob
         Generated.Statements.CreateRole
+        Generated.Statements.CreateScanWatermark
         Generated.Statements.CreateService
         Generated.Statements.CreateSource
         Generated.Statements.CreateSourceHealthJob
@@ -653,6 +657,7 @@ library
         Generated.Statements.FetchRetentionConfig
         Generated.Statements.FetchRetentionJob
         Generated.Statements.FetchRole
+        Generated.Statements.FetchScanWatermark
         Generated.Statements.FetchService
         Generated.Statements.FetchSource
         Generated.Statements.FetchSourceHealthJob
@@ -724,6 +729,7 @@ library
         Generated.Statements.RowDecoderRetentionConfig
         Generated.Statements.RowDecoderRetentionJob
         Generated.Statements.RowDecoderRole
+        Generated.Statements.RowDecoderScanWatermark
         Generated.Statements.RowDecoderService
         Generated.Statements.RowDecoderSource
         Generated.Statements.RowDecoderSourceHealthJob
@@ -795,6 +801,7 @@ library
         Generated.Statements.UpdateRetentionConfig
         Generated.Statements.UpdateRetentionJob
         Generated.Statements.UpdateRole
+        Generated.Statements.UpdateScanWatermark
         Generated.Statements.UpdateService
         Generated.Statements.UpdateSource
         Generated.Statements.UpdateSourceHealthJob

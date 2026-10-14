@@ -35,6 +35,7 @@ instance Job RetentionJob where
 
         pruneBannerSnapshots
         pruneMemSnapshots
+        pruneScanWatermarks
 
         now <- getCurrentTime
         next <-
@@ -225,6 +226,23 @@ pruneMemSnapshots = do
         |]
     when (deleted > 0) do
         putStrLn ("retention: pruned " <> tshow deleted <> " mem stat snapshots" :: Text)
+
+-- | Scan replay watermarks of triggers quiet for a week are dead weight —
+-- the worst case of losing one is a single full-window refetch if the
+-- trigger ever re-enters the missing-problem scan.
+pruneScanWatermarks :: (?modelContext :: ModelContext) => IO ()
+pruneScanWatermarks = do
+    cutoff <- addUTCTime (-7 * 86400) <$> getCurrentTime
+    deleted <-
+        sqlExecTyped
+            [typedSql|
+            DELETE FROM scan_watermarks
+            WHERE id IN (SELECT id FROM scan_watermarks
+                WHERE updated_at < ${cutoff}
+                LIMIT 1000)
+        |]
+    when (deleted > 0) do
+        putStrLn ("retention: pruned " <> tshow deleted <> " scan watermarks" :: Text)
 
 pruneMattermostJobs :: (?modelContext :: ModelContext) => UTCTime -> IO Int64
 pruneMattermostJobs cutoff =

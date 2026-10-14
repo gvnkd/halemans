@@ -155,15 +155,27 @@ pollSource source = do
                         Right acc -> do
                             logDebug ("zabbix source \"" <> source.name <> "\": event.get returned " <> tshow (paCount acc) <> " events")
                             recordSuccess source
-                            alerts <- activeSourceAlerts source
-                            syncUngroupedHostAlerts source alerts (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
-                            reconcileAcks source token alerts
-                            when (reconcileDue now source) do
-                                when (reconcileResolvedEnabled source) do
-                                    reconcileProblemStates source token alerts now
-                                when (scanMissingProblemsEnabled source) do
-                                    scanMissingProblems source token alerts groupIds now
-                                void (source |> set #lastReconcileAt (Just now) |> updateRecord)
+                            -- The active cohort (every firing/ack/stalled row
+                            -- of the source, fully decoded) is the cycle's
+                            -- dominant decode cost. Fetch it ONLY when
+                            -- something will act on it: ungrouped/grouped
+                            -- hosts to sync, or a due reconcile (which also
+                            -- carries the ack mirror — with a positive
+                            -- reconcileIntervalSeconds the ack mirror gains
+                            -- that cadence, default 0 keeps every-cycle).
+                            let groupedHosts = [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
+                                hostSyncNeeded = not (Set.null (paUngrouped acc)) || not (null groupedHosts)
+                                due = reconcileDue now source
+                            when (hostSyncNeeded || due) do
+                                alerts <- activeSourceAlerts source
+                                syncUngroupedHostAlerts source alerts (Set.toList (paUngrouped acc)) groupedHosts
+                                reconcileAcks source token alerts
+                                when due do
+                                    when (reconcileResolvedEnabled source) do
+                                        reconcileProblemStates source token alerts now
+                                    when (scanMissingProblemsEnabled source) do
+                                        scanMissingProblems source token alerts groupIds now
+                                    void (source |> set #lastReconcileAt (Just now) |> updateRecord)
                             -- +1s: event.get's time_from is INCLUSIVE, so a
                             -- cursor at maxClock re-ingests the boundary event
                             -- every cycle (resolved→resolved no-op flood, and
@@ -187,15 +199,19 @@ pollSource source = do
 -- token), and the hosts seen ungrouped this cycle. Everything is bounded by
 -- the page size and the host inventory — never by the event backlog, which
 -- is what OOMed the worker on sources with the host group filter removed.
+-- | Per-trigger max event clock SEEN (fetched), regardless of whether the
+-- events were ingested — feeds the persistent scan watermark so the next
+-- scan's time_from starts past everything already fetched.
 data PageAcc = PageAcc
     { paCount :: Int
     , paMaxClock :: Maybe Integer
     , paGroups :: Map.Map Text [Text]
     , paUngrouped :: Set.Set Text
+    , paTriggerClocks :: Map.Map Text Integer
     }
 
 emptyPageAcc :: PageAcc
-emptyPageAcc = PageAcc 0 Nothing Map.empty Set.empty
+emptyPageAcc = PageAcc 0 Nothing Map.empty Set.empty Map.empty
 
 -- | One page of the event fold: resolve host groups for the page's hosts
 -- that are not in the cycle cache yet (one batched host.get per page), drop
@@ -254,6 +270,10 @@ resolveGroupIds source _token = case hostGroupScope source of
 maximumMaybe :: (Ord a) => [a] -> Maybe a
 maximumMaybe [] = Nothing
 maximumMaybe xs = Just (maximum xs)
+
+minimumMaybe :: (Ord a) => [a] -> Maybe a
+minimumMaybe [] = Nothing
+minimumMaybe xs = Just (minimum xs)
 
 -- | event.get time_from for a poll. With a stored cursor this is the cursor;
 -- the FIRST poll of a source is bounded to config.initialHistoryDays back
@@ -357,7 +377,10 @@ lastMaybe = last
 --   reconcileResolved           bool  master switch (default true)
 --   reconcileGraceSeconds       int   min age of last local activity before
 --                                     trusting source state (default 60)
---   reconcileIntervalSeconds    int   min seconds between reconciles,
+--   reconcileIntervalSeconds    int   min seconds between reconciles
+--                                     (resolved reconcile + missing-problem
+--                                     scan + ack mirror; the active-cohort
+--                                     decode only happens on these cycles),
 --                                     0 = every poll cycle (default 0)
 --   absentResolveMinAgeSeconds  int   min alert age before a trigger MISSING
 --                                     from trigger.get (deleted, or invisible
@@ -408,13 +431,26 @@ reconcileProblemStates source token alerts now = do
 -- resolved/closed local rows are rescanned on purpose: a refire we never saw
 -- (skipped tail) looks exactly like that.
 --
--- Replay watermark: the scan fetches the candidate's whole window history,
--- and ingest re-executes every firing/resolved transition in it — replaying
--- an already-processed alternating history produces flap bursts (each refire
--- a fresh MM card, each resolve a deleteOnClose delete; prod 2026-10-12:
+-- Replay watermark: the scan fetches the candidate's window history, and
+-- ingest re-executes every firing/resolved transition in it — replaying an
+-- already-processed alternating history produces flap bursts (each refire a
+-- fresh MM card, each resolve a deleteOnClose delete; prod 2026-10-12:
 -- 90-event replays of one trigger every poll cycle). Events at or before the
 -- newest local row's last_seen_at for the fingerprint are dropped before
 -- ingest; only genuinely unseen events (the tail the cursor missed) replay.
+--
+-- The watermark has two sources, max wins: (1) local alert rows (above), and
+-- (2) the scan_watermarks table — a persistent per-(source, trigger) max
+-- clock that also advances when events were NOT ingested (dropped as
+-- ungrouped, or no local row exists to key on). Without (2), a trigger that
+-- never becomes tracked got its whole window re-fetched and re-decoded on
+-- every reconcile forever (prod 2026-10-14: 19 untracked problem triggers,
+-- ~2GiB/min alloc churn, worker OOM).
+--
+-- Pushdown: the batched event.get time_from starts at the MINIMUM of the
+-- candidates' watermarks (a trigger with no watermark keeps the full
+-- window), so steady-state scans fetch only the unseen tail instead of the
+-- whole window.
 scanMissingProblems :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> [Alert] -> [Text] -> UTCTime -> IO ()
 scanMissingProblems source token alerts groupIds now = do
     result <- Zabbix.problemTriggersGet source.baseUrl token groupIds
@@ -428,13 +464,15 @@ scanMissingProblems source token alerts groupIds now = do
             unless (null candidates) do
                 let triggerIds = map (.triggerStateId) candidates
                     windowStart = floor (utcTimeToPOSIXSeconds (addUTCTime (negate (fromIntegral (scanWindowSeconds source))) now))
-                watermarks <- scanReplayWatermarks triggerIds
-                eventsResult <- Zabbix.eventsByTriggersFold source.baseUrl token windowStart triggerIds groupIds (eventPageLimit source) (ingestPageUnseen source token watermarks) emptyPageAcc
+                watermarks <- scanReplayWatermarks source triggerIds
+                eventsResult <- Zabbix.eventsByTriggersFold source.baseUrl token (scanTimeFrom windowStart watermarks triggerIds) triggerIds groupIds (eventPageLimit source) (ingestPageUnseen source token watermarks) emptyPageAcc
                 case eventsResult of
-                    Left err ->
-                        logWarn ("zabbix source \"" <> source.name <> "\" missed-problem event fetch failed: " <> err)
+                    Left err -> do
+                        logWarn ("zabbix source \"" <> source.name <> "\": missed-problem event fetch failed: " <> err)
+                        recordReconcileFailure source err
                     Right acc -> do
                         recordReconcileSuccess source
+                        recordScanWatermarks source (paTriggerClocks acc)
                         logInfo ("zabbix source \"" <> source.name <> "\": ingesting " <> tshow (paCount acc) <> " missed events for " <> tshow (length candidates) <> " untracked problem trigger(s)")
                         -- Unlike the cursor path there is nothing to retry
                         -- (the cursor doesn't move), but the trigger stays in
@@ -442,31 +480,87 @@ scanMissingProblems source token alerts groupIds now = do
                         alertsAfterScan <- activeSourceAlerts source
                         syncUngroupedHostAlerts source alertsAfterScan (Set.toList (paUngrouped acc)) [host | (host, groups) <- Map.toList (paGroups acc), not (null groups)]
 
--- | Per-trigger replay watermarks for the missing-problem scan: the newest
--- local row's last_seen_at per fingerprint, as event-clock seconds. Sibling
--- rows of the same fingerprint (closed history) fold via max — the most
--- recently active row's watermark wins. Triggers with no local row get no
--- entry, so their whole window stays unseen.
-scanReplayWatermarks :: (?modelContext :: ModelContext) => [Text] -> IO (Map.Map Text Integer)
-scanReplayWatermarks triggerIds = do
-    rows <-
+-- | Per-trigger replay watermarks for the missing-problem scan, keyed by
+-- fingerprint ("zabbix:trigger:<id>"): the newest local row's last_seen_at
+-- per fingerprint, as event-clock seconds, UNIONED with the persistent
+-- scan_watermarks table (max wins). Sibling rows of the same fingerprint
+-- (closed history) fold via max — the most recently active row's watermark
+-- wins. Triggers with neither get no entry, so their whole window stays
+-- unseen.
+scanReplayWatermarks :: (?modelContext :: ModelContext) => Source -> [Text] -> IO (Map.Map Text Integer)
+scanReplayWatermarks source triggerIds = do
+    let sourceId = get #id source
+    alertRows <-
         query @Alert
             |> filterWhereIn (#fingerprint, ["zabbix:trigger:" <> triggerId | triggerId <- triggerIds])
             |> fetch
-    pure (watermarksFromRows rows)
+    tableRows <-
+        sqlQueryTyped
+            [typedSql|
+            SELECT trigger_id, watermark FROM scan_watermarks
+            WHERE source_id = ${sourceId} AND trigger_id = ANY(${triggerIds})
+        |]
+    let fromAlerts = watermarksFromRows alertRows
+        fromTable =
+            Map.fromList
+                [ ("zabbix:trigger:" <> row.trigger_id, fromIntegral row.watermark)
+                | row <- tableRows
+                ]
+    pure (Map.unionWith max fromAlerts fromTable)
 
 -- | Pure core of scanReplayWatermarks (unit-testable).
 watermarksFromRows :: [Alert] -> Map.Map Text Integer
 watermarksFromRows rows =
     Map.fromListWith max [(row.fingerprint, floor (utcTimeToPOSIXSeconds row.lastSeenAt)) | row <- rows]
 
+-- | Pure (unit-testable): the batched event.get time_from for a scan — the
+-- MINIMUM of the candidates' effective starts. A trigger with a watermark
+-- fetches only its unseen tail; a trigger without one (new candidate) keeps
+-- the full window, and the shared time_from then covers it too.
+scanTimeFrom :: Integer -> Map.Map Text Integer -> [Text] -> Integer
+scanTimeFrom windowStart watermarks triggerIds =
+    fromMaybe
+        windowStart
+        (minimumMaybe [fromMaybe windowStart (Map.lookup ("zabbix:trigger:" <> triggerId) watermarks) | triggerId <- triggerIds])
+
+-- | Advance the persistent scan watermarks with the max clock SEEN per
+-- trigger this scan (regardless of ingest outcome). Only-advance upsert —
+-- the alert-row-derived watermark may be newer. Failure-isolated: a
+-- telemetry-ish write must not kill the reconcile.
+recordScanWatermarks :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Map.Map Text Integer -> IO ()
+recordScanWatermarks source clocks = do
+    let sourceId = get #id source
+    forM_ (Map.toList clocks) \(triggerId, watermark) -> do
+        let watermark64 = fromIntegral watermark :: Int64
+        result <-
+            try
+                ( sqlExecTyped
+                    [typedSql|
+                    INSERT INTO scan_watermarks (source_id, trigger_id, watermark)
+                    VALUES (${sourceId}, ${triggerId}, ${watermark64})
+                    ON CONFLICT (source_id, trigger_id)
+                    DO UPDATE SET watermark = EXCLUDED.watermark, updated_at = NOW()
+                    WHERE scan_watermarks.watermark < EXCLUDED.watermark
+                |]
+                )
+        case result of
+            Left err -> logWarn ("zabbix source \"" <> source.name <> "\": scan watermark upsert failed: " <> tshow (err :: SomeException))
+            Right _ -> pure ()
+
 -- | ingestPage wrapper for the missing-problem scan: drops replayed events
 -- (at or before their trigger's watermark) before the normal page
 -- processing, so only events newer than anything the local row has seen are
--- re-executed through the pipeline.
+-- re-executed through the pipeline. ALSO accumulates the per-trigger max
+-- clock from the RAW page (before the drop) — the persistent watermark must
+-- advance past everything that was fetched, not just what ingested.
 ingestPageUnseen :: (?modelContext :: ModelContext, ?context :: FrameworkConfig) => Source -> Text -> Map.Map Text Integer -> PageAcc -> [Zabbix.ZabbixEvent] -> IO (Either Text PageAcc)
 ingestPageUnseen source token watermarks acc page =
-    ingestPage source token acc (dropReplayedEvents watermarks page)
+    ingestPage source token acc{paTriggerClocks = Map.unionWith max (paTriggerClocks acc) (triggerClocksFromPage page)} (dropReplayedEvents watermarks page)
+
+-- | Pure (unit-testable): per-trigger max event clock of a raw page.
+triggerClocksFromPage :: [Zabbix.ZabbixEvent] -> Map.Map Text Integer
+triggerClocksFromPage page =
+    Map.fromListWith max [(event.triggerId, event.clock) | event <- page]
 
 -- | Pure filter behind ingestPageUnseen (unit-testable): an event is replayed
 -- when its trigger has a local watermark and its clock is at or before it.

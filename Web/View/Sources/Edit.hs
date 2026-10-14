@@ -13,6 +13,8 @@ data EditView = EditView
     , jiraProjects :: Text
     , initialHistoryDays :: Text
     , hostGroupScope :: Text
+    , reconcileIntervalSeconds :: Text
+    , scanWindowSeconds :: Text
     }
 
 instance View EditView where
@@ -42,4 +44,6 @@ instance View EditView where
                 , formJiraProjects = jiraProjects
                 , formInitialHistoryDays = initialHistoryDays
                 , formHostGroupScope = hostGroupScope
+                , formReconcileIntervalSeconds = reconcileIntervalSeconds
+                , formScanWindowSeconds = scanWindowSeconds
                 }

@@ -1064,3 +1064,21 @@ CREATE TABLE mem_stats_snapshots (
 );
 CREATE INDEX mem_stats_snapshots_label_created_idx ON mem_stats_snapshots(label, created_at);
 
+-- Missing-problem scan replay watermarks (migration 1791980605): the newest
+-- event clock (seconds) already fetched+processed per zabbix trigger, for
+-- triggers with no local alert row (so the alert-row-derived watermark has
+-- nothing to key on). Without this, an untracked problem trigger's whole
+-- scanWindowSeconds history is re-fetched and re-decoded every reconcile
+-- cycle forever (prod 2026-10-14: ~2GiB/min alloc churn from 19 such
+-- triggers). The event.get time_from is pushed down to the min watermark so
+-- steady-state scans only fetch the unseen tail.
+CREATE TABLE scan_watermarks (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY NOT NULL,
+    source_id UUID NOT NULL,
+    trigger_id TEXT NOT NULL,
+    watermark BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE UNIQUE INDEX scan_watermarks_source_trigger_idx ON scan_watermarks(source_id, trigger_id);
+ALTER TABLE scan_watermarks ADD CONSTRAINT scan_watermarks_source_id_fkey FOREIGN KEY (source_id) REFERENCES sources (id);
+
