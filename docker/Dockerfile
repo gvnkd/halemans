@@ -6,8 +6,16 @@
 #
 #   docker build -f docker/Dockerfile.deps -t halemans-deps .
 #   docker build -f docker/Dockerfile -t halemans .
+# PROFILE=1 additionally compiles the info-table map and links the eventlog
+# into the binaries (skip strip — the map lives in debug sections), for heap
+# profiling: run with GHCRTS="-l -hi -i30" and analyze the .eventlog with
+# eventlog2html. See design_docs/ops-notes.md "Heap profiling a worker".
 ARG DEPS_IMAGE=halemans-deps
 FROM ${DEPS_IMAGE} AS build
+
+# Empty (default) = normal build; "1" = profiling build (see header).
+ARG PROFILE=
+ENV PROFILE_GHC_OPTS=${PROFILE:+--ghc-options=-finfo-table-map --ghc-options=-eventlog}
 
 # PostgreSQL 18 for the compile-time database (typedSql Template Haskell
 # introspects a scratch database during the build, mirroring
@@ -39,14 +47,14 @@ RUN install -d -m 777 /var/lib/halemans-pg/sock \
     && su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/createuser -h /var/lib/halemans-pg/sock -s root" \
     && su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/psql -h /var/lib/halemans-pg/sock -d app -q -f /src/vendor/ihp/ihp-schema-compiler/data/IHPSchema.sql" \
     && su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/psql -h /var/lib/halemans-pg/sock -d app -q -f /src/Application/Schema.sql" \
-    && DATABASE_URL="postgresql:///app?host=/var/lib/halemans-pg/sock" cabal build all -j$(nproc) \
+    && DATABASE_URL="postgresql:///app?host=/var/lib/halemans-pg/sock" cabal build all -j$(nproc) ${PROFILE_GHC_OPTS} \
     ; su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/pg_ctl -D /var/lib/halemans-pg/data stop -m fast"
 
 RUN mkdir -p /out/bin \
     && for exe in RunProdServer RunJobs EnqueuePollers GenPassword; do \
         cp "$(cabal list-bin exe:${exe})" /out/bin/${exe}; \
     done \
-    && strip /out/bin/*
+    && if [ -z "${PROFILE}" ]; then strip /out/bin/*; fi
 
 # db-init bundle (mirrors the dbInit derivation in flake.nix): framework
 # schema, app schema, roles, and the schema_migrations ledger for every

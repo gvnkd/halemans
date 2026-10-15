@@ -123,6 +123,14 @@ IHP (Haskell) app aggregating alerts from Zabbix/Grafana/Alertmanager/generic we
 - HALEMANS_LOG_LEVEL=debug|info|warn|error (default info, validated at boot in Config.hs, read per call in Application/Service/Log.hs); HALEMANS_ACCESS_LOG=0 disables wai request logging (RequestLoggerMiddleware override — `option` is first-wins vs ihpDefaultConfig).
 - HALEMANS_MEMSTATS=0|false|no|off disables the worker's per-job RTS memory snapshots (Application/Service/MemStats, default enabled, one per autoclose tick and per zabbix/grafana poll cycle that actually polled; needs the -T RTS flag, compiled into the prod binaries on both build paths — flake.nix ihp.rtsFlags for the nix image, halemans.cabal executable ghc-options for the Dockerfile/cabal build; runghc/ghci runs need +RTS -T). Fields: live/maxLive/inUse (gcdetails) vs allocTotal/gcs. Snapshots persist to mem_stats_snapshots (pruned after 7d by the Retention job) and render on the admin Jobs page (Worker memory chart + latest-per-label table).
 
+## Heap profiling a worker
+- Build a profiled image: `docker build -f docker/Dockerfile --build-arg PROFILE=1 -t halemans-profile .` (same deps image; the info-table map + eventlog are compiled in, strip skipped). The nix-built ghcr image has NO profiling support.
+- Run it as a REPLACEMENT for the normal worker (clean attribution; the job queue is safe either way — FOR UPDATE SKIP LOCKED — but the poll-loop single-loop guard means two co-workers split loops):
+  `docker compose stop worker`
+  `docker run -d --name halemans-profile --network halemans_default --env-file .env -e DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@db:5432/halemans -e HALEMANS_PROVISION_CONFIG=/provision/provision.json -v $PWD/provision.json:/provision/provision.json:ro -e GHCRTS="-l -hi -i30" halemans-profile /bin/sh -c "/bin/db-migrate && exec /bin/RunJobs"`
+- The eventlog lands at /app/RunJobs.eventlog; `docker cp halemans-profile:/app/RunJobs.eventlog .` — analyze with eventlog2html (haskellPackages.eventlog2html in nixpkgs): the heap chart is grouped by closure type/module, the GC/alloc charts show the churn. -hi censuses add moderate CPU; -i30 sets the interval.
+- After: `docker rm -f halemans-profile && docker compose start worker`.
+
 ## Reports (diagrams-svg charts)
 - New controllers need THREE registrations: Web/Types.hs (data), Web/Routes.hs (routes), Web/FrontController.hs (import + parseRoute) — missing the last 404s silently, unit tests stay green; only smoke/Playwright catches it.
 - diagrams' DEFAULT FILL IS TRANSPARENT (fill-opacity=0): `rect` without `fc` renders invisible; always set `fc` explicitly. Text defaults opaque.
