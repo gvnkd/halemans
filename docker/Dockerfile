@@ -14,8 +14,9 @@ ARG DEPS_IMAGE=halemans-deps
 FROM ${DEPS_IMAGE} AS build
 
 # Empty (default) = normal build; "1" = profiling build (see header).
+# The ghc opts are derived in the build RUN via shell — Dockerfile ENV
+# interpolation does not support :+ expansions containing spaces.
 ARG PROFILE=
-ENV PROFILE_GHC_OPTS=${PROFILE:+--ghc-options=-finfo-table-map --ghc-options=-eventlog}
 
 # PostgreSQL 18 for the compile-time database (typedSql Template Haskell
 # introspects a scratch database during the build, mirroring
@@ -47,7 +48,8 @@ RUN install -d -m 777 /var/lib/halemans-pg/sock \
     && su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/createuser -h /var/lib/halemans-pg/sock -s root" \
     && su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/psql -h /var/lib/halemans-pg/sock -d app -q -f /src/vendor/ihp/ihp-schema-compiler/data/IHPSchema.sql" \
     && su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/psql -h /var/lib/halemans-pg/sock -d app -q -f /src/Application/Schema.sql" \
-    && DATABASE_URL="postgresql:///app?host=/var/lib/halemans-pg/sock" cabal build all -j$(nproc) ${PROFILE_GHC_OPTS} \
+    && PROFILE_GHC_OPTS=""; if [ -n "${PROFILE}" ]; then PROFILE_GHC_OPTS="--ghc-options=-finfo-table-map --ghc-options=-eventlog"; fi; \
+    DATABASE_URL="postgresql:///app?host=/var/lib/halemans-pg/sock" cabal build all -j$(nproc) ${PROFILE_GHC_OPTS} \
     ; su -s /bin/sh postgres -c "/usr/lib/postgresql/18/bin/pg_ctl -D /var/lib/halemans-pg/data stop -m fast"
 
 RUN mkdir -p /out/bin \
