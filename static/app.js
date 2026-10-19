@@ -287,6 +287,7 @@
                 if (first) idSelect.value = first.value;
             }
             if (entityDiv) entityDiv.hidden = isPattern;
+            if (patternDiv) patternDiv.hidden = !isPattern;
             idSelect.disabled = isPattern;
             patternInputs.forEach(function (input) { input.disabled = !isPattern; });
         };
