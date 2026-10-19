@@ -1,12 +1,15 @@
 module Test.GrafanaSpec where
 
 import qualified Application.Connector.Grafana as Grafana
+import Application.Job.PollGrafana (grafanaListingSeen)
 import Application.Service.Http (HttpStatusError (..))
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Either (fromRight, isLeft)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Generated.Types
+import IHP.ModelSupport (newRecord)
 import IHP.Prelude
 import Network.HTTP.Types (status200, status500)
 import qualified Network.Socket as Socket
@@ -21,76 +24,97 @@ import Test.Hspec
 -- OOMed the worker on sources with huge alert counts. The mock dispatches
 -- on the Bearer token because alertsFold fixes the URL path itself.
 spec :: Spec
-spec = describe "Application.Connector.Grafana.alertsFold" do
-    around withServer do
-        it "folds a multi-megabyte listing element by element" \(baseUrl, _) -> do
-            firstRef <- newIORef Nothing :: IO (IORef (Maybe Text))
-            result <-
-                Grafana.alertsFold
-                    (cs baseUrl)
-                    "token"
-                    ( \count alert -> do
-                        modifyIORef' firstRef \case
-                            Nothing -> Just alert.amFingerprint
-                            just -> just
-                        pure (count + (1 :: Int))
-                    )
-                    0
-            result `shouldBe` Right 20000
-            first <- readIORef firstRef
-            first `shouldBe` Just "fp-1"
+spec = do
+    describe "Application.Job.PollGrafana.grafanaListingSeen" do
+        let firingRow = newRecord @Alert |> set #status "firing" |> set #lastSeenAt seenAt
+            ackedRow = firingRow |> set #status "ack"
+            resolvedRow = firingRow |> set #status "resolved"
+            stalledRow = firingRow |> set #status "stalled"
+            seenAt = UTCTime (fromGregorian 2026 10 12) 3600
+            episodeStart = addUTCTime (-120) seenAt
+        it "skips a listing episode already ingested by a firing row" do
+            grafanaListingSeen firingRow (Just episodeStart) `shouldBe` True
+        it "skips for acked rows too" do
+            grafanaListingSeen ackedRow (Just episodeStart) `shouldBe` True
+        it "keeps a genuinely newer listing episode" do
+            grafanaListingSeen firingRow (Just (addUTCTime 1 seenAt)) `shouldBe` False
+        it "never skips on a resolved row — the refire guard owns that case" do
+            grafanaListingSeen resolvedRow (Just episodeStart) `shouldBe` False
+        it "never skips on a stalled row — the listing is the stall-recovery path" do
+            grafanaListingSeen stalledRow (Just episodeStart) `shouldBe` False
+        it "never skips without a listing updatedAt" do
+            grafanaListingSeen firingRow Nothing `shouldBe` False
 
-        it "decodes alert fields as they stream in" \(baseUrl, _) -> do
-            result <-
-                Grafana.alertsFold
-                    (cs baseUrl)
-                    "token"
-                    (\acc alert -> pure (acc ++ [(alert.amFingerprint, alert.amGeneratorUrl)]))
-                    []
-            let alerts = fromRight [] result
-            length alerts `shouldBe` 20000
-            take 2 alerts
-                `shouldBe` [ ("fp-1", Just "http://grafana/1")
-                           , ("fp-2", Just "http://grafana/2")
-                           ]
-
-        it "folds an empty listing" \(baseUrl, _) -> do
-            result <-
-                Grafana.alertsFold
-                    (cs baseUrl)
-                    "empty"
-                    (\count _ -> pure (count + (1 :: Int)))
-                    (0 :: Int)
-            result `shouldBe` Right 0
-
-        it "returns Left on a malformed listing" \(baseUrl, _) -> do
-            result <-
-                Grafana.alertsFold
-                    (cs baseUrl)
-                    "bad"
-                    (\count _ -> pure (count + (1 :: Int)))
-                    (0 :: Int)
-            result `shouldSatisfy` isLeft
-
-        it "returns Left when an element misses the fingerprint" \(baseUrl, _) -> do
-            result <-
-                Grafana.alertsFold
-                    (cs baseUrl)
-                    "nofp"
-                    (\count _ -> pure (count + (1 :: Int)))
-                    (0 :: Int)
-            result `shouldSatisfy` isLeft
-
-        it "throws HttpStatusError on a non-2xx response" \(baseUrl, _) -> do
-            let foldIt =
+    describe "Application.Connector.Grafana.alertsFold" do
+        around withServer do
+            it "folds a multi-megabyte listing element by element" \(baseUrl, _) -> do
+                firstRef <- newIORef Nothing :: IO (IORef (Maybe Text))
+                result <-
                     Grafana.alertsFold
                         (cs baseUrl)
-                        "boom"
+                        "token"
+                        ( \count alert -> do
+                            modifyIORef' firstRef \case
+                                Nothing -> Just alert.amFingerprint
+                                just -> just
+                            pure (count + (1 :: Int))
+                        )
+                        0
+                result `shouldBe` Right 20000
+                first <- readIORef firstRef
+                first `shouldBe` Just "fp-1"
+
+            it "decodes alert fields as they stream in" \(baseUrl, _) -> do
+                result <-
+                    Grafana.alertsFold
+                        (cs baseUrl)
+                        "token"
+                        (\acc alert -> pure (acc ++ [(alert.amFingerprint, alert.amGeneratorUrl)]))
+                        []
+                let alerts = fromRight [] result
+                length alerts `shouldBe` 20000
+                take 2 alerts
+                    `shouldBe` [ ("fp-1", Just "http://grafana/1")
+                               , ("fp-2", Just "http://grafana/2")
+                               ]
+
+            it "folds an empty listing" \(baseUrl, _) -> do
+                result <-
+                    Grafana.alertsFold
+                        (cs baseUrl)
+                        "empty"
                         (\count _ -> pure (count + (1 :: Int)))
                         (0 :: Int)
-            foldIt
-                `shouldThrow` \case
-                    HttpStatusError _ code -> code == 500
+                result `shouldBe` Right 0
+
+            it "returns Left on a malformed listing" \(baseUrl, _) -> do
+                result <-
+                    Grafana.alertsFold
+                        (cs baseUrl)
+                        "bad"
+                        (\count _ -> pure (count + (1 :: Int)))
+                        (0 :: Int)
+                result `shouldSatisfy` isLeft
+
+            it "returns Left when an element misses the fingerprint" \(baseUrl, _) -> do
+                result <-
+                    Grafana.alertsFold
+                        (cs baseUrl)
+                        "nofp"
+                        (\count _ -> pure (count + (1 :: Int)))
+                        (0 :: Int)
+                result `shouldSatisfy` isLeft
+
+            it "throws HttpStatusError on a non-2xx response" \(baseUrl, _) -> do
+                let foldIt =
+                        Grafana.alertsFold
+                            (cs baseUrl)
+                            "boom"
+                            (\count _ -> pure (count + (1 :: Int)))
+                            (0 :: Int)
+                foldIt
+                    `shouldThrow` \case
+                        HttpStatusError _ code -> code == 500
 
 withServer :: ((String, IORef ()) -> IO ()) -> IO ()
 withServer action = do

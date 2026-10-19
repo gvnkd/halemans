@@ -121,12 +121,13 @@ pollSource source = do
                     let fingerprints' = Set.insert ("grafana:" <> amAlert.amFingerprint) fingerprints
                     case amAlert.amUpdatedAt of
                         -- 5-min overlap window on the cursor (§8) so a
-                        -- restarted poller re-sees the tail and dedupe
-                        -- handles the rest.
+                        -- restarted poller re-sees the tail; the poller
+                        -- dedupe below keeps the re-seen tail from
+                        -- re-executing every cycle.
                         Just updated | updated < cutoff -> pure (count + 1, fingerprints')
                         _ -> do
                             let event = Grafana.amAlertToNormalized now amAlert
-                            skip <- refireGuard now event
+                            skip <- pollerSkip now amAlert.amUpdatedAt event
                             unless skip (void (ingest source event))
                             pure (count + 1, fingerprints')
             outcome <- try (Grafana.alertsFold source.baseUrl token stepAlert (0, Set.empty))
@@ -159,9 +160,6 @@ pollSource source = do
                             |> updateRecord
                     pure ()
 
--- | The listing can lag a webhook resolve by a few seconds (alertmanager
--- keeps the alert listed until its endsAt passes); don't let the poller
--- refire an alert the fast path just resolved.
 -- | The reconciles run at most once a minute per source (see the poll
 -- cycle). lastReconcileAt is only stamped by this job, so grafana sources
 -- keep their own cadence independent of zabbix sources.
@@ -170,8 +168,22 @@ grafanaReconcileDue now source = case source.lastReconcileAt of
     Nothing -> True
     Just lastAt -> addUTCTime 60 lastAt <= now
 
-refireGuard :: (?modelContext :: ModelContext) => UTCTime -> NormalizedEvent -> IO Bool
-refireGuard now event = case event.status of
+-- | Poller-path dedupe: ONE row lookup decides both guards before ingest.
+--
+-- (1) Refire guard: the listing can lag a webhook resolve by a few seconds
+--     (alertmanager keeps the alert listed until its endsAt passes); don't
+--     let the poller refire an alert the fast path just resolved.
+--
+-- (2) Overlap watermark: the 300s cursor overlap re-sees every listing entry
+--     on every poll cycle, and the state machine treats (Firing, Refire) as
+--     an APPLIED transition — so re-ingesting a standing alert is a
+--     'repeated' event, an occurrences bump and a WS/MM sync fan-out PER
+--     CYCLE. A firing/acked row whose last activity is at or after the
+--     listing entry's updatedAt has already ingested this episode (cause
+--     precedes effect), so the re-ingest is skipped. A missing updatedAt
+--     proves nothing and never skips.
+pollerSkip :: (?modelContext :: ModelContext) => UTCTime -> Maybe UTCTime -> NormalizedEvent -> IO Bool
+pollerSkip now listingUpdatedAt event = case event.status of
     Resolved -> pure False
     Firing -> do
         existing <-
@@ -184,7 +196,18 @@ refireGuard now event = case event.status of
                 , Just resolvedAt <- alert.resolvedAt
                 , resolvedAt > addUTCTime (-90) now ->
                     True
+                | grafanaListingSeen alert listingUpdatedAt -> True
             _ -> False
+
+-- | Pure watermark check behind pollerSkip (unit-testable). Restricted to
+-- firing/acked rows on purpose: a firing listing entry on a RESOLVED row is
+-- a genuine refire (stale-listing lag is the 90s guard's job, and that guard
+-- must keep winning over the watermark), and on a STALLED row it is the
+-- stall-recovery path — both must keep ingesting.
+grafanaListingSeen :: Alert -> Maybe UTCTime -> Bool
+grafanaListingSeen alert listingUpdatedAt =
+    (alert.status == "firing" || alert.status == "ack")
+        && maybe False (\updatedAt -> updatedAt <= alert.lastSeenAt) listingUpdatedAt
 
 -- | Firing alerts owned by this source that vanished from the listing
 -- resolved while we weren't listening. Grace window guards against listing
