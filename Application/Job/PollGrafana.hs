@@ -119,7 +119,17 @@ pollSource source = do
             let cutoff = addUTCTime (-300) (fromMaybe now source.lastSyncCursor)
                 stepAlert (count, fingerprints) amAlert = do
                     let fingerprints' = Set.insert ("grafana:" <> amAlert.amFingerprint) fingerprints
-                    case amAlert.amUpdatedAt of
+                        -- Grafana's embedded alertmanager OMITS updatedAt
+                        -- (prod 2026-10-22: every firing alert re-ingested
+                        -- EVERY cycle — 1300+ repeats/3h per alert, ~TiB/day
+                        -- alloc churn). grafanaListingTime falls back to
+                        -- startsAt: same value for firing alerts (AM sets
+                        -- updatedAt = startsAt), also constant per episode,
+                        -- and always present — without a fallback the
+                        -- overlap cutoff and the poller watermark below
+                        -- never engage.
+                        listingAt = grafanaListingTime amAlert
+                    case listingAt of
                         -- 5-min overlap window on the cursor (§8) so a
                         -- restarted poller re-sees the tail; the poller
                         -- dedupe below keeps the re-seen tail from
@@ -127,7 +137,7 @@ pollSource source = do
                         Just updated | updated < cutoff -> pure (count + 1, fingerprints')
                         _ -> do
                             let event = Grafana.amAlertToNormalized now amAlert
-                            skip <- pollerSkip now amAlert.amUpdatedAt event
+                            skip <- pollerSkip now listingAt event
                             unless skip (void (ingest source event))
                             pure (count + 1, fingerprints')
             outcome <- try (Grafana.alertsFold source.baseUrl token stepAlert (0, Set.empty))
@@ -198,6 +208,12 @@ pollerSkip now listingUpdatedAt event = case event.status of
                     True
                 | grafanaListingSeen alert listingUpdatedAt -> True
             _ -> False
+
+-- | Episode timestamp for listing dedupe: updatedAt when the listing
+-- carries it, falling back to startsAt (see pollSource for why the fallback
+-- matters — grafana's embedded alertmanager omits updatedAt).
+grafanaListingTime :: Grafana.GrafanaAmAlert -> Maybe UTCTime
+grafanaListingTime amAlert = amAlert.amUpdatedAt <|> amAlert.amStartsAt
 
 -- | Pure watermark check behind pollerSkip (unit-testable). Restricted to
 -- firing/acked rows on purpose: a firing listing entry on a RESOLVED row is

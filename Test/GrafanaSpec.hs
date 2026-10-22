@@ -1,7 +1,7 @@
 module Test.GrafanaSpec where
 
 import qualified Application.Connector.Grafana as Grafana
-import Application.Job.PollGrafana (grafanaListingSeen)
+import Application.Job.PollGrafana (grafanaListingSeen, grafanaListingTime)
 import Application.Service.Http (HttpStatusError (..))
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import qualified Data.Aeson as Aeson
@@ -42,8 +42,20 @@ spec = do
             grafanaListingSeen resolvedRow (Just episodeStart) `shouldBe` False
         it "never skips on a stalled row — the listing is the stall-recovery path" do
             grafanaListingSeen stalledRow (Just episodeStart) `shouldBe` False
-        it "never skips without a listing updatedAt" do
+        it "never skips without a listing time" do
             grafanaListingSeen firingRow Nothing `shouldBe` False
+
+    describe "Application.Job.PollGrafana.grafanaListingTime" do
+        let episodeStart = UTCTime (fromGregorian 2026 10 12) 3600
+            newer = addUTCTime 30 episodeStart
+            mkAmAlert startsAt updatedAt =
+                Grafana.GrafanaAmAlert{amFingerprint = "fp", amLabels = Aeson.object [], amAnnotations = Aeson.object [], amStartsAt = startsAt, amEndsAt = Nothing, amUpdatedAt = updatedAt, amGeneratorUrl = Nothing}
+        it "falls back to startsAt when the listing omits updatedAt (grafana embedded AM)" do
+            grafanaListingTime (mkAmAlert (Just episodeStart) Nothing) `shouldBe` Just episodeStart
+        it "prefers updatedAt when present" do
+            grafanaListingTime (mkAmAlert (Just episodeStart) (Just newer)) `shouldBe` Just newer
+        it "is Nothing only when both are absent" do
+            grafanaListingTime (mkAmAlert Nothing Nothing) `shouldBe` Nothing
 
     describe "Application.Connector.Grafana.alertsFold" do
         around withServer do
