@@ -20,6 +20,8 @@ llmJobConcurrency = unsafePerformIO (envPositiveInt "HALEMANS_LLM_JOB_CONCURRENC
 envPositiveInt :: Text -> Int -> IO Int
 envPositiveInt name fallback = do
     raw <- lookupEnv (cs name)
-    pure (case raw >>= readMaybe . cs of
-        Just n | n >= 1 -> n
-        _ -> fallback)
+    pure
+        ( case raw >>= readMaybe . cs of
+            Just n | n >= 1 -> n
+            _ -> fallback
+        )
