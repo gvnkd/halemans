@@ -83,6 +83,7 @@ library
         Application.Connector.Zabbix
         Application.Helper.Controller
         Application.Helper.DashboardConfig
+        Application.Helper.Env
         Application.Helper.FilterPrefs
         Application.Helper.I18n
         Application.Helper.Ingest

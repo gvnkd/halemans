@@ -1,5 +1,6 @@
 module Application.Job.EnrichAlert where
 
+import Application.Helper.Env (enrichJobConcurrency)
 import Application.Helper.Ingest (publishAlertUpdate, reevaluateBlackoutOverlay)
 import qualified Application.Service.Assets.Cache as AssetsCache
 import qualified Application.Service.Cmdb.DbConfig as Cmdb
@@ -115,6 +116,12 @@ instance Job EnrichAlertJob where
         maybeRetriggerAnalysis alert startedAt
 
     maxAttempts = 3
+
+    -- Burst throttle: a Zabbix flood (600+ alerts) otherwise runs 16
+    -- concurrent enriches (IHP default), each hitting CMDB/Jira/Assets and
+    -- possibly enqueueing an LlmAnalysisJob — that OOMed an 8GB stage node.
+    -- Env override: HALEMANS_ENRICH_JOB_CONCURRENCY (default 4).
+    maxConcurrency = enrichJobConcurrency
 
 -- Enrichment-triggered re-analysis (design_docs/milestone_5.md §7): an alert
 -- whose LLM analysis completed before this enrichment run gets exactly one

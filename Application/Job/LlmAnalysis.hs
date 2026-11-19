@@ -1,5 +1,6 @@
 module Application.Job.LlmAnalysis where
 
+import Application.Helper.Env (llmJobConcurrency)
 import Application.Helper.Ingest (publishAlertUpdate)
 import Application.Service.I18n (agentLanguageName)
 import Application.Service.Llm
@@ -54,6 +55,12 @@ instance Job LlmAnalysisJob where
                             throwIO err
 
     maxAttempts = 3
+
+    -- Burst throttle: enrichment retrigger enqueues one job per alert, so a
+    -- Zabbix flood also floods the LLM queue; cap below the IHP default of 16
+    -- to bound provider/tool-call pressure on small nodes. Env override:
+    -- HALEMANS_LLM_JOB_CONCURRENCY (default 4).
+    maxConcurrency = llmJobConcurrency
 
     -- 10s poll (default 60s): analyses should land on open cards promptly,
     -- and backoff-requeued retries must not wait a full minute each.
